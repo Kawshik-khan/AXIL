@@ -4,6 +4,7 @@ import { CourierSyncService } from "@/domains/automation/services/courier-sync.s
 import { WebhookProvider } from "@/types/automation";
 import { CourierProviderName } from "@/types/commerce";
 import { logger } from "@/lib/logger";
+import { checkRateLimit, MINUTE } from "@/lib/rate-limit";
 
 const COURIER_PROVIDERS = new Set<string>(["STEADFAST", "PATHAO", "REDX", "PAPERFLY", "ECOURIER", "SUNDARBAN"]);
 const MAX_BODY_BYTES = 256 * 1024;
@@ -27,6 +28,10 @@ export async function POST(request: Request, { params }: { params: { provider: s
     const webhook = webhookId ? WebhookGatewayService.findIngressWebhook(webhookId, provider) : undefined;
     if (!webhook) {
       return reject(401, "UNKNOWN_WEBHOOK", "Unknown or inactive webhook endpoint.");
+    }
+    // 600 calls per minute per endpoint (FX-14): bounds the rejected-delivery rows a flood of bad signatures can write.
+    if (!checkRateLimit(`webhook:${webhook.id}`, 600, MINUTE).allowed) {
+      return reject(429, "RATE_LIMITED", "Too many webhook calls for this endpoint.");
     }
 
     const rawBody = await request.text();

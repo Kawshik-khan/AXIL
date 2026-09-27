@@ -411,6 +411,57 @@ async function main() {
     assert.ok(body.data.organizations.every((o) => o.tenant_id === other.tenant.id));
   });
 
+  // ---------------------------------------------------------------------------
+  console.log(`\n${ANSI_BOLD}[FX-14] Rate limiting (M13)${ANSI_RESET}`);
+  // ---------------------------------------------------------------------------
+
+  const { checkRateLimit } = await import("@/lib/rate-limit");
+  const loginRoute = (await import("@/app/api/v1/auth/login/route")) as { POST: (r: Request) => Promise<Response> };
+  const tryLogin = (email: string, password: string) =>
+    loginRoute.POST(new Request(`${BASE}/auth/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    }));
+
+  await runTest("the 11th login attempt for one account within 15 minutes → 429 with Retry-After", async () => {
+    const victim = await AuthService.registerTenantWithOwner({
+      email: `${uid("brute")}@phase1.test`, password: "Brute-Target-Pass-9012!", name: "Target", workspaceName: `Target ${Date.now()}`,
+    });
+    for (let i = 0; i < 10; i++) {
+      assert.strictEqual((await tryLogin(victim.user.email, `wrong-guess-${i}`)).status, 401);
+    }
+    const blocked = await tryLogin(victim.user.email, "Brute-Target-Pass-9012!");
+    assert.strictEqual(blocked.status, 429, "even the right password is refused while limited");
+    assert.ok(Number(blocked.headers.get("retry-after")) > 0, "Retry-After is set");
+  });
+
+  await runTest("the limit is per account: another account still signs in", async () => {
+    assert.strictEqual((await tryLogin(shop.user.email, "Phase1-Owner-Pass-4471!")).status, 200);
+  });
+
+  await runTest("platform login is limited per account too", async () => {
+    const route = (await import("@/app/api/v1/platform/auth/login/route")) as { POST: (r: Request) => Promise<Response> };
+    const email = `${uid("op")}@operators.test`;
+    let last = 0;
+    for (let i = 0; i < 11; i++) {
+      last = (await route.POST(new Request(`${BASE}/platform/auth/login`, {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email, password: `guess-${i}` }),
+      }))).status;
+    }
+    assert.strictEqual(last, 429);
+  });
+
+  await runTest("a widget visitor sending more than 30 messages a minute → 429", async () => {
+    const now = Date.now();
+    const key = `widget:visitor:test:${uid("anon")}`;
+    for (let i = 0; i < 30; i++) assert.strictEqual(checkRateLimit(key, 30, 60_000, now).allowed, true);
+    const blocked = checkRateLimit(key, 30, 60_000, now);
+    assert.strictEqual(blocked.allowed, false);
+    assert.ok(blocked.retryAfterSec > 0);
+    assert.strictEqual(checkRateLimit(key, 30, 60_000, now + 61_000).allowed, true, "the window slides");
+  });
+
   console.log(`\n${ANSI_BOLD}====================================================${ANSI_RESET}`);
   console.log(`  Tests Passed: ${passedCount} | Tests Failed: ${failedCount}`);
   console.log(`${ANSI_BOLD}====================================================${ANSI_RESET}\n`);

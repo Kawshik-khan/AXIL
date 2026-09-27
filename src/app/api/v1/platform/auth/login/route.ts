@@ -6,6 +6,7 @@ import { apiSuccess, apiError } from "@/lib/api-response";
 import { signPlatformSessionToken, verifyPassword, PLATFORM_AUTH_COOKIE_NAME } from "@/lib/security";
 import { PLATFORM_ROLE_PERMISSIONS } from "@/lib/permissions";
 import { AppError } from "@/lib/errors";
+import { enforceRateLimit, clientKey, MINUTE } from "@/lib/rate-limit";
 
 const LoginBody = z.object({
   email: z.string().trim().toLowerCase().email().max(254),
@@ -27,6 +28,10 @@ export async function POST(request: Request) {
       throw new AppError("INVALID_CREDENTIALS", "Email and password are required.", 400);
     }
     const { email, password } = parsed.data;
+    // Brute-force limits (FX-14): per account always, per client when a trusted proxy identifies it.
+    enforceRateLimit(`login:platform:email:${email}`, 10, 15 * MINUTE);
+    const client = clientKey(request);
+    if (client) enforceRateLimit(`login:platform:client:${client}`, 50, 15 * MINUTE);
 
     // Password first (bcrypt only — audit C8), membership second, so the endpoint does not reveal which
     // emails belong to platform operators.

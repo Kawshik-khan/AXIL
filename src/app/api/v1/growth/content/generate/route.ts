@@ -1,3 +1,4 @@
+import { enforceRateLimit, MINUTE } from "@/lib/rate-limit";
 import { PERMISSIONS } from "@/lib/permissions";
 import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
@@ -7,6 +8,7 @@ export async function POST(request: Request) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.MARKETING_WRITE);
+    enforceRateLimit(`ai:user:${context.user.id}`, 30, MINUTE); // costly model calls (FX-14)
     const body = await request.json();
 
     const asset = contentService.generateCopyDraft({

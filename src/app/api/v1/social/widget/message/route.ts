@@ -3,6 +3,7 @@ import { z } from "zod";
 import { db } from "@/infrastructure/db";
 import { WebhookIngressService } from "@/domains/social/webhooks/webhook-ingress.service";
 import { logger } from "@/lib/logger";
+import { checkRateLimit, clientKey, MINUTE } from "@/lib/rate-limit";
 
 /**
  * Public website chat widget ingress (audit H5, FX-07).
@@ -38,6 +39,22 @@ export async function POST(request: Request) {
     const channel = db.findConnectedChannelForIngress(parsed.data.channel_id);
     if (!channel || channel.type !== "WEBSITE_CHAT" || channel.status !== "ACTIVE") {
       return badRequest("Unknown chat channel.");
+    }
+
+    // Anonymous traffic limits (FX-14): per visitor, per client behind a trusted proxy, and a per-channel backstop
+    // because visitor ids are chosen by the browser.
+    const client = clientKey(request);
+    const limits = [
+      checkRateLimit(`widget:visitor:${channel.id}:${parsed.data.anonymous_id}`, 30, MINUTE),
+      checkRateLimit(`widget:channel:${channel.id}`, 300, MINUTE),
+      ...(client ? [checkRateLimit(`widget:client:${client}`, 60, MINUTE)] : []),
+    ];
+    const blocked = limits.find((l) => !l.allowed);
+    if (blocked) {
+      return NextResponse.json(
+        { error: { code: "RATE_LIMITED", message: "Too many messages. Try again shortly." } },
+        { status: 429, headers: { "Retry-After": String(blocked.retryAfterSec) } }
+      );
     }
 
     // Phone and email typed into the public widget are unverified claims. Identity resolution links conversations

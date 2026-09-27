@@ -42,6 +42,7 @@ export function apiError(error: unknown, requestId?: string) {
   const reqId = requestId || `req_${Math.random().toString(36).substring(2, 10)}`;
 
   if (error instanceof AppError) {
+    const retryAfter = error.details?.retry_after_sec;
     return NextResponse.json(
       {
         error: {
@@ -51,7 +52,10 @@ export function apiError(error: unknown, requestId?: string) {
           request_id: reqId,
         },
       },
-      { status: error.statusCode }
+      {
+        status: error.statusCode,
+        ...(typeof retryAfter === "number" ? { headers: { "Retry-After": String(retryAfter) } } : {}),
+      }
     );
   }
 
