@@ -107,3 +107,32 @@ done
 Once verification passes:
 1. Toggle the workflow to **Active**.
 2. **Immutability Principle**: Never edit active workflows in production directly. Create version $N+1$ in CommerceOS, test in `TEST` mode, approve, and deploy.
+
+---
+
+## Courier and payment callbacks into CommerceOS (changed in Phase 0)
+
+`commerceos-courier-status-sync.json` and `commerceos-payment-verification.json` relay provider callbacks to
+`POST /api/v1/automation/webhooks/{provider}`. Since Phase 0 (ADR-103), that endpoint accepts only signed calls:
+
+| Part | Value |
+|---|---|
+| URL | `…/api/v1/automation/webhooks/{provider}?wh=<webhook id>`. Copy the full callback URL from **Automations → Webhooks**. |
+| `x-webhook-timestamp` | Current Unix time in milliseconds (or seconds). It must be within 300 s of the server clock. |
+| `x-webhook-signature` | Hex HMAC-SHA256 of `<timestamp>.<raw body>`, keyed with that provider's secret: the value of `STEADFAST_WEBHOOK_SECRET`, `PATHAO_WEBHOOK_SECRET`, `BKASH_WEBHOOK_SECRET` or `NAGAD_WEBHOOK_SECRET` on the CommerceOS server (at least 24 characters). |
+
+`X-Tenant-ID`, `?tenant_id=` and bearer/header-auth credentials are ignored; the tenant is the one that owns the
+webhook id. **The two workflows above do not sign yet, so their calls get `401` and change nothing.** Updating them
+belongs to FIX_IMPLEMENTATION_PLAN FX-18 (machine credentials for n8n). Until then, sign in a Code node placed before
+the HTTP Request node:
+
+```js
+// Needs NODE_FUNCTION_ALLOW_BUILTIN=crypto on the n8n container, and the secret available to the workflow.
+const crypto = require('crypto');
+const body = JSON.stringify($json);
+const timestamp = Date.now().toString();
+const signature = crypto.createHmac('sha256', $env.STEADFAST_WEBHOOK_SECRET).update(`${timestamp}.${body}`).digest('hex');
+return [{ json: { body, timestamp, signature } }];
+```
+
+Send `body` as a raw JSON string, byte for byte. If the HTTP node re-serializes it, the signature will not match.

@@ -15,15 +15,16 @@ Next.js 14 App Router · React 18 · TypeScript (strict) · Zod · jose/bcryptjs
 
 | Purpose | Command | Notes |
 |---|---|---|
-| Dev server | `npm run dev` | http://localhost:3000 |
+| Dev server | `npm run dev` | http://localhost:3000. Needs `JWT_SECRET` and `CREDENTIALS_ENCRYPTION_KEY` in `.env.local`: two different random values, 32+ chars each. `DEV_AUTH_BYPASS=1` is an opt-in for token-less local browsing and is logged. |
 | Type-check | `npm run type-check` | Currently has pre-existing errors (H15). Record the count before and after; never increase it. |
-| All tests | `npm test` | 19 custom suites via `tests/ts-runner.cjs` |
-| One suite | `node tests/ts-runner.cjs ./tests/<name>-tests.ts` | e.g. `commerce-tests.ts`, `super-admin-tests.ts` |
+| All tests | `npm test` | 20 custom suites via `tests/ts-runner.cjs`; the Phase 0 security suite runs first |
+| One suite | `node tests/ts-runner.cjs ./tests/<name>-tests.ts` | e.g. `security-regression-tests.ts`, `commerce-tests.ts` |
+| Exploit replay | `BASE_URL=http://localhost:3000 node scripts/smoke-security.mjs` | Against a running server started without `DEV_AUTH_BYPASS`; run after touching auth, webhooks or platform routes |
 | DB integration tests | `npm run test:db` | Hits real Neon/Pinecone/Upstash — ask before running |
 | Migrations / seeds | `npm run db:migrate`, `npm run db:seed:*` | Hits real Neon — ask before running |
 | Lint | `npm run lint` | **No ESLint config yet** — don't rely on it |
 
-There is no `test:eval`, `test:unit`, `test:e2e`, Dockerfile, or git repository yet (see STATUS §2).
+There is no `test:eval`, `test:unit`, `test:e2e` or Dockerfile yet. The project is a local git repository with no remote (see STATUS §2).
 
 ## 3. Where things are
 
@@ -32,6 +33,7 @@ src/app/api/v1/<resource>/route.ts   REST routes (tenant); src/app/api/v1/platfo
 src/app/(dashboard)/**               Merchant UI          src/app/super-admin/**  Platform UI
 src/domains/<domain>/                *.service.ts (logic), *.repository.ts (Neon, not yet wired)
 src/lib/api-response.ts              extractRequestContext, extractPlatformContext, apiSuccess, apiError
+src/lib/security.ts                  JWTs (issuer + per-purpose audience), bcrypt, credential encryption (ADR-103)
 src/lib/errors.ts                    AppError family (NotFoundError, ForbiddenError, ...)
 src/lib/permissions.ts               PERMISSIONS, RoleName, ROLE_PERMISSIONS
 src/domains/rbac/service.ts          RbacService.assertCan (tenant)

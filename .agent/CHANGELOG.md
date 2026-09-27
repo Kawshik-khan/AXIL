@@ -6,6 +6,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [Unreleased] - Phase 0 security containment (2026-09-27, branch `phase-0-containment`)
+See [ADR-103](DECISIONS.md#adr-103-fail-closed-authentication-secrets-and-webhook-signatures-phase-0-containment) and `.agent/STATUS.md`. Finding IDs refer to `AUDIT_REPORT_2026-09-27.md`.
+
+### Security
+- Removed the shared default passwords and pass-the-hash acceptance. Passwords are verified only with bcrypt (C1).
+- Platform login now checks the password, and the token is set only in an httpOnly cookie (C8).
+- `JWT_SECRET` and `CREDENTIALS_ENCRYPTION_KEY` fail closed: there is no published default, and the two keys must differ. Every JWT carries an issuer and a per-purpose audience (C2, M14).
+- Removed the `x-test-platform-role` header bypass and the dev OWNER/SUPER_ADMIN fallback. The platform role is read from the stored membership (C3, H1).
+- Step-up returns 501 until TOTP exists, and no session claims MFA without a verified factor (H10).
+- Courier and payment webhooks require a per-endpoint `?wh=` id and an HMAC of `<timestamp>.<raw body>` within 300 s. The tenant comes from the webhook row, and rows are never auto-created (C4).
+- Social webhooks resolve the channel strictly, always verify the Meta signature, and have no built-in secrets or verify tokens (H5).
+- Accepting an invitation for an existing account requires that account's password (N1).
+- `.env.example` holds placeholders only, and `.gitignore` / `.gitattributes` were added (C5).
+
+### Changed (action required)
+- `.env.local` must define `JWT_SECRET` and `CREDENTIALS_ENCRYPTION_KEY`: two different random values of at least 32 characters.
+- Set `SEED_ADMIN_PASSWORD` (at least 14 characters) and run `scripts/reset-seed-passwords.ts --apply`; seeded accounts cannot sign in until then.
+- Re-encrypt stored credentials with `scripts/rotate-credential-key.ts` (needs `OLD_JWT_SECRET`).
+- Webhooks need `STEADFAST_WEBHOOK_SECRET`, `PATHAO_WEBHOOK_SECRET`, `BKASH_WEBHOOK_SECRET` and `NAGAD_WEBHOOK_SECRET`; social webhooks need `META_APP_SECRET` and `META_VERIFY_TOKEN`.
+- All existing sessions are invalidated.
+- The n8n courier/payment relay workflows get 401 until they sign their requests (FX-18).
+- Super-admin actions that need step-up are unavailable until FX-15.
+
+### Added
+- `tests/security-regression-tests.ts`, which runs first in `npm test`.
+- `scripts/smoke-security.mjs`, which replays the audit exploits against a running server.
+- A super-admin sign-in page (`/super-admin/login`) and a shared platform fetch client.
+- The Automations → Webhooks tab now shows each provider callback URL and whether its secret is set.
+- `src/lib/logger.ts` (structured JSON logs).
+
 ## [0.2.0] - 2026-09-19
 ### Added
 - **Phase 1: Core Platform Foundation** fully implemented and verified.

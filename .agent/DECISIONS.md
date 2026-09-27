@@ -110,6 +110,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 | [ADR-100](#adr-100-authoritative-separation-of-platform-scope-and-tenant-scope-authorization-boundary-adr-platform-scope-separation) | Authoritative Separation of Platform Scope and Tenant Scope Authorization Boundary (ADR-Platform-Scope-Separation) |
 | [ADR-101](#adr-101-integration-of-typesafe-ai-jev-system-one-model-for-sub-20ms-decisions-and-policy-guardrails) | Integration of TypeSafe AI Jev (System One) Model for Sub-20ms Decisions and Policy Guardrails |
 | [ADR-102](#adr-102-agent-governance-restructure-status-as-source-of-truth) | Agent governance restructure: STATUS as source of truth |
+| [ADR-103](#adr-103-fail-closed-authentication-secrets-and-webhook-signatures-phase-0-containment) | Fail-closed authentication, secrets and webhook signatures (Phase 0 containment) |
 
 > Several ADRs assume PostgreSQL/pgvector, Redis Streams, and real providers. Where the code differs (JSON store, Pinecone, mocked LLM), STATUS.md describes reality; the ADR still records the intended decision. Supersede an ADR with a new one rather than editing it.
 
@@ -1136,3 +1137,48 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 - **Context**: `.agent/` docs described the target design in the present tense; `PROJECT_STATE.md` claimed "Phase 12 complete" while the 2026-09-27 audit found CRITICAL auth bypasses and mostly simulated integrations. Docs duplicated invariants and contradicted each other (tokens, thresholds, fees, roles). Product-agent personas were filed as coding-agent skills. Nothing was auto-loaded by coding tools.
 - **Decision**: Root `AGENTS.md` (+ `CLAUDE.md` importing it) is the entry point. `.agent/STATUS.md` is the single source of truth for what works; architecture docs carry status banners. Invariants/11 questions/DoD live only in `.agent/GOVERNANCE.md`. Numeric values live in code (tokens.css, constants) and docs cite them. Product-agent specs moved to `.agent/runtime-agents/`, product procedures to `.agent/specs/platform/`. Rules carry activation frontmatter. Claude Code wrappers, hooks, and subagents live in `.claude/`.
 - **Consequences**: Less duplicated text to drift; agents can't mistake target design for current reality; enforcement moves partly into hooks. Previous layout archived in `.backups/agent-folder-2026-09-27.tar.gz`.
+
+---
+
+## ADR-103: Fail-Closed Authentication, Secrets and Webhook Signatures (Phase 0 Containment)
+- **Date**: 2026-09-27
+- **Status**: Approved. Amends ADR-016 (key source) and ADR-100 (where the platform role comes from).
+- **Context**: The 2026-09-27 audit found that anyone could get in:
+  - shared default passwords, and the stored hash itself, verified for any account (C1);
+  - platform login never checked the password (C8);
+  - the JWT secret was a value published in `.env.example`, and it was the fallback (C2);
+  - an `x-test-*` header and a dev fallback identity granted roles without a valid token (C3, H1);
+  - step-up MFA accepted any 6 characters (H10);
+  - courier/payment webhooks were unsigned, took the tenant from headers and auto-created rows (C4);
+  - social webhooks fell back to built-in secrets (H5).
+  Stored provider credentials were encrypted with a key derived from that same public secret (M14).
+- **Decision**:
+  1. **Secrets fail closed.** `JWT_SECRET` and `CREDENTIALS_ENCRYPTION_KEY` are read lazily. Each must be at least 32 characters, the two must differ, and neither may start with the published default. A bad value throws; the only exception is `NODE_ENV=test`, which uses a fixed test value. Stored credentials use `sha256(CREDENTIALS_ENCRYPTION_KEY)`. `scripts/rotate-credential-key.ts` re-encrypts old ciphertext.
+  2. **One audience per token purpose.** Every JWT has issuer `commerceos` and one audience: `commerceos:tenant`, `commerceos:platform`, `commerceos:step-up` or `commerceos:impersonation`. Verification pins both, so a token can't be used for a different purpose.
+  3. **Passwords are verified only with bcrypt.** There are no shared passwords, and a stored hash is never accepted as a password.
+     - Seeded accounts get `DISABLED_PASSWORD_HASH` ("!disabled") unless `SEED_ADMIN_PASSWORD` (at least 14 characters) is set.
+     - A provisioned tenant owner starts as `INVITED`.
+     - Accepting an invitation for an email that already has an account requires that account's password; the link alone never creates a session.
+     - Platform login compares against a dummy hash for unknown emails, so timing doesn't reveal which emails exist.
+     - The platform session token is only set in an httpOnly cookie, never in the response body.
+  4. **No identity without a valid token.** The test headers and the dev fallback identity are removed.
+     - The only bypass is `DEV_AUTH_BYPASS=1` together with `NODE_ENV=development`, and only when no token is sent. Every use is logged.
+     - A token that is sent but invalid always gets 401.
+     - The platform role is read from the stored, active `PlatformMembership`. Token claims don't set it.
+  5. **Step-up fails closed.** `POST /api/v1/platform/auth/step-up` returns 501 until TOTP exists (FX-15), and `mfaVerified` is true only after a real factor check. Until then, the seven platform actions that need step-up are unavailable.
+  6. **Courier/payment webhooks are signed per endpoint.**
+     - Each webhook row has a public id, sent as `?wh=`. The request's tenant is that row's tenant. An unknown or inactive id gets 401 and nothing is written. Rows are never auto-created.
+     - Every request needs `x-webhook-timestamp` (within 300 s) and `x-webhook-signature`. The signature is the HMAC-SHA256 (HMAC-SHA512 if the row says so) of `<timestamp>.<raw body>`, keyed with the env var named by `secret_reference` (at least 24 characters).
+     - An Authorization header never replaces the signature. Legacy `TOKEN` rows are verified as HMAC-SHA256.
+     - This departs from FIX_IMPLEMENTATION_PLAN FX-06, which kept a bearer-token mode. `.agent/rules/security.md` §4 requires HMAC with a 300 s window, and that window means nothing unless the signature covers the timestamp.
+  7. **Social ingress resolves the channel strictly and always verifies.**
+     - Meta signatures use the channel's app secret or `META_APP_SECRET`; when neither is set, verification fails.
+     - Verify tokens come only from `META_VERIFY_TOKEN`; the endpoint returns 503 when it is unset.
+     - The only unsigned path is the public website widget, and only for an ACTIVE `WEBSITE_CHAT` channel.
+- **Consequences**:
+  - Every existing session becomes invalid, so everyone signs in again.
+  - The app doesn't serve authenticated requests until `.env.local` has both new secrets.
+  - Seeded accounts can't sign in until `scripts/reset-seed-passwords.ts --apply` runs with `SEED_ADMIN_PASSWORD` set.
+  - Credentials that can't be re-encrypted are marked ERROR and must be reconnected.
+  - The n8n courier/payment relay workflows get 401 until they sign their requests (FX-18).
+  - Guarded by `tests/security-regression-tests.ts` (part of `npm test`) and `scripts/smoke-security.mjs` (live exploit replay).
