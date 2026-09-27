@@ -1,6 +1,6 @@
 import { db, UserRecord, TenantRecord } from "@/infrastructure/db";
 import { hashPassword, verifyPassword, signSessionToken, verifySessionToken } from "@/lib/security";
-import { AuthenticationError, ConflictError, ValidationError, UserSuspendedError, TenantSuspendedError } from "@/lib/errors";
+import { AuthenticationError, ConflictError, ValidationError, UserSuspendedError, TenantSuspendedError, MembershipSuspendedError } from "@/lib/errors";
 import { RequestContext } from "@/lib/context";
 import { RbacService } from "@/domains/rbac/service";
 import { AuditService } from "@/domains/audit/service";
@@ -129,8 +129,12 @@ export class AuthService {
       throw new AuthenticationError("Invalid email or password.");
     }
 
-    // Resolve tenant memberships
-    const memberships = db.findMembershipsByUserId(user.id);
+    // Resolve tenant memberships; a membership suspended by a workspace admin gives no access to that workspace (N5).
+    const allMemberships = db.findMembershipsByUserId(user.id);
+    const memberships = allMemberships.filter((m) => m.status !== "SUSPENDED");
+    if (allMemberships.length > 0 && memberships.length === 0) {
+      throw new MembershipSuspendedError();
+    }
     let activeMembership = memberships[0];
 
     if (!activeMembership) {
@@ -236,6 +240,9 @@ export class AuthService {
     }
     if (!membership) {
       throw new AuthenticationError("User is no longer a member of this workspace.");
+    }
+    if (membership.status === "SUSPENDED") {
+      throw new MembershipSuspendedError();
     }
 
     const permissions = RbacService.getPermissionsForRole(membership.role);

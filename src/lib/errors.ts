@@ -166,3 +166,10 @@ export class ConcurrentModificationError extends AppError {
   }
 }
 
+
+/** The user's access to this workspace was suspended by a workspace admin (their account itself is unaffected). */
+export class MembershipSuspendedError extends AppError {
+  constructor() {
+    super("MEMBERSHIP_SUSPENDED", "Your access to this workspace has been suspended. Contact a workspace admin.", 403);
+  }
+}

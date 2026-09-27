@@ -1,9 +1,11 @@
 import { db } from "@/infrastructure/db";
 import { Customer, CustomerAddress, CustomerSource } from "@/types/commerce";
 import { RequestContext } from "@/lib/context";
+import { parseOrThrow } from "@/lib/validation";
+import { CustomerPatchSchema } from "./customer.schemas";
 import { RbacService } from "@/domains/rbac/service";
 import { PERMISSIONS } from "@/lib/permissions";
-import { BadRequestError, NotFoundError } from "@/lib/errors";
+import { BadRequestError, ConflictError, NotFoundError } from "@/lib/errors";
 
 export class CustomerService {
   /**
@@ -149,13 +151,22 @@ export class CustomerService {
   public static async updateCustomer(
     context: RequestContext,
     customerId: string,
-    updates: Partial<Customer>
+    body: unknown
   ): Promise<Customer> {
     RbacService.assertCan(context, PERMISSIONS.CUSTOMERS_UPDATE);
     await this.getCustomerById(context, customerId);
 
+    // Only whitelisted fields; totals, source and tenant are never client-writable (FX-12, audit H4).
+    const patch = parseOrThrow(CustomerPatchSchema, body);
+    const updates: Partial<Customer> = { ...patch, email: patch.email === null ? undefined : patch.email };
+    if (!("email" in patch)) delete updates.email;
+
     if (updates.phone) {
       updates.phone = this.normalizePhoneNumber(updates.phone);
+      const holder = db.findCustomerByPhone(context.tenant.id, updates.phone);
+      if (holder && holder.id !== customerId) {
+        throw new ConflictError("Another customer already uses this phone number.");
+      }
     }
 
     const updated = db.updateCustomer(context.tenant.id, customerId, updates);

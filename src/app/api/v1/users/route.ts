@@ -20,7 +20,8 @@ export async function GET(request: Request) {
           name: user.name,
           email: user.email,
           avatar: user.avatar,
-          status: user.status,
+          // Access to this workspace: a suspended membership, or a suspended/deactivated account, shows as not active.
+          status: user.status !== "ACTIVE" ? user.status : m.status ?? "ACTIVE",
           role: m.role,
           last_login_at: user.last_login_at,
           joined_at: m.created_at,

@@ -100,6 +100,21 @@ async function postJson(route: string, token: string, body: unknown): Promise<Re
   );
 }
 
+async function sendJson(route: string, id: string, method: "PATCH" | "PUT", token: string, body: unknown): Promise<Response> {
+  type Handler = (r: Request, ctx: { params: { id: string } }) => Promise<Response>;
+  const mod = (await import(`@/app/api/v1/${route}/route`)) as Partial<Record<"PATCH" | "PUT", Handler>>;
+  const handler = mod[method];
+  if (!handler) throw new Error(`${method} ${route} is not exported`);
+  return handler(
+    new Request(`${BASE}/${route.replace("[id]", id)}`, {
+      method,
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+    { params: { id } }
+  );
+}
+
 async function main() {
   console.log(`\n${ANSI_BOLD}====================================================${ANSI_RESET}`);
   console.log(`${ANSI_BOLD}   COMMERCEOS PHASE 1: INTEGRITY (FX-11 … FX-19)      ${ANSI_RESET}`);
@@ -191,6 +206,129 @@ async function main() {
     for (const amount of [0, -50, 1000000]) {
       await assert.rejects(() => PaymentService.createPayment(ctx, { order_id: o.id, provider: "BKASH", amount }), /amount/i);
     }
+  });
+
+  // ---------------------------------------------------------------------------
+  console.log(`\n${ANSI_BOLD}[FX-12] Strict update schemas (H4) and workspace-only suspension (N5)${ANSI_RESET}`);
+  // ---------------------------------------------------------------------------
+
+  const ownerToken = (await AuthService.login(shop.user.email, "Phase1-Owner-Pass-4471!")).token;
+  const other: Workspace = await AuthService.registerTenantWithOwner({
+    email: `${uid("owner2")}@phase1.test`,
+    password: "Phase1-Other-Pass-5582!",
+    name: "Other Owner",
+    workspaceName: `Phase 1 Other ${Date.now()}`,
+  });
+  const nowIso = () => new Date().toISOString();
+
+  await runTest("product PATCH with tenant_id → 400, and the product stays in its tenant", async () => {
+    const product = db.createProduct({
+      id: uid("prd_p1"), tenant_id: tenantId, name: "Panjabi", slug: uid("panjabi"), description: "", sku: uid("SKU"),
+      base_price: 1200, currency: "BDT", status: "ACTIVE", images: [], created_at: nowIso(), updated_at: nowIso(),
+    });
+    const res = await sendJson(`products/[id]`, product.id, "PATCH", ownerToken, { name: "Moved", tenant_id: other.tenant.id });
+    assert.strictEqual(res.status, 400);
+    const stored = db.findProductById(tenantId, product.id);
+    assert.ok(stored, "product still in its tenant");
+    assert.strictEqual(stored?.name, "Panjabi");
+    const ok = await sendJson(`products/[id]`, product.id, "PATCH", ownerToken, { name: "Eid Panjabi", base_price: 1350 });
+    assert.strictEqual(ok.status, 200);
+    assert.strictEqual(db.findProductById(tenantId, product.id)?.base_price, 1350);
+  });
+
+  await runTest("customer PATCH cannot set computed totals → 400", async () => {
+    const customer = db.createCustomer({
+      id: uid("cus_p1"), tenant_id: tenantId, first_name: "Rahim", last_name: "Uddin", phone: "+8801811000001",
+      status: "ACTIVE", source: "WEBSITE", created_at: nowIso(), updated_at: nowIso(),
+    });
+    const res = await sendJson(`customers/[id]`, customer.id, "PATCH", ownerToken, { total_spent: 999999 });
+    assert.strictEqual(res.status, 400);
+  });
+
+  await runTest("the store never moves a record to another tenant, even if a caller forwards tenant_id", () => {
+    const product = db.createProduct({
+      id: uid("prd_p1"), tenant_id: tenantId, name: "Saree", slug: uid("saree"), description: "", sku: uid("SKU"),
+      base_price: 900, currency: "BDT", status: "ACTIVE", images: [], created_at: nowIso(), updated_at: nowIso(),
+    });
+    db.updateProduct(tenantId, product.id, { tenant_id: other.tenant.id, id: "prd_hijacked", name: "Silk Saree" } as never);
+    assert.strictEqual(db.findProductById(tenantId, product.id)?.name, "Silk Saree");
+    assert.strictEqual(db.findProductById(other.tenant.id, product.id), undefined);
+  });
+
+  await runTest("business-hours PUT with tenant_id → 400 (the record can't be rewritten into another tenant)", async () => {
+    const mod = (await import("@/app/api/v1/social/business-hours/route")) as { PUT: (r: Request) => Promise<Response> };
+    const res = await mod.PUT(new Request(`${BASE}/social/business-hours`, {
+      method: "PUT",
+      headers: { authorization: `Bearer ${ownerToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ tenant_id: other.tenant.id, offline_message: "closed" }),
+    }));
+    assert.strictEqual(res.status, 400);
+    assert.strictEqual(db.getBusinessHours(other.tenant.id), undefined);
+  });
+
+  await runTest("campaign PUT cannot set status APPROVED (would skip approval and four-eyes) → 400", async () => {
+    const id = uid("camp_p1");
+    db.insertCampaign({
+      id, tenant_id: tenantId, name: "Draft", objective: "ENGAGEMENT", status: "DRAFT", audience_id: "aud_x", channel: "WHATSAPP",
+      variants: [], action_risk_level: "LOW", required_approval: false, risk_class: "LOW", created_by: shop.user.id,
+      created_at: nowIso(), updated_at: nowIso(),
+    } as never);
+    const res = await sendJson(`growth/campaigns/[id]`, id, "PUT", ownerToken, { status: "APPROVED" });
+    assert.strictEqual(res.status, 400);
+    assert.strictEqual(db.getCampaignById(id)?.status, "DRAFT");
+  });
+
+  await runTest("editing a draft campaign re-classifies its risk from the new budget", async () => {
+    const audienceId = uid("aud_p1");
+    db.insertAudience({
+      id: audienceId, tenant_id: tenantId, name: "Small", description: "", type: "STATIC", status: "ACTIVE", rule_groups: [],
+      estimated_size: 10, last_evaluated_at: nowIso(), created_by: shop.user.id, created_at: nowIso(), updated_at: nowIso(),
+    } as never);
+    const id = uid("camp_p1");
+    db.insertCampaign({
+      id, tenant_id: tenantId, name: "Draft", objective: "ENGAGEMENT", status: "DRAFT", audience_id: audienceId, channel: "WHATSAPP",
+      variants: [], action_risk_level: "LOW", required_approval: false, risk_class: "LOW", created_by: shop.user.id,
+      created_at: nowIso(), updated_at: nowIso(),
+    } as never);
+    const res = await sendJson(`growth/campaigns/[id]`, id, "PUT", ownerToken, { budget_bdt: 50000 });
+    assert.strictEqual(res.status, 200);
+    const stored = db.getCampaignById(id);
+    assert.strictEqual(stored?.risk_class, "HIGH");
+    assert.strictEqual(stored?.required_approval, true);
+  });
+
+  await runTest("a campaign that left DRAFT can't be edited → 409", async () => {
+    const id = uid("camp_p1");
+    db.insertCampaign({
+      id, tenant_id: tenantId, name: "Live", objective: "ENGAGEMENT", status: "RUNNING", audience_id: "aud_x", channel: "WHATSAPP",
+      variants: [], action_risk_level: "LOW", required_approval: false, risk_class: "LOW", created_by: shop.user.id,
+      created_at: nowIso(), updated_at: nowIso(),
+    } as never);
+    assert.strictEqual((await sendJson(`growth/campaigns/[id]`, id, "PUT", ownerToken, { budget_bdt: 1 })).status, 409);
+  });
+
+  await runTest("N5: suspending a member affects only this workspace, never their account", async () => {
+    // other's owner is also a member (SALES) of this shop.
+    db.createMembership({ id: uid("mem_p1"), tenant_id: tenantId, user_id: other.user.id, role: "SALES", created_at: nowIso(), updated_at: nowIso() });
+    const res = await sendJson(`users/[id]`, other.user.id, "PATCH", ownerToken, { status: "SUSPENDED" });
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(db.findUserById(other.user.id)?.status, "ACTIVE", "the account itself is untouched");
+    const inShop = await signSessionToken({ userId: other.user.id, tenantId, role: "SALES", email: other.user.email, name: other.user.name });
+    await assert.rejects(() => AuthService.resolveRequestContext(inShop), /suspended/i);
+    const ownShop = await AuthService.login(other.user.email, "Phase1-Other-Pass-5582!", other.tenant.id);
+    const ctx = await AuthService.resolveRequestContext(ownShop.token);
+    assert.strictEqual(ctx.tenant.id, other.tenant.id, "their own workspace still works");
+  });
+
+  await runTest("N5: account-level statuses (DEACTIVATED) are rejected by the member route → 400", async () => {
+    assert.strictEqual((await sendJson(`users/[id]`, other.user.id, "PATCH", ownerToken, { status: "DEACTIVATED" })).status, 400);
+  });
+
+  await runTest("only an OWNER can grant OWNER or change an owner", async () => {
+    const admin = await member(tenantId, "ADMIN");
+    const target = await member(tenantId, "SALES");
+    assert.strictEqual((await sendJson(`users/[id]`, target.id, "PATCH", admin.token, { role: "OWNER" })).status, 403);
+    assert.strictEqual((await sendJson(`users/[id]`, shop.user.id, "PATCH", admin.token, { status: "SUSPENDED" })).status, 403);
   });
 
   console.log(`\n${ANSI_BOLD}====================================================${ANSI_RESET}`);

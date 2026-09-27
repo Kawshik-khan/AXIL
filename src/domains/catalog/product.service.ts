@@ -1,6 +1,8 @@
 import { db } from "@/infrastructure/db";
 import { Product, ProductVariant, ProductStatus } from "@/types/commerce";
 import { RequestContext } from "@/lib/context";
+import { parseOrThrow } from "@/lib/validation";
+import { ProductPatchSchema } from "./product.schemas";
 import { RbacService } from "@/domains/rbac/service";
 import { PERMISSIONS } from "@/lib/permissions";
 import { BadRequestError, NotFoundError, ConflictError } from "@/lib/errors";
@@ -160,10 +162,23 @@ export class ProductService {
   public static async updateProduct(
     context: RequestContext,
     productId: string,
-    updates: Partial<Product>
+    body: unknown
   ): Promise<Product> {
     RbacService.assertCan(context, PERMISSIONS.PRODUCTS_UPDATE);
     const existing = await this.getProductById(context, productId);
+
+    // Only whitelisted fields; unknown keys (tenant_id, id, variants, …) are a 400 (FX-12, audit H4).
+    const patch = parseOrThrow(ProductPatchSchema, body);
+    const updates: Partial<Product> = {
+      ...patch,
+      category_id: patch.category_id === null ? undefined : patch.category_id,
+      brand_id: patch.brand_id === null ? undefined : patch.brand_id,
+      compare_at_price: patch.compare_at_price === null ? undefined : patch.compare_at_price,
+      cost_price: patch.cost_price === null ? undefined : patch.cost_price,
+    };
+    for (const key of Object.keys(updates) as Array<keyof Product>) {
+      if (updates[key] === undefined && !(key in patch)) delete updates[key];
+    }
 
     if (updates.sku && updates.sku.toUpperCase() !== existing.sku.toUpperCase()) {
       const collision = db.findProductBySku(context.tenant.id, updates.sku);

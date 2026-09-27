@@ -1,9 +1,27 @@
+import { z } from "zod";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { db } from "@/infrastructure/db";
 import { RbacService } from "@/domains/rbac/service";
 import { AuditService } from "@/domains/audit/service";
-import { PERMISSIONS, RoleName } from "@/lib/permissions";
+import { PERMISSIONS } from "@/lib/permissions";
 import { NotFoundError, ValidationError, ForbiddenError } from "@/lib/errors";
+import { parseOrThrow, readJson } from "@/lib/validation";
+
+const ROLES = ["OWNER", "ADMIN", "DEV", "MANAGER", "SALES", "SUPPORT", "MARKETING", "INVENTORY", "FINANCE", "ANALYST"] as const;
+
+/**
+ * Changes a member's role or their access to THIS workspace (FX-12, STATUS N5).
+ * `status` suspends or restores the membership only; it never touches the account (users.status), which other
+ * workspaces and the platform also rely on.
+ */
+const MemberPatch = z
+  .object({
+    role: z.enum(ROLES),
+    status: z.enum(["ACTIVE", "SUSPENDED"]),
+  })
+  .partial()
+  .strict()
+  .refine((patch) => patch.role !== undefined || patch.status !== undefined, { message: "Nothing to update." });
 
 export async function PATCH(
   request: Request,
@@ -14,7 +32,7 @@ export async function PATCH(
     RbacService.assertCan(context, PERMISSIONS.USER_UPDATE);
 
     const targetUserId = params.id;
-    const body = await request.json();
+    const patch = parseOrThrow(MemberPatch, await readJson(request));
 
     // Verify target user is a member of this tenant
     const membership = db.findMembership(context.tenant.id, targetUserId);
@@ -22,17 +40,14 @@ export async function PATCH(
       throw new NotFoundError("Team member", targetUserId);
     }
 
-    // Role update
-    if (body.role) {
+    // Owners are managed by owners only: nobody else can change, suspend or create an OWNER.
+    if ((membership.role === "OWNER" || patch.role === "OWNER") && context.role !== "OWNER") {
+      throw new ForbiddenError("Only workspace owners can grant or change owner access.");
+    }
+
+    if (patch.role && patch.role !== membership.role) {
       RbacService.assertCan(context, PERMISSIONS.ROLE_MANAGE);
-      const newRole = body.role as RoleName;
-
-      // Prevent non-owners from modifying owner roles
-      if (membership.role === "OWNER" && context.role !== "OWNER") {
-        throw new ForbiddenError("Only workspace owners can alter owner privileges.");
-      }
-
-      db.updateMembershipRole(context.tenant.id, targetUserId, newRole);
+      db.updateMembershipRole(context.tenant.id, targetUserId, patch.role);
 
       AuditService.log({
         tenantId: context.tenant.id,
@@ -40,25 +55,24 @@ export async function PATCH(
         action: "USER_ROLE_UPDATED",
         resourceType: "membership",
         resourceId: targetUserId,
-        metadata: { old_role: membership.role, new_role: newRole },
+        metadata: { old_role: membership.role, new_role: patch.role },
       });
     }
 
-    // Status update (ACTIVE, SUSPENDED, DEACTIVATED)
-    if (body.status) {
+    if (patch.status) {
       if (targetUserId === context.user.id) {
-        throw new ValidationError("You cannot suspend or deactivate your own account.");
+        throw new ValidationError("You cannot suspend or restore your own access.");
       }
 
-      db.updateUser(targetUserId, { status: body.status });
+      db.updateMembershipStatus(context.tenant.id, targetUserId, patch.status);
 
       AuditService.log({
         tenantId: context.tenant.id,
         actorUserId: context.user.id,
-        action: "USER_STATUS_UPDATED",
-        resourceType: "user",
+        action: "MEMBERSHIP_STATUS_UPDATED",
+        resourceType: "membership",
         resourceId: targetUserId,
-        metadata: { new_status: body.status },
+        metadata: { new_status: patch.status },
       });
     }
 

@@ -1,5 +1,15 @@
+import { z } from "zod";
+import { parseOrThrow, readJson } from "@/lib/validation";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { ConversationService } from "@/domains/social/conversations/conversation.service";
+
+const ConversationPatch = z
+  .object({
+    status: z.enum(["OPEN", "PENDING", "WAITING_CUSTOMER", "WAITING_AGENT", "RESOLVED", "CLOSED", "SPAM"]),
+    automation_paused: z.boolean(),
+  })
+  .partial()
+  .strict();
 
 export async function GET(
   request: Request,
@@ -20,7 +30,7 @@ export async function PATCH(
 ) {
   try {
     const context = await extractRequestContext(request);
-    const body = await request.json();
+    const body = parseOrThrow(ConversationPatch, await readJson(request));
 
     let updated = await ConversationService.getConversationById(context, params.id);
     if (body.status) {

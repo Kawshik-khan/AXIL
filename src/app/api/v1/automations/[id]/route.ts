@@ -1,8 +1,21 @@
+import { z } from "zod";
+import { parseOrThrow, readJson } from "@/lib/validation";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { RbacService } from "@/domains/rbac/service";
 import { PERMISSIONS } from "@/lib/permissions";
 import { AutomationRegistryService } from "@/domains/automation/services/automation-registry.service";
 import { NotFoundError } from "@/lib/errors";
+
+// FX-12: workflow bindings, ownership and tenant can't be changed through this route.
+const AutomationPatch = z
+  .object({
+    name: z.string().trim().min(1).max(200),
+    description: z.string().max(2000),
+    enabled: z.boolean(),
+    configuration: z.record(z.unknown()),
+  })
+  .partial()
+  .strict();
 
 export async function GET(
   request: Request,
@@ -35,7 +48,7 @@ export async function PATCH(
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.AUTOMATION_UPDATE);
 
-    const body = await request.json();
+    const body = parseOrThrow(AutomationPatch, await readJson(request));
     const updated = AutomationRegistryService.updateAutomation(
       context.tenant.id,
       params.id,

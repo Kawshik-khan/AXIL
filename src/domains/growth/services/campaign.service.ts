@@ -14,7 +14,7 @@ import {
   MarketingChannelType,
 } from "@/types/growth";
 import { ActionRiskLevel, ApprovalStatus } from "@/types/orchestration";
-import { ForbiddenError } from "@/lib/errors";
+import { ConflictError, ForbiddenError, NotFoundError } from "@/lib/errors";
 import { audienceService } from "./audience.service";
 import { consentService, frequencyCappingService } from "./consent.service";
 import { marketingChannelService } from "./marketing-channel.service";
@@ -132,6 +132,70 @@ export class CampaignService {
 
     db.insertCampaign(campaign);
     return campaign;
+  }
+
+  /**
+   * Edits a DRAFT campaign's content and targeting (FX-12). Status, approval and risk fields are never taken from the
+   * caller: risk is re-classified from the new audience, offer and budget, so an edit can't dodge the approval gate.
+   */
+  public updateDraftCampaign(
+    tenantId: string,
+    campaignId: string,
+    patch: {
+      name?: string;
+      objective?: CampaignGoal;
+      audience_id?: string;
+      channel?: MarketingChannelType;
+      variants?: GrowthCampaign["variants"];
+      offer_id?: string | null;
+      target_products?: string[];
+      budget_bdt?: number;
+      scheduled_start_at?: string | null;
+      scheduled_end_at?: string | null;
+    }
+  ): GrowthCampaign {
+    const campaign = db.getCampaignById(campaignId);
+    if (!campaign || campaign.tenant_id !== tenantId) {
+      throw new NotFoundError("Campaign", campaignId);
+    }
+    if (campaign.status !== "DRAFT") {
+      throw new ConflictError(`Only DRAFT campaigns can be edited (this one is ${campaign.status}).`);
+    }
+
+    const audienceId = patch.audience_id ?? campaign.audience_id;
+    const audience = db.getAudienceById(audienceId);
+    if (!audience || audience.tenant_id !== tenantId) {
+      throw new NotFoundError("Audience", audienceId);
+    }
+    const offerId = patch.offer_id === null ? undefined : patch.offer_id ?? campaign.offer_id;
+    const offer = offerId ? db.getOfferById(offerId) : undefined;
+    if (offerId && (!offer || offer.tenant_id !== tenantId)) {
+      throw new NotFoundError("Offer", offerId);
+    }
+    const budgetBdt = patch.budget_bdt ?? campaign.budget_bdt;
+    const risk = this.evaluateRiskTier({
+      audienceSize: audience.estimated_size,
+      budgetBdt,
+      discountValue: offer?.value ?? 0,
+      discountType: offer?.type ?? "",
+    });
+
+    return db.updateCampaign(campaignId, {
+      ...(patch.name !== undefined ? { name: patch.name } : {}),
+      ...(patch.objective !== undefined ? { objective: patch.objective } : {}),
+      ...(patch.channel !== undefined ? { channel: patch.channel } : {}),
+      ...(patch.variants !== undefined ? { variants: patch.variants } : {}),
+      ...(patch.target_products !== undefined ? { target_products: patch.target_products } : {}),
+      ...(patch.scheduled_start_at !== undefined ? { scheduled_start_at: patch.scheduled_start_at ?? undefined } : {}),
+      ...(patch.scheduled_end_at !== undefined ? { scheduled_end_at: patch.scheduled_end_at ?? undefined } : {}),
+      audience_id: audienceId,
+      offer_id: offerId,
+      budget_bdt: budgetBdt,
+      action_risk_level: risk.riskLevel,
+      required_approval: risk.requiresApproval,
+      risk_class: risk.riskClass,
+      updated_at: new Date().toISOString(),
+    });
   }
 
   /**

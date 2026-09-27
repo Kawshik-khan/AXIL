@@ -1,7 +1,18 @@
+import { z } from "zod";
+import { parseOrThrow, readJson } from "@/lib/validation";
 import { PERMISSIONS } from "@/lib/permissions";
 import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { operationalBudgetService } from "@/domains/operations/services/operational-budget.service";
+
+const BudgetPatch = z
+  .object({
+    daily_max_spend_bdt: z.number().finite().min(0).max(10_000_000),
+    daily_max_actions: z.number().int().min(0).max(100_000),
+    daily_max_llm_cost_usd: z.number().finite().min(0).max(10_000),
+  })
+  .partial()
+  .strict();
 
 export async function GET(request: Request) {
   try {
@@ -21,13 +32,9 @@ export async function PUT(request: Request) {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.OPERATIONS_APPROVE);
     const tenantId = context.tenant.id;
-    const body = await request.json();
+    const body = parseOrThrow(BudgetPatch, await readJson(request));
 
-    const updated = operationalBudgetService.updateBudget(tenantId, {
-      daily_max_spend_bdt: body.daily_max_spend_bdt,
-      daily_max_actions: body.daily_max_actions,
-      daily_max_llm_cost_usd: body.daily_max_llm_cost_usd,
-    });
+    const updated = operationalBudgetService.updateBudget(tenantId, body);
 
     return apiSuccess(updated);
   } catch (err) {
