@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 9: Marketplace Adapter Framework
  * Ingests external orders (Daraz, Amazon, Shopify) and normalizes into Commerce Core canonical models.
@@ -43,7 +44,7 @@ export class MarketplaceAdapterService {
         let customer = db.findCustomerByPhone(params.tenantId, extOrder.customer_phone);
         if (!customer) {
           customer = db.createCustomer({
-            id: `cust_mp_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+            id: `cust_mp_${Date.now()}_${randomSuffix()}`,
             tenant_id: params.tenantId,
             first_name: extOrder.customer_name || "Marketplace",
             last_name: "Customer",
@@ -63,7 +64,7 @@ export class MarketplaceAdapterService {
         const orderItems: OrderItem[] = extOrder.items.map((item) => {
           const variant = db.getAllProductVariants(params.tenantId).find((v) => v.sku === item.sku);
           return {
-            id: `oi_mp_${Math.random().toString(36).substring(2, 8)}`,
+            id: `oi_mp_${randomSuffix()}`,
             tenant_id: params.tenantId,
             order_id: orderId,
             product_id: variant?.product_id || "prod_unknown",

@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 import { db } from "@/infrastructure/db";
 import { Coupon } from "@/types/commerce";
 import { RequestContext } from "@/lib/context";
@@ -39,7 +40,7 @@ export class CouponService {
     }
 
     const newCoupon: Coupon = {
-      id: `cpn_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      id: `cpn_${Date.now()}_${randomSuffix()}`,
       tenant_id: context.tenant.id,
       code: normalizedCode,
       type: payload.type,

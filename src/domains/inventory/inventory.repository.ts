@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS — Inventory Repository
  * Authoritative inventory levels, reservations, stock movements, and warehouses.
@@ -119,7 +120,7 @@ export class InventoryRepository extends BaseRepository<InventoryItem & Record<s
       );
 
       // Record stock movement
-      const movementId = `sm_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      const movementId = `sm_${Date.now()}_${randomSuffix()}`;
       await client.query(
         `INSERT INTO stock_movements (id, tenant_id, product_variant_id, warehouse_id, movement_type, quantity, reference_type, reference_id, notes, created_by, created_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())`,

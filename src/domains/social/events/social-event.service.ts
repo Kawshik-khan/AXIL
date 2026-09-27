@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 import crypto from "crypto";
 import { db } from "@/infrastructure/db";
 import { CommerceEvent } from "@/types/commerce";
@@ -19,7 +20,7 @@ export class SocialEventService {
    * Authoritatively record and publish a social commerce event into the outbox
    */
   public static emit(envelope: SocialEventEnvelope): CommerceEvent {
-    const eventId = `evt_soc_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const eventId = `evt_soc_${Date.now()}_${randomSuffix()}`;
     const event: CommerceEvent = {
       id: eventId,
       type: envelope.eventType,
@@ -57,7 +58,7 @@ export class SocialEventService {
 
     for (const sub of matching) {
       const signature = this.generateHmacSignature(payloadJson, sub.secret);
-      const deliveryId = `del_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      const deliveryId = `del_${Date.now()}_${randomSuffix()}`;
 
       const delivery: OutboundWebhookDelivery = {
         id: deliveryId,

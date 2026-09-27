@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 import { db } from "@/infrastructure/db";
 import { ConnectedChannel, ChannelType, ChannelStatus } from "@/types/social";
 import { RequestContext } from "@/lib/context";
@@ -106,7 +107,7 @@ export class ChannelService {
     const encrypted = encryptCredential(payload.credentials);
 
     const newChannel: ConnectedChannel = {
-      id: `chn_${payload.type.toLowerCase().slice(0, 3)}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      id: `chn_${payload.type.toLowerCase().slice(0, 3)}_${Date.now()}_${randomSuffix()}`,
       tenant_id: context.tenant.id,
       type: payload.type,
       name: payload.name,

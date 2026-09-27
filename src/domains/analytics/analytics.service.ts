@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 7: Analytics & Business Intelligence Domain Service
  * Strict deterministic calculations for GMV, AOV, Gross Margins, 64-District RTO,
@@ -602,7 +603,7 @@ export class AnalyticsService {
     ];
 
     const digest: ExecutiveDigest = {
-      id: `ed_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      id: `ed_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       period_type: periodType,
       period_start: periodStart,

@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 9: Enterprise Incident Management Service
  * Incident lifecycle tracking (DETECTED -> TRIAGED -> INVESTIGATING -> MITIGATING -> RESOLVED -> POSTMORTEM)
@@ -27,7 +28,7 @@ export class EnterpriseIncidentService {
     }
   ): EnterpriseIncident {
     const incident: EnterpriseIncident = {
-      id: `inc_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      id: `inc_${Date.now()}_${randomSuffix()}`,
       organization_id: orgId,
       title: params.title,
       domain: params.domain,

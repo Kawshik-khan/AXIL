@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 import { PERMISSIONS } from "@/lib/permissions";
 import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
@@ -24,7 +25,7 @@ export async function POST(request: Request) {
 
     const now = new Date().toISOString();
     const offerInput: GrowthOffer = {
-      id: `off_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      id: `off_${Date.now()}_${randomSuffix()}`,
       tenant_id: context.tenant.id,
       code: body.code,
       title: body.title || body.name || "Special Offer",

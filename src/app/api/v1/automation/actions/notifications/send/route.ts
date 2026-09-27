@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { IdempotencyService } from "@/domains/automation/services/idempotency.service";
 import { db } from "@/infrastructure/db";
@@ -24,7 +25,7 @@ export async function POST(request: Request) {
       "AUTOMATION_NOTIFICATION_SEND",
       body,
       async () => {
-        const notifId = `notif_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        const notifId = `notif_${Date.now()}_${randomSuffix()}`;
         const now = new Date().toISOString();
 
         // Authoritative validation
@@ -38,7 +39,7 @@ export async function POST(request: Request) {
 
         // Record canonical domain event
         db.recordEvent({
-          id: `evt_notif_${Date.now()}`,
+          id: `evt_notif_${Date.now()}_${randomSuffix()}`,
           type: "notification.sent",
           version: "1.0",
           tenant_id: context.tenant.id,
@@ -58,7 +59,7 @@ export async function POST(request: Request) {
 
         // Audit log
         db.createAutomationAuditLog({
-          id: `aud_notif_${Date.now()}`,
+          id: `aud_notif_${Date.now()}_${randomSuffix()}`,
           tenant_id: context.tenant.id,
           actor_id: context.user.id,
           action: "NOTIFICATION_DISPATCHED",

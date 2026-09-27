@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 import { db } from "@/infrastructure/db";
 import { EntitlementRecord, TenantEntitlementRecord, UsageRecordRecord } from "@/types/platform";
 import { PlatformContext } from "@/lib/context";
@@ -83,7 +84,7 @@ export class PlatformEntitlementService {
     );
 
     const updated: UsageRecordRecord = {
-      id: existing?.id || `usg_${Math.random().toString(36).substring(2, 10)}`,
+      id: existing?.id || `usg_${randomSuffix()}`,
       tenant_id: tenantId,
       entitlement_id: entitlementId,
       period_start: periodStart,

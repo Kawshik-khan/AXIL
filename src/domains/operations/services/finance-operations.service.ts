@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 8: Autonomous Operational Finance Service
  * Deterministic revenue reconciliation, courier Cash on Delivery (COD) audit,
@@ -20,7 +21,7 @@ export class FinanceOperationsService {
   public executeReconciliationRun(tenantId: string): ReconciliationRun {
     const orders = db.getOrders(tenantId).orders;
     const payments = db.getPayments(tenantId);
-    const runId = `rec_run_${Date.now()}`;
+    const runId = `rec_run_${Date.now()}_${randomSuffix()}`;
     const today = new Date().toISOString().split("T")[0];
 
     let totalExpected = 0;
@@ -120,7 +121,7 @@ export class FinanceOperationsService {
     let exceptionId: string | undefined;
     if (hasAnomaly) {
       const exc: FinancialException = {
-        id: `fexc_fee_${Date.now()}`,
+        id: `fexc_fee_${Date.now()}_${randomSuffix()}`,
         tenant_id: tenantId,
         category: "FEE_ANOMALY",
         amount_bdt: variance,

@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 8: Operational Budget & Emergency Kill Switch Service
  * Enforces strict financial, action volume, and AI spend quotas per tenant.
@@ -126,7 +127,7 @@ export class OperationalBudgetService {
     db.upsertAutonomyBudget(budget);
 
     db.createAuditLog({
-      id: `aud_ops_killswitch_${Date.now()}`,
+      id: `aud_ops_killswitch_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       actor_user_id: "OPERATOR",
       action: "OPERATIONAL_KILL_SWITCH_TRIGGERED",
@@ -149,7 +150,7 @@ export class OperationalBudgetService {
     db.upsertAutonomyBudget(budget);
 
     db.createAuditLog({
-      id: `aud_ops_killswitch_cleared_${Date.now()}`,
+      id: `aud_ops_killswitch_cleared_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       actor_user_id: "OPERATOR",
       action: "OPERATIONAL_KILL_SWITCH_CLEARED",

@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 9: CRM Adapter Framework
  * Interfaces for enterprise CRM systems (Salesforce, HubSpot, Zoho) for contact and lead synchronization.
@@ -55,7 +56,7 @@ export class CrmAdapterService {
 
         // Create new customer record
         db.createCustomer({
-          id: `cust_crm_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          id: `cust_crm_${Date.now()}_${randomSuffix()}`,
           tenant_id: params.tenantId,
           first_name: (canonical.name as string) || "CRM",
           last_name: "Contact",

@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 4: Conversation & Customer Memory Service
  * Manages rolling multi-turn summaries and structured customer preferences.
@@ -47,7 +48,7 @@ export class MemoryService {
 
     const existing = db.getConversationSummary(tenantId, conversationId);
     const summary: ConversationSummary = {
-      id: existing?.id || `csum_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      id: existing?.id || `csum_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       conversation_id: conversationId,
       summary_text: summaryText.trim(),
@@ -84,7 +85,7 @@ export class MemoryService {
   ): CustomerMemory {
     const existing = db.getCustomerMemory(tenantId, customerId);
     const memory: CustomerMemory = {
-      id: existing?.id || `cmem_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      id: existing?.id || `cmem_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       customer_id: customerId,
       preferred_language: patch.preferred_language || existing?.preferred_language || "bn",

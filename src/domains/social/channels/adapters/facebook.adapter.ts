@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 import crypto from "crypto";
 import { ChannelType, NormalizedIncomingMessage } from "@/types/social";
 import {
@@ -138,7 +139,7 @@ export class FacebookAdapter implements IChannelProvider {
     text: string,
     _options?: { replyToMessageId?: string; metadata?: Record<string, unknown> }
   ): Promise<SendMessageResult> {
-    const mockId = `m_mid.$${Date.now()}_fb_${Math.random().toString(36).slice(2, 8)}`;
+    const mockId = `m_mid.$${Date.now()}_fb_${randomSuffix()}`;
     // If accessToken is provided and not test mode, call Meta Graph API, else return simulated successful result
     return {
       externalMessageId: mockId,
@@ -155,7 +156,7 @@ export class FacebookAdapter implements IChannelProvider {
     mediaUrl: string,
     _options?: { caption?: string; fileName?: string }
   ): Promise<SendMessageResult> {
-    const mockId = `m_mid.$${Date.now()}_fb_media_${Math.random().toString(36).slice(2, 8)}`;
+    const mockId = `m_mid.$${Date.now()}_fb_media_${randomSuffix()}`;
     return {
       externalMessageId: mockId,
       status: "SENT",
@@ -170,7 +171,7 @@ export class FacebookAdapter implements IChannelProvider {
     templateName: string,
     parameters: Record<string, string>
   ): Promise<SendMessageResult> {
-    const mockId = `m_mid.$${Date.now()}_fb_tpl_${Math.random().toString(36).slice(2, 8)}`;
+    const mockId = `m_mid.$${Date.now()}_fb_tpl_${randomSuffix()}`;
     return {
       externalMessageId: mockId,
       status: "SENT",

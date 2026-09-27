@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 8: Autonomous Operations Workflows Service
  * Implements the 9 canonical operations workflows connecting events, intelligence,
@@ -40,7 +41,7 @@ export class OperationsWorkflowService {
     providerReference?: string
   ): ActionReceipt {
     const receipt: ActionReceipt = {
-      id: `rcpt_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      id: `rcpt_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       workflow_id: `wf_ops_${Date.now()}`,
       task_id: `tsk_ops_${Date.now()}`,
@@ -223,7 +224,7 @@ export class OperationsWorkflowService {
     const target = exceptions[0];
     // Create support ticket for manual/customer follow-up
     const ticket = db.createSupportTicket({
-      id: `tick_pay_${Date.now()}`,
+      id: `tick_pay_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       ticket_number: `TICK-PAY-${Math.floor(1000 + Math.random() * 9000)}`,
       customer_id: "cust_system_detected",

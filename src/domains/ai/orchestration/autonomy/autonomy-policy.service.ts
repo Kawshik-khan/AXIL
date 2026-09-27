@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 import {
   AutonomyPolicy,
   AutonomyLevel,
@@ -87,7 +88,7 @@ export class AutonomyPolicyService {
 
     // Record audit log
     db.createAuditLog({
-      id: `aud_killswitch_${Date.now()}`,
+      id: `aud_killswitch_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       actor_user_id: "ADMIN",
       action: "EMERGENCY_STOP_TRIGGERED",
@@ -110,7 +111,7 @@ export class AutonomyPolicyService {
     db.upsertAutonomyPolicy(policy);
 
     db.createAuditLog({
-      id: `aud_killswitch_cleared_${Date.now()}`,
+      id: `aud_killswitch_cleared_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       actor_user_id: "ADMIN",
       action: "EMERGENCY_STOP_CLEARED",

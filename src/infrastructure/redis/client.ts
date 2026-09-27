@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS — Upstash Redis Client
  * Serverless HTTP-based Redis for caching, rate limiting,
@@ -190,7 +191,7 @@ export const locks = {
     ttlSeconds: number = 15
   ): Promise<string | null> {
     const redis = getRedis();
-    const token = `lock_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const token = `lock_${Date.now()}_${randomSuffix()}`;
     const result = await redis.set(`lock:${lockKey}`, token, {
       nx: true,
       ex: ttlSeconds,
@@ -226,7 +227,7 @@ export const eventBus = {
   ): Promise<void> {
     const redis = getRedis();
     const event = {
-      event_id: `evt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      event_id: `evt_${Date.now()}_${randomSuffix()}`,
       event_type: eventType,
       tenant_id: tenantId,
       timestamp: new Date().toISOString(),

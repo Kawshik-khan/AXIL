@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 7: Campaign Management, Governance & Execution Engine
  * Handles campaign planning, risk classification, approval gating, simulation, and resilient execution.
@@ -110,7 +111,7 @@ export class CampaignService {
     });
 
     const campaign: GrowthCampaign = {
-      id: `cmp_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      id: `cmp_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       name,
       objective,

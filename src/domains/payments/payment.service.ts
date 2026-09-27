@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 import { db } from "@/infrastructure/db";
 import { Payment, PaymentMethod, PaymentStatus } from "@/types/commerce";
 import { RequestContext } from "@/lib/context";
@@ -45,7 +46,7 @@ export class PaymentService {
       }
     }
 
-    const paymentId = `pay_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const paymentId = `pay_${Date.now()}_${randomSuffix()}`;
     const now = new Date().toISOString();
 
     // COD starts as PENDING; online MFS can start as PENDING or AUTHORIZED
@@ -84,7 +85,7 @@ export class PaymentService {
     });
 
     db.createAuditLog({
-      id: `aud_${Date.now()}`,
+      id: `aud_${Date.now()}_${randomSuffix()}`,
       tenant_id: context.tenant.id,
       actor_user_id: context.user.id,
       action: "PAYMENT_RECORDED",
@@ -181,7 +182,7 @@ export class PaymentService {
     });
 
     db.createAuditLog({
-      id: `aud_${Date.now()}`,
+      id: `aud_${Date.now()}_${randomSuffix()}`,
       tenant_id: context.tenant.id,
       actor_user_id: context.user.id,
       action: "PAYMENT_VERIFIED",

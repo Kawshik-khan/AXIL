@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 6: Dead Letter Queue (DLQ) Service
  * Manages exhausted, permanently failed, and unrecoverable automation executions
@@ -24,7 +25,7 @@ export class DeadLetterService {
       causationId?: string;
     }
   ): AutomationDeadLetter {
-    const id = `dlq_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const id = `dlq_${Date.now()}_${randomSuffix()}`;
     const now = new Date().toISOString();
 
     const deadLetter: AutomationDeadLetter = {
@@ -57,7 +58,7 @@ export class DeadLetterService {
     }
 
     db.createAutomationAuditLog({
-      id: `aud_dlq_${Date.now()}`,
+      id: `aud_dlq_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       actor_id: "SYSTEM",
       action: "DEAD_LETTER_ENQUEUED",
@@ -95,7 +96,7 @@ export class DeadLetterService {
       throw new Error(`Dead letter record not found: ${id}`);
     }
 
-    const newExecutionId = `exec_replay_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const newExecutionId = `exec_replay_${Date.now()}_${randomSuffix()}`;
     const now = new Date().toISOString();
 
     // Mark DLQ as RETRIED
@@ -107,7 +108,7 @@ export class DeadLetterService {
     });
 
     db.createAutomationAuditLog({
-      id: `aud_dlq_retry_${Date.now()}`,
+      id: `aud_dlq_retry_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       actor_id: actorId,
       action: "DEAD_LETTER_RETRIED",
@@ -144,7 +145,7 @@ export class DeadLetterService {
     });
 
     db.createAutomationAuditLog({
-      id: `aud_dlq_cancel_${Date.now()}`,
+      id: `aud_dlq_cancel_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       actor_id: actorId,
       action: "DEAD_LETTER_CANCELLED",
@@ -177,7 +178,7 @@ export class DeadLetterService {
     });
 
     db.createAutomationAuditLog({
-      id: `aud_dlq_resolve_${Date.now()}`,
+      id: `aud_dlq_resolve_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       actor_id: actorId,
       action: "DEAD_LETTER_RESOLVED",

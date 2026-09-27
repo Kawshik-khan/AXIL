@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 8: Autonomous Payment Operations Service
  * Payment transaction matching, bKash/Nagad verification, timeout recovery,
@@ -89,7 +90,7 @@ export class PaymentOperationsService {
 
     if (duplicate) {
       const exc: PaymentException = {
-        id: `pe_dup_${Date.now()}`,
+        id: `pe_dup_${Date.now()}_${randomSuffix()}`,
         tenant_id: tenantId,
         payment_id: targetPayment.id,
         order_id: params.orderId,
@@ -108,7 +109,7 @@ export class PaymentOperationsService {
     // Amount match validation
     if (Math.abs(targetPayment.amount - params.amount) > 1.0) {
       const exc: PaymentException = {
-        id: `pe_mismatch_${Date.now()}`,
+        id: `pe_mismatch_${Date.now()}_${randomSuffix()}`,
         tenant_id: tenantId,
         payment_id: targetPayment.id,
         order_id: params.orderId,
@@ -139,7 +140,7 @@ export class PaymentOperationsService {
     }
 
     const op: PaymentOperation = {
-      id: `pop_${Date.now()}`,
+      id: `pop_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       order_id: params.orderId,
       payment_id: targetPayment.id,

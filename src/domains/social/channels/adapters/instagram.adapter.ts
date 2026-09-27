@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 import crypto from "crypto";
 import { ChannelType, NormalizedIncomingMessage } from "@/types/social";
 import {
@@ -122,7 +123,7 @@ export class InstagramAdapter implements IChannelProvider {
     text: string,
     _options?: { replyToMessageId?: string; metadata?: Record<string, unknown> }
   ): Promise<SendMessageResult> {
-    const mockId = `ig_msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const mockId = `ig_msg_${Date.now()}_${randomSuffix()}`;
     return {
       externalMessageId: mockId,
       status: "SENT",
@@ -138,7 +139,7 @@ export class InstagramAdapter implements IChannelProvider {
     mediaUrl: string,
     _options?: { caption?: string; fileName?: string }
   ): Promise<SendMessageResult> {
-    const mockId = `ig_media_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const mockId = `ig_media_${Date.now()}_${randomSuffix()}`;
     return {
       externalMessageId: mockId,
       status: "SENT",
@@ -153,7 +154,7 @@ export class InstagramAdapter implements IChannelProvider {
     templateName: string,
     parameters: Record<string, string>
   ): Promise<SendMessageResult> {
-    const mockId = `ig_tpl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const mockId = `ig_tpl_${Date.now()}_${randomSuffix()}`;
     return {
       externalMessageId: mockId,
       status: "SENT",

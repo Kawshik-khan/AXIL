@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 4: Agent Runtime & State Machine
  * Deterministic 9-step agent lifecycle with strict grounding, safety, and budget enforcement.
@@ -77,7 +78,7 @@ export class AgentRuntime {
     const tenantId = context.tenant.id;
     const policy = db.getAIPolicy(tenantId);
 
-    const runId = `run_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const runId = `run_${Date.now()}_${randomSuffix()}`;
 
     // ----------------------------------------------------
     // STEP 1: RECEIVE & POLICY PRE-CHECK
@@ -341,7 +342,7 @@ export class AgentRuntime {
 
     // Record AI usage
     db.recordAIUsage({
-      id: `usg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      id: `usg_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       agent_run_id: runId,
       conversation_id: options.conversationId,
@@ -383,7 +384,7 @@ export class AgentRuntime {
   }
 
   public static async simulate(input: AgentSimulationInput): Promise<AgentRunOutput> {
-    const conversationId = input.conversationId || `sim_cnv_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const conversationId = input.conversationId || `sim_cnv_${Date.now()}_${randomSuffix()}`;
     return this.run(input.context, {
       conversationId,
       messageText: input.messageText,

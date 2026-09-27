@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 9: Enterprise Customer Identity Resolution Service
  * Cross-store, cross-brand identity resolution, confidence scoring, and high-impact merge review.
@@ -57,7 +58,7 @@ export class EnterpriseCustomerIdentityService {
 
     // 3. Create new enterprise customer identity
     const newIdentity: EnterpriseCustomerIdentity = {
-      id: `ecust_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      id: `ecust_${Date.now()}_${randomSuffix()}`,
       organization_id: params.organizationId,
       canonical_name: params.name,
       primary_phone: params.phone,

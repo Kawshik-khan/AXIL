@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 import { db } from "@/infrastructure/db";
 import { Message, MessageType } from "@/types/social";
 import { RequestContext } from "@/lib/context";
@@ -76,7 +77,7 @@ export class OutboundMessageService {
     }
 
     // 4. Create Message Record in QUEUED state
-    const msgId = `msg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const msgId = `msg_${Date.now()}_${randomSuffix()}`;
     const initialMessage: Message = {
       id: msgId,
       tenant_id: context.tenant.id,

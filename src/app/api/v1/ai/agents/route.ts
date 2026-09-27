@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { RbacService } from "@/domains/rbac/service";
 import { PERMISSIONS } from "@/lib/permissions";
@@ -85,7 +86,7 @@ export async function POST(request: Request) {
     }
 
     const agent: AgentDefinition = {
-      id: `agt_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      id: `agt_${Date.now()}_${randomSuffix()}`,
       tenant_id: context.tenant.id,
       agent_type: body.agent_type,
       name: body.name,

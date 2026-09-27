@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 import fs from "fs";
 import path from "path";
 import bcrypt from "bcryptjs";
@@ -4327,7 +4328,7 @@ class CommerceDatabase {
 
   public createProductVariant(tenantId: string, variant: Omit<ProductVariant, "tenant_id" | "id" | "created_at" | "updated_at"> & { id?: string }): ProductVariant {
     const newVariant: ProductVariant = {
-      id: variant.id || `var_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      id: variant.id || `var_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       product_id: variant.product_id,
       sku: variant.sku,
@@ -4462,7 +4463,7 @@ class CommerceDatabase {
 
     // Append-only stock movement record
     const movement: StockMovement = {
-      id: `sm_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      id: `sm_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       warehouse_id: params.warehouse_id,
       product_variant_id: params.product_variant_id,
@@ -4509,7 +4510,7 @@ class CommerceDatabase {
     const expiresAt = new Date(Date.now() + (params.expires_minutes || 60) * 60 * 1000).toISOString();
 
     const reservation: InventoryReservation = {
-      id: `res_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      id: `res_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       order_id: params.order_id,
       product_variant_id: params.product_variant_id,
@@ -8919,7 +8920,7 @@ class CommerceDatabase {
     if (changedByUserId) {
       if (!this.data.platform_setting_versions) this.data.platform_setting_versions = [];
       this.data.platform_setting_versions.push({
-        id: `set_ver_${Math.random().toString(36).substring(2, 10)}`,
+        id: `set_ver_${randomSuffix()}`,
         setting_key: setting.key,
         value: setting.value,
         changed_by_user_id: changedByUserId,

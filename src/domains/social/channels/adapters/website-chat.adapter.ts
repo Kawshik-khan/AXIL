@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 import crypto from "crypto";
 import { ChannelType, NormalizedIncomingMessage } from "@/types/social";
 import {
@@ -35,7 +36,7 @@ export class WebsiteChatAdapter implements IChannelProvider {
   ): NormalizedIncomingMessage[] {
     const anonymousId = String(rawPayload.anonymous_id || rawPayload.visitor_id || `anon_${Date.now()}`);
     const text = String(rawPayload.text || rawPayload.message || "");
-    const messageId = String(rawPayload.client_message_id || `web_msg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`);
+    const messageId = String(rawPayload.client_message_id || `web_msg_${Date.now()}_${randomSuffix()}`);
 
     return [
       {
@@ -73,7 +74,7 @@ export class WebsiteChatAdapter implements IChannelProvider {
     text: string,
     _options?: { replyToMessageId?: string; metadata?: Record<string, unknown> }
   ): Promise<SendMessageResult> {
-    const mockId = `web_out_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const mockId = `web_out_${Date.now()}_${randomSuffix()}`;
     return {
       externalMessageId: mockId,
       status: "SENT",
@@ -89,7 +90,7 @@ export class WebsiteChatAdapter implements IChannelProvider {
     mediaUrl: string,
     _options?: { caption?: string; fileName?: string }
   ): Promise<SendMessageResult> {
-    const mockId = `web_media_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const mockId = `web_media_${Date.now()}_${randomSuffix()}`;
     return {
       externalMessageId: mockId,
       status: "SENT",
@@ -104,7 +105,7 @@ export class WebsiteChatAdapter implements IChannelProvider {
     templateName: string,
     parameters: Record<string, string>
   ): Promise<SendMessageResult> {
-    const mockId = `web_tpl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const mockId = `web_tpl_${Date.now()}_${randomSuffix()}`;
     return {
       externalMessageId: mockId,
       status: "SENT",

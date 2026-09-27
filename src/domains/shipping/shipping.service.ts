@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 import { db } from "@/infrastructure/db";
 import {
   Shipment,
@@ -96,7 +97,7 @@ export class ShippingService {
       payload.tracking_number ||
       `TRK-${payload.courier_provider.slice(0, 3)}-${Date.now().toString().slice(-8)}`;
 
-    const shipmentId = `shp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const shipmentId = `shp_${Date.now()}_${randomSuffix()}`;
     const now = new Date().toISOString();
 
     const newShipment: Shipment = {
@@ -139,7 +140,7 @@ export class ShippingService {
     });
 
     db.createAuditLog({
-      id: `aud_${Date.now()}`,
+      id: `aud_${Date.now()}_${randomSuffix()}`,
       tenant_id: context.tenant.id,
       actor_user_id: context.user.id,
       action: "SHIPMENT_CREATED",

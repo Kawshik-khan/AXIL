@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 8: Autonomous Order Operations Service
  * Continuous order lifecycle monitoring, address validation, fulfillment readiness auditing,
@@ -90,7 +91,7 @@ export class OrderOperationsService {
     }
 
     db.createAuditLog({
-      id: `aud_order_fulfill_${Date.now()}`,
+      id: `aud_order_fulfill_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       actor_user_id: actor,
       action: "ORDER_PREPARED_FOR_FULFILLMENT",
@@ -128,7 +129,7 @@ export class OrderOperationsService {
     }
 
     db.createAuditLog({
-      id: `aud_order_cancel_${Date.now()}`,
+      id: `aud_order_cancel_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       actor_user_id: actor,
       action: "ORDER_CANCELLED_SAFELY",

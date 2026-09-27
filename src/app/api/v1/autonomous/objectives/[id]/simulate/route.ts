@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 import { PERMISSIONS } from "@/lib/permissions";
 import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
@@ -16,7 +17,7 @@ export async function POST(
     let strategy = strategyEngineService.getStrategies(context.tenant.id).find((s) => s.objective_id === id);
     if (!strategy) {
       strategy = strategyEngineService.createStrategy({
-        id: `strat_${Date.now()}`,
+        id: `strat_${Date.now()}_${randomSuffix()}`,
         tenant_id: context.tenant.id,
         objective_id: id,
         name: body.name || `Strategy for objective ${id}`,

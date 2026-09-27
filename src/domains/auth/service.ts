@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 import { db, UserRecord, TenantRecord } from "@/infrastructure/db";
 import { hashPassword, verifyPassword, signSessionToken, verifySessionToken } from "@/lib/security";
 import { AuthenticationError, ConflictError, ValidationError, UserSuspendedError, TenantSuspendedError, MembershipSuspendedError } from "@/lib/errors";
@@ -62,7 +63,7 @@ export class AuthService {
 
     // 2. Hash Password & Create User
     const passwordHash = await hashPassword(input.password);
-    const userId = `usr_${Math.random().toString(36).substring(2, 10)}`;
+    const userId = `usr_${randomSuffix()}`;
 
     const user: UserRecord = {
       id: userId,
@@ -77,7 +78,7 @@ export class AuthService {
 
     // 3. Create Owner Membership
     db.createMembership({
-      id: `mem_${Math.random().toString(36).substring(2, 10)}`,
+      id: `mem_${randomSuffix()}`,
       tenant_id: tenant.id,
       user_id: user.id,
       role: "OWNER",
@@ -225,8 +226,8 @@ export class AuthService {
     const permissions = RbacService.getPermissionsForRole(membership.role);
 
     return {
-      requestId: requestId || `req_${Math.random().toString(36).substring(2, 10)}`,
-      traceId: `trc_${Math.random().toString(36).substring(2, 10)}`,
+      requestId: requestId || `req_${randomSuffix()}`,
+      traceId: `trc_${randomSuffix()}`,
       user: {
         id: user.id,
         email: user.email,

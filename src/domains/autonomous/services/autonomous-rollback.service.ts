@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 10: Autonomous Rollback Service
  * Rollback for reversible operations; compensating actions for irreversible ones (§30).
@@ -31,7 +32,7 @@ export class AutonomousRollbackService {
   /** Create a compensating action for irreversible operations. */
   createCompensatingAction(tenantId: string, originalAction: string, compensatingDescription: string): RollbackAction {
     const action: RollbackAction = {
-      id: `rback_compensate_${Date.now()}`,
+      id: `rback_compensate_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       rollback_type: "CONFIGURATION",
       target_entity_id: originalAction,

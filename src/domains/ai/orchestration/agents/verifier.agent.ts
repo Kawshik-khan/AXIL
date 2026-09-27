@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 5: Deterministic Verifier Agent
  * Validates task output claims against objective database records and authoritative domain state.
@@ -28,7 +29,7 @@ export class VerifierAgent {
    */
   public async verify(req: VerificationRequest): Promise<AgentVerification> {
     const verifiedAt = new Date().toISOString();
-    const verificationId = `ver_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const verificationId = `ver_${Date.now()}_${randomSuffix()}`;
 
     // 1. Order Creation / Draft Assertion
     if (req.claimedOutput.order_id || req.claimedOutput.order_number) {

@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { RbacService } from "@/domains/rbac/service";
 import { PERMISSIONS } from "@/lib/permissions";
@@ -32,7 +33,7 @@ export async function POST(request: Request) {
     }
 
     const newFeedback: AIFeedbackRecord = {
-      id: `fb_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      id: `fb_${Date.now()}_${randomSuffix()}`,
       tenant_id: context.tenant.id,
       agent_run_id: body.agent_run_id,
       conversation_id: body.conversation_id || "",

@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 6: Authoritative Idempotency Service
  * Guarantees that any side-effecting action or webhook is processed exactly once
@@ -80,7 +81,7 @@ export class IdempotencyService {
 
     // Create new record
     const record: IdempotencyRecord = {
-      id: `idemp_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      id: `idemp_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       idempotency_key: idempotencyKey,
       operation,

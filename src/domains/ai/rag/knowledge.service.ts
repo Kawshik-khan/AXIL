@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 4: Knowledge Base & RAG Management Service
  * Multi-tenant semantic retrieval over merchant store policies, FAQs, and sizing guides.
@@ -73,7 +74,7 @@ export class KnowledgeService {
     }
 
     const tenantId = context.tenant.id;
-    const docId = `kdoc_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const docId = `kdoc_${Date.now()}_${randomSuffix()}`;
 
     // 1. Create Document in PROCESSING state
     const document: KnowledgeDocument = {

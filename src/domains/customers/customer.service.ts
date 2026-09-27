@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 import { db } from "@/infrastructure/db";
 import { Customer, CustomerAddress, CustomerSource } from "@/types/commerce";
 import { RequestContext } from "@/lib/context";
@@ -93,13 +94,13 @@ export class CustomerService {
       return existing;
     }
 
-    const customerId = `cust_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const customerId = `cust_${Date.now()}_${randomSuffix()}`;
     const now = new Date().toISOString();
 
     let initialAddress: CustomerAddress | undefined;
     if (payload.address) {
       initialAddress = {
-        id: `addr_${Date.now()}`,
+        id: `addr_${Date.now()}_${randomSuffix()}`,
         tenant_id: context.tenant.id,
         customer_id: customerId,
         type: "SHIPPING",
@@ -135,7 +136,7 @@ export class CustomerService {
     const created = db.createCustomer(newCust, initialAddress);
 
     db.createAuditLog({
-      id: `aud_${Date.now()}`,
+      id: `aud_${Date.now()}_${randomSuffix()}`,
       tenant_id: context.tenant.id,
       actor_user_id: context.user.id,
       action: "CUSTOMER_CREATED",

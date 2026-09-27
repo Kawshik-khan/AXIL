@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 8: Autonomous Courier Operations & Failover Service
  * Ingests courier telemetry, monitors transit exceptions, and executes provider failover
@@ -77,7 +78,7 @@ export class CourierOperationsService {
 
     // Create new shipment with alternate courier
     const newTracking = `TRK-${alternateCourier.substring(0, 3)}-${Date.now().toString().slice(-8)}`;
-    const newShipmentId = `shp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const newShipmentId = `shp_${Date.now()}_${randomSuffix()}`;
     const now = new Date().toISOString();
 
     const replacementShipment: Shipment = {
@@ -105,7 +106,7 @@ export class CourierOperationsService {
     });
 
     db.createAuditLog({
-      id: `aud_failover_${Date.now()}`,
+      id: `aud_failover_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       actor_user_id: actor,
       action: "COURIER_FAILOVER_EXECUTED",

@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 6: Durable Automation Retry Queue Service
  * Implements bounded retries with exponential backoff and randomized jitter,
@@ -150,7 +151,7 @@ export class RetryQueueService {
       });
     } else {
       retryRecord = {
-        id: `ret_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        id: `ret_${Date.now()}_${randomSuffix()}`,
         tenant_id: tenantId,
         automation_id: params.automationId,
         execution_id: params.executionId,

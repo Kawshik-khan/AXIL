@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 9: Enterprise Webhook Platform Service
  * Outbound webhook dispatching with HMAC-SHA256 signing, replay protection, retry backoff, and DLQ handling.
@@ -25,7 +26,7 @@ export class WebhookPlatformService {
     const secret = `whsec_${crypto.randomBytes(24).toString("hex")}`;
 
     const sub: EnterpriseWebhookSubscription = {
-      id: `whsub_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      id: `whsub_${Date.now()}_${randomSuffix()}`,
       organization_id: orgId,
       application_id: params.applicationId,
       target_url: params.targetUrl,
@@ -69,7 +70,7 @@ export class WebhookPlatformService {
       .filter((s) => s.status === "ACTIVE" && (s.event_types.includes(params.eventType) || s.event_types.includes("*")));
 
     const deliveries: WebhookDeliveryRecord[] = [];
-    const eventId = `evt_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const eventId = `evt_${Date.now()}_${randomSuffix()}`;
     const payloadStr = JSON.stringify({
       event_id: eventId,
       event_type: params.eventType,
@@ -80,7 +81,7 @@ export class WebhookPlatformService {
 
     for (const sub of subscriptions) {
       const signature = this.computeSignature(payloadStr, sub.secret);
-      const deliveryId = `deliv_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+      const deliveryId = `deliv_${Date.now()}_${randomSuffix()}`;
 
       // Simulated HTTP delivery (succeeds unless URL contains 'fail')
       const isFailed = sub.target_url.includes("fail");

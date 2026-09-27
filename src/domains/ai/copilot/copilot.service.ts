@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 4: AI Copilot Service
  * Powers interactive AI reply generation and draft action approval for human operators.
@@ -83,7 +84,7 @@ export class CopilotService {
       throw new NotFoundError(`Conversation '${params.conversationId}' not found.`);
     }
 
-    const runId = `capp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const runId = `capp_${Date.now()}_${randomSuffix()}`;
     const exec = await toolRegistry.executeTool(context, {
       toolName: params.actionName,
       arguments: params.arguments,

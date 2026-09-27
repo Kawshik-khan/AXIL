@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 7: Grounded Content & Personalization Engine
  * Synthesizes culturally-authentic Bangla/Banglish/English copy with strict factual verification against Commerce Core.
@@ -168,7 +169,7 @@ export class ContentService {
     });
 
     const asset: ContentAsset = {
-      id: `cnt_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      id: `cnt_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       channel,
       language,

@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 import { db } from "@/infrastructure/db";
 import { Product, ProductVariant, ProductStatus } from "@/types/commerce";
 import { RequestContext } from "@/lib/context";
@@ -98,7 +99,7 @@ export class ProductService {
       candidateSlug = `${baseSlug}-${counter}`;
     }
 
-    const productId = `prod_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const productId = `prod_${Date.now()}_${randomSuffix()}`;
     const now = new Date().toISOString();
 
     let variants: ProductVariant[] = [];
@@ -146,7 +147,7 @@ export class ProductService {
 
     // Audit log
     db.createAuditLog({
-      id: `aud_${Date.now()}`,
+      id: `aud_${Date.now()}_${randomSuffix()}`,
       tenant_id: context.tenant.id,
       actor_user_id: context.user.id,
       action: "PRODUCT_CREATED",
@@ -193,7 +194,7 @@ export class ProductService {
     }
 
     db.createAuditLog({
-      id: `aud_${Date.now()}`,
+      id: `aud_${Date.now()}_${randomSuffix()}`,
       tenant_id: context.tenant.id,
       actor_user_id: context.user.id,
       action: "PRODUCT_UPDATED",
@@ -215,7 +216,7 @@ export class ProductService {
     const success = db.archiveProduct(context.tenant.id, productId);
 
     db.createAuditLog({
-      id: `aud_${Date.now()}`,
+      id: `aud_${Date.now()}_${randomSuffix()}`,
       tenant_id: context.tenant.id,
       actor_user_id: context.user.id,
       action: "PRODUCT_ARCHIVED",

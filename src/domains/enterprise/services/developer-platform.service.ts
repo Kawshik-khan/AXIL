@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 9: Developer Platform Service
  * API Key generation, application client credentials, granular scopes, and rate limiting.
@@ -26,7 +27,7 @@ export class DeveloperPlatformService {
     const secretHash = crypto.createHash("sha256").update(clientSecretRaw).digest("hex");
 
     const app: DeveloperApplication = {
-      id: `app_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      id: `app_${Date.now()}_${randomSuffix()}`,
       organization_id: orgId,
       name: params.name,
       description: params.description,
@@ -66,7 +67,7 @@ export class DeveloperPlatformService {
       : undefined;
 
     const record: APIKeyRecord = {
-      id: `key_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      id: `key_${Date.now()}_${randomSuffix()}`,
       organization_id: orgId,
       application_id: params.applicationId,
       name: params.name,

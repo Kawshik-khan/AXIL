@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 8: Autonomous Pricing Operations Service
  * Governed dynamic pricing optimization with strict profit margin safeguards,
@@ -153,7 +154,7 @@ export class PricingOperationsService {
     const simulation = this.simulatePriceChange(tenantId, params.variantId, params.newPrice);
     const variant = db.findVariantById(tenantId, params.variantId)!;
 
-    const requestId = `pcr_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const requestId = `pcr_${Date.now()}_${randomSuffix()}`;
     const status: PriceChangeRequest["status"] = simulation.margin_safe ? "SCHEDULED" : "PENDING_APPROVAL";
 
     const request: PriceChangeRequest = {
@@ -192,7 +193,7 @@ export class PricingOperationsService {
     // Mutate via authoritative DB store
     db.updateProductVariant(tenantId, variant.id, { price: request.new_price });
 
-    const auditId = `aud_price_${Date.now()}`;
+    const auditId = `aud_price_${Date.now()}_${randomSuffix()}`;
     db.createAuditLog({
       id: auditId,
       tenant_id: tenantId,
@@ -205,7 +206,7 @@ export class PricingOperationsService {
     });
 
     const execution: PriceChangeExecution = {
-      id: `pce_${Date.now()}`,
+      id: `pce_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       request_id: request.id,
       product_variant_id: variant.id,
@@ -242,7 +243,7 @@ export class PricingOperationsService {
     db.updateProductVariant(tenantId, execution.product_variant_id, { price: execution.rollback_price });
 
     db.createAuditLog({
-      id: `aud_price_rollback_${Date.now()}`,
+      id: `aud_price_rollback_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       actor_user_id: actor,
       action: "PRICE_ROLLED_BACK",

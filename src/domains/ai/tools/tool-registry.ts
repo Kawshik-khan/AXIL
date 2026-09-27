@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 4: Central Tool Registry & Server-Side Execution Gateway
  * Strictly enforces Zod validation, RBAC assertion, tenant isolation, and audit logging.
@@ -269,7 +270,7 @@ export class ToolRegistry {
     if (!tool) {
       const duration = Date.now() - startTime;
       db.createAgentToolCall({
-        id: `tcall_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        id: `tcall_${Date.now()}_${randomSuffix()}`,
         tenant_id: context.tenant.id,
         agent_run_id: params.agentRunId,
         conversation_id: params.conversationId,
@@ -288,7 +289,7 @@ export class ToolRegistry {
     if (policy.disallowed_tool_names && policy.disallowed_tool_names.includes(params.toolName)) {
       const duration = Date.now() - startTime;
       db.createAgentToolCall({
-        id: `tcall_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        id: `tcall_${Date.now()}_${randomSuffix()}`,
         tenant_id: context.tenant.id,
         agent_run_id: params.agentRunId,
         conversation_id: params.conversationId,
@@ -308,7 +309,7 @@ export class ToolRegistry {
     } catch (err: any) {
       const duration = Date.now() - startTime;
       db.createAgentToolCall({
-        id: `tcall_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        id: `tcall_${Date.now()}_${randomSuffix()}`,
         tenant_id: context.tenant.id,
         agent_run_id: params.agentRunId,
         conversation_id: params.conversationId,
@@ -328,7 +329,7 @@ export class ToolRegistry {
       const duration = Date.now() - startTime;
       const errorMsg = parseResult.error.errors.map((e) => `${e.path.join(".")}: ${e.message}`).join(", ");
       db.createAgentToolCall({
-        id: `tcall_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        id: `tcall_${Date.now()}_${randomSuffix()}`,
         tenant_id: context.tenant.id,
         agent_run_id: params.agentRunId,
         conversation_id: params.conversationId,
@@ -352,7 +353,7 @@ export class ToolRegistry {
 
       // 5. Audit Tool Call
       db.createAgentToolCall({
-        id: `tcall_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        id: `tcall_${Date.now()}_${randomSuffix()}`,
         tenant_id: context.tenant.id,
         agent_run_id: params.agentRunId,
         conversation_id: params.conversationId,
@@ -369,7 +370,7 @@ export class ToolRegistry {
     } catch (err: any) {
       const duration = Date.now() - startTime;
       db.createAgentToolCall({
-        id: `tcall_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        id: `tcall_${Date.now()}_${randomSuffix()}`,
         tenant_id: context.tenant.id,
         agent_run_id: params.agentRunId,
         conversation_id: params.conversationId,

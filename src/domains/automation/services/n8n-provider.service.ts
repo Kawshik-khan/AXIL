@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 6: n8n Provider Adapter Service
  * Manages external HTTP webhook invocation to n8n instances, propagates tenant,
@@ -75,7 +76,7 @@ export class N8nProviderService {
    */
   public static async invokeWorkflow(params: N8nInvokeParams): Promise<N8nInvokeResult> {
     const executionMode = params.executionMode || "PRODUCTION";
-    const executionId = `exec_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const executionId = `exec_${Date.now()}_${randomSuffix()}`;
     const startTime = Date.now();
 
     // 1. Check emergency kill switch

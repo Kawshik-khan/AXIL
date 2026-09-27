@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 import crypto from "crypto";
 import { db } from "@/infrastructure/db";
 import { WebhookSubscription, CommerceEvent } from "@/types/commerce";
@@ -24,7 +25,7 @@ export class WebhookService {
 
     const secret = `whsec_${crypto.randomBytes(24).toString("hex")}`;
     const sub: WebhookSubscription = {
-      id: `wh_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      id: `wh_${Date.now()}_${randomSuffix()}`,
       tenant_id: context.tenant.id,
       url: payload.url,
       secret,

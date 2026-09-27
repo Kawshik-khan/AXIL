@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 7: Customer Lifecycle State Machine Service
  * Governs the 10 deterministic customer lifecycle stages and event-driven transitions.
@@ -95,7 +96,7 @@ export class CustomerLifecycleService {
 
     if (isTransition) {
       const transition: CustomerLifecycleTransition = {
-        id: `clt_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        id: `clt_${Date.now()}_${randomSuffix()}`,
         tenant_id: tenantId,
         customer_id: customerId,
         from_stage: existing?.stage || "PROSPECT",

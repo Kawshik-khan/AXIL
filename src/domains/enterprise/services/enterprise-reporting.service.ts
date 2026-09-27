@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 9: Enterprise Reporting & Export Service
  * Governed executive and domain report generation with CSV and JSON exports.
@@ -28,7 +29,7 @@ export class EnterpriseReportingService {
     }
   ): ReportDefinition {
     const report: ReportDefinition = {
-      id: `rep_def_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      id: `rep_def_${Date.now()}_${randomSuffix()}`,
       organization_id: orgId,
       title: params.title,
       category: params.category,
@@ -73,7 +74,7 @@ export class EnterpriseReportingService {
     const exportCsv = csvHeader + csvRows;
 
     const execution: ReportExecution = {
-      id: `rep_exec_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      id: `rep_exec_${Date.now()}_${randomSuffix()}`,
       report_definition_id: reportDefId,
       organization_id: orgId,
       generated_at: new Date().toISOString(),

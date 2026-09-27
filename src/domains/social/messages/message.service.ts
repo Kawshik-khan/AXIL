@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 import { db } from "@/infrastructure/db";
 import { Message, NormalizedIncomingMessage } from "@/types/social";
 import { RequestContext } from "@/lib/context";
@@ -49,7 +50,7 @@ export class MessageService {
 
     // 3. Create message record
     const messageRecord: Message = {
-      id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      id: `msg_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       conversation_id: conversationId,
       external_message_id: normalized.externalMessageId,
@@ -110,7 +111,7 @@ export class MessageService {
     }
 
     const noteRecord: Message = {
-      id: `not_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      id: `not_${Date.now()}_${randomSuffix()}`,
       tenant_id: context.tenant.id,
       conversation_id: conversationId,
       direction: "OUTBOUND",

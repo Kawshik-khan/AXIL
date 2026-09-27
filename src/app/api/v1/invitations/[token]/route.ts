@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 import { InvitationService } from "@/domains/invitations/service";
 import { TenantService } from "@/domains/tenants/service";
 import { AuthService } from "@/domains/auth/service";
@@ -52,7 +53,7 @@ export async function POST(
       }
 
       const passwordHash = await hashPassword(body.password);
-      const userId = `usr_${Math.random().toString(36).substring(2, 10)}`;
+      const userId = `usr_${randomSuffix()}`;
 
       user = {
         id: userId,

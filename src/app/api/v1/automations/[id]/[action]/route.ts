@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { RbacService } from "@/domains/rbac/service";
 import { PERMISSIONS } from "@/lib/permissions";
@@ -103,7 +104,7 @@ export async function POST(
         n8nInstanceId: automation.n8n_instance_id,
         webhookPath: workflow?.n8n_workflow_id || `commerceos-test`,
         event: body.event || { test: true, trigger: "manual_test" },
-        correlationId: `test_corr_${Date.now()}`,
+        correlationId: `test_corr_${Date.now()}_${randomSuffix()}`,
         idempotencyKey: `test_idemp_${Date.now()}`,
         executionMode: body.dry_run ? "DRY_RUN" : "TEST",
       });

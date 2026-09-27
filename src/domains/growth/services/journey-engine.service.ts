@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 7: Customer Journey Engine Service
  * Executes durable, multi-step customer journeys with checkpointing, wait delays, and branching.
@@ -27,7 +28,7 @@ export class JourneyEngineService {
     const { tenantId, name, description, triggerEvent, steps } = params;
 
     const journey: CustomerJourney = {
-      id: `jrn_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      id: `jrn_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       name,
       description,

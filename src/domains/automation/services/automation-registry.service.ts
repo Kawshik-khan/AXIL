@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 6: Automation Registry & Lifecycle Governance Service
  * Governs automation definitions, workflow version immutability, tenant template
@@ -54,7 +55,7 @@ export class AutomationRegistryService {
       execution_mode?: ExecutionMode;
     }
   ): AutomationRecord {
-    const id = `auto_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const id = `auto_${Date.now()}_${randomSuffix()}`;
     const now = new Date().toISOString();
 
     const record: AutomationRecord = {
@@ -79,7 +80,7 @@ export class AutomationRegistryService {
     db.createAutomation(record);
 
     db.createAutomationAuditLog({
-      id: `aud_auto_create_${Date.now()}`,
+      id: `aud_auto_create_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       actor_id: actorId,
       action: "AUTOMATION_CREATED",
@@ -148,7 +149,7 @@ export class AutomationRegistryService {
     db.createAutomationWorkflowVersion(version);
 
     // 3. Create Tenant Automation Instance
-    const automationId = `auto_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const automationId = `auto_${Date.now()}_${randomSuffix()}`;
     const automation: AutomationRecord = {
       id: automationId,
       tenant_id: tenantId,
@@ -170,7 +171,7 @@ export class AutomationRegistryService {
     db.createAutomation(automation);
 
     db.createAutomationAuditLog({
-      id: `aud_install_${Date.now()}`,
+      id: `aud_install_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       actor_id: actorId,
       action: "TEMPLATE_INSTALLED",
@@ -201,7 +202,7 @@ export class AutomationRegistryService {
     });
 
     db.createAutomationAuditLog({
-      id: `aud_auto_update_${Date.now()}`,
+      id: `aud_auto_update_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       actor_id: actorId,
       action: "AUTOMATION_UPDATED",
@@ -234,7 +235,7 @@ export class AutomationRegistryService {
     const updated = this.updateAutomation(tenantId, id, actorId, target);
 
     db.createAutomationAuditLog({
-      id: `aud_status_${Date.now()}`,
+      id: `aud_status_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       actor_id: actorId,
       action: `AUTOMATION_${action}D`,

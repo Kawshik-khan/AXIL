@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 9: Master Data Management (MDM) Service
  * Manages canonical master records, cross-system external ID maps, duplicate detection, and merge governance.
@@ -75,7 +76,7 @@ export class MasterDataService {
     }
   ): MergeProposal {
     const proposal: MergeProposal = {
-      id: `mrg_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      id: `mrg_${Date.now()}_${randomSuffix()}`,
       organization_id: orgId,
       domain: params.domain,
       source_record_id: params.sourceId,

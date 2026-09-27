@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 8: Autonomous Fulfillment Operations Service
  * Multi-warehouse inventory allocation, picking/packing priority sequencing,
@@ -39,7 +40,7 @@ export class FulfillmentOperationsService {
 
     const isUrgent = order.grand_total > 5000 || (Date.now() - new Date(order.created_at).getTime()) > 18 * 3600000;
     const plan: FulfillmentPlan = {
-      id: `flp_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      id: `flp_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       order_id: order.id,
       allocated_warehouse_id: defaultWarehouse.id,

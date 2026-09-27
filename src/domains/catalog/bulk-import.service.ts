@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 import { db } from "@/infrastructure/db";
 import { RequestContext } from "@/lib/context";
 import { RbacService } from "@/domains/rbac/service";
@@ -26,7 +27,7 @@ export class BulkImportService {
     RbacService.assertCan(context, PERMISSIONS.PRODUCTS_CREATE);
 
     const startTime = Date.now();
-    const batchId = `batch_imp_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const batchId = `batch_imp_${Date.now()}_${randomSuffix()}`;
     const mode = options?.mode || "upsert";
     const dryRun = Boolean(options?.dry_run);
     const autoCreateCategories = options?.auto_create_categories ?? true;
@@ -186,7 +187,7 @@ export class BulkImportService {
 
                   if (delta !== 0) {
                     db.data.stock_movements.push({
-                      id: `sm_${Date.now()}_adj_${Math.random().toString(36).slice(2, 6)}`,
+                      id: `sm_${Date.now()}_adj_${randomSuffix()}`,
                       tenant_id: context.tenant.id,
                       warehouse_id: defaultWarehouse.id,
                       product_variant_id: defaultVariant.id,
@@ -228,7 +229,7 @@ export class BulkImportService {
               candidateSlug = `${baseSlug}-${counter}`;
             }
 
-            const productId = `prod_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+            const productId = `prod_${Date.now()}_${randomSuffix()}`;
             const now = new Date().toISOString();
 
             const newProduct: Product = {
@@ -273,7 +274,7 @@ export class BulkImportService {
     // 6. Record Audit Log
     if (!dryRun && (importedCount > 0 || updatedCount > 0)) {
       db.createAuditLog({
-        id: `aud_${Date.now()}`,
+        id: `aud_${Date.now()}_${randomSuffix()}`,
         tenant_id: context.tenant.id,
         actor_user_id: context.user.id,
         action: "PRODUCT_BULK_IMPORT",

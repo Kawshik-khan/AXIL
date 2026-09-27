@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 import { db } from "@/infrastructure/db";
 import { Return, Refund, ReturnStatus } from "@/types/commerce";
 import { RequestContext } from "@/lib/context";
@@ -30,7 +31,7 @@ export class ReturnService {
       throw new BadRequestError(`Cannot request return for order in '${order.status}' status. Only DELIVERED orders can be returned.`);
     }
 
-    const returnId = `ret_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const returnId = `ret_${Date.now()}_${randomSuffix()}`;
     const now = new Date().toISOString();
 
     const returnRecord: Return = {
@@ -108,7 +109,7 @@ export class ReturnService {
     }
 
     const refundAmount = payload.amount || order.grand_total;
-    const refundId = `ref_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const refundId = `ref_${Date.now()}_${randomSuffix()}`;
     const now = new Date().toISOString();
 
     const refund: Refund = {
@@ -153,7 +154,7 @@ export class ReturnService {
     });
 
     db.createAuditLog({
-      id: `aud_${Date.now()}`,
+      id: `aud_${Date.now()}_${randomSuffix()}`,
       tenant_id: context.tenant.id,
       actor_user_id: context.user.id,
       action: "REFUND_PROCESSED",

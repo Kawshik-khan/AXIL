@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 import { db } from "@/infrastructure/db";
 import { Brand } from "@/types/commerce";
 import { RequestContext } from "@/lib/context";
@@ -26,7 +27,7 @@ export class BrandService {
       .replace(/[^a-z0-9]+/g, "-");
 
     const newBrand: Brand = {
-      id: `brd_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      id: `brd_${Date.now()}_${randomSuffix()}`,
       tenant_id: context.tenant.id,
       name: payload.name.trim(),
       slug,

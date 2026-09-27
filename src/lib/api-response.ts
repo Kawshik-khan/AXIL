@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 import { NextResponse } from "next/server";
 import {
   AppError,
@@ -39,7 +40,7 @@ export function apiSuccess<T>(data: T, meta?: Record<string, unknown>, status = 
 }
 
 export function apiError(error: unknown, requestId?: string) {
-  const reqId = requestId || `req_${Math.random().toString(36).substring(2, 10)}`;
+  const reqId = requestId || `req_${randomSuffix()}`;
 
   if (error instanceof AppError) {
     const retryAfter = error.details?.retry_after_sec;
@@ -74,7 +75,7 @@ export function apiError(error: unknown, requestId?: string) {
 }
 
 export async function extractRequestContext(request: Request): Promise<RequestContext> {
-  const requestId = request.headers.get("x-request-id") || `req_${Math.random().toString(36).substring(2, 10)}`;
+  const requestId = request.headers.get("x-request-id") || `req_${randomSuffix()}`;
 
   // Check Authorization Bearer header
   let token: string | null = null;
@@ -163,8 +164,8 @@ function devAuthBypassContext(request: Request, requestId: string): RequestConte
 }
 
 export async function extractPlatformContext(request: Request): Promise<PlatformContext> {
-  const requestId = request.headers.get("x-request-id") || `req_plat_${Math.random().toString(36).substring(2, 10)}`;
-  const traceId = request.headers.get("x-trace-id") || `trc_plat_${Math.random().toString(36).substring(2, 10)}`;
+  const requestId = request.headers.get("x-request-id") || `req_plat_${randomSuffix()}`;
+  const traceId = request.headers.get("x-trace-id") || `trc_plat_${randomSuffix()}`;
 
   let token: string | null = null;
 

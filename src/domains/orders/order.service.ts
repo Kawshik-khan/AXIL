@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 import { db } from "@/infrastructure/db";
 import { Order, OrderItem, OrderStatus, PaymentMethod, CustomerSource } from "@/types/commerce";
 import { RequestContext } from "@/lib/context";
@@ -99,7 +100,7 @@ export class OrderService {
       db.getWarehouses(context.tenant.id)[0]?.id ||
       "wh_dhaka_main";
 
-    const orderId = `ord_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const orderId = `ord_${Date.now()}_${randomSuffix()}`;
     const orderNumber = db.generateOrderNumber(context.tenant.id);
     const now = new Date().toISOString();
 
@@ -200,7 +201,7 @@ export class OrderService {
 
     // 9. Audit logging
     db.createAuditLog({
-      id: `aud_${Date.now()}`,
+      id: `aud_${Date.now()}_${randomSuffix()}`,
       tenant_id: context.tenant.id,
       actor_user_id: context.user.id,
       action: "ORDER_CREATED",
@@ -277,7 +278,7 @@ export class OrderService {
     });
 
     db.createAuditLog({
-      id: `aud_${Date.now()}`,
+      id: `aud_${Date.now()}_${randomSuffix()}`,
       tenant_id: context.tenant.id,
       actor_user_id: context.user.id,
       action: `ORDER_STATUS_${targetStatus}`,

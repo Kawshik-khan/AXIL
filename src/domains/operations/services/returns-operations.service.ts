@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 8: Autonomous Returns & Refunds Operations Service
  * Governed return eligibility inspection, repeat return fraud signals,
@@ -72,7 +73,7 @@ export class ReturnsOperationsService {
     if (!primaryPayment) throw new Error("No payment found to refund.");
 
     const now = new Date().toISOString();
-    const refundId = `ref_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const refundId = `ref_${Date.now()}_${randomSuffix()}`;
 
     const refund: Refund = {
       id: refundId,
@@ -93,7 +94,7 @@ export class ReturnsOperationsService {
     db.updateOrderPaymentStatus(tenantId, order.id, "REFUNDED");
 
     db.createAuditLog({
-      id: `aud_ret_refund_${Date.now()}`,
+      id: `aud_ret_refund_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       actor_user_id: actor,
       action: "RETURN_REFUND_EXECUTED",

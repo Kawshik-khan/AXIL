@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 7: Growth Intelligence & Explainable Recommendation Engine
  * Detects commercial growth opportunities/risks and synthesizes 7-factor explainable growth recommendations.
@@ -34,7 +35,7 @@ export class GrowthIntelligenceService {
 
     if (highValueDormant.length > 0) {
       insights.push({
-        id: `ins_dormancy_${Date.now()}`,
+        id: `ins_dormancy_${Date.now()}_${randomSuffix()}`,
         tenant_id: tenantId,
         type: "HIGH_VALUE_DORMANCY",
         title: `${highValueDormant.length} High-Value Customers Entering Dormancy`,
@@ -62,14 +63,14 @@ export class GrowthIntelligenceService {
 
     if (totalPurchasers.length >= 5 && repeatRate < 25) {
       insights.push({
-        id: `ins_repeat_drop_${Date.now()}`,
+        id: `ins_repeat_drop_${Date.now()}_${randomSuffix()}`,
         tenant_id: tenantId,
         type: "REPEAT_PURCHASE_DROP",
         title: "Sub-Optimal Repeat Purchase Rate Detected",
         summary: `Repeat customer rate is currently ${repeatRate.toFixed(1)}% (Benchmark: >30%). First-time buyers are not converting into repeat buyers.`,
         evidence: [
           {
-            id: `evi_repeat_${Date.now()}`,
+            id: `evi_repeat_${Date.now()}_${randomSuffix()}`,
             source_type: "METRIC" as const,
             source_id: "analytics_rollups",
             metric: "repeat_customer_rate",
@@ -110,7 +111,7 @@ export class GrowthIntelligenceService {
     const dormancyInsight = insights.find((i) => i.type === "HIGH_VALUE_DORMANCY");
     if (dormancyInsight) {
       recommendations.push({
-        id: `grec_dormancy_${Date.now()}`,
+        id: `grec_dormancy_${Date.now()}_${randomSuffix()}`,
         tenant_id: tenantId,
         title: "Execute VIP Dormancy Win-Back Campaign on WhatsApp",
         strategy: "Target high-value dormant purchasers with an exclusive 15% comeback voucher and personalized top catalog picks.",
@@ -137,7 +138,7 @@ export class GrowthIntelligenceService {
 
     // General Cross-Sell recommendation
     recommendations.push({
-      id: `grec_cross_sell_${Date.now()}`,
+      id: `grec_cross_sell_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       title: "Activate Automated Post-Delivery Accessory Cross-Sell Journey",
       strategy: "Trigger an automated message 3 days after courier delivery recommending top matching accessories with free delivery subsidy.",
@@ -146,7 +147,7 @@ export class GrowthIntelligenceService {
       rationale: "Customer satisfaction is highest immediately following successful order delivery, presenting an optimal conversion window for accessories.",
       evidence: [
         {
-          id: `evi_rec_${Date.now()}`,
+          id: `evi_rec_${Date.now()}_${randomSuffix()}`,
           source_type: "ORDER" as const,
           source_id: "post_purchase_window",
           metric: "reorder_interval_days",

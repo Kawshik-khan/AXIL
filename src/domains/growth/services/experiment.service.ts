@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 7: Experimentation & A/B Testing Engine
  * Allocates customer variants, tracks engagement/conversion metrics, and evaluates statistical significance.
@@ -37,7 +38,7 @@ export class ExperimentService {
     }
 
     const exp: GrowthExperiment = {
-      id: `exp_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      id: `exp_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       name,
       hypothesis,

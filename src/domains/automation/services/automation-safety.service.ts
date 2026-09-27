@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 6: Automation Safety & Governance Service
  * Implements infinite loop & recursion protection, multi-tier emergency kill switch,
@@ -125,7 +126,7 @@ export class AutomationSafetyService {
     // Record audit log if tenant is defined
     const auditTenantId = scope === "TENANT" && targetId ? targetId : "SYSTEM";
     db.createAutomationAuditLog({
-      id: `aud_ks_${Date.now()}`,
+      id: `aud_ks_${Date.now()}_${randomSuffix()}`,
       tenant_id: auditTenantId,
       actor_id: actorId,
       action: "KILL_SWITCH_ACTIVATED",
@@ -159,7 +160,7 @@ export class AutomationSafetyService {
 
     const auditTenantId = scope === "TENANT" && targetId ? targetId : "SYSTEM";
     db.createAutomationAuditLog({
-      id: `aud_ks_res_${Date.now()}`,
+      id: `aud_ks_res_${Date.now()}_${randomSuffix()}`,
       tenant_id: auditTenantId,
       actor_id: actorId,
       action: "KILL_SWITCH_RESUMED",

@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 import { PERMISSIONS } from "@/lib/permissions";
 import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
@@ -34,7 +35,7 @@ export async function POST(request: Request) {
     const body = await request.json();
 
     const created = db.createPricingRule({
-      id: `pr_${Date.now()}`,
+      id: `pr_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       name: body.name,
       min_margin_percent: body.min_margin_percent,

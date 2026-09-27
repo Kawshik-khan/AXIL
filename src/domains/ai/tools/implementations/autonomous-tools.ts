@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 10: Autonomous Platform Tools
  * Implements 14 authoritative autonomous tools grounded in Phase 10 domain services.
@@ -166,7 +167,7 @@ export class CreateBusinessObjectiveTool implements IAgentTool<z.infer<typeof Cr
   public async execute(context: RequestContext, input: z.infer<typeof CreateBusinessObjectiveInputSchema>): Promise<any> {
     const now = new Date().toISOString();
     const objective = businessObjectivesService.createObjective({
-      id: `obj_${Date.now()}`,
+      id: `obj_${Date.now()}_${randomSuffix()}`,
       tenant_id: context.tenant.id,
       name: input.name,
       description: input.description,
@@ -248,7 +249,7 @@ export class SimulateObjectiveStrategyTool implements IAgentTool<z.infer<typeof 
     let strategy = strategyEngineService.getStrategies(context.tenant.id).find((s) => s.objective_id === input.objective_id);
     if (!strategy) {
       strategy = strategyEngineService.createStrategy({
-        id: `strat_${Date.now()}`,
+        id: `strat_${Date.now()}_${randomSuffix()}`,
         tenant_id: context.tenant.id,
         objective_id: input.objective_id,
         name: input.strategy_name,
@@ -326,7 +327,7 @@ export class EvaluateGlobalDecisionTool implements IAgentTool<z.infer<typeof Eva
   }
 
   public async execute(context: RequestContext, input: z.infer<typeof EvaluateGlobalDecisionInputSchema>): Promise<any> {
-    const decisionId = `dec_${Date.now()}`;
+    const decisionId = `dec_${Date.now()}_${randomSuffix()}`;
     const decision = globalDecisionEngineService.createDecision({
       id: decisionId,
       tenant_id: context.tenant.id,

@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 9: Enterprise Hierarchy & Multi-Entity Management Service
  * Manages configurable multi-tier hierarchy: Organization -> Business Units -> Brand Groups -> Brands -> Stores -> Channels
@@ -51,7 +52,7 @@ export class EnterpriseHierarchyService {
     headquarters_country?: string;
   }): Organization {
     const org: Organization = {
-      id: params.id || `org_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      id: params.id || `org_${Date.now()}_${randomSuffix()}`,
       tenant_id: params.tenantId,
       name: params.name,
       slug: params.slug,
@@ -83,7 +84,7 @@ export class EnterpriseHierarchyService {
     budget_allocated_bdt?: number;
   }): BusinessUnit {
     const bu: BusinessUnit = {
-      id: params.id || `bu_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      id: params.id || `bu_${Date.now()}_${randomSuffix()}`,
       organization_id: orgId,
       name: params.name,
       code: params.code.toUpperCase(),
@@ -115,7 +116,7 @@ export class EnterpriseHierarchyService {
     };
   }): EnterpriseBrand {
     const brand: EnterpriseBrand = {
-      id: params.id || `br_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      id: params.id || `br_${Date.now()}_${randomSuffix()}`,
       organization_id: orgId,
       business_unit_id: params.business_unit_id,
       name: params.name,
@@ -154,7 +155,7 @@ export class EnterpriseHierarchyService {
     assigned_courier_ids?: string[];
   }): EnterpriseStore {
     const store: EnterpriseStore = {
-      id: params.id || `str_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      id: params.id || `str_${Date.now()}_${randomSuffix()}`,
       organization_id: orgId,
       business_unit_id: params.business_unit_id,
       brand_id: params.brand_id,
@@ -220,7 +221,7 @@ export class EnterpriseHierarchyService {
     granted_by: string;
   }): EntityMembership {
     const membership: EntityMembership = {
-      id: `mem_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      id: `mem_${Date.now()}_${randomSuffix()}`,
       organization_id: params.organization_id,
       user_id: params.user_id,
       entity_type: params.entity_type,

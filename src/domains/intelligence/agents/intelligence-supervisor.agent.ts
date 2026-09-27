@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 6: Intelligence Supervisor Agent
  * Decomposes high-level commerce intelligence and analytical queries into structured,
@@ -47,7 +48,7 @@ export class IntelligenceSupervisorAgent {
   public planIntelligenceTask(request: IntelligencePlanRequest): IntelligenceExecutionPlan {
     const { tenantId, query } = request;
     const q = query.toLowerCase();
-    const planId = `plan_intel_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const planId = `plan_intel_${Date.now()}_${randomSuffix()}`;
     const steps: WorkflowPlanStep[] = [];
 
     if (q.includes("drop") || q.includes("down") || q.includes("why did sales") || q.includes("decline")) {

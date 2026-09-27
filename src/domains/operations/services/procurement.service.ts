@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 8: Autonomous Procurement Operations Service
  * Manages supplier catalog, automated replenishment drafting, purchase order lifecycle,
@@ -93,7 +94,7 @@ export class ProcurementService {
     const variants = db.getAllProductVariants(tenantId);
     const poItems: PurchaseOrderItem[] = [];
     let totalAmount = 0;
-    const poId = `po_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const poId = `po_${Date.now()}_${randomSuffix()}`;
 
     for (const item of params.items) {
       const sp = supplierProducts.find((p) => p.product_variant_id === item.variantId);
@@ -105,7 +106,7 @@ export class ProcurementService {
       totalAmount += subtotal;
 
       poItems.push({
-        id: `poi_${Math.random().toString(36).substring(2, 8)}`,
+        id: `poi_${randomSuffix()}`,
         purchase_order_id: poId,
         product_variant_id: item.variantId,
         sku: sp.supplier_sku || variant?.sku || "SKU",

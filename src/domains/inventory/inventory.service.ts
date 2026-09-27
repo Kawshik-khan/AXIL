@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 import { db } from "@/infrastructure/db";
 import {
   InventoryItem,
@@ -70,7 +71,7 @@ export class InventoryService {
     }
 
     db.createAuditLog({
-      id: `aud_${Date.now()}`,
+      id: `aud_${Date.now()}_${randomSuffix()}`,
       tenant_id: context.tenant.id,
       actor_user_id: context.user.id,
       action: "STOCK_ADJUSTED",
@@ -152,7 +153,7 @@ export class InventoryService {
     }
 
     const warehouse: Warehouse = {
-      id: `wh_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      id: `wh_${Date.now()}_${randomSuffix()}`,
       tenant_id: context.tenant.id,
       name: payload.name.trim(),
       code: payload.code.trim().toUpperCase(),

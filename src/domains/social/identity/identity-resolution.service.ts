@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 import { db } from "@/infrastructure/db";
 import { CustomerIdentity, ChannelType } from "@/types/social";
 import { Customer } from "@/types/commerce";
@@ -39,8 +40,8 @@ export class IdentityResolutionService {
 
     // Context mock for internal service calls
     const mockContext: RequestContext = {
-      requestId: `req_id_res_${Date.now()}`,
-      traceId: `trc_id_res_${Date.now()}`,
+      requestId: `req_id_res_${Date.now()}_${randomSuffix()}`,
+      traceId: `trc_id_res_${Date.now()}_${randomSuffix()}`,
       tenant: {
         id: tenantId,
         name: "Tenant Workspace",
@@ -67,7 +68,7 @@ export class IdentityResolutionService {
       const matchedByPhone = await CustomerService.getCustomerByPhone(mockContext, normalizedPhone);
       if (matchedByPhone) {
         const newIdentity: CustomerIdentity = {
-          id: `cid_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          id: `cid_${Date.now()}_${randomSuffix()}`,
           tenant_id: tenantId,
           customer_id: matchedByPhone.id,
           channel_id: channelId,
@@ -94,7 +95,7 @@ export class IdentityResolutionService {
       );
       if (matchedByEmail) {
         const newIdentity: CustomerIdentity = {
-          id: `cid_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          id: `cid_${Date.now()}_${randomSuffix()}`,
           tenant_id: tenantId,
           customer_id: matchedByEmail.id,
           channel_id: channelId,
@@ -128,7 +129,7 @@ export class IdentityResolutionService {
     });
 
     const newIdentity: CustomerIdentity = {
-      id: `cid_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      id: `cid_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       customer_id: newCustomer.id,
       channel_id: channelId,

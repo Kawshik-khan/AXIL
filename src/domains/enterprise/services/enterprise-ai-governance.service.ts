@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 9: Enterprise AI Governance & Cost Control Service
  * Multi-entity AI budgets, token quotas, model authorization, and anomalous usage enforcement.
@@ -91,7 +92,7 @@ export class EnterpriseAiGovernanceService {
     workflowId?: string;
   }): AIUsageRecord {
     const record: AIUsageRecord = {
-      id: `aiuse_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      id: `aiuse_${Date.now()}_${randomSuffix()}`,
       organization_id: params.organizationId,
       store_id: params.storeId,
       agent_type: params.agentType,

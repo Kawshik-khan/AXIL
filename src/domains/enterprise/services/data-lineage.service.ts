@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 9: Enterprise Data Lineage Service
  * End-to-end data provenance tracking from source systems through transformations to BI and agent actions.
@@ -22,7 +23,7 @@ export class DataLineageService {
     }
   ): DataLineageTrace {
     const trace: DataLineageTrace = {
-      id: `lin_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      id: `lin_${Date.now()}_${randomSuffix()}`,
       organization_id: orgId,
       target_asset_name: params.targetAssetName,
       target_field: params.targetField,

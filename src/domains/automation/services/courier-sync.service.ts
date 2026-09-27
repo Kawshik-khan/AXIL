@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 6: Courier Status Synchronizer & Provider Adapter Service
  * Provides deterministic status normalization for Bangladeshi courier partners
@@ -194,7 +195,7 @@ export class CourierSyncService {
 
       // Record canonical domain event
       db.recordEvent({
-        id: `evt_csync_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        id: `evt_csync_${Date.now()}_${randomSuffix()}`,
         type: "shipment.updated",
         version: "1.0",
         tenant_id: tenantId,

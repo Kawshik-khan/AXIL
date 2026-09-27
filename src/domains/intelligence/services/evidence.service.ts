@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 6: Evidence & Explainability Service
  * Builds immutable, auditable factual citations linking insights and recommendations to ground-truth sources.
@@ -20,7 +21,7 @@ export class EvidenceService {
     comparison?: string;
   }): EvidenceItem {
     return {
-      id: `ev_${Math.random().toString(36).substring(2, 9)}`,
+      id: `ev_${randomSuffix()}`,
       source_type: params.sourceType,
       source_id: params.sourceId,
       metric: params.metric,

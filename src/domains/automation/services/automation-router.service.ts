@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 6: Automation Router Service
  * Subscribes to canonical commerce events, evaluates tenant automation triggers,
@@ -50,7 +51,7 @@ export class AutomationRouterService {
 
       if (!loopCheck.isSafe) {
         db.createAutomationAuditLog({
-          id: `aud_loop_${Date.now()}`,
+          id: `aud_loop_${Date.now()}_${randomSuffix()}`,
           tenant_id: tenantId,
           actor_id: "SYSTEM",
           action: "LOOP_PROTECTION_TRIGGERED",

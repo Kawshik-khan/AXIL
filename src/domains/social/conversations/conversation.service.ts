@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 import { db } from "@/infrastructure/db";
 import { Conversation, ConversationStatus, ChannelType, ConversationSource } from "@/types/social";
 import { RequestContext } from "@/lib/context";
@@ -86,7 +87,7 @@ export class ConversationService {
     else if (channelType === "WEBSITE_CHAT") source = "WEBSITE";
 
     const newConversation: Conversation = {
-      id: `cnv_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      id: `cnv_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       channel_id: channelId,
       channel_type: channelType,
@@ -154,7 +155,7 @@ export class ConversationService {
 
     // Record assignment audit record
     db.createAssignment({
-      id: `asg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      id: `asg_${Date.now()}_${randomSuffix()}`,
       tenant_id: context.tenant.id,
       conversation_id: conversationId,
       assigned_user_id: assignedUserId,

@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 import { db } from "@/infrastructure/db";
 import { Lead, LeadStatus, ConversationSource } from "@/types/social";
 import { RequestContext } from "@/lib/context";
@@ -46,7 +47,7 @@ export class LeadService {
       throw new BadRequestError(`Customer '${payload.customer_id}' not found.`);
     }
 
-    const leadId = `led_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const leadId = `led_${Date.now()}_${randomSuffix()}`;
     const newLead: Lead = {
       id: leadId,
       tenant_id: context.tenant.id,

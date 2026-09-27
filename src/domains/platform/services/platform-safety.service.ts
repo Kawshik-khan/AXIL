@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 import { db } from "@/infrastructure/db";
 import { PlatformKillSwitchRecord } from "@/types/platform";
 import { PlatformContext } from "@/lib/context";
@@ -54,7 +55,7 @@ export class PlatformSafetyService {
 
     // Also record security event
     db.recordPlatformSecurityEvent({
-      id: `sec_evt_${Math.random().toString(36).substring(2, 10)}`,
+      id: `sec_evt_${randomSuffix()}`,
       event_type: "KILL_SWITCH_TRIGGERED",
       severity: "CRITICAL",
       actor_id: context.platformUser.id,

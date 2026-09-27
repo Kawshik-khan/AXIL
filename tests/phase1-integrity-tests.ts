@@ -577,6 +577,42 @@ async function main() {
     assert.ok(cleared.some((c) => c.startsWith(`${PLATFORM_AUTH_COOKIE_NAME}=;`) && /max-age=0/i.test(c)));
   });
 
+  // ---------------------------------------------------------------------------
+  console.log(`\n${ANSI_BOLD}[FX-16] Cryptographic tokens and IDs (M4)${ANSI_RESET}`);
+  // ---------------------------------------------------------------------------
+
+  await runTest("newId and randomSuffix are unique and well-formed", async () => {
+    const { newId, randomSuffix } = await import("@/lib/ids");
+    const ids = new Set(Array.from({ length: 2000 }, () => newId("x")));
+    assert.strictEqual(ids.size, 2000);
+    assert.ok(/^x_[0-9a-f]{32}$/.test(newId("x")));
+    assert.ok(/^[a-z0-9]{12}$/.test(randomSuffix()));
+  });
+
+  await runTest("invitation tokens come from a CSPRNG (base64url, 48 bytes)", async () => {
+    const { InvitationService } = await import("@/domains/invitations/service");
+    const inv = InvitationService.createInvitation(tenantId, `${uid("inv")}@phase1.test`, "SALES", shop.user.id);
+    assert.ok(/^[A-Za-z0-9_-]{60,}$/.test(inv.token), inv.token);
+  });
+
+  await runTest("no server code builds IDs from Math.random().toString(36) any more", async () => {
+    const fs = await import("fs");
+    const path = await import("path");
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (/\.(ts|tsx)$/.test(entry.name)) {
+          const text = fs.readFileSync(full, "utf8");
+          if (text.includes("Math.random().toString(36)") && !/^\s*["']use client["']/.test(text)) offenders.push(full);
+        }
+      }
+    };
+    walk(path.resolve(__dirname, "..", "src"));
+    assert.deepStrictEqual(offenders, []);
+  });
+
   console.log(`\n${ANSI_BOLD}====================================================${ANSI_RESET}`);
   console.log(`  Tests Passed: ${passedCount} | Tests Failed: ${failedCount}`);
   console.log(`${ANSI_BOLD}====================================================${ANSI_RESET}\n`);

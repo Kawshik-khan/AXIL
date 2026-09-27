@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 import { db, AuditLogRecord } from "@/infrastructure/db";
 
 export interface LogAuditInput {
@@ -13,7 +14,7 @@ export interface LogAuditInput {
 
 export class AuditService {
   public static log(input: LogAuditInput): AuditLogRecord {
-    const id = `aud_${Math.random().toString(36).substring(2, 10)}`;
+    const id = `aud_${randomSuffix()}`;
     const logRecord: AuditLogRecord = {
       id,
       tenant_id: input.tenantId,

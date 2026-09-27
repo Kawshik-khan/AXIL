@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 import { db, TenantRecord } from "@/infrastructure/db";
 import { NotFoundError, ConflictError, ValidationError } from "@/lib/errors";
 
@@ -31,7 +32,7 @@ export class TenantService {
       throw new ConflictError(`Workspace with identifier '${slug}' already exists.`);
     }
 
-    const tenantId = `ten_${Math.random().toString(36).substring(2, 10)}`;
+    const tenantId = `ten_${randomSuffix()}`;
     const newTenant: TenantRecord = {
       id: tenantId,
       name: input.name.trim(),

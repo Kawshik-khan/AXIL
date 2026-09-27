@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 7: Segment & Audience Engine Service
  * Deterministic rule evaluation, predictive segment scoring, and tenant-isolated audience management.
@@ -225,7 +226,7 @@ export class AudienceService {
     const { tenantId, name, description, type, ruleGroups, predictiveMetadata, createdBy } = params;
 
     const audience: Audience = {
-      id: `aud_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      id: `aud_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       name,
       description,
@@ -292,7 +293,7 @@ export class AudienceService {
     const { memberIds } = this.evaluateAudienceMembership(tenantId, audience);
 
     const snapshot: AudienceSnapshot = {
-      id: `snp_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      id: `snp_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       audience_id: audienceId,
       campaign_id: campaignId,

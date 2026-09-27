@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 import { Permission, RoleName, ROLE_PERMISSIONS } from "./permissions";
 
 export interface RequestUser {
@@ -30,7 +31,7 @@ export interface RequestContext {
 
 export function createAnonymousContext(requestId?: string): { requestId: string; timestamp: string } {
   return {
-    requestId: requestId || `req_${Math.random().toString(36).substring(2, 12)}`,
+    requestId: requestId || `req_${randomSuffix()}`,
     timestamp: new Date().toISOString(),
   };
 }

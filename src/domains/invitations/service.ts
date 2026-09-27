@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 import { db, InvitationRecord } from "@/infrastructure/db";
 import { RoleName } from "@/lib/permissions";
 import { generateSecureToken } from "@/lib/security";
@@ -29,7 +30,7 @@ export class InvitationService {
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days
 
     const invitation: InvitationRecord = {
-      id: `inv_${Math.random().toString(36).substring(2, 10)}`,
+      id: `inv_${randomSuffix()}`,
       tenant_id: tenantId,
       email: normalizedEmail,
       role,
@@ -73,7 +74,7 @@ export class InvitationService {
 
     // Create tenant membership
     db.createMembership({
-      id: `mem_${Math.random().toString(36).substring(2, 10)}`,
+      id: `mem_${randomSuffix()}`,
       tenant_id: inv.tenant_id,
       user_id: userId,
       role: inv.role,

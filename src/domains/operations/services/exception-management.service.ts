@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 8: Central Operational Exception Engine
  * Detects, classifies, prioritizes, assigns, resolves, and verifies operational exceptions
@@ -44,7 +45,7 @@ export class ExceptionManagementService {
       params.assignedAgent || this.resolveDomainAgent(params.domain);
 
     const exception: OperationalException = {
-      id: `exp_${params.domain.toLowerCase()}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      id: `exp_${params.domain.toLowerCase()}_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       domain: params.domain,
       exception_type: params.exceptionType,
@@ -85,7 +86,7 @@ export class ExceptionManagementService {
     });
 
     db.createAuditLog({
-      id: `aud_exp_resolve_${Date.now()}`,
+      id: `aud_exp_resolve_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       actor_user_id: actor,
       action: "OPERATIONAL_EXCEPTION_RESOLVED",
@@ -116,7 +117,7 @@ export class ExceptionManagementService {
     });
 
     db.createAuditLog({
-      id: `aud_exp_escalate_${Date.now()}`,
+      id: `aud_exp_escalate_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       actor_user_id: actor,
       action: "OPERATIONAL_EXCEPTION_ESCALATED",

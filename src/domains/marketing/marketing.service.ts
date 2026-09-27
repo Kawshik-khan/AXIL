@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 8: Marketing & Campaigns Domain Service
  * Orchestrates WhatsApp cart recovery, audience cohort segmentation, rate-limited broadcasts,
@@ -113,7 +114,7 @@ export class MarketingService {
     const total = cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
 
     const cart: AbandonedCartRecoveryItem = {
-      id: `acr_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      id: `acr_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       customer_id: customerId,
       cart_items: cartItems,
@@ -529,7 +530,7 @@ export class MarketingService {
       channel,
       variants: [
         {
-          id: `var_${Date.now()}`,
+          id: `var_${Date.now()}_${randomSuffix()}`,
           name: "Variant A (Primary)",
           subject_or_title: name,
           content_body: contentBody,
