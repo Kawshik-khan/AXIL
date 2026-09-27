@@ -1,3 +1,5 @@
+import { PERMISSIONS } from "@/lib/permissions";
+import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { paymentOperationsService } from "@/domains/operations/services/payment-operations.service";
 import { db } from "@/infrastructure/db";
@@ -5,6 +7,7 @@ import { db } from "@/infrastructure/db";
 export async function GET(request: Request) {
   try {
     const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.FINANCE_READ);
     const tenantId = context.tenant.id;
 
     const payments = db.getPayments(tenantId);
@@ -23,6 +26,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.PAYMENTS_VERIFY);
     const tenantId = context.tenant.id;
     const body = await request.json();
 

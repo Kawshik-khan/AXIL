@@ -1,3 +1,5 @@
+import { PERMISSIONS } from "@/lib/permissions";
+import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { decisionService } from "@/domains/intelligence/services/decision.service";
 
@@ -7,6 +9,7 @@ export async function POST(
 ) {
   try {
     const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.OPERATIONS_EXECUTE);
     const recommendationId = params.id;
     const body = await request.json().catch(() => ({}));
 

@@ -14,6 +14,7 @@ import {
   MarketingChannelType,
 } from "@/types/growth";
 import { ActionRiskLevel, ApprovalStatus } from "@/types/orchestration";
+import { ForbiddenError } from "@/lib/errors";
 import { audienceService } from "./audience.service";
 import { consentService, frequencyCappingService } from "./consent.service";
 import { marketingChannelService } from "./marketing-channel.service";
@@ -216,6 +217,11 @@ export class CampaignService {
     const campaign = db.getCampaignById(campaignId);
     if (!campaign || campaign.tenant_id !== tenantId) {
       throw new Error(`Campaign not found: ${campaignId}`);
+    }
+
+    // Four-eyes rule (FX-10 step 4): high-risk campaigns need an approver other than their creator.
+    if ((campaign.risk_class === "HIGH" || campaign.risk_class === "CRITICAL") && campaign.created_by === approvedBy) {
+      throw new ForbiddenError("High-risk campaigns must be approved by someone other than their creator.");
     }
 
     if (campaign.approval_request_id) {

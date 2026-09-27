@@ -1,3 +1,5 @@
+import { PERMISSIONS } from "@/lib/permissions";
+import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { db } from "@/infrastructure/db";
 import { audienceService } from "@/domains/growth/services/audience.service";
@@ -8,6 +10,7 @@ import { growthIntelligenceService } from "@/domains/growth/services/growth-inte
 export async function GET(request: Request) {
   try {
     const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.MARKETING_READ);
     const tenantId = context.tenant.id;
 
     const audiences = audienceService.listAudiences(tenantId);

@@ -1,3 +1,5 @@
+import { PERMISSIONS } from "@/lib/permissions";
+import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { financeOperationsService } from "@/domains/operations/services/finance-operations.service";
 import { db } from "@/infrastructure/db";
@@ -5,6 +7,7 @@ import { db } from "@/infrastructure/db";
 export async function GET(request: Request) {
   try {
     const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.FINANCE_READ);
     const tenantId = context.tenant.id;
 
     const runs = db.getReconciliationRuns(tenantId);
@@ -24,6 +27,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.OPERATIONS_EXECUTE);
     const tenantId = context.tenant.id;
 
     const run = financeOperationsService.executeReconciliationRun(tenantId);

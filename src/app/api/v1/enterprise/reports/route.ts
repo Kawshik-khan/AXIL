@@ -1,3 +1,5 @@
+import { PERMISSIONS } from "@/lib/permissions";
+import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { enterpriseReportingService } from "@/domains/enterprise/services/enterprise-reporting.service";
 import { db } from "@/infrastructure/db";
@@ -6,6 +8,7 @@ import { EnterpriseUserRecord } from "@/types/enterprise";
 export async function GET(request: Request) {
   try {
     const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.EXPORTS_READ);
     const { searchParams } = new URL(request.url);
     const orgId = searchParams.get("organization_id") || "org_default";
 
@@ -22,6 +25,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.EXPORTS_CREATE);
     const body = await request.json();
     const orgId = body.organization_id || "org_default";
 

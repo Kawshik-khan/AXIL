@@ -1,3 +1,5 @@
+import { PERMISSIONS } from "@/lib/permissions";
+import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { dataQualityService } from "@/domains/enterprise/services/data-quality.service";
 import { db } from "@/infrastructure/db";
@@ -5,6 +7,7 @@ import { db } from "@/infrastructure/db";
 export async function GET(request: Request) {
   try {
     const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.DATA_QUALITY_READ);
     const { searchParams } = new URL(request.url);
     const orgId = searchParams.get("organization_id") || "org_default";
 

@@ -1,3 +1,5 @@
+import { PERMISSIONS } from "@/lib/permissions";
+import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { businessObjectivesService } from "@/domains/autonomous/services";
 import { NotFoundError } from "@/lib/errors";
@@ -8,6 +10,7 @@ export async function GET(
 ) {
   try {
     const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.OBJECTIVES_READ);
     const { id } = await Promise.resolve(params);
     const objective = businessObjectivesService.findById(context.tenant.id, id);
     if (!objective) {

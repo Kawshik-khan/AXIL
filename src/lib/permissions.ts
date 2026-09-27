@@ -57,6 +57,7 @@ export const PERMISSIONS = {
   // Payments & Finance
   PAYMENTS_READ: "payments.read",
   PAYMENTS_REFUND: "payments.refund",
+  PAYMENTS_VERIFY: "payments.verify", // mark a payment PAID (FX-11); PAYMENTS_READ alone no longer can
   FINANCE_READ: "finance.read",
 
   // Shipments & Courier
@@ -74,8 +75,10 @@ export const PERMISSIONS = {
 
   // Analytics & Marketing
   ANALYTICS_READ: "analytics.read",
+  ANALYTICS_MANAGE: "analytics.manage", // recompute jobs (FX-21)
   MARKETING_READ: "marketing.read",
   MARKETING_WRITE: "marketing.write",
+  MARKETING_APPROVE: "marketing.approve", // approve/reject campaigns and broadcasts; creators (MARKETING) cannot
 
   // Customer Support
   SUPPORT_READ: "support.read",
@@ -500,6 +503,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Permission[]> = {
     PERMISSIONS.ORDERS_CANCEL,
     PERMISSIONS.PAYMENTS_READ,
     PERMISSIONS.PAYMENTS_REFUND,
+    PERMISSIONS.PAYMENTS_VERIFY,
     PERMISSIONS.FINANCE_READ,
     PERMISSIONS.SHIPMENTS_READ,
     PERMISSIONS.SHIPMENTS_CREATE,
@@ -509,8 +513,10 @@ export const ROLE_PERMISSIONS: Record<RoleName, Permission[]> = {
     PERMISSIONS.COUPONS_READ,
     PERMISSIONS.COUPONS_MANAGE,
     PERMISSIONS.ANALYTICS_READ,
+    PERMISSIONS.ANALYTICS_MANAGE,
     PERMISSIONS.MARKETING_READ,
     PERMISSIONS.MARKETING_WRITE,
+    PERMISSIONS.MARKETING_APPROVE,
     PERMISSIONS.SUPPORT_READ,
     PERMISSIONS.SUPPORT_WRITE,
     PERMISSIONS.SOCIAL_CHANNEL_READ,
@@ -767,6 +773,7 @@ export const ROLE_PERMISSIONS: Record<RoleName, Permission[]> = {
     PERMISSIONS.ORDERS_READ,
     PERMISSIONS.PAYMENTS_READ,
     PERMISSIONS.PAYMENTS_REFUND,
+    PERMISSIONS.PAYMENTS_VERIFY,
     PERMISSIONS.FINANCE_READ,
     PERMISSIONS.RETURNS_READ,
     PERMISSIONS.ANALYTICS_READ,

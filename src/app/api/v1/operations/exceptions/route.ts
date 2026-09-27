@@ -1,3 +1,5 @@
+import { PERMISSIONS } from "@/lib/permissions";
+import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { db } from "@/infrastructure/db";
 import { exceptionManagementService } from "@/domains/operations/services/exception-management.service";
@@ -5,6 +7,7 @@ import { exceptionManagementService } from "@/domains/operations/services/except
 export async function GET(request: Request) {
   try {
     const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.EXCEPTIONS_READ);
     const tenantId = context.tenant.id;
     const { searchParams } = new URL(request.url);
 
@@ -29,6 +32,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.EXCEPTIONS_MANAGE);
     const tenantId = context.tenant.id;
     const body = await request.json();
 

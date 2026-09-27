@@ -4,6 +4,7 @@ const path = require('path');
 
 const testSuites = [
   { name: 'Phase 0: Security Regression (audit C1-C8, H1, H5, H10)', file: 'tests/security-regression-tests.ts' },
+  { name: 'Phase 1 (remediation): RBAC Matrix', file: 'tests/rbac-matrix-tests.ts' },
   { name: 'Phase 1: Auth & IAM Security', file: 'tests/run-tests.ts' },
   { name: 'Phase 2: Commerce Core & Catalog', file: 'tests/commerce-tests.ts' },
   { name: 'Phase 3: Social Commerce & Meta Ingress', file: 'tests/social-tests.ts' },

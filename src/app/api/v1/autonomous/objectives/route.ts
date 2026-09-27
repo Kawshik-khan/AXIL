@@ -1,3 +1,5 @@
+import { PERMISSIONS } from "@/lib/permissions";
+import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { businessObjectivesService } from "@/domains/autonomous/services";
 import { ObjectiveStatus } from "@/types/autonomous";
@@ -5,6 +7,7 @@ import { ObjectiveStatus } from "@/types/autonomous";
 export async function GET(request: Request) {
   try {
     const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.OBJECTIVES_READ);
     const { searchParams } = new URL(request.url);
     const status = searchParams.get("status") as ObjectiveStatus | null;
     const objectives = businessObjectivesService.getObjectives(context.tenant.id, status || undefined);
@@ -17,6 +20,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.OBJECTIVES_MANAGE);
     const body = await request.json();
     const now = new Date().toISOString();
 

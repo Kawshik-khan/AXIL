@@ -1,3 +1,5 @@
+import { PERMISSIONS } from "@/lib/permissions";
+import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { strategyEngineService } from "@/domains/autonomous/services";
 
@@ -7,6 +9,7 @@ export async function POST(
 ) {
   try {
     const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.STRATEGY_MANAGE);
     const { id } = await Promise.resolve(params);
     const body = await request.json().catch(() => ({}));
 

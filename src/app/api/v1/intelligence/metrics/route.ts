@@ -1,10 +1,13 @@
+import { PERMISSIONS } from "@/lib/permissions";
+import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { metricRegistryService } from "@/domains/intelligence/services/metric-registry.service";
 import { MetricCategory } from "@/types/intelligence";
 
 export async function GET(request: Request) {
   try {
-    await extractRequestContext(request);
+    const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.ANALYTICS_READ);
     const { searchParams } = new URL(request.url);
     const category = searchParams.get("category") as MetricCategory | null;
     const key = searchParams.get("key");

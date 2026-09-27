@@ -1,3 +1,5 @@
+import { PERMISSIONS } from "@/lib/permissions";
+import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { campaignService } from "@/domains/growth/services/campaign.service";
 
@@ -7,6 +9,7 @@ export async function POST(
 ) {
   try {
     const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.MARKETING_READ);
     const simulation = campaignService.simulateCampaign(context.tenant.id, params.id);
     return apiSuccess({ simulation });
   } catch (err) {

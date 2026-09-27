@@ -1,3 +1,5 @@
+import { PERMISSIONS } from "@/lib/permissions";
+import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { enterpriseHierarchyService } from "@/domains/enterprise/services/enterprise-hierarchy.service";
 import { db } from "@/infrastructure/db";
@@ -5,6 +7,7 @@ import { db } from "@/infrastructure/db";
 export async function GET(request: Request) {
   try {
     const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.ORGANIZATION_READ);
     const orgs = db.getOrganizations();
     return apiSuccess({
       total: orgs.length,
@@ -18,6 +21,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.ORGANIZATION_MANAGE);
     const body = await request.json();
 
     const created = enterpriseHierarchyService.createOrganization({

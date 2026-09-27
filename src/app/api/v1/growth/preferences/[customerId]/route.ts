@@ -1,3 +1,5 @@
+import { PERMISSIONS } from "@/lib/permissions";
+import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { consentService } from "@/domains/growth/services/consent.service";
 import { db } from "@/infrastructure/db";
@@ -8,6 +10,7 @@ export async function GET(
 ) {
   try {
     const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.MARKETING_READ);
     const { customerId } = await params;
     const preferences = db.getCommunicationPreferences(context.tenant.id, customerId);
     return apiSuccess({ preferences });
@@ -22,6 +25,7 @@ export async function POST(
 ) {
   try {
     const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.MARKETING_WRITE);
     const { customerId } = await params;
     const body = await request.json();
 

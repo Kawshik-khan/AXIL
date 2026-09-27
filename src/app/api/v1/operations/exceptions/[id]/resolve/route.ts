@@ -1,3 +1,5 @@
+import { PERMISSIONS } from "@/lib/permissions";
+import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { exceptionManagementService } from "@/domains/operations/services/exception-management.service";
 
@@ -7,6 +9,7 @@ export async function POST(
 ) {
   try {
     const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.EXCEPTIONS_MANAGE);
     const tenantId = context.tenant.id;
     const exceptionId = params.id;
     const body = await request.json();

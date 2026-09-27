@@ -1,3 +1,5 @@
+import { PERMISSIONS } from "@/lib/permissions";
+import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { analyticsQueryService } from "@/domains/intelligence/services/analytics-query.service";
 import { AnalyticsQuery } from "@/types/intelligence";
@@ -5,6 +7,7 @@ import { AnalyticsQuery } from "@/types/intelligence";
 export async function POST(request: Request) {
   try {
     const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.ANALYTICS_READ);
     const body = await request.json();
 
     const query: AnalyticsQuery = {

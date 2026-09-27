@@ -1,3 +1,5 @@
+import { PERMISSIONS } from "@/lib/permissions";
+import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { salesIntelligenceService } from "@/domains/intelligence/services/sales-intelligence.service";
 import { anomalyDetectorService } from "@/domains/intelligence/services/anomaly-detector.service";
@@ -8,6 +10,7 @@ import { recommendationService } from "@/domains/intelligence/services/recommend
 export async function GET(request: Request) {
   try {
     const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.ANALYTICS_READ);
     const tenantId = context.tenant.id;
 
     const sales = salesIntelligenceService.getOverview(tenantId);

@@ -93,6 +93,7 @@ export default function DashboardLayout({
 
       <FloatingNav
         userRole={session.role}
+        permissions={session.permissions}
         tenantName={session.tenant?.name}
         userName={session.user?.name}
         onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
@@ -111,6 +112,7 @@ export default function DashboardLayout({
       <CommandPalette
         isOpen={isCommandPaletteOpen}
         onClose={() => setIsCommandPaletteOpen(false)}
+        permissions={session.permissions}
       />
     </div>
   );

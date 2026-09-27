@@ -1,3 +1,5 @@
+import { PERMISSIONS } from "@/lib/permissions";
+import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { simulationService } from "@/domains/intelligence/services/simulation.service";
 import { SimulationInput, SimulationScenarioType } from "@/types/intelligence";
@@ -5,6 +7,7 @@ import { SimulationInput, SimulationScenarioType } from "@/types/intelligence";
 export async function POST(request: Request) {
   try {
     const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.ANALYTICS_READ);
     const body = await request.json();
 
     const scenarioName: string = body.scenario_name || "Custom Scenario Simulation";

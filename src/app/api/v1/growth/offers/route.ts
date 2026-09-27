@@ -1,3 +1,5 @@
+import { PERMISSIONS } from "@/lib/permissions";
+import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { offerService } from "@/domains/growth/services/offer.service";
 import { GrowthOffer } from "@/types/growth";
@@ -6,6 +8,7 @@ import { db } from "@/infrastructure/db";
 export async function GET(request: Request) {
   try {
     const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.MARKETING_READ);
     const offers = db.getOffers(context.tenant.id);
     return apiSuccess({ offers, total: offers.length });
   } catch (err) {
@@ -16,6 +19,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.MARKETING_WRITE);
     const body = await request.json();
 
     const now = new Date().toISOString();

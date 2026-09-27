@@ -1,3 +1,5 @@
+import { PERMISSIONS } from "@/lib/permissions";
+import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { syncEngineService } from "@/domains/enterprise/services/sync-engine.service";
 
@@ -7,6 +9,7 @@ export async function POST(
 ) {
   try {
     const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.INTEGRATIONS_SYNC);
     const { id } = await params;
     const body = await request.json().catch(() => ({}));
     const orgId = body.organization_id || "org_default";

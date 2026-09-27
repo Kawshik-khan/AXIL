@@ -1,3 +1,5 @@
+import { PERMISSIONS } from "@/lib/permissions";
+import { RbacService } from "@/domains/rbac/service";
 import { z } from "zod";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { marketingService } from "@/domains/marketing/marketing.service";
@@ -12,6 +14,7 @@ export async function POST(
 ) {
   try {
     const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.MARKETING_APPROVE);
     let body: any = {};
     try {
       body = await request.json();
@@ -23,7 +26,7 @@ export async function POST(
     const campaign = marketingService.rejectCampaign(
       context.tenant.id,
       params.id,
-      context.user?.name || "Merchant Owner",
+      context.user.id,
       validated.reason
     );
 

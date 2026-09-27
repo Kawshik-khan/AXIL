@@ -1,3 +1,5 @@
+import { PERMISSIONS } from "@/lib/permissions";
+import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { integrationHubService } from "@/domains/enterprise/services/integration-hub.service";
 
@@ -7,6 +9,7 @@ export async function POST(
 ) {
   try {
     const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.INTEGRATIONS_MANAGE);
     const { id } = await params;
 
     const result = integrationHubService.testConnection(id);

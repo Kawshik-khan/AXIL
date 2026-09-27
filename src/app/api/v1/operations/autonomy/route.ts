@@ -1,9 +1,12 @@
+import { PERMISSIONS } from "@/lib/permissions";
+import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { operationalBudgetService } from "@/domains/operations/services/operational-budget.service";
 
 export async function GET(request: Request) {
   try {
     const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.OPERATIONS_READ);
     const tenantId = context.tenant.id;
 
     const budget = operationalBudgetService.getBudget(tenantId);
@@ -16,6 +19,7 @@ export async function GET(request: Request) {
 export async function PUT(request: Request) {
   try {
     const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.OPERATIONS_APPROVE);
     const tenantId = context.tenant.id;
     const body = await request.json();
 

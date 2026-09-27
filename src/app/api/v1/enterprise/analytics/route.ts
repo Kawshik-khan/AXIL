@@ -1,3 +1,5 @@
+import { PERMISSIONS } from "@/lib/permissions";
+import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { enterpriseAnalyticsService } from "@/domains/enterprise/services/enterprise-analytics.service";
 import { EnterpriseUserRecord } from "@/types/enterprise";
@@ -5,6 +7,7 @@ import { EnterpriseUserRecord } from "@/types/enterprise";
 export async function GET(request: Request) {
   try {
     const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.ENTERPRISE_READ);
     const { searchParams } = new URL(request.url);
     const orgId = searchParams.get("organization_id") || "org_default";
 

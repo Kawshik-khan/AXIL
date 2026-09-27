@@ -1,3 +1,5 @@
+import { PERMISSIONS } from "@/lib/permissions";
+import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { semanticMetricsService } from "@/domains/enterprise/services/semantic-metrics.service";
 import { db } from "@/infrastructure/db";
@@ -5,6 +7,7 @@ import { db } from "@/infrastructure/db";
 export async function GET(request: Request) {
   try {
     const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.METRICS_READ);
     const { searchParams } = new URL(request.url);
     const orgId = searchParams.get("organization_id") || "org_default";
     const metricKey = searchParams.get("metric_key");
@@ -38,6 +41,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.METRICS_MANAGE);
     const body = await request.json();
     const orgId = body.organization_id || "org_default";
 

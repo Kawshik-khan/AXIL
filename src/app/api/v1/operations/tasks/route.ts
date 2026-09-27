@@ -1,3 +1,5 @@
+import { PERMISSIONS } from "@/lib/permissions";
+import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { db } from "@/infrastructure/db";
 import { operationsWorkflowService } from "@/domains/operations/services/operations-workflow.service";
@@ -5,6 +7,7 @@ import { operationsWorkflowService } from "@/domains/operations/services/operati
 export async function GET(request: Request) {
   try {
     const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.OPERATIONS_READ);
     const tenantId = context.tenant.id;
 
     const receipts = db.getActionReceipts(tenantId);
@@ -20,6 +23,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.OPERATIONS_EXECUTE);
     const tenantId = context.tenant.id;
     const body = await request.json();
 

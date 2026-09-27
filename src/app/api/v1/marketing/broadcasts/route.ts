@@ -1,3 +1,5 @@
+import { PERMISSIONS } from "@/lib/permissions";
+import { RbacService } from "@/domains/rbac/service";
 import { z } from "zod";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { marketingService } from "@/domains/marketing/marketing.service";
@@ -34,6 +36,7 @@ const CreateBroadcastSchema = z.object({
 export async function GET(request: Request) {
   try {
     const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.MARKETING_READ);
     const campaigns = marketingService.getBroadcastCampaigns(context.tenant.id);
     return apiSuccess({ campaigns, total: campaigns.length });
   } catch (err) {
@@ -44,6 +47,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.MARKETING_WRITE);
     const body = await request.json();
     const validated = CreateBroadcastSchema.parse(body);
 

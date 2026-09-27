@@ -1,3 +1,5 @@
+import { PERMISSIONS } from "@/lib/permissions";
+import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { forecastingService } from "@/domains/intelligence/services/forecasting.service";
 import { ForecastHorizon } from "@/types/intelligence";
@@ -5,6 +7,7 @@ import { ForecastHorizon } from "@/types/intelligence";
 export async function POST(request: Request) {
   try {
     const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.ANALYTICS_READ);
     const body = await request.json();
 
     const targetType: "DEMAND" | "SALES_REVENUE" | "ORDER_VOLUME" | "INVENTORY_DEPLETION" = body.target_type || "SALES_REVENUE";

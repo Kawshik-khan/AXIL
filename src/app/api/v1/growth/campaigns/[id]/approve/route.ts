@@ -1,3 +1,5 @@
+import { PERMISSIONS } from "@/lib/permissions";
+import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { campaignService } from "@/domains/growth/services/campaign.service";
 
@@ -7,9 +9,10 @@ export async function POST(
 ) {
   try {
     const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.MARKETING_APPROVE);
     const { id } = await params;
-    const body = await request.json().catch(() => ({}));
-    const approvedBy = body.approved_by || context.user?.id || "MERCHANT";
+    // The approver is always the signed-in user; a body field never names someone else (FX-10 step 3).
+    const approvedBy = context.user.id;
 
     const campaign = campaignService.approveCampaign(context.tenant.id, id, approvedBy);
     return apiSuccess({ campaign });

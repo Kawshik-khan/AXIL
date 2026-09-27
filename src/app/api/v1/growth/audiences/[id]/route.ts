@@ -1,3 +1,5 @@
+import { PERMISSIONS } from "@/lib/permissions";
+import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { audienceService } from "@/domains/growth/services/audience.service";
 import { db } from "@/infrastructure/db";
@@ -8,6 +10,7 @@ export async function GET(
 ) {
   try {
     const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.MARKETING_READ);
     const { id } = await params;
     const audience = audienceService.getAudience(context.tenant.id, id);
     if (!audience) {
@@ -25,6 +28,7 @@ export async function PUT(
 ) {
   try {
     const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.MARKETING_WRITE);
     const { id } = await params;
     const body = await request.json();
 

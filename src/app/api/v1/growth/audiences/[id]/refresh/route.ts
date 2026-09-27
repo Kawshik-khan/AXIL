@@ -1,3 +1,5 @@
+import { PERMISSIONS } from "@/lib/permissions";
+import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { audienceService } from "@/domains/growth/services/audience.service";
 
@@ -7,6 +9,7 @@ export async function POST(
 ) {
   try {
     const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.MARKETING_WRITE);
     const { id } = await params;
     const snapshot = audienceService.createAudienceSnapshot(context.tenant.id, id);
     return apiSuccess({ snapshot, member_count: snapshot.member_count });

@@ -23,10 +23,13 @@ import {
   Building2,
 } from "lucide-react";
 import styles from "./CommandPalette.module.css";
+import { canAccessPath } from "./module-access";
 
 export interface CommandPaletteProps {
   isOpen: boolean;
   onClose: () => void;
+  /** Tenant permissions of the signed-in user; commands for modules the role can't use are hidden. */
+  permissions?: string[];
 }
 
 interface Command {
@@ -34,10 +37,11 @@ interface Command {
   title: string;
   category: string;
   icon: React.ReactNode;
+  href?: string;
   action: () => void;
 }
 
-export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose }) => {
+export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose, permissions }) => {
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const router = useRouter();
@@ -49,6 +53,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
       title: "Go to Dashboard Overview",
       category: "Navigation",
       icon: <LayoutDashboard size={18} />,
+      href: "/",
       action: () => {
         router.push("/");
         onClose();
@@ -59,6 +64,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
       title: "Go to Connectors & Integrations Hub",
       category: "Integrations",
       icon: <PlugZap size={18} />,
+      href: "/connector",
       action: () => {
         router.push("/connector");
         onClose();
@@ -69,6 +75,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
       title: "Connect AI & LLM Models (OpenAI, Claude, Gemini, Ollama)",
       category: "Integrations",
       icon: <Sparkles size={18} />,
+      href: "/connector?category=AI_LLM",
       action: () => {
         router.push("/connector?category=AI_LLM");
         onClose();
@@ -79,6 +86,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
       title: "Connect Vector Database for RAG (Qdrant, Pinecone, ChromaDB, pgvector)",
       category: "Integrations",
       icon: <Layers size={18} />,
+      href: "/connector?category=VECTOR_DB",
       action: () => {
         router.push("/connector?category=VECTOR_DB");
         onClose();
@@ -89,6 +97,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
       title: "Connect Redis & Distributed Cache (Self-Hosted, Upstash, Redis Cloud)",
       category: "Integrations",
       icon: <Flame size={18} />,
+      href: "/connector?category=REDIS_CACHE",
       action: () => {
         router.push("/connector?category=REDIS_CACHE");
         onClose();
@@ -99,6 +108,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
       title: "Connect Social Media & Ads (Meta, WhatsApp, Google Ads)",
       category: "Integrations",
       icon: <Send size={18} />,
+      href: "/connector?category=SOCIAL_ADS",
       action: () => {
         router.push("/connector?category=SOCIAL_ADS");
         onClose();
@@ -109,6 +119,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
       title: "Connect Parcel Delivery & Couriers (Steadfast, Pathao, RedX)",
       category: "Integrations",
       icon: <PlugZap size={18} />,
+      href: "/connector?category=LOGISTICS",
       action: () => {
         router.push("/connector?category=LOGISTICS");
         onClose();
@@ -119,6 +130,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
       title: "Connect Cloud / Self-Hosted Database (Supabase, Neon, Postgres)",
       category: "Integrations",
       icon: <PlugZap size={18} />,
+      href: "/connector?category=DATABASE",
       action: () => {
         router.push("/connector?category=DATABASE");
         onClose();
@@ -129,6 +141,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
       title: "Connect Enterprise Systems & ERP (SAP S/4HANA, NetSuite, Salesforce, Daraz)",
       category: "Integrations",
       icon: <Building2 size={18} />,
+      href: "/connector?category=ENTERPRISE",
       action: () => {
         router.push("/connector?category=ENTERPRISE");
         onClose();
@@ -139,6 +152,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
       title: "Go to Automations & n8n Hub",
       category: "Automation",
       icon: <Workflow size={18} />,
+      href: "/automations",
       action: () => {
         router.push("/automations");
         onClose();
@@ -149,6 +163,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
       title: "Browse 39 Workflow Templates Catalog",
       category: "Automation",
       icon: <Workflow size={18} />,
+      href: "/automations",
       action: () => {
         router.push("/automations");
         onClose();
@@ -159,6 +174,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
       title: "Inspect Dead Letter Queue (DLQ)",
       category: "Automation",
       icon: <Workflow size={18} />,
+      href: "/automations",
       action: () => {
         router.push("/automations");
         onClose();
@@ -169,6 +185,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
       title: "Go to Growth Command Center",
       category: "Growth & Marketing",
       icon: <Rocket size={18} />,
+      href: "/growth",
       action: () => {
         router.push("/growth");
         onClose();
@@ -179,6 +196,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
       title: "Launch / Manage Growth Campaigns",
       category: "Growth & Marketing",
       icon: <Send size={18} />,
+      href: "/growth/campaigns",
       action: () => {
         router.push("/growth/campaigns");
         onClose();
@@ -189,6 +207,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
       title: "Customer Lifecycle Automated Journeys",
       category: "Growth & Marketing",
       icon: <GitFork size={18} />,
+      href: "/growth/journeys",
       action: () => {
         router.push("/growth/journeys");
         onClose();
@@ -199,6 +218,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
       title: "Audience Segments & Predictive Cohorts",
       category: "Growth & Marketing",
       icon: <Users size={18} />,
+      href: "/growth/audiences",
       action: () => {
         router.push("/growth/audiences");
         onClose();
@@ -209,6 +229,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
       title: "Go to Commerce Intelligence Overview",
       category: "Intelligence",
       icon: <Sparkles size={18} />,
+      href: "/intelligence",
       action: () => {
         router.push("/intelligence");
         onClose();
@@ -219,6 +240,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
       title: "Predictive Demand & Revenue Forecasts",
       category: "Intelligence",
       icon: <TrendingUp size={18} />,
+      href: "/intelligence/forecasts",
       action: () => {
         router.push("/intelligence/forecasts");
         onClose();
@@ -229,6 +251,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
       title: "Simulate What-If Scenarios (Price, Stock, Discounts)",
       category: "Intelligence",
       icon: <Sliders size={18} />,
+      href: "/intelligence/simulation",
       action: () => {
         router.push("/intelligence/simulation");
         onClose();
@@ -239,6 +262,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
       title: "Ask AI Analytics in Natural Language",
       category: "Intelligence",
       icon: <Sparkles size={18} />,
+      href: "/intelligence/analytics",
       action: () => {
         router.push("/intelligence/analytics");
         onClose();
@@ -249,6 +273,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
       title: "Go to Orders Management",
       category: "Commerce",
       icon: <FileText size={18} />,
+      href: "/orders",
       action: () => {
         router.push("/orders");
         onClose();
@@ -259,6 +284,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
       title: "Go to Product Catalog & SKUs",
       category: "Commerce",
       icon: <FileText size={18} />,
+      href: "/products",
       action: () => {
         router.push("/products");
         onClose();
@@ -269,6 +295,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
       title: "Go to Inventory & Warehouses",
       category: "Commerce",
       icon: <FileText size={18} />,
+      href: "/inventory",
       action: () => {
         router.push("/inventory");
         onClose();
@@ -279,6 +306,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
       title: "Go to Logistics & Courier Shipments",
       category: "Commerce",
       icon: <FileText size={18} />,
+      href: "/shipments",
       action: () => {
         router.push("/shipments");
         onClose();
@@ -289,6 +317,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
       title: "Go to Customer Directory",
       category: "Commerce",
       icon: <Users size={18} />,
+      href: "/customers",
       action: () => {
         router.push("/customers");
         onClose();
@@ -299,6 +328,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
       title: "Go to Workspace Settings",
       category: "Settings",
       icon: <Settings size={18} />,
+      href: "/settings",
       action: () => {
         router.push("/settings");
         onClose();
@@ -309,6 +339,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
       title: "Manage Team Members",
       category: "Settings",
       icon: <Users size={18} />,
+      href: "/settings#users",
       action: () => {
         router.push("/settings#users");
         onClose();
@@ -319,6 +350,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
       title: "View Security & Audit Logs",
       category: "Security",
       icon: <Shield size={18} />,
+      href: "/settings#security",
       action: () => {
         router.push("/settings#security");
         onClose();
@@ -349,9 +381,10 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
     },
   ];
 
-  const filtered = commands.filter((cmd) =>
-    cmd.title.toLowerCase().includes(query.toLowerCase()) ||
-    cmd.category.toLowerCase().includes(query.toLowerCase())
+  const filtered = commands.filter(
+    (cmd) =>
+      (!cmd.href || canAccessPath(cmd.href, permissions)) &&
+      (cmd.title.toLowerCase().includes(query.toLowerCase()) || cmd.category.toLowerCase().includes(query.toLowerCase()))
   );
 
   useEffect(() => {

@@ -1,3 +1,5 @@
+import { PERMISSIONS } from "@/lib/permissions";
+import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { pricingOperationsService } from "@/domains/operations/services/pricing-operations.service";
 import { procurementService } from "@/domains/operations/services/procurement.service";
@@ -8,6 +10,7 @@ export async function POST(
 ) {
   try {
     const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.OPERATIONS_APPROVE);
     const tenantId = context.tenant.id;
     const actionId = params.id;
     const body = await request.json();

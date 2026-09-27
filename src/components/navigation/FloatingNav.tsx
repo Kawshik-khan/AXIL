@@ -25,6 +25,7 @@ import {
   PlugZap,
 } from "lucide-react";
 import styles from "./FloatingNav.module.css";
+import { canAccessPath } from "./module-access";
 
 interface DockRoute {
   label: string;
@@ -57,22 +58,17 @@ export interface FloatingNavProps {
   tenantName?: string;
   userName?: string;
   userRole?: string;
+  /** Tenant permissions of the signed-in user (from /api/v1/auth/session). */
+  permissions?: string[];
   onOpenCommandPalette?: () => void;
 }
 
-export const FloatingNav: React.FC<FloatingNavProps> = ({ userRole, onOpenCommandPalette }) => {
+export const FloatingNav: React.FC<FloatingNavProps> = ({ permissions, onOpenCommandPalette }) => {
   const pathname = usePathname();
   const router = useRouter();
 
-  const isPrivileged = userRole === "OWNER" || userRole === "ADMIN" || userRole === "DEV";
-
-  // Filter routes based on role (Automations strictly restricted to Owner/Admin/Dev)
-  const filteredRoutes = DOCK_ROUTES.filter((route) => {
-    if (route.href === "/automations") {
-      return isPrivileged;
-    }
-    return true;
-  });
+  // Show only the modules this role can use (FX-10); the API enforces the same permissions.
+  const filteredRoutes = DOCK_ROUTES.filter((route) => canAccessPath(route.href, permissions));
 
   // Strictly merchant dock routes
   const effectiveRoutes: DockRoute[] = filteredRoutes;
