@@ -5126,9 +5126,13 @@ class CommerceDatabase {
     return this.data.connected_channels.find((c) => c.id === id);
   }
 
-  public findConnectedChannelByProviderId(type: ChannelType, providerAccountId: string): ConnectedChannel | undefined {
-    return this.data.connected_channels.find(
-      (c) => c.type === type && c.provider_account_id === providerAccountId && c.status === "ACTIVE"
+  /**
+   * Every channel (any tenant, any status) registered for a provider account. Callers must treat more than one
+   * match as ambiguous rather than picking the first (audit H5).
+   */
+  public findConnectedChannelsByProviderId(type: ChannelType, providerAccountId: string): ConnectedChannel[] {
+    return this.data.connected_channels.filter(
+      (c) => c.type === type && c.provider_account_id === providerAccountId
     );
   }
 

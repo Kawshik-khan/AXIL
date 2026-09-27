@@ -1,7 +1,7 @@
 import { db } from "@/infrastructure/db";
 import { ChannelType, ConnectedChannel } from "@/types/social";
-import { ChannelService } from "../channels/channel.service";
-import { ChannelCredentials } from "../channels/channel-provider.interface";
+import { ChannelService, PROVIDER_ROUTED_TYPES } from "../channels/channel.service";
+import { ChannelCredentials, IChannelProvider } from "../channels/channel-provider.interface";
 import { logger } from "@/lib/logger";
 import { IdentityResolutionService } from "../identity/identity-resolution.service";
 import { ConversationService } from "../conversations/conversation.service";
@@ -17,6 +17,8 @@ export interface WebhookIngressResult {
   channelId?: string;
   tenantId?: string;
 }
+
+type PayloadEntry = Record<string, unknown>;
 
 export class WebhookIngressService {
   /**
@@ -39,60 +41,119 @@ export class WebhookIngressService {
       throw new BadRequestError("Webhook payload is not valid JSON.");
     }
 
-    // 1. Resolve the channel strictly (audit H5): by its public id, or by the provider account id in the
-    //    payload. There is no "first active channel" or sandbox-tenant fallback — an unknown channel is ignored.
-    let channel: ConnectedChannel | undefined;
+    // 1. Resolve target channels strictly (audit H5): by the channel's public id, or — for Meta — by the account id
+    //    of EACH entry. Meta batches events for several Pages / numbers of one app into a single request, so every
+    //    entry is routed to its own channel. Unknown or ambiguous accounts are dropped; there is no fallback channel.
+    const targets: Array<{ channel: ConnectedChannel; payload: Record<string, unknown> }> = [];
     if (channelIdOverride) {
-      channel = db.findConnectedChannelForIngress(channelIdOverride);
-    } else {
-      let providerAccountId = "";
-      if (channelType === "FACEBOOK_MESSENGER" || channelType === "INSTAGRAM") {
-        const entry = (parsedPayload.entry as Array<Record<string, unknown>>)?.[0];
-        providerAccountId = String(entry?.id || "");
-      } else if (channelType === "WHATSAPP") {
-        const entry = (parsedPayload.entry as Array<Record<string, unknown>>)?.[0];
-        const changes = (entry?.changes as Array<{ value?: Record<string, unknown> }>)?.[0];
-        const meta = changes?.value?.metadata as { phone_number_id?: string } | undefined;
-        providerAccountId = String(meta?.phone_number_id || "");
+      const channel = db.findConnectedChannelForIngress(channelIdOverride);
+      if (channel && channel.type === channelType && channel.status === "ACTIVE") {
+        targets.push({ channel, payload: parsedPayload });
       }
-      if (providerAccountId) {
-        channel = db.findConnectedChannelByProviderId(channelType, providerAccountId);
+    } else if (PROVIDER_ROUTED_TYPES.has(channelType)) {
+      const entries = Array.isArray(parsedPayload.entry) ? (parsedPayload.entry as PayloadEntry[]) : [];
+      const byChannel = new Map<string, { channel: ConnectedChannel; entries: PayloadEntry[] }>();
+      for (const entry of entries) {
+        for (const part of this.splitEntryByAccount(channelType, entry)) {
+          const channel = this.resolveProviderChannel(channelType, part.accountId);
+          if (!channel) continue;
+          const group = byChannel.get(channel.id) ?? { channel, entries: [] };
+          group.entries.push(part.entry);
+          byChannel.set(channel.id, group);
+        }
+      }
+      for (const { channel, entries: channelEntries } of Array.from(byChannel.values())) {
+        targets.push({ channel, payload: { ...parsedPayload, entry: channelEntries } });
       }
     }
 
-    if (!channel || channel.type !== channelType || channel.status !== "ACTIVE") {
+    if (targets.length === 0) {
       logger.warn("social_webhook.unknown_channel", { channel_type: channelType });
       return { success: false, messagesProcessed: 0, receiptsProcessed: 0 };
     }
 
-    const tenantId = channel.tenant_id;
-    const channelId = channel.id;
-
-    // 2. Signature verification is mandatory, except for the public browser widget, which by design cannot hold
-    //    a secret (it is restricted to active WEBSITE_CHAT channels and validated/capped by its route).
-    if (!(options.unsignedWidget && channelType === "WEBSITE_CHAT")) {
+    // 2. Signature verification is mandatory for every target channel, with that channel's own credentials (or a
+    //    platform-level secret such as META_APP_SECRET). The only exception is the public browser widget, which by
+    //    design cannot hold a secret (restricted to active WEBSITE_CHAT channels and validated/capped by its route).
+    const verified = targets.filter(({ channel }) => {
+      if (options.unsignedWidget && channelType === "WEBSITE_CHAT") return true;
       let credentials: ChannelCredentials = {};
       try {
         credentials = ChannelService.getDecryptedCredentials(channel);
       } catch {
-        // Unreadable per-channel credentials: the adapter can still use a platform-level secret (e.g. META_APP_SECRET)
-        // or reject; it never falls back to a built-in default.
-        logger.warn("social_webhook.channel_credentials_unreadable", { tenant_id: tenantId, channel_id: channelId });
+        // Unreadable per-channel credentials: the adapter can still use a platform-level secret or reject; it never
+        // falls back to a built-in default.
+        logger.warn("social_webhook.channel_credentials_unreadable", { tenant_id: channel.tenant_id, channel_id: channel.id });
       }
-      if (!adapter.verifyWebhook(rawBody, signature, headers, credentials)) {
-        throw new AuthenticationError("Webhook signature verification failed.");
+      const ok = adapter.verifyWebhook(rawBody, signature, headers, credentials);
+      if (!ok) {
+        logger.warn("social_webhook.signature_rejected", { tenant_id: channel.tenant_id, channel_id: channel.id });
       }
+      return ok;
+    });
+    if (verified.length === 0) {
+      throw new AuthenticationError("Webhook signature verification failed.");
     }
 
+    let messagesProcessed = 0;
+    let receiptsProcessed = 0;
+    for (const { channel, payload } of verified) {
+      const result = await this.processForChannel(adapter, channelType, channel, payload);
+      messagesProcessed += result.messagesProcessed;
+      receiptsProcessed += result.receiptsProcessed;
+    }
+
+    const single = verified.length === 1 ? verified[0].channel : undefined;
+    return {
+      success: true,
+      messagesProcessed,
+      receiptsProcessed,
+      channelId: single?.id,
+      tenantId: single?.tenant_id,
+    };
+  }
+
+  /** Splits a Meta entry into parts that each belong to one provider account (Page id / WhatsApp phone number id). */
+  private static splitEntryByAccount(channelType: ChannelType, entry: PayloadEntry): Array<{ accountId: string; entry: PayloadEntry }> {
+    if (channelType === "WHATSAPP") {
+      const changes = Array.isArray(entry?.changes) ? (entry.changes as Array<{ value?: Record<string, unknown> }>) : [];
+      return changes.map((change) => {
+        const meta = change?.value?.metadata as { phone_number_id?: string } | undefined;
+        return { accountId: String(meta?.phone_number_id || ""), entry: { ...entry, changes: [change] } };
+      });
+    }
+    return [{ accountId: String(entry?.id || ""), entry }];
+  }
+
+  /** The single ACTIVE channel registered for a provider account, or undefined when there is none or several. */
+  private static resolveProviderChannel(channelType: ChannelType, accountId: string): ConnectedChannel | undefined {
+    if (!accountId) return undefined;
+    const matches = db.findConnectedChannelsByProviderId(channelType, accountId).filter((c) => c.status === "ACTIVE");
+    if (matches.length > 1) {
+      logger.error("social_webhook.ambiguous_channel", { channel_type: channelType, channel_ids: matches.map((c) => c.id) });
+      return undefined;
+    }
+    return matches[0];
+  }
+
+  private static async processForChannel(
+    adapter: IChannelProvider,
+    channelType: ChannelType,
+    channel: ConnectedChannel,
+    payload: Record<string, unknown>
+  ): Promise<{ messagesProcessed: number; receiptsProcessed: number }> {
+    const tenantId = channel.tenant_id;
+    const channelId = channel.id;
+
     // 3. Normalize Incoming Messages
-    const normalizedMessages = adapter.normalizeIncomingEvent(parsedPayload, channelId!);
+    const normalizedMessages = adapter.normalizeIncomingEvent(payload, channelId);
     let messagesProcessed = 0;
 
     for (const norm of normalizedMessages) {
       // A. Identity Resolution (External user -> Canonical customer)
       const { customer } = await IdentityResolutionService.resolveCustomer(
-        tenantId!,
-        channelId!,
+        tenantId,
+        channelId,
         channelType,
         norm.externalSenderId,
         norm.senderProfile
@@ -100,8 +161,8 @@ export class WebhookIngressService {
 
       // B. Conversation lookup or creation
       const { conversation, isNew } = await ConversationService.findOrCreateConversation(
-        tenantId!,
-        channelId!,
+        tenantId,
+        channelId,
         channelType,
         customer.id,
         norm.externalConversationId,
@@ -115,11 +176,7 @@ export class WebhookIngressService {
       );
 
       // C. Process message & check idempotency
-      const { message, isDuplicate } = await MessageService.processInboundMessage(
-        tenantId!,
-        conversation.id,
-        norm
-      );
+      const { message, isDuplicate } = await MessageService.processInboundMessage(tenantId, conversation.id, norm);
 
       if (!isDuplicate) {
         messagesProcessed++;
@@ -128,14 +185,14 @@ export class WebhookIngressService {
         const intent = (message.metadata?.detected_intent as string) || undefined;
         const targetTeam = AssignmentService.determineTeamRoute(intent);
         if (targetTeam && !conversation.assigned_team_id) {
-          db.updateConversation(tenantId!, conversation.id, {
+          db.updateConversation(tenantId, conversation.id, {
             assigned_team_id: targetTeam,
           });
         }
 
         // E. Emit message.received event
         SocialEventService.emit({
-          tenantId: tenantId!,
+          tenantId,
           eventType: "message.received",
           aggregateType: "conversation",
           aggregateId: conversation.id,
@@ -153,26 +210,26 @@ export class WebhookIngressService {
     }
 
     // 4. Parse & Process Delivery Receipts
-    const receipts = adapter.parseDeliveryReceipts(parsedPayload);
+    const receipts = adapter.parseDeliveryReceipts(payload);
     let receiptsProcessed = 0;
 
     for (const receipt of receipts) {
-      const msg = db.findMessageByExternalId(tenantId!, channelId!, receipt.externalMessageId);
+      const msg = db.findMessageByExternalId(tenantId, channelId, receipt.externalMessageId);
       if (msg) {
         if (receipt.status === "DELIVERED") {
-          db.updateMessage(tenantId!, msg.id, {
+          db.updateMessage(tenantId, msg.id, {
             status: "DELIVERED",
             delivered_at: receipt.timestamp,
           });
           receiptsProcessed++;
         } else if (receipt.status === "READ") {
-          db.updateMessage(tenantId!, msg.id, {
+          db.updateMessage(tenantId, msg.id, {
             status: "READ",
             read_at: receipt.timestamp,
           });
           receiptsProcessed++;
         } else if (receipt.status === "FAILED") {
-          db.updateMessage(tenantId!, msg.id, {
+          db.updateMessage(tenantId, msg.id, {
             status: "FAILED",
             failed_at: receipt.timestamp,
             failure_reason: receipt.failureReason,
@@ -183,18 +240,10 @@ export class WebhookIngressService {
     }
 
     // Update channel last webhook timestamp
-    if (channel) {
-      db.updateConnectedChannel(tenantId!, channel.id, {
-        last_webhook_at: new Date().toISOString(),
-      });
-    }
+    db.updateConnectedChannel(tenantId, channelId, {
+      last_webhook_at: new Date().toISOString(),
+    });
 
-    return {
-      success: true,
-      messagesProcessed,
-      receiptsProcessed,
-      channelId,
-      tenantId,
-    };
+    return { messagesProcessed, receiptsProcessed };
   }
 }

@@ -15,6 +15,7 @@ import {
   verifyPlatformSessionToken,
   signStepUpToken,
   decryptCredential,
+  encryptCredential,
   AUTH_COOKIE_NAME,
   PLATFORM_AUTH_COOKIE_NAME,
 } from "@/lib/security";
@@ -26,7 +27,8 @@ import { ChannelService } from "@/domains/social/channels/channel.service";
 import { FacebookAdapter } from "@/domains/social/channels/adapters/facebook.adapter";
 import { InstagramAdapter } from "@/domains/social/channels/adapters/instagram.adapter";
 import { WhatsAppAdapter } from "@/domains/social/channels/adapters/whatsapp.adapter";
-import type { ConnectedChannel } from "@/types/social";
+import type { ChannelType, ConnectedChannel } from "@/types/social";
+import { CustomerService } from "@/domains/customers/customer.service";
 import type { PlatformRole } from "@/lib/permissions";
 
 /**
@@ -348,6 +350,17 @@ async function main() {
     });
   });
 
+  await runTest("H1: the opt-in dev bypass serves only same-machine, same-site requests", async () => {
+    await withEnv({ NODE_ENV: "development", DEV_AUTH_BYPASS: "1" }, async () => {
+      const local = await extractRequestContext(new Request(`${BASE}/api/v1/orders`));
+      assert.strictEqual(local.tenant.id, DEFAULT_TENANT_ID, "control: a loopback request without a token gets the dev identity");
+      const lan = new Request("http://192.168.1.20:3000/api/v1/orders", { headers: { host: "192.168.1.20:3000" } });
+      await assert.rejects(() => extractRequestContext(lan), "a LAN host must not get the bypass");
+      const crossSite = new Request(`${BASE}/api/v1/orders`, { method: "POST", headers: { origin: "https://evil.example", "sec-fetch-site": "cross-site" } });
+      await assert.rejects(() => extractRequestContext(crossSite), "a cross-site request must not get the bypass");
+    });
+  });
+
   await runTest("H1: the platform context has no development fallback at all", async () => {
     await withEnv({ NODE_ENV: "development", DEV_AUTH_BYPASS: "1" }, async () => {
       await assert.rejects(() => extractPlatformContext(new Request(`${BASE}/api/v1/platform/overview`)));
@@ -525,6 +538,95 @@ async function main() {
       body: JSON.stringify({ channel_id: "chn_web_chat", anonymous_id: "anon_sec", customer_name: "Visitor", text: "x".repeat(5000) }),
     }));
     assert.strictEqual(res.status, 400);
+  });
+
+  const addChannel = (tenantId: string, type: ChannelType, providerAccountId: string): ConnectedChannel => {
+    const now = new Date().toISOString();
+    return db.createConnectedChannel({
+      id: `chn_sec_${crypto.randomUUID().slice(0, 8)}`,
+      tenant_id: tenantId,
+      type,
+      name: `Security ${type}`,
+      status: "ACTIVE",
+      provider_account_id: providerAccountId,
+      credentials_encrypted: encryptCredential({}),
+      configuration: { auto_reply_enabled: false },
+      created_at: now,
+      updated_at: now,
+    });
+  };
+  const messageTexts = (tenantId: string) => db.data.messages.filter((m) => m.tenant_id === tenantId).map((m) => m.text);
+
+  await runTest("H5: a signed Meta batch routes each entry to its own page's tenant", async () => {
+    const appSecret = crypto.randomBytes(24).toString("hex");
+    const pageA = `page_a_${crypto.randomUUID().slice(0, 8)}`;
+    const pageB = `page_b_${crypto.randomUUID().slice(0, 8)}`;
+    addChannel(tenantA.tenant.id, "FACEBOOK_MESSENGER", pageA);
+    addChannel(tenantB.tenant.id, "FACEBOOK_MESSENGER", pageB);
+    const entries = [...JSON.parse(metaPayload(pageA, "batch message for A")).entry, ...JSON.parse(metaPayload(pageB, "batch message for B")).entry];
+    const payload = JSON.stringify({ object: "page", entry: entries });
+    await withEnv({ META_APP_SECRET: appSecret }, async () => {
+      const result = await WebhookIngressService.handleWebhook("FACEBOOK_MESSENGER", payload, `sha256=${hmacHex(appSecret, payload)}`, {});
+      assert.strictEqual(result.messagesProcessed, 2);
+    });
+    assert.ok(messageTexts(tenantA.tenant.id).includes("batch message for A"));
+    assert.ok(!messageTexts(tenantA.tenant.id).includes("batch message for B"), "B's message must not land in A's inbox");
+    assert.ok(messageTexts(tenantB.tenant.id).includes("batch message for B"));
+  });
+
+  await runTest("H5: a page id held by two active channels is ignored rather than routed to the first", async () => {
+    const appSecret = crypto.randomBytes(24).toString("hex");
+    const page = `page_dup_${crypto.randomUUID().slice(0, 8)}`;
+    addChannel(tenantA.tenant.id, "FACEBOOK_MESSENGER", page);
+    addChannel(tenantB.tenant.id, "FACEBOOK_MESSENGER", page);
+    const payload = metaPayload(page, "ambiguous page message");
+    await withEnv({ META_APP_SECRET: appSecret }, async () => {
+      const result = await WebhookIngressService.handleWebhook("FACEBOOK_MESSENGER", payload, `sha256=${hmacHex(appSecret, payload)}`, {});
+      assert.strictEqual(result.messagesProcessed, 0);
+    });
+    assert.ok(!db.data.messages.some((m) => m.text === "ambiguous page message"));
+  });
+
+  await runTest("H5: a workspace cannot connect a Meta account another workspace already holds", async () => {
+    const page = `page_owned_${crypto.randomUUID().slice(0, 8)}`;
+    addChannel(tenantA.tenant.id, "FACEBOOK_MESSENGER", page);
+    const { token } = await AuthService.login(tenantB.user.email, "Unique-Owner-Pass-8842!");
+    const ctxB = await AuthService.resolveRequestContext(token);
+    await assert.rejects(
+      () => ChannelService.connectChannel(ctxB, { type: "FACEBOOK_MESSENGER", name: "Claimed page", provider_account_id: page, credentials: { accessToken: "EAAB-not-real" } }),
+      /already connected/
+    );
+    assert.strictEqual(db.findConnectedChannelsByProviderId("FACEBOOK_MESSENGER", page).length, 1);
+  });
+
+  const widgetChannel = addChannel(tenantA.tenant.id, "WEBSITE_CHAT", `web_${crypto.randomUUID().slice(0, 8)}`);
+
+  await runTest("N6: a widget visitor claiming a known customer's phone is not linked to that customer", async () => {
+    const { token } = await AuthService.login(tenantA.user.email, ownerPassword);
+    const ctxA = await AuthService.resolveRequestContext(token);
+    const known = await CustomerService.createCustomer(ctxA, { first_name: "Known", last_name: "Customer", phone: "01912345678" });
+    const linkedBefore = db.getCustomerIdentities(tenantA.tenant.id, known.id).length;
+    const { POST } = await import("@/app/api/v1/social/widget/message/route");
+    const res = await POST(new Request(`${BASE}/api/v1/social/widget/message`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ channel_id: widgetChannel.id, anonymous_id: `anon_${crypto.randomUUID()}`, customer_name: "Impostor", phone: "01912345678", text: "please cancel my order" }),
+    }));
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(db.getCustomerIdentities(tenantA.tenant.id, known.id).length, linkedBefore, "no identity may be linked to the known customer");
+  });
+
+  await runTest("H5: the widget session endpoint never returns another visitor's IP address or user agent", async () => {
+    const { POST } = await import("@/app/api/v1/social/widget/session/route");
+    const anonymousId = `anon_${crypto.randomUUID()}`;
+    const open = (headers: Record<string, string>) => POST(new Request(`${BASE}/api/v1/social/widget/session`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...headers },
+      body: JSON.stringify({ channel_id: widgetChannel.id, anonymous_id: anonymousId }),
+    }));
+    assert.strictEqual((await open({ "x-forwarded-for": "203.0.113.7", "user-agent": "VictimBrowser/1.0" })).status, 200);
+    const text = await (await open({})).text();
+    assert.ok(!text.includes("203.0.113.7") && !text.includes("VictimBrowser"), "visitor details must not be returned");
   });
 
   // ---------------------------------------------------------------------------

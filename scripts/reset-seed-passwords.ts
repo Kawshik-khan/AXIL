@@ -9,8 +9,9 @@
  *   3. Dry run:  node tests/ts-runner.cjs ./scripts/reset-seed-passwords.ts
  *      Apply:    node tests/ts-runner.cjs ./scripts/reset-seed-passwords.ts --apply   (backs up first)
  *
- * Optional: --deactivate-staff also sets the four seeded platform staff accounts (support@, ops@, analyst@,
- * security@) to DEACTIVATED, keeping only admin@ (workspace owner) and superadmin@ usable.
+ * By default the four seeded platform staff accounts (support@, ops@, analyst@, security@) are set to DEACTIVATED,
+ * keeping only admin@ (workspace owner) and superadmin@ usable; otherwise six accounts would share one password.
+ * Pass --keep-staff to give the staff accounts the same password instead.
  */
 import bcrypt from "bcryptjs";
 import fs from "fs";
@@ -23,7 +24,7 @@ const OWNER_ACCOUNTS = ["admin@commerceos.io", "superadmin@commerceos.io"];
 const STAFF_ACCOUNTS = ["support@commerceos.io", "ops@commerceos.io", "analyst@commerceos.io", "security@commerceos.io"];
 
 const apply = process.argv.includes("--apply");
-const deactivateStaff = process.argv.includes("--deactivate-staff");
+const deactivateStaff = !process.argv.includes("--keep-staff");
 const seedPassword = process.env.SEED_ADMIN_PASSWORD;
 if (!seedPassword || seedPassword.length < 14) {
   process.stderr.write("SEED_ADMIN_PASSWORD (at least 14 characters) must be set in .env.local.\n");

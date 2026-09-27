@@ -4,12 +4,15 @@ import { RequestContext } from "@/lib/context";
 import { RbacService } from "@/domains/rbac/service";
 import { PERMISSIONS } from "@/lib/permissions";
 import { encryptCredential, decryptCredential, maskSecret } from "@/lib/security";
-import { AppError, BadRequestError, NotFoundError } from "@/lib/errors";
+import { AppError, BadRequestError, ConflictError, NotFoundError } from "@/lib/errors";
 import { IChannelProvider, ChannelCredentials } from "./channel-provider.interface";
 import { FacebookAdapter } from "./adapters/facebook.adapter";
 import { InstagramAdapter } from "./adapters/instagram.adapter";
 import { WhatsAppAdapter } from "./adapters/whatsapp.adapter";
 import { WebsiteChatAdapter } from "./adapters/website-chat.adapter";
+
+/** Channel types whose inbound webhooks are routed by `provider_account_id` (Page id / WhatsApp phone number id). */
+export const PROVIDER_ROUTED_TYPES: ReadonlySet<ChannelType> = new Set<ChannelType>(["FACEBOOK_MESSENGER", "INSTAGRAM", "WHATSAPP"]);
 
 export class ChannelService {
   private static adapters: Record<ChannelType, IChannelProvider> = {
@@ -86,6 +89,12 @@ export class ChannelService {
 
     if (!payload.type || !payload.provider_account_id || !payload.name) {
       throw new BadRequestError("Channel type, name, and provider account ID are required.");
+    }
+
+    // Meta webhooks are routed by provider account id, so one account can belong to only one channel; otherwise a
+    // workspace could claim another's Page / phone number and receive its customers' messages (audit H5).
+    if (PROVIDER_ROUTED_TYPES.has(payload.type) && db.findConnectedChannelsByProviderId(payload.type, payload.provider_account_id).length > 0) {
+      throw new ConflictError("This account is already connected to a CommerceOS workspace.");
     }
 
     const adapter = this.getAdapter(payload.type);

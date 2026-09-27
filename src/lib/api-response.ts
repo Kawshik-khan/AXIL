@@ -91,7 +91,7 @@ export async function extractRequestContext(request: Request): Promise<RequestCo
   }
 
   if (!token) {
-    const devContext = devAuthBypassContext(requestId);
+    const devContext = devAuthBypassContext(request, requestId);
     if (devContext) return devContext;
     throw new AppError("AUTHENTICATION_REQUIRED", "No authentication session token provided.", 401);
   }
@@ -105,8 +105,27 @@ export async function extractRequestContext(request: Request): Promise<RequestCo
  * Applies only when NODE_ENV=development AND DEV_AUTH_BYPASS=1 AND the request carries no token at all.
  * Serves the request as the demo workspace owner (admin@commerceos.io) — never as a platform operator.
  */
-function devAuthBypassContext(requestId: string): RequestContext | null {
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+const hostnameOf = (hostHeader: string): string => {
+  try {
+    return new URL(`http://${hostHeader}`).hostname;
+  } catch {
+    return "";
+  }
+};
+
+function devAuthBypassContext(request: Request, requestId: string): RequestContext | null {
   if (process.env.NODE_ENV !== "development" || process.env.DEV_AUTH_BYPASS !== "1") {
+    return null;
+  }
+  // `next dev` listens on every interface, and any site the developer visits can send simple cross-site requests.
+  // Only same-machine, same-site requests get the bypass identity.
+  if (!LOOPBACK_HOSTS.has(hostnameOf(request.headers.get("host") || new URL(request.url).host))) {
+    return null;
+  }
+  const origin = request.headers.get("origin");
+  if (request.headers.get("sec-fetch-site") === "cross-site" || (origin && !LOOPBACK_HOSTS.has(hostnameOf(origin.replace(/^https?:\/\//, ""))))) {
     return null;
   }
   const devTenant = db.findTenantById("ten_default_dhaka");

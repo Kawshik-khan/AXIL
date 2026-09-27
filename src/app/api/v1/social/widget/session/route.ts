@@ -55,7 +55,11 @@ export async function POST(request: Request) {
       });
     }
 
-    return NextResponse.json({ session });
+    // Only what the widget needs: the stored session also holds the visitor's IP address and user agent, and
+    // anonymous_id is caller-supplied, so returning the whole record would disclose another visitor's details.
+    return NextResponse.json({
+      session: { id: session.id, anonymous_id: session.anonymous_id, conversation_id: session.conversation_id, started_at: session.started_at },
+    });
   } catch (err) {
     logger.error("widget_session.failed", { error: err instanceof Error ? err.message : String(err) });
     return NextResponse.json({ error: { code: "WIDGET_SESSION_FAILED", message: "Failed to initialize chat session." } }, { status: 500 });

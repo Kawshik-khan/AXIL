@@ -40,9 +40,14 @@ export async function POST(request: Request) {
       return badRequest("Unknown chat channel.");
     }
 
+    // Phone and email typed into the public widget are unverified claims. Identity resolution links conversations
+    // to existing customers by phone/email, so forwarding them would let anyone post as a known customer and see
+    // replies about their orders. They are not used for identity until a verification step exists (STATUS N6).
+    const { phone: _unverifiedPhone, email: _unverifiedEmail, ...widgetMessage } = parsed.data;
+
     const result = await WebhookIngressService.handleWebhook(
       "WEBSITE_CHAT",
-      JSON.stringify(parsed.data),
+      JSON.stringify(widgetMessage),
       null,
       Object.fromEntries(request.headers),
       channel.id,

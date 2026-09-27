@@ -80,7 +80,8 @@ for (const channel of db.data.connected_channels) {
   out(`channel      ${channel.id} (${channel.tenant_id}): ${result}`);
   if (result === "reencrypted" && next) {
     writes.push(() => db.updateConnectedChannel(channel.tenant_id, channel.id, { credentials_encrypted: next }));
-  } else if (result === "unreadable") {
+  } else if (result === "unreadable" && channel.type !== "WEBSITE_CHAT") {
+    // Website chat keeps working without credentials (the browser widget is unsigned), so it is reported, not disabled.
     writes.push(() =>
       db.updateConnectedChannel(channel.tenant_id, channel.id, {
         status: "ERROR",
@@ -127,3 +128,5 @@ out(`Backup written: ${path.relative(process.cwd(), backupFile)}`);
 
 for (const write of writes) write();
 out(`Applied ${writes.length} change(s). Remove OLD_JWT_SECRET from .env.local now.`);
+out("The backup holds credentials encrypted under the old, published secret, so treat it as plaintext: delete it once");
+out("the app works, and rotate the provider tokens themselves (Meta, WhatsApp, couriers, payments) at each provider.");

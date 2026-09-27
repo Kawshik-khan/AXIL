@@ -37,7 +37,10 @@ export const WebsiteChatWidget: React.FC<WebsiteChatWidgetProps> = ({
       .finally(() => setChannelLookupDone(true));
   }, [channelIdProp]);
 
-  const [anonymousId] = useState(() => `anon_vis_${Math.random().toString(36).slice(2, 8)}`);
+  // 128 random bits: the id addresses the visitor's conversation, so it must not be guessable.
+  const [anonymousId] = useState(
+    () => `anon_vis_${Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("")}`
+  );
   const [visitorName, setVisitorName] = useState("Tanvir Rahman");
   const [visitorPhone, setVisitorPhone] = useState("01711223344");
   const [inputText, setInputText] = useState("");
