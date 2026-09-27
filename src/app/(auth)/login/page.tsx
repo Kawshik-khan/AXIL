@@ -43,18 +43,6 @@ export default function LoginPage() {
     }
   };
 
-  const setDemoCredentials = () => {
-    setEmail("admin@commerceos.io");
-    setPassword("CommerceOS2026!");
-    setError(null);
-  };
-
-  const setSuperAdminCredentials = () => {
-    setEmail("superadmin@commerceos.io");
-    setPassword("Password123!");
-    setError(null);
-  };
-
   return (
     <main className={styles.authContainer}>
       <div className={styles.authCard}>
@@ -102,26 +90,6 @@ export default function LoginPage() {
             Sign In to Workspace
           </Button>
         </form>
-
-        <div className={styles.demoBanner} style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <span>💡 Store Owner:</span>
-            <span className={styles.demoClickable} onClick={setDemoCredentials}>
-              admin@commerceos.io (CommerceOS2026!)
-            </span>
-          </div>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <span>⚡ Super Admin:</span>
-            <span className={styles.demoClickable} onClick={setSuperAdminCredentials}>
-              superadmin@commerceos.io (Password123!)
-            </span>
-          </div>
-          <div style={{ marginTop: "4px", borderTop: "1px dashed rgba(255,255,255,0.1)", paddingTop: "6px" }}>
-            <Link href="/super-admin" style={{ color: "var(--color-brand-primary)", textDecoration: "none", fontSize: "11px", fontWeight: 700 }}>
-              Direct Link: Open Super Admin Control Plane (/super-admin) →
-            </Link>
-          </div>
-        </div>
 
         <p className={styles.footerText}>
           Don&apos;t have a workspace yet?{" "}

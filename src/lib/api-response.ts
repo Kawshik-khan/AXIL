@@ -19,9 +19,9 @@ import {
   hasPlatformPermission,
 } from "@/lib/context";
 import { db } from "@/infrastructure/db";
+import { logger } from "@/lib/logger";
 import {
   PERMISSIONS,
-  PLATFORM_PERMISSIONS,
   PLATFORM_ROLE_PERMISSIONS,
 } from "@/lib/permissions";
 
@@ -90,51 +90,53 @@ export async function extractRequestContext(request: Request): Promise<RequestCo
     }
   }
 
-  const getDevFallbackContext = (): RequestContext | null => {
-    if (process.env.NODE_ENV !== "production" && process.env.NODE_ENV !== "test") {
-      const devTenant = db.findTenantById("ten_default_dhaka");
-      const devUser = db.findUserByEmail("superadmin@commerceos.io") || db.findUserByEmail("admin@commerceos.io");
-      if (devTenant && devUser) {
-        return {
-          requestId,
-          traceId: `trc_dev_${Math.random().toString(36).substring(2, 10)}`,
-          user: {
-            id: devUser.id,
-            email: devUser.email,
-            name: devUser.name,
-            status: devUser.status,
-          },
-          tenant: {
-            id: devTenant.id,
-            name: devTenant.name,
-            slug: devTenant.slug,
-            currency: devTenant.currency,
-            timezone: devTenant.timezone,
-            language: devTenant.language,
-            status: devTenant.status,
-          },
-          role: "OWNER",
-          permissions: Object.values(PERMISSIONS),
-          timestamp: new Date().toISOString(),
-        };
-      }
-    }
-    return null;
-  };
-
   if (!token) {
-    const devFallback = getDevFallbackContext();
-    if (devFallback) return devFallback;
+    const devContext = devAuthBypassContext(requestId);
+    if (devContext) return devContext;
     throw new AppError("AUTHENTICATION_REQUIRED", "No authentication session token provided.", 401);
   }
 
-  try {
-    return await AuthService.resolveRequestContext(token, requestId);
-  } catch (err) {
-    const devFallback = getDevFallbackContext();
-    if (devFallback) return devFallback;
-    throw err;
+  // A presented token is always verified; an invalid or expired token is never replaced by a fallback identity (audit H1).
+  return AuthService.resolveRequestContext(token, requestId);
+}
+
+/**
+ * Local-development convenience, off by default (audit H1, ADR-103).
+ * Applies only when NODE_ENV=development AND DEV_AUTH_BYPASS=1 AND the request carries no token at all.
+ * Serves the request as the demo workspace owner (admin@commerceos.io) — never as a platform operator.
+ */
+function devAuthBypassContext(requestId: string): RequestContext | null {
+  if (process.env.NODE_ENV !== "development" || process.env.DEV_AUTH_BYPASS !== "1") {
+    return null;
   }
+  const devTenant = db.findTenantById("ten_default_dhaka");
+  const devUser = db.findUserByEmail("admin@commerceos.io");
+  if (!devTenant || !devUser || devUser.status !== "ACTIVE" || !db.findMembership(devTenant.id, devUser.id)) {
+    return null;
+  }
+  logger.warn("auth.dev_bypass_used", { request_id: requestId, tenant_id: devTenant.id });
+  return {
+    requestId,
+    traceId: `trc_dev_${crypto.randomUUID()}`,
+    user: {
+      id: devUser.id,
+      email: devUser.email,
+      name: devUser.name,
+      status: devUser.status,
+    },
+    tenant: {
+      id: devTenant.id,
+      name: devTenant.name,
+      slug: devTenant.slug,
+      currency: devTenant.currency,
+      timezone: devTenant.timezone,
+      language: devTenant.language,
+      status: devTenant.status,
+    },
+    role: "OWNER",
+    permissions: Object.values(PERMISSIONS),
+    timestamp: new Date().toISOString(),
+  };
 }
 
 export async function extractPlatformContext(request: Request): Promise<PlatformContext> {
@@ -168,105 +170,53 @@ export async function extractPlatformContext(request: Request): Promise<Platform
     }
   }
 
-  // If token is present, authoritatively verify platform session
-  if (token) {
-    const payload = await verifyPlatformSessionToken(token);
-    if (!payload) {
-      throw new PlatformScopeRequiredError("Invalid or expired platform session token.");
-    }
-
-    const user = db.findUserById(payload.userId);
-    if (!user || user.status !== "ACTIVE") {
-      throw new PlatformAuthRequiredError("Platform operator account is suspended or not found.");
-    }
-
-    const platformRole = payload.platformRole as PlatformRole;
-    const permissions = PLATFORM_ROLE_PERMISSIONS[platformRole] || [];
-
-    // Check step-up token if present
-    let stepUpVerified = false;
-    const stepUpHeader = request.headers.get("x-step-up-token");
-    if (stepUpHeader) {
-      const stepUpPayload = await verifyStepUpToken(stepUpHeader, user.id);
-      stepUpVerified = !!stepUpPayload;
-    }
-
-    return {
-      requestId,
-      traceId,
-      scope: "PLATFORM",
-      platformUser: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        status: user.status as "ACTIVE" | "SUSPENDED" | "DEACTIVATED",
-      },
-      platformRole,
-      permissions,
-      mfaVerified: payload.mfaVerified ?? true,
-      stepUpVerified,
-      timestamp: new Date().toISOString(),
-    };
+  // Platform identity comes only from a verified platform session token. There is no header, query-flag, or
+  // environment fallback that can grant a platform role in any environment (audit C3, H1; ADR-103).
+  if (!token) {
+    throw new PlatformAuthRequiredError("Platform session required. Please sign in at /super-admin/login.");
   }
 
-  // Explicit test header support for automated test suites
-  const testRole = request.headers.get("x-test-platform-role") as PlatformRole | null;
-  const testUserId = request.headers.get("x-test-user-id");
-  if (testRole) {
-    const user = (testUserId && db.findUserById(testUserId)) ||
-      db.findUserByEmail("superadmin@commerceos.io") ||
-      db.findUserByEmail("admin@commerceos.io") || {
-        id: "usr_platform_test",
-        email: "superadmin@commerceos.io",
-        name: "Test Platform Operator",
-        status: "ACTIVE" as const,
-      };
-
-    const permissions = PLATFORM_ROLE_PERMISSIONS[testRole] || [];
-    const stepUpHeader = request.headers.get("x-step-up-token");
-    const stepUpVerified = !!stepUpHeader && stepUpHeader.length > 5;
-
-    return {
-      requestId,
-      traceId,
-      scope: "PLATFORM",
-      platformUser: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        status: user.status as "ACTIVE" | "SUSPENDED" | "DEACTIVATED",
-      },
-      platformRole: testRole,
-      permissions,
-      mfaVerified: true,
-      stepUpVerified,
-      timestamp: new Date().toISOString(),
-    };
+  const claims = await verifyPlatformSessionToken(token);
+  if (!claims) {
+    throw new PlatformAuthRequiredError("Invalid or expired platform session. Please sign in again.");
   }
 
-  // Development convenience fallback: auto-seed Super Admin context in dev mode
-  if (process.env.NODE_ENV !== "production" && process.env.NODE_ENV !== "test") {
-    const devUser = db.findUserByEmail("superadmin@commerceos.io") || db.findUserByEmail("admin@commerceos.io");
-    if (devUser) {
-      return {
-        requestId,
-        traceId,
-        scope: "PLATFORM",
-        platformUser: {
-          id: devUser.id,
-          email: devUser.email,
-          name: devUser.name,
-          status: "ACTIVE",
-        },
-        platformRole: "SUPER_ADMIN",
-        permissions: Object.values(PLATFORM_PERMISSIONS),
-        mfaVerified: true,
-        stepUpVerified: true,
-        timestamp: new Date().toISOString(),
-      };
-    }
+  const user = db.findUserById(claims.userId);
+  if (!user || user.status !== "ACTIVE") {
+    throw new PlatformAuthRequiredError("Platform operator account is suspended or not found.");
   }
 
-  throw new PlatformAuthRequiredError("Platform session required. Please authenticate at /super-admin/login.");
+  // The role is resolved from the stored membership, not from the token, so deactivation or a role change
+  // takes effect immediately instead of when the token expires.
+  const membership = db.findPlatformMembershipByUserId(user.id);
+  if (!membership || !membership.is_active) {
+    throw new PlatformScopeRequiredError("Account is not an active platform operator.");
+  }
+  const platformRole = membership.role as PlatformRole;
+  const permissions = PLATFORM_ROLE_PERMISSIONS[platformRole] || [];
+
+  // Step-up is recognised only from a signed step-up token issued to this operator.
+  let stepUpVerified = false;
+  const stepUpHeader = request.headers.get("x-step-up-token");
+  if (stepUpHeader) {
+    stepUpVerified = !!(await verifyStepUpToken(stepUpHeader, user.id));
+  }
+
+  return {
+    requestId,
+    traceId,
+    scope: "PLATFORM",
+    platformUser: {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      status: user.status as "ACTIVE" | "SUSPENDED" | "DEACTIVATED",
+    },
+    platformRole,
+    permissions,
+    mfaVerified: claims.mfaVerified === true,
+    stepUpVerified,
+    timestamp: new Date().toISOString(),
+  };
 }
 

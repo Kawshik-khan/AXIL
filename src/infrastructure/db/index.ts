@@ -1,6 +1,8 @@
 import fs from "fs";
 import path from "path";
+import bcrypt from "bcryptjs";
 import { RoleName } from "@/lib/permissions";
+import { DISABLED_PASSWORD_HASH } from "@/lib/security";
 import { ConnectorConfigRecord } from "@/types/connector";
 import {
   Product,
@@ -1072,6 +1074,21 @@ class CommerceDatabase {
     }
   }
 
+  private seedPasswordHashCache: string | null = null;
+
+  /**
+   * Password hash for seeded demo accounts (audit C1-b, FX-02). Taken from SEED_ADMIN_PASSWORD (>= 14 chars);
+   * without it the accounts are created disabled. Existing accounts are reset with scripts/reset-seed-passwords.ts.
+   */
+  private seedPasswordHash(): string {
+    if (this.seedPasswordHashCache === null) {
+      const seedPassword = process.env.SEED_ADMIN_PASSWORD;
+      this.seedPasswordHashCache =
+        seedPassword && seedPassword.length >= 14 ? bcrypt.hashSync(seedPassword, 12) : DISABLED_PASSWORD_HASH;
+    }
+    return this.seedPasswordHashCache;
+  }
+
   private ensureDefaultSeed(): void {
     const tenantId = "ten_default_dhaka";
     const userId = "usr_owner_default";
@@ -1101,7 +1118,7 @@ class CommerceDatabase {
         email: "admin@commerceos.io",
         name: "Rafiqul Islam",
         avatar: "",
-        password_hash: "$2a$10$iM.oG9E/T0.1h3lP2kQeeeh7sU988wL2v/51Z2qK1vW8kK8E7v.yG",
+        password_hash: this.seedPasswordHash(),
         status: "ACTIVE",
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
@@ -1150,7 +1167,7 @@ class CommerceDatabase {
         email: "superadmin@commerceos.io",
         name: "Platform Super Admin",
         avatar: "",
-        password_hash: "$2a$10$iM.oG9E/T0.1h3lP2kQeeeh7sU988wL2v/51Z2qK1vW8kK8E7v.yG", // Password123!
+        password_hash: this.seedPasswordHash(),
         status: "ACTIVE",
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
@@ -1205,7 +1222,7 @@ class CommerceDatabase {
           email: staff.email,
           name: staff.name,
           avatar: "",
-          password_hash: "$2a$10$iM.oG9E/T0.1h3lP2kQeeeh7sU988wL2v/51Z2qK1vW8kK8E7v.yG",
+          password_hash: this.seedPasswordHash(),
           status: "ACTIVE",
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),

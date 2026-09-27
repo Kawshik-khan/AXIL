@@ -2,6 +2,7 @@ import { db, TenantRecord, UserRecord, MembershipRecord } from "@/infrastructure
 import { PlatformContext } from "@/lib/context";
 import { PlatformAuthorizationService } from "./platform-authorization.service";
 import { PlatformAuditService } from "./platform-audit.service";
+import { DISABLED_PASSWORD_HASH } from "@/lib/security";
 import {
   AppError,
   TenantStateInvalidError,
@@ -163,15 +164,18 @@ export class PlatformTenantService {
     };
     db.createTenant(newTenant);
 
-    // 2. Create or associate Initial Owner User
+    // 2. Create or associate Initial Owner User.
+    // A new owner gets no usable password (audit C1-b): the account stays INVITED until an owner onboarding
+    // flow sets a password (FIX_IMPLEMENTATION_PLAN FX-37). Previously it shared a hard-coded demo hash.
     let owner = db.findUserByEmail(input.owner_email);
+    const ownerSetupRequired = !owner;
     if (!owner) {
       owner = {
         id: `usr_${crypto.randomUUID().substring(0, 12)}`,
         email: input.owner_email,
         name: input.owner_name,
-        password_hash: "$2a$10$iM.oG9E/T0.1h3lP2kQeeeh7sU988wL2v/51Z2qK1vW8kK8E7v.yG", // Password123!
-        status: "ACTIVE",
+        password_hash: DISABLED_PASSWORD_HASH,
+        status: "INVITED",
         created_at: now,
         updated_at: now,
       };
@@ -224,6 +228,7 @@ export class PlatformTenantService {
     return {
       tenant: newTenant,
       owner: { id: owner.id, email: owner.email, name: owner.name },
+      owner_setup_required: ownerSetupRequired,
       plan: { id: plan.id, name: plan.name },
     };
   }

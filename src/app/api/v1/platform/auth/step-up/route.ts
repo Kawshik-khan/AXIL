@@ -1,32 +1,21 @@
-import { apiSuccess, apiError, extractPlatformContext } from "@/lib/api-response";
-import { signStepUpToken } from "@/lib/security";
+import { apiError, extractPlatformContext } from "@/lib/api-response";
 import { AppError } from "@/lib/errors";
 
+/**
+ * Step-up elevation for HIGH/CRITICAL platform actions.
+ *
+ * STATUS: TARGET — no real second factor (TOTP/WebAuthn) exists yet, so this endpoint fails closed and never
+ * issues a step-up token (rules/security.md §2, rules/privileged-actions.md §3.4, audit H10). Until FX-15 lands,
+ * actions that call PlatformAuthorizationService.assertStepUp() stay blocked with StepUpRequiredError.
+ */
 export async function POST(request: Request) {
   try {
-    const context = await extractPlatformContext(request);
-    const body = await request.json().catch(() => ({}));
-    const { code, password } = body;
-
-    // Verify step-up verification code or admin password re-verification
-    // In production, validates TOTP authenticator code or WebAuthn assertion
-    const isStepUpValid =
-      code === "123456" ||
-      code === "000000" ||
-      password === "Password123!" ||
-      (code && code.length === 6);
-
-    if (!isStepUpValid) {
-      throw new AppError("INVALID_STEP_UP_CODE", "Invalid step-up authentication code or credential.", 401);
-    }
-
-    const stepUpToken = await signStepUpToken(context.platformUser.id);
-
-    return apiSuccess({
-      stepUpVerified: true,
-      stepUpToken,
-      expiresInSeconds: 900, // 15-minute elevation window
-    });
+    await extractPlatformContext(request); // unauthenticated callers still get 401
+    throw new AppError(
+      "STEP_UP_NOT_AVAILABLE",
+      "Step-up verification needs a TOTP or WebAuthn factor, which is not implemented yet. HIGH and CRITICAL platform actions stay disabled until it is.",
+      501
+    );
   } catch (error) {
     return apiError(error);
   }
