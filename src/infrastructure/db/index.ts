@@ -720,7 +720,10 @@ class CommerceDatabase {
           autonomy_budgets: parsed.autonomy_budgets || [],
           bulk_safeguards: parsed.bulk_safeguards || [],
           // Phase 9 Collections
-          organizations: parsed.organizations || [],
+          // Legacy: every workspace used to share "org_default"; it belongs to the demo workspace now (FX-13).
+          organizations: (parsed.organizations || []).map((o: Organization) =>
+            o.id === "org_default" && !o.tenant_id ? { ...o, tenant_id: "ten_default_dhaka" } : o
+          ),
           business_units: parsed.business_units || [],
           brand_groups: parsed.brand_groups || [],
           enterprise_brands: parsed.enterprise_brands || [],
@@ -4070,8 +4073,8 @@ class CommerceDatabase {
     return this.data.invitations[idx];
   }
 
-  public updateInvitation(id: string, patch: Partial<InvitationRecord>): InvitationRecord | undefined {
-    const idx = this.data.invitations.findIndex((i) => i.id === id);
+  public updateInvitation(tenantId: string, id: string, patch: Partial<InvitationRecord>): InvitationRecord | undefined {
+    const idx = this.data.invitations.findIndex((i) => i.tenant_id === tenantId && i.id === id);
     if (idx === -1) return undefined;
     this.data.invitations[idx] = { ...this.data.invitations[idx], ...safePatch(patch) };
     this.persist();
@@ -6202,8 +6205,8 @@ class CommerceDatabase {
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   }
 
-  public getWorkflowById(id: string): AgentWorkflow | undefined {
-    return this.data.workflows.find((w) => w.id === id);
+  public getWorkflowById(tenantId: string, id: string): AgentWorkflow | undefined {
+    return this.data.workflows.find((w) => w.tenant_id === tenantId && w.id === id);
   }
 
   public insertWorkflow(workflow: AgentWorkflow): AgentWorkflow {
@@ -6212,8 +6215,8 @@ class CommerceDatabase {
     return workflow;
   }
 
-  public updateWorkflow(id: string, updates: Partial<AgentWorkflow>): AgentWorkflow {
-    const idx = this.data.workflows.findIndex((w) => w.id === id);
+  public updateWorkflow(tenantId: string, id: string, updates: Partial<AgentWorkflow>): AgentWorkflow {
+    const idx = this.data.workflows.findIndex((w) => w.tenant_id === tenantId && w.id === id);
     if (idx === -1) throw new Error(`Workflow not found: ${id}`);
     const updated: AgentWorkflow = {
       ...this.data.workflows[idx],
@@ -6232,8 +6235,8 @@ class CommerceDatabase {
     );
   }
 
-  public getTaskById(id: string): AgentTask | undefined {
-    return this.data.tasks.find((t) => t.id === id);
+  public getTaskById(tenantId: string, id: string): AgentTask | undefined {
+    return this.data.tasks.find((t) => t.tenant_id === tenantId && t.id === id);
   }
 
   public insertTask(task: AgentTask): AgentTask {
@@ -6242,8 +6245,8 @@ class CommerceDatabase {
     return task;
   }
 
-  public updateTask(id: string, updates: Partial<AgentTask>): AgentTask {
-    const idx = this.data.tasks.findIndex((t) => t.id === id);
+  public updateTask(tenantId: string, id: string, updates: Partial<AgentTask>): AgentTask {
+    const idx = this.data.tasks.findIndex((t) => t.tenant_id === tenantId && t.id === id);
     if (idx === -1) throw new Error(`Task not found: ${id}`);
     const updated: AgentTask = {
       ...this.data.tasks[idx],
@@ -6269,8 +6272,8 @@ class CommerceDatabase {
   }
 
   // --- Workflow Contexts ---
-  public getWorkflowContext(workflowId: string): WorkflowContext | undefined {
-    return this.data.workflow_contexts.find((c) => c.workflow_id === workflowId);
+  public getWorkflowContext(tenantId: string, workflowId: string): WorkflowContext | undefined {
+    return this.data.workflow_contexts.find((c) => c.tenant_id === tenantId && c.workflow_id === workflowId);
   }
 
   public upsertWorkflowContext(context: WorkflowContext): WorkflowContext {
@@ -6289,8 +6292,8 @@ class CommerceDatabase {
   }
 
   // --- Workflow Artifacts ---
-  public getWorkflowArtifacts(workflowId: string): WorkflowArtifact[] {
-    return this.data.workflow_artifacts.filter((a) => a.workflow_id === workflowId);
+  public getWorkflowArtifacts(tenantId: string, workflowId: string): WorkflowArtifact[] {
+    return this.data.workflow_artifacts.filter((a) => a.tenant_id === tenantId && a.workflow_id === workflowId);
   }
 
   public insertWorkflowArtifact(artifact: WorkflowArtifact): WorkflowArtifact {
@@ -6300,9 +6303,9 @@ class CommerceDatabase {
   }
 
   // --- Checkpoints ---
-  public getWorkflowCheckpoints(workflowId: string): WorkflowCheckpoint[] {
+  public getWorkflowCheckpoints(tenantId: string, workflowId: string): WorkflowCheckpoint[] {
     return this.data.workflow_checkpoints
-      .filter((c) => c.workflow_id === workflowId)
+      .filter((c) => c.tenant_id === tenantId && c.workflow_id === workflowId)
       .sort((a, b) => b.step_index - a.step_index);
   }
 
@@ -6313,8 +6316,8 @@ class CommerceDatabase {
   }
 
   // --- Delegations ---
-  public getAgentDelegations(workflowId: string): AgentDelegation[] {
-    return this.data.agent_delegations.filter((d) => d.workflow_id === workflowId);
+  public getAgentDelegations(tenantId: string, workflowId: string): AgentDelegation[] {
+    return this.data.agent_delegations.filter((d) => d.tenant_id === tenantId && d.workflow_id === workflowId);
   }
 
   public insertAgentDelegation(delegation: AgentDelegation): AgentDelegation {
@@ -6323,8 +6326,8 @@ class CommerceDatabase {
     return delegation;
   }
 
-  public updateAgentDelegation(id: string, updates: Partial<AgentDelegation>): AgentDelegation {
-    const idx = this.data.agent_delegations.findIndex((d) => d.id === id);
+  public updateAgentDelegation(tenantId: string, id: string, updates: Partial<AgentDelegation>): AgentDelegation {
+    const idx = this.data.agent_delegations.findIndex((d) => d.tenant_id === tenantId && d.id === id);
     if (idx === -1) throw new Error(`Delegation not found: ${id}`);
     const updated = { ...this.data.agent_delegations[idx], ...safePatch(updates) };
     this.data.agent_delegations[idx] = updated;
@@ -6333,8 +6336,8 @@ class CommerceDatabase {
   }
 
   // --- Verifications ---
-  public getAgentVerifications(taskId: string): AgentVerification[] {
-    return this.data.agent_verifications.filter((v) => v.task_id === taskId);
+  public getAgentVerifications(tenantId: string, taskId: string): AgentVerification[] {
+    return this.data.agent_verifications.filter((v) => v.tenant_id === tenantId && v.task_id === taskId);
   }
 
   public getAgentVerificationsByTenant(tenantId: string): AgentVerification[] {
@@ -6354,12 +6357,12 @@ class CommerceDatabase {
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   }
 
-  public getApprovalRequestById(id: string): ApprovalRequest | undefined {
-    return this.data.approval_requests.find((a) => a.id === id);
+  public getApprovalRequestById(tenantId: string, id: string): ApprovalRequest | undefined {
+    return this.data.approval_requests.find((a) => a.tenant_id === tenantId && a.id === id);
   }
 
-  public getApprovalRequest(id: string): ApprovalRequest | undefined {
-    return this.getApprovalRequestById(id);
+  public getApprovalRequest(tenantId: string, id: string): ApprovalRequest | undefined {
+    return this.getApprovalRequestById(tenantId, id);
   }
 
   public insertApprovalRequest(req: ApprovalRequest): ApprovalRequest {
@@ -6368,8 +6371,8 @@ class CommerceDatabase {
     return req;
   }
 
-  public updateApprovalRequest(id: string, updates: Partial<ApprovalRequest>): ApprovalRequest {
-    const idx = this.data.approval_requests.findIndex((a) => a.id === id);
+  public updateApprovalRequest(tenantId: string, id: string, updates: Partial<ApprovalRequest>): ApprovalRequest {
+    const idx = this.data.approval_requests.findIndex((a) => a.tenant_id === tenantId && a.id === id);
     if (idx === -1) throw new Error(`ApprovalRequest not found: ${id}`);
     const updated = { ...this.data.approval_requests[idx], ...safePatch(updates) };
     this.data.approval_requests[idx] = updated;
@@ -6437,8 +6440,8 @@ class CommerceDatabase {
     return rule;
   }
 
-  public updateAgentTriggerRule(id: string, updates: Partial<AgentTriggerRule>): AgentTriggerRule {
-    const idx = this.data.trigger_rules.findIndex((r) => r.id === id);
+  public updateAgentTriggerRule(tenantId: string, id: string, updates: Partial<AgentTriggerRule>): AgentTriggerRule {
+    const idx = this.data.trigger_rules.findIndex((r) => r.tenant_id === tenantId && r.id === id);
     if (idx === -1) throw new Error(`TriggerRule not found: ${id}`);
     const updated = {
       ...this.data.trigger_rules[idx],
@@ -6478,8 +6481,8 @@ class CommerceDatabase {
     return schedule;
   }
 
-  public updateAgentSchedule(id: string, updates: Partial<AgentSchedule>): AgentSchedule {
-    const idx = this.data.agent_schedules.findIndex((s) => s.id === id);
+  public updateAgentSchedule(tenantId: string, id: string, updates: Partial<AgentSchedule>): AgentSchedule {
+    const idx = this.data.agent_schedules.findIndex((s) => s.tenant_id === tenantId && s.id === id);
     if (idx === -1) throw new Error(`AgentSchedule not found: ${id}`);
     const updated = {
       ...this.data.agent_schedules[idx],
@@ -6552,8 +6555,8 @@ class CommerceDatabase {
     return insight;
   }
 
-  public updateInsight(id: string, updates: Partial<Insight>): Insight {
-    const idx = this.data.insights.findIndex((i) => i.id === id);
+  public updateInsight(tenantId: string, id: string, updates: Partial<Insight>): Insight {
+    const idx = this.data.insights.findIndex((i) => i.tenant_id === tenantId && i.id === id);
     if (idx === -1) throw new Error(`Insight not found: ${id}`);
     const updated = { ...this.data.insights[idx], ...safePatch(updates), updated_at: new Date().toISOString() };
     this.data.insights[idx] = updated;
@@ -6587,8 +6590,8 @@ class CommerceDatabase {
     return opportunity;
   }
 
-  public updateOpportunity(id: string, updates: Partial<Opportunity>): Opportunity {
-    const idx = this.data.opportunities.findIndex((o) => o.id === id);
+  public updateOpportunity(tenantId: string, id: string, updates: Partial<Opportunity>): Opportunity {
+    const idx = this.data.opportunities.findIndex((o) => o.tenant_id === tenantId && o.id === id);
     if (idx === -1) throw new Error(`Opportunity not found: ${id}`);
     const updated = { ...this.data.opportunities[idx], ...safePatch(updates) };
     this.data.opportunities[idx] = updated;
@@ -6616,8 +6619,8 @@ class CommerceDatabase {
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   }
 
-  public getRecommendationById(id: string): Recommendation | undefined {
-    return this.data.recommendations.find((r) => r.id === id);
+  public getRecommendationById(tenantId: string, id: string): Recommendation | undefined {
+    return this.data.recommendations.find((r) => r.tenant_id === tenantId && r.id === id);
   }
 
   public insertRecommendation(rec: Recommendation): Recommendation {
@@ -6626,8 +6629,8 @@ class CommerceDatabase {
     return rec;
   }
 
-  public updateRecommendation(id: string, updates: Partial<Recommendation>): Recommendation {
-    const idx = this.data.recommendations.findIndex((r) => r.id === id);
+  public updateRecommendation(tenantId: string, id: string, updates: Partial<Recommendation>): Recommendation {
+    const idx = this.data.recommendations.findIndex((r) => r.tenant_id === tenantId && r.id === id);
     if (idx === -1) throw new Error(`Recommendation not found: ${id}`);
     const updated = { ...this.data.recommendations[idx], ...safePatch(updates), updated_at: new Date().toISOString() };
     this.data.recommendations[idx] = updated;
@@ -6655,8 +6658,8 @@ class CommerceDatabase {
       .sort((a, b) => new Date(b.simulated_at).getTime() - new Date(a.simulated_at).getTime());
   }
 
-  public getSimulationById(id: string): SimulationResult | undefined {
-    return this.data.simulations.find((s) => s.id === id);
+  public getSimulationById(tenantId: string, id: string): SimulationResult | undefined {
+    return this.data.simulations.find((s) => s.tenant_id === tenantId && s.id === id);
   }
 
   public insertSimulation(sim: SimulationResult): SimulationResult {
@@ -6672,8 +6675,8 @@ class CommerceDatabase {
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   }
 
-  public getDecisionRequestById(id: string): DecisionRequest | undefined {
-    return this.data.decision_requests.find((d) => d.id === id);
+  public getDecisionRequestById(tenantId: string, id: string): DecisionRequest | undefined {
+    return this.data.decision_requests.find((d) => d.tenant_id === tenantId && d.id === id);
   }
 
   public insertDecisionRequest(dec: DecisionRequest): DecisionRequest {
@@ -6682,8 +6685,8 @@ class CommerceDatabase {
     return dec;
   }
 
-  public updateDecisionRequest(id: string, updates: Partial<DecisionRequest>): DecisionRequest {
-    const idx = this.data.decision_requests.findIndex((d) => d.id === id);
+  public updateDecisionRequest(tenantId: string, id: string, updates: Partial<DecisionRequest>): DecisionRequest {
+    const idx = this.data.decision_requests.findIndex((d) => d.tenant_id === tenantId && d.id === id);
     if (idx === -1) throw new Error(`DecisionRequest not found: ${id}`);
     const updated = { ...this.data.decision_requests[idx], ...safePatch(updates), updated_at: new Date().toISOString() };
     this.data.decision_requests[idx] = updated;
@@ -6814,8 +6817,8 @@ class CommerceDatabase {
     return this.data.audiences.filter((a) => a.tenant_id === tenantId);
   }
 
-  public getAudienceById(id: string): Audience | undefined {
-    return this.data.audiences.find((a) => a.id === id);
+  public getAudienceById(tenantId: string, id: string): Audience | undefined {
+    return this.data.audiences.find((a) => a.tenant_id === tenantId && a.id === id);
   }
 
   public insertAudience(audience: Audience): Audience {
@@ -6824,8 +6827,8 @@ class CommerceDatabase {
     return audience;
   }
 
-  public updateAudience(id: string, updates: Partial<Audience>): Audience {
-    const idx = this.data.audiences.findIndex((a) => a.id === id);
+  public updateAudience(tenantId: string, id: string, updates: Partial<Audience>): Audience {
+    const idx = this.data.audiences.findIndex((a) => a.tenant_id === tenantId && a.id === id);
     if (idx === -1) throw new Error(`Audience not found: ${id}`);
     const updated = { ...this.data.audiences[idx], ...safePatch(updates), updated_at: new Date().toISOString() };
     this.data.audiences[idx] = updated;
@@ -6918,8 +6921,8 @@ class CommerceDatabase {
     return this.data.journeys.filter((j) => j.tenant_id === tenantId);
   }
 
-  public getJourneyById(id: string): CustomerJourney | undefined {
-    return this.data.journeys.find((j) => j.id === id);
+  public getJourneyById(tenantId: string, id: string): CustomerJourney | undefined {
+    return this.data.journeys.find((j) => j.tenant_id === tenantId && j.id === id);
   }
 
   public insertJourney(journey: CustomerJourney): CustomerJourney {
@@ -6928,8 +6931,8 @@ class CommerceDatabase {
     return journey;
   }
 
-  public updateJourney(id: string, updates: Partial<CustomerJourney>): CustomerJourney {
-    const idx = this.data.journeys.findIndex((j) => j.id === id);
+  public updateJourney(tenantId: string, id: string, updates: Partial<CustomerJourney>): CustomerJourney {
+    const idx = this.data.journeys.findIndex((j) => j.tenant_id === tenantId && j.id === id);
     if (idx === -1) throw new Error(`Journey not found: ${id}`);
     const updated = { ...this.data.journeys[idx], ...safePatch(updates), updated_at: new Date().toISOString() };
     this.data.journeys[idx] = updated;
@@ -6949,8 +6952,8 @@ class CommerceDatabase {
     return enrollment;
   }
 
-  public updateJourneyEnrollment(id: string, updates: Partial<JourneyEnrollment>): JourneyEnrollment {
-    const idx = this.data.journey_enrollments.findIndex((e) => e.id === id);
+  public updateJourneyEnrollment(tenantId: string, id: string, updates: Partial<JourneyEnrollment>): JourneyEnrollment {
+    const idx = this.data.journey_enrollments.findIndex((e) => e.tenant_id === tenantId && e.id === id);
     if (idx === -1) throw new Error(`JourneyEnrollment not found: ${id}`);
     const updated = { ...this.data.journey_enrollments[idx], ...safePatch(updates), updated_at: new Date().toISOString() };
     this.data.journey_enrollments[idx] = updated;
@@ -6969,8 +6972,8 @@ class CommerceDatabase {
     return this.data.campaigns.filter((c) => c.tenant_id === tenantId);
   }
 
-  public getCampaignById(id: string): GrowthCampaign | undefined {
-    return this.data.campaigns.find((c) => c.id === id);
+  public getCampaignById(tenantId: string, id: string): GrowthCampaign | undefined {
+    return this.data.campaigns.find((c) => c.tenant_id === tenantId && c.id === id);
   }
 
   public insertCampaign(campaign: GrowthCampaign): GrowthCampaign {
@@ -6979,8 +6982,8 @@ class CommerceDatabase {
     return campaign;
   }
 
-  public updateCampaign(id: string, updates: Partial<GrowthCampaign>): GrowthCampaign {
-    const idx = this.data.campaigns.findIndex((c) => c.id === id);
+  public updateCampaign(tenantId: string, id: string, updates: Partial<GrowthCampaign>): GrowthCampaign {
+    const idx = this.data.campaigns.findIndex((c) => c.tenant_id === tenantId && c.id === id);
     if (idx === -1) throw new Error(`Campaign not found: ${id}`);
     const updated = { ...this.data.campaigns[idx], ...safePatch(updates), updated_at: new Date().toISOString() };
     this.data.campaigns[idx] = updated;
@@ -7000,8 +7003,8 @@ class CommerceDatabase {
     return exec;
   }
 
-  public updateCampaignExecution(id: string, updates: Partial<CampaignExecutionRecord>): CampaignExecutionRecord {
-    const idx = this.data.campaign_executions.findIndex((e) => e.id === id);
+  public updateCampaignExecution(tenantId: string, id: string, updates: Partial<CampaignExecutionRecord>): CampaignExecutionRecord {
+    const idx = this.data.campaign_executions.findIndex((e) => e.tenant_id === tenantId && e.id === id);
     if (idx === -1) throw new Error(`CampaignExecution not found: ${id}`);
     const updated = { ...this.data.campaign_executions[idx], ...safePatch(updates) };
     this.data.campaign_executions[idx] = updated;
@@ -7014,8 +7017,8 @@ class CommerceDatabase {
     return this.data.abandoned_carts.filter((c) => c.tenant_id === tenantId);
   }
 
-  public getAbandonedCartById(id: string): AbandonedCartRecoveryItem | undefined {
-    return this.data.abandoned_carts.find((c) => c.id === id);
+  public getAbandonedCartById(tenantId: string, id: string): AbandonedCartRecoveryItem | undefined {
+    return this.data.abandoned_carts.find((c) => c.tenant_id === tenantId && c.id === id);
   }
 
   public insertAbandonedCart(cart: AbandonedCartRecoveryItem): AbandonedCartRecoveryItem {
@@ -7024,8 +7027,8 @@ class CommerceDatabase {
     return cart;
   }
 
-  public updateAbandonedCart(id: string, updates: Partial<AbandonedCartRecoveryItem>): AbandonedCartRecoveryItem {
-    const idx = this.data.abandoned_carts.findIndex((c) => c.id === id);
+  public updateAbandonedCart(tenantId: string, id: string, updates: Partial<AbandonedCartRecoveryItem>): AbandonedCartRecoveryItem {
+    const idx = this.data.abandoned_carts.findIndex((c) => c.tenant_id === tenantId && c.id === id);
     if (idx === -1) throw new Error(`AbandonedCart not found: ${id}`);
     const updated = { ...this.data.abandoned_carts[idx], ...safePatch(updates) };
     this.data.abandoned_carts[idx] = updated;
@@ -7038,8 +7041,8 @@ class CommerceDatabase {
     return this.data.executive_digests.filter((d) => d.tenant_id === tenantId);
   }
 
-  public getExecutiveDigestById(id: string): ExecutiveDigest | undefined {
-    return this.data.executive_digests.find((d) => d.id === id);
+  public getExecutiveDigestById(tenantId: string, id: string): ExecutiveDigest | undefined {
+    return this.data.executive_digests.find((d) => d.tenant_id === tenantId && d.id === id);
   }
 
   public insertExecutiveDigest(digest: ExecutiveDigest): ExecutiveDigest {
@@ -7073,8 +7076,8 @@ class CommerceDatabase {
     return this.data.offers.filter((o) => o.tenant_id === tenantId);
   }
 
-  public getOfferById(id: string): GrowthOffer | undefined {
-    return this.data.offers.find((o) => o.id === id);
+  public getOfferById(tenantId: string, id: string): GrowthOffer | undefined {
+    return this.data.offers.find((o) => o.tenant_id === tenantId && o.id === id);
   }
 
   public insertOffer(offer: GrowthOffer): GrowthOffer {
@@ -7083,8 +7086,8 @@ class CommerceDatabase {
     return offer;
   }
 
-  public updateOffer(id: string, updates: Partial<GrowthOffer>): GrowthOffer {
-    const idx = this.data.offers.findIndex((o) => o.id === id);
+  public updateOffer(tenantId: string, id: string, updates: Partial<GrowthOffer>): GrowthOffer {
+    const idx = this.data.offers.findIndex((o) => o.tenant_id === tenantId && o.id === id);
     if (idx === -1) throw new Error(`Offer not found: ${id}`);
     const updated = { ...this.data.offers[idx], ...safePatch(updates) };
     this.data.offers[idx] = updated;
@@ -7109,8 +7112,8 @@ class CommerceDatabase {
     return this.data.experiments.filter((e) => e.tenant_id === tenantId);
   }
 
-  public getExperimentById(id: string): GrowthExperiment | undefined {
-    return this.data.experiments.find((e) => e.id === id);
+  public getExperimentById(tenantId: string, id: string): GrowthExperiment | undefined {
+    return this.data.experiments.find((e) => e.tenant_id === tenantId && e.id === id);
   }
 
   public insertExperiment(exp: GrowthExperiment): GrowthExperiment {
@@ -7119,8 +7122,8 @@ class CommerceDatabase {
     return exp;
   }
 
-  public updateExperiment(id: string, updates: Partial<GrowthExperiment>): GrowthExperiment {
-    const idx = this.data.experiments.findIndex((e) => e.id === id);
+  public updateExperiment(tenantId: string, id: string, updates: Partial<GrowthExperiment>): GrowthExperiment {
+    const idx = this.data.experiments.findIndex((e) => e.tenant_id === tenantId && e.id === id);
     if (idx === -1) throw new Error(`Experiment not found: ${id}`);
     const updated = { ...this.data.experiments[idx], ...safePatch(updates) };
     this.data.experiments[idx] = updated;
@@ -7208,8 +7211,8 @@ class CommerceDatabase {
     return rec;
   }
 
-  public updateGrowthRecommendation(id: string, updates: Partial<GrowthRecommendation>): GrowthRecommendation {
-    const idx = this.data.growth_recommendations.findIndex((r) => r.id === id);
+  public updateGrowthRecommendation(tenantId: string, id: string, updates: Partial<GrowthRecommendation>): GrowthRecommendation {
+    const idx = this.data.growth_recommendations.findIndex((r) => r.tenant_id === tenantId && r.id === id);
     if (idx === -1) throw new Error(`GrowthRecommendation not found: ${id}`);
     const updated = { ...this.data.growth_recommendations[idx], ...safePatch(updates) };
     this.data.growth_recommendations[idx] = updated;
@@ -7232,8 +7235,8 @@ class CommerceDatabase {
     return supplier;
   }
 
-  public updateSupplier(id: string, updates: Partial<Supplier>): Supplier {
-    const idx = this.data.suppliers.findIndex((s) => s.id === id);
+  public updateSupplier(tenantId: string, id: string, updates: Partial<Supplier>): Supplier {
+    const idx = this.data.suppliers.findIndex((s) => s.tenant_id === tenantId && s.id === id);
     if (idx === -1) throw new Error(`Supplier not found: ${id}`);
     const updated = { ...this.data.suppliers[idx], ...safePatch(updates), updated_at: new Date().toISOString() };
     this.data.suppliers[idx] = updated;
@@ -7267,8 +7270,8 @@ class CommerceDatabase {
     return po;
   }
 
-  public updatePurchaseOrder(id: string, updates: Partial<PurchaseOrder>): PurchaseOrder {
-    const idx = this.data.purchase_orders.findIndex((po) => po.id === id);
+  public updatePurchaseOrder(tenantId: string, id: string, updates: Partial<PurchaseOrder>): PurchaseOrder {
+    const idx = this.data.purchase_orders.findIndex((po) => po.tenant_id === tenantId && po.id === id);
     if (idx === -1) throw new Error(`PurchaseOrder not found: ${id}`);
     const updated = { ...this.data.purchase_orders[idx], ...safePatch(updates), updated_at: new Date().toISOString() };
     this.data.purchase_orders[idx] = updated;
@@ -7286,8 +7289,8 @@ class CommerceDatabase {
     return pr;
   }
 
-  public updateProcurementRecommendation(id: string, updates: Partial<ProcurementRecommendation>): ProcurementRecommendation {
-    const idx = this.data.procurement_recommendations.findIndex((pr) => pr.id === id);
+  public updateProcurementRecommendation(tenantId: string, id: string, updates: Partial<ProcurementRecommendation>): ProcurementRecommendation {
+    const idx = this.data.procurement_recommendations.findIndex((pr) => pr.tenant_id === tenantId && pr.id === id);
     if (idx === -1) throw new Error(`ProcurementRecommendation not found: ${id}`);
     const updated = { ...this.data.procurement_recommendations[idx], ...safePatch(updates) };
     this.data.procurement_recommendations[idx] = updated;
@@ -7321,8 +7324,8 @@ class CommerceDatabase {
     return rule;
   }
 
-  public updatePricingRule(id: string, updates: Partial<PricingRule>): PricingRule {
-    const idx = this.data.pricing_rules.findIndex((pr) => pr.id === id);
+  public updatePricingRule(tenantId: string, id: string, updates: Partial<PricingRule>): PricingRule {
+    const idx = this.data.pricing_rules.findIndex((pr) => pr.tenant_id === tenantId && pr.id === id);
     if (idx === -1) throw new Error(`PricingRule not found: ${id}`);
     const updated = { ...this.data.pricing_rules[idx], ...safePatch(updates), updated_at: new Date().toISOString() };
     this.data.pricing_rules[idx] = updated;
@@ -7340,8 +7343,8 @@ class CommerceDatabase {
     return rec;
   }
 
-  public updatePricingRecommendation(id: string, updates: Partial<PricingRecommendation>): PricingRecommendation {
-    const idx = this.data.pricing_recommendations.findIndex((pr) => pr.id === id);
+  public updatePricingRecommendation(tenantId: string, id: string, updates: Partial<PricingRecommendation>): PricingRecommendation {
+    const idx = this.data.pricing_recommendations.findIndex((pr) => pr.tenant_id === tenantId && pr.id === id);
     if (idx === -1) throw new Error(`PricingRecommendation not found: ${id}`);
     const updated = { ...this.data.pricing_recommendations[idx], ...safePatch(updates) };
     this.data.pricing_recommendations[idx] = updated;
@@ -7359,8 +7362,8 @@ class CommerceDatabase {
     return req;
   }
 
-  public updatePriceChangeRequest(id: string, updates: Partial<PriceChangeRequest>): PriceChangeRequest {
-    const idx = this.data.price_change_requests.findIndex((pcr) => pcr.id === id);
+  public updatePriceChangeRequest(tenantId: string, id: string, updates: Partial<PriceChangeRequest>): PriceChangeRequest {
+    const idx = this.data.price_change_requests.findIndex((pcr) => pcr.tenant_id === tenantId && pcr.id === id);
     if (idx === -1) throw new Error(`PriceChangeRequest not found: ${id}`);
     const updated = { ...this.data.price_change_requests[idx], ...safePatch(updates) };
     this.data.price_change_requests[idx] = updated;
@@ -7404,8 +7407,8 @@ class CommerceDatabase {
     return se;
   }
 
-  public updateShipmentException(id: string, updates: Partial<ShipmentException>): ShipmentException {
-    const idx = this.data.shipment_exceptions.findIndex((se) => se.id === id);
+  public updateShipmentException(tenantId: string, id: string, updates: Partial<ShipmentException>): ShipmentException {
+    const idx = this.data.shipment_exceptions.findIndex((se) => se.tenant_id === tenantId && se.id === id);
     if (idx === -1) throw new Error(`ShipmentException not found: ${id}`);
     const updated = { ...this.data.shipment_exceptions[idx], ...safePatch(updates) };
     this.data.shipment_exceptions[idx] = updated;
@@ -7444,8 +7447,8 @@ class CommerceDatabase {
     return pe;
   }
 
-  public updatePaymentException(id: string, updates: Partial<PaymentException>): PaymentException {
-    const idx = this.data.payment_exceptions.findIndex((pe) => pe.id === id);
+  public updatePaymentException(tenantId: string, id: string, updates: Partial<PaymentException>): PaymentException {
+    const idx = this.data.payment_exceptions.findIndex((pe) => pe.tenant_id === tenantId && pe.id === id);
     if (idx === -1) throw new Error(`PaymentException not found: ${id}`);
     const updated = { ...this.data.payment_exceptions[idx], ...safePatch(updates) };
     this.data.payment_exceptions[idx] = updated;
@@ -7485,8 +7488,8 @@ class CommerceDatabase {
     return fe;
   }
 
-  public updateFinancialException(id: string, updates: Partial<FinancialException>): FinancialException {
-    const idx = this.data.financial_exceptions.findIndex((fe) => fe.id === id);
+  public updateFinancialException(tenantId: string, id: string, updates: Partial<FinancialException>): FinancialException {
+    const idx = this.data.financial_exceptions.findIndex((fe) => fe.tenant_id === tenantId && fe.id === id);
     if (idx === -1) throw new Error(`FinancialException not found: ${id}`);
     const updated = { ...this.data.financial_exceptions[idx], ...safePatch(updates) };
     this.data.financial_exceptions[idx] = updated;
@@ -7519,8 +7522,8 @@ class CommerceDatabase {
     return ticket;
   }
 
-  public updateSupportTicket(id: string, updates: Partial<SupportTicket>): SupportTicket {
-    const idx = this.data.support_tickets.findIndex((st) => st.id === id);
+  public updateSupportTicket(tenantId: string, id: string, updates: Partial<SupportTicket>): SupportTicket {
+    const idx = this.data.support_tickets.findIndex((st) => st.tenant_id === tenantId && st.id === id);
     if (idx === -1) throw new Error(`SupportTicket not found: ${id}`);
     const updated = { ...this.data.support_tickets[idx], ...safePatch(updates), updated_at: new Date().toISOString() };
     this.data.support_tickets[idx] = updated;
@@ -7543,8 +7546,8 @@ class CommerceDatabase {
     return oe;
   }
 
-  public updateOperationalException(id: string, updates: Partial<OperationalException>): OperationalException {
-    const idx = this.data.operational_exceptions.findIndex((oe) => oe.id === id);
+  public updateOperationalException(tenantId: string, id: string, updates: Partial<OperationalException>): OperationalException {
+    const idx = this.data.operational_exceptions.findIndex((oe) => oe.tenant_id === tenantId && oe.id === id);
     if (idx === -1) throw new Error(`OperationalException not found: ${id}`);
     const updated = { ...this.data.operational_exceptions[idx], ...safePatch(updates), updated_at: new Date().toISOString() };
     this.data.operational_exceptions[idx] = updated;
@@ -7597,8 +7600,8 @@ class CommerceDatabase {
     return incident;
   }
 
-  public updateProviderIncident(id: string, updates: Partial<ProviderIncident>): ProviderIncident {
-    const idx = this.data.provider_incidents.findIndex((pi) => pi.id === id);
+  public updateProviderIncident(tenantId: string, id: string, updates: Partial<ProviderIncident>): ProviderIncident {
+    const idx = this.data.provider_incidents.findIndex((pi) => pi.tenant_id === tenantId && pi.id === id);
     if (idx === -1) throw new Error(`ProviderIncident not found: ${id}`);
     const updated = { ...this.data.provider_incidents[idx], ...safePatch(updates) };
     this.data.provider_incidents[idx] = updated;
@@ -7632,8 +7635,8 @@ class CommerceDatabase {
     return sb;
   }
 
-  public updateSLABreach(id: string, updates: Partial<SLABreach>): SLABreach {
-    const idx = this.data.sla_breaches.findIndex((sb) => sb.id === id);
+  public updateSLABreach(tenantId: string, id: string, updates: Partial<SLABreach>): SLABreach {
+    const idx = this.data.sla_breaches.findIndex((sb) => sb.tenant_id === tenantId && sb.id === id);
     if (idx === -1) throw new Error(`SLABreach not found: ${id}`);
     const updated = { ...this.data.sla_breaches[idx], ...safePatch(updates) };
     this.data.sla_breaches[idx] = updated;
@@ -7667,8 +7670,8 @@ class CommerceDatabase {
     return bs;
   }
 
-  public updateBulkSafeguard(id: string, updates: Partial<BulkOperationSafeguard>): BulkOperationSafeguard {
-    const idx = this.data.bulk_safeguards.findIndex((bs) => bs.id === id);
+  public updateBulkSafeguard(tenantId: string, id: string, updates: Partial<BulkOperationSafeguard>): BulkOperationSafeguard {
+    const idx = this.data.bulk_safeguards.findIndex((bs) => bs.tenant_id === tenantId && bs.id === id);
     if (idx === -1) throw new Error(`BulkOperationSafeguard not found: ${id}`);
     const updated = { ...this.data.bulk_safeguards[idx], ...safePatch(updates) };
     this.data.bulk_safeguards[idx] = updated;
@@ -8051,8 +8054,8 @@ class CommerceDatabase {
     return i;
   }
 
-  public updateIntegrationInstallation(id: string, updates: Partial<IntegrationInstallation>): IntegrationInstallation {
-    const idx = this.data.integration_installations.findIndex((i) => i.id === id);
+  public updateIntegrationInstallation(orgId: string, id: string, updates: Partial<IntegrationInstallation>): IntegrationInstallation {
+    const idx = this.data.integration_installations.findIndex((i) => i.organization_id === orgId && i.id === id);
     if (idx === -1) throw new Error(`Integration installation not found: ${id}`);
     this.data.integration_installations[idx] = {
       ...this.data.integration_installations[idx],
@@ -8191,8 +8194,8 @@ class CommerceDatabase {
     return i;
   }
 
-  public resolveDataQualityIssue(id: string, notes: string): DataQualityIssue {
-    const idx = this.data.data_quality_issues.findIndex((i) => i.id === id);
+  public resolveDataQualityIssue(orgId: string, id: string, notes: string): DataQualityIssue {
+    const idx = this.data.data_quality_issues.findIndex((i) => i.organization_id === orgId && i.id === id);
     if (idx === -1) throw new Error(`Data quality issue not found: ${id}`);
     this.data.data_quality_issues[idx] = {
       ...this.data.data_quality_issues[idx],
@@ -8239,8 +8242,8 @@ class CommerceDatabase {
     return i;
   }
 
-  public updateEnterpriseIncident(id: string, updates: Partial<EnterpriseIncident>): EnterpriseIncident {
-    const idx = this.data.enterprise_incidents.findIndex((i) => i.id === id);
+  public updateEnterpriseIncident(orgId: string, id: string, updates: Partial<EnterpriseIncident>): EnterpriseIncident {
+    const idx = this.data.enterprise_incidents.findIndex((i) => i.organization_id === orgId && i.id === id);
     if (idx === -1) throw new Error(`Incident not found: ${id}`);
     this.data.enterprise_incidents[idx] = {
       ...this.data.enterprise_incidents[idx],
@@ -8500,9 +8503,9 @@ class CommerceDatabase {
     return rec;
   }
 
-  public updateIdempotencyRecord(id: string, updates: Partial<IdempotencyRecord>): IdempotencyRecord {
+  public updateIdempotencyRecord(tenantId: string, id: string, updates: Partial<IdempotencyRecord>): IdempotencyRecord {
     if (!this.data.idempotency_records) this.data.idempotency_records = [];
-    const idx = this.data.idempotency_records.findIndex((r) => r.id === id);
+    const idx = this.data.idempotency_records.findIndex((r) => r.tenant_id === tenantId && r.id === id);
     if (idx === -1) throw new Error(`Idempotency record not found: ${id}`);
     this.data.idempotency_records[idx] = {
       ...this.data.idempotency_records[idx],
@@ -8525,9 +8528,9 @@ class CommerceDatabase {
     return retry;
   }
 
-  public updateAutomationRetry(id: string, updates: Partial<AutomationRetry>): AutomationRetry {
+  public updateAutomationRetry(tenantId: string, id: string, updates: Partial<AutomationRetry>): AutomationRetry {
     if (!this.data.automation_retries) this.data.automation_retries = [];
-    const idx = this.data.automation_retries.findIndex((r) => r.id === id);
+    const idx = this.data.automation_retries.findIndex((r) => r.tenant_id === tenantId && r.id === id);
     if (idx === -1) throw new Error(`Retry record not found: ${id}`);
     this.data.automation_retries[idx] = {
       ...this.data.automation_retries[idx],
@@ -8556,9 +8559,9 @@ class CommerceDatabase {
     return dlq;
   }
 
-  public updateAutomationDeadLetter(id: string, updates: Partial<AutomationDeadLetter>): AutomationDeadLetter {
+  public updateAutomationDeadLetter(tenantId: string, id: string, updates: Partial<AutomationDeadLetter>): AutomationDeadLetter {
     if (!this.data.automation_dead_letters) this.data.automation_dead_letters = [];
-    const idx = this.data.automation_dead_letters.findIndex((d) => d.id === id);
+    const idx = this.data.automation_dead_letters.findIndex((d) => d.tenant_id === tenantId && d.id === id);
     if (idx === -1) throw new Error(`Dead letter record not found: ${id}`);
     this.data.automation_dead_letters[idx] = {
       ...this.data.automation_dead_letters[idx],

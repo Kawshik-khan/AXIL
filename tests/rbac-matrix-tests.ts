@@ -291,7 +291,7 @@ async function main() {
   await runTest("a high-risk campaign cannot be approved by its own creator (four-eyes)", async () => {
     const id = campaign(admin.id, "HIGH");
     assert.strictEqual(await callById(approveRoute, id, "POST", admin.token), 403);
-    assert.notStrictEqual(db.getCampaignById(id)?.status, "APPROVED");
+    assert.notStrictEqual(db.getCampaignById(TENANT_ID, id)?.status, "APPROVED");
   });
 
   await runTest("a body-supplied approved_by is ignored: the approver is the signed-in user", async () => {
@@ -303,7 +303,7 @@ async function main() {
     const creator = await member("MARKETING");
     const id = campaign(creator.id, "HIGH");
     assert.strictEqual(await callById(approveRoute, id, "POST", admin.token), 200);
-    assert.strictEqual(db.getCampaignById(id)?.status, "APPROVED");
+    assert.strictEqual(db.getCampaignById(TENANT_ID, id)?.status, "APPROVED");
   });
 
   await runTest("MARKETING can create campaigns but cannot approve them", async () => {

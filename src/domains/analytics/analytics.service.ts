@@ -553,7 +553,7 @@ export class AnalyticsService {
     id: string
   ): Promise<ExecutiveDigest | undefined> {
     RbacService.assertCan(context, PERMISSIONS.ANALYTICS_READ);
-    return db.getExecutiveDigestById(id);
+    return db.getExecutiveDigestById(context.tenant.id, id);
   }
 
   /**

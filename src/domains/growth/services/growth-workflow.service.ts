@@ -151,7 +151,7 @@ export class GrowthWorkflowService {
    * Workflow 6: Campaign Optimization & A/B Experimentation
    */
   public async runCampaignOptimization(tenantId: string, campaignId: string): Promise<WorkflowExecutionResult> {
-    const campaign = db.getCampaignById(campaignId);
+    const campaign = db.getCampaignById(tenantId, campaignId);
     if (!campaign) throw new Error(`Campaign not found: ${campaignId}`);
 
     // Check if experiment is active or create experiment recommendation

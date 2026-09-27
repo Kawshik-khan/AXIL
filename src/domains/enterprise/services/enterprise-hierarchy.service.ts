@@ -40,6 +40,8 @@ export class EnterpriseHierarchyService {
    */
   public createOrganization(params: {
     id?: string;
+    /** Owning workspace (FX-13). */
+    tenantId?: string;
     name: string;
     slug: string;
     legal_name: string;
@@ -50,6 +52,7 @@ export class EnterpriseHierarchyService {
   }): Organization {
     const org: Organization = {
       id: params.id || `org_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      tenant_id: params.tenantId,
       name: params.name,
       slug: params.slug,
       legal_name: params.legal_name,

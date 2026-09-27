@@ -61,7 +61,7 @@ export class BulkSafeguardService {
       throw new Error(`Bulk operation ${safeguardId} was halted by emergency kill switch.`);
     }
 
-    db.updateBulkSafeguard(safeguardId, {
+    db.updateBulkSafeguard(tenantId, safeguardId, {
       status: "RUNNING",
       started_at: new Date().toISOString(),
     });
@@ -70,7 +70,7 @@ export class BulkSafeguardService {
       // Re-check kill switch on each iteration
       const current = db.getBulkSafeguards(tenantId).find((bs) => bs.id === safeguardId);
       if (current?.kill_switch_active) {
-        db.updateBulkSafeguard(safeguardId, { status: "HALTED" });
+        db.updateBulkSafeguard(tenantId, safeguardId, { status: "HALTED" });
         return current;
       }
 
@@ -87,7 +87,7 @@ export class BulkSafeguardService {
       safeguard.processed_count++;
     }
 
-    const completed = db.updateBulkSafeguard(safeguardId, {
+    const completed = db.updateBulkSafeguard(tenantId, safeguardId, {
       status: "COMPLETED",
       processed_count: safeguard.processed_count,
       successful_count: safeguard.successful_count,
@@ -118,7 +118,7 @@ export class BulkSafeguardService {
    * Immediately halts an active bulk operation
    */
   public triggerBulkKillSwitch(tenantId: string, safeguardId: string): BulkOperationSafeguard {
-    return db.updateBulkSafeguard(safeguardId, {
+    return db.updateBulkSafeguard(tenantId, safeguardId, {
       kill_switch_active: true,
       status: "HALTED",
     });

@@ -44,7 +44,7 @@ export async function GET(
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.MARKETING_READ);
     const { id } = await params;
-    const campaign = db.getCampaignById(id);
+    const campaign = db.getCampaignById(context.tenant.id, id);
     if (!campaign || campaign.tenant_id !== context.tenant.id) {
       return apiError(new Error("Campaign not found"));
     }

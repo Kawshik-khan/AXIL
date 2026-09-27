@@ -1,3 +1,4 @@
+import { NotFoundError } from "@/lib/errors";
 import {
   ApprovalRequest,
   ApprovalStatus,
@@ -19,12 +20,14 @@ export class ApprovalEngine {
    * Approves a pending action with mandatory pre-execution entity state revalidation.
    */
   public async approveAction(
+    tenantId: string,
     approvalId: string,
     approvedBy: string
   ): Promise<ApprovalResolutionResult> {
-    const approval = db.getApprovalRequestById(approvalId);
+    // Scoped to the caller's tenant: another tenant's approval id is simply not found (FX-13, audit H13).
+    const approval = db.getApprovalRequestById(tenantId, approvalId);
     if (!approval) {
-      throw new Error(`Approval request not found: ${approvalId}`);
+      throw new NotFoundError("Approval request", approvalId);
     }
 
     if (approval.status !== ApprovalStatus.PENDING) {
@@ -37,7 +40,7 @@ export class ApprovalEngine {
 
     // 1. Expiration check
     if (new Date() > new Date(approval.expires_at)) {
-      const expired = db.updateApprovalRequest(approvalId, {
+      const expired = db.updateApprovalRequest(tenantId, approvalId, {
         status: ApprovalStatus.EXPIRED,
       });
       return {
@@ -50,7 +53,7 @@ export class ApprovalEngine {
     // 2. Pre-Execution Entity State Revalidation
     const isStale = this.checkEntityStaleness(approval);
     if (isStale.stale) {
-      const staleApproval = db.updateApprovalRequest(approvalId, {
+      const staleApproval = db.updateApprovalRequest(tenantId, approvalId, {
         status: ApprovalStatus.REJECTED,
         rejected_by: "SYSTEM_VALIDATOR",
         rejected_at: new Date().toISOString(),
@@ -58,9 +61,9 @@ export class ApprovalEngine {
       });
 
       // Fail or cancel associated task due to stale concurrency if it exists
-      const associatedTask = db.getTaskById(approval.task_id);
+      const associatedTask = db.getTaskById(tenantId, approval.task_id);
       if (associatedTask) {
-        db.updateTask(approval.task_id, {
+        db.updateTask(tenantId, approval.task_id, {
           status: TaskStatus.FAILED,
           error: `Stale state rejection: ${isStale.reason}`,
         });
@@ -75,24 +78,24 @@ export class ApprovalEngine {
     }
 
     // 3. Mark Approved
-    const approved = db.updateApprovalRequest(approvalId, {
+    const approved = db.updateApprovalRequest(tenantId, approvalId, {
       status: ApprovalStatus.APPROVED,
       approved_by: approvedBy,
       approved_at: new Date().toISOString(),
     });
 
     // 4. Update task to READY or RUNNING and resume workflow
-    const task = db.getTaskById(approval.task_id);
+    const task = db.getTaskById(tenantId, approval.task_id);
     if (task) {
-      db.updateTask(task.id, {
+      db.updateTask(tenantId, task.id, {
         status: TaskStatus.READY,
         approval_id: approval.id,
       });
 
-      const workflow = db.getWorkflowById(approval.workflow_id);
+      const workflow = db.getWorkflowById(tenantId, approval.workflow_id);
       if (workflow && workflow.status === WorkflowStatus.WAITING) {
         // Automatically resume workflow execution asynchronously
-        workflowEngine.resumeWorkflow(workflow.id).catch((err) => {
+        workflowEngine.resumeWorkflow(workflow.tenant_id, workflow.id).catch((err) => {
           console.error(`Error resuming workflow ${workflow.id}:`, err);
         });
       }
@@ -108,16 +111,17 @@ export class ApprovalEngine {
    * Rejects an approval request with explicit operator reason
    */
   public async rejectAction(
+    tenantId: string,
     approvalId: string,
     rejectedBy: string,
     reason: string
   ): Promise<ApprovalResolutionResult> {
-    const approval = db.getApprovalRequestById(approvalId);
+    const approval = db.getApprovalRequestById(tenantId, approvalId);
     if (!approval) {
-      throw new Error(`Approval request not found: ${approvalId}`);
+      throw new NotFoundError("Approval request", approvalId);
     }
 
-    const rejected = db.updateApprovalRequest(approvalId, {
+    const rejected = db.updateApprovalRequest(tenantId, approvalId, {
       status: ApprovalStatus.REJECTED,
       rejected_by: rejectedBy,
       rejected_at: new Date().toISOString(),
@@ -125,9 +129,9 @@ export class ApprovalEngine {
     });
 
     // Cancel or fail the task
-    const task = db.getTaskById(approval.task_id);
+    const task = db.getTaskById(tenantId, approval.task_id);
     if (task) {
-      db.updateTask(task.id, {
+      db.updateTask(tenantId, task.id, {
         status: TaskStatus.CANCELLED,
         error: `Rejected by operator (${rejectedBy}): ${reason}`,
       });

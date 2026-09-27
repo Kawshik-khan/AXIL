@@ -78,7 +78,7 @@ export class ExceptionManagementService {
     if (!exc) throw new Error(`Operational exception not found: ${exceptionId}`);
 
     const now = new Date().toISOString();
-    const updated = db.updateOperationalException(exceptionId, {
+    const updated = db.updateOperationalException(tenantId, exceptionId, {
       status: "RESOLVED",
       resolution_notes: resolutionNotes,
       resolved_at: now,
@@ -110,7 +110,7 @@ export class ExceptionManagementService {
     const exc = db.findOperationalExceptionById(tenantId, exceptionId);
     if (!exc) throw new Error(`Operational exception not found: ${exceptionId}`);
 
-    const updated = db.updateOperationalException(exceptionId, {
+    const updated = db.updateOperationalException(tenantId, exceptionId, {
       status: "ESCALATED",
       resolution_notes: `Escalated to human supervisor: ${reason}`,
     });

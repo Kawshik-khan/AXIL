@@ -41,11 +41,11 @@ export class TaskExecutor {
     // 1. Dependency Check
     if (task.dependencies && task.dependencies.length > 0) {
       for (const dep of task.dependencies) {
-        const depTask = db.getTaskById(dep.task_id);
+        const depTask = db.getTaskById(tenantId, dep.task_id);
         const requiredStatus = dep.required_status || TaskStatus.COMPLETED;
         if (!depTask || depTask.status !== requiredStatus) {
           workflowStateMachine.assertTaskTransition(task.status, TaskStatus.WAITING_DEPENDENCY);
-          const updated = db.updateTask(task.id, { status: TaskStatus.WAITING_DEPENDENCY });
+          const updated = db.updateTask(tenantId, task.id, { status: TaskStatus.WAITING_DEPENDENCY });
           return {
             task: updated,
             status: TaskStatus.WAITING_DEPENDENCY,
@@ -59,7 +59,7 @@ export class TaskExecutor {
     const isEmergencyStopped = policy?.is_emergency_stopped || false;
     if (isEmergencyStopped) {
       const err = `Execution halted: Emergency Kill Switch active for agent ${task.agent_type}`;
-      db.updateTask(task.id, { status: TaskStatus.FAILED, error: err });
+      db.updateTask(tenantId, task.id, { status: TaskStatus.FAILED, error: err });
       return { task: { ...task, status: TaskStatus.FAILED, error: err }, status: TaskStatus.FAILED, error: err };
     }
 
@@ -91,7 +91,7 @@ export class TaskExecutor {
       };
 
       db.insertApprovalRequest(approvalReq);
-      const updated = db.updateTask(task.id, {
+      const updated = db.updateTask(tenantId, task.id, {
         status: TaskStatus.WAITING_APPROVAL,
         approval_id: approvalId,
       });
@@ -106,7 +106,7 @@ export class TaskExecutor {
 
     // 3. Mark Task as RUNNING
     workflowStateMachine.assertTaskTransition(task.status, TaskStatus.RUNNING);
-    db.updateTask(task.id, {
+    db.updateTask(tenantId, task.id, {
       status: TaskStatus.RUNNING,
       started_at: new Date().toISOString(),
       attempt_count: task.attempt_count + 1,
@@ -167,7 +167,7 @@ export class TaskExecutor {
 
       // 7. Complete Task
       workflowStateMachine.assertTaskTransition(TaskStatus.RUNNING, TaskStatus.COMPLETED);
-      const completedTask = db.updateTask(task.id, {
+      const completedTask = db.updateTask(tenantId, task.id, {
         status: TaskStatus.COMPLETED,
         output,
         completed_at: new Date().toISOString(),
@@ -198,13 +198,13 @@ export class TaskExecutor {
       
       // Determine retry eligibility
       if (task.attempt_count < task.max_attempts) {
-        db.updateTask(task.id, {
+        db.updateTask(tenantId, task.id, {
           status: TaskStatus.PENDING,
           error: `Attempt ${task.attempt_count} failed: ${errorMessage}`,
         });
       } else {
         workflowStateMachine.assertTaskTransition(TaskStatus.RUNNING, TaskStatus.FAILED);
-        db.updateTask(task.id, {
+        db.updateTask(tenantId, task.id, {
           status: TaskStatus.FAILED,
           error: errorMessage,
         });
@@ -225,7 +225,7 @@ export class TaskExecutor {
       });
 
       return {
-        task: db.getTaskById(task.id) || task,
+        task: db.getTaskById(tenantId, task.id) || task,
         status: task.attempt_count < task.max_attempts ? TaskStatus.PENDING : TaskStatus.FAILED,
         error: errorMessage,
       };

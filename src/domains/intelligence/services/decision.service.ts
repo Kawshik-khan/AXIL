@@ -1,3 +1,4 @@
+import { NotFoundError } from "@/lib/errors";
 /**
  * CommerceOS Phase 6: Decision Engine & Phase 5 Workflow Bridge
  * Evaluates recommendation policy, manages human approval gates, and dispatches durable DAG workflows.
@@ -18,7 +19,7 @@ export class DecisionService {
     recommendationId: string,
     context: Record<string, unknown> = {}
   ): Promise<DecisionRequest> {
-    const rec = db.getRecommendationById(recommendationId);
+    const rec = db.getRecommendationById(tenantId, recommendationId);
     if (!rec) {
       throw new Error(`Recommendation not found: ${recommendationId}`);
     }
@@ -75,7 +76,7 @@ export class DecisionService {
       status = "PENDING_APPROVAL";
 
       // Mark recommendation under review
-      db.updateRecommendation(rec.id, { status: "REVIEWING" });
+      db.updateRecommendation(tenantId, rec.id, { status: "REVIEWING" });
     } else {
       // Autonomous execution allowed by Level 4 policy!
       status = "EXECUTING";
@@ -118,21 +119,22 @@ export class DecisionService {
    * Human operator approves the decision request
    */
   public async approveDecision(
+    tenantId: string,
     decisionId: string,
     operatorName: string
   ): Promise<{ decision: DecisionRequest; workflowId: string }> {
-    const dec = db.getDecisionRequestById(decisionId);
-    if (!dec) throw new Error(`DecisionRequest not found: ${decisionId}`);
+    const dec = db.getDecisionRequestById(tenantId, decisionId);
+    if (!dec) throw new NotFoundError("Decision request", decisionId);
 
     if (dec.status !== "PENDING_APPROVAL" && dec.status !== "EVALUATING") {
       throw new Error(`Decision cannot be approved in status: ${dec.status}`);
     }
 
-    const rec = dec.recommendation_id ? db.getRecommendationById(dec.recommendation_id) : undefined;
+    const rec = dec.recommendation_id ? db.getRecommendationById(tenantId, dec.recommendation_id) : undefined;
 
     // Resolve approval request if present
     if (dec.approval_id) {
-      db.updateApprovalRequest(dec.approval_id, {
+      db.updateApprovalRequest(tenantId, dec.approval_id, {
         status: ApprovalStatus.APPROVED,
         approved_by: operatorName,
         approved_at: new Date().toISOString(),
@@ -142,13 +144,13 @@ export class DecisionService {
     // Execute through Phase 5 Workflow Engine
     const wf = await this.executeDecisionWorkflow(dec, rec);
 
-    const updated = db.updateDecisionRequest(dec.id, {
+    const updated = db.updateDecisionRequest(tenantId, dec.id, {
       status: "EXECUTING",
       workflow_id: wf.id,
     });
 
     if (rec) {
-      db.updateRecommendation(rec.id, {
+      db.updateRecommendation(tenantId, rec.id, {
         status: "APPROVED",
         reviewed_by: operatorName,
         reviewed_at: new Date().toISOString(),
@@ -163,15 +165,16 @@ export class DecisionService {
    * Human operator rejects the decision request
    */
   public async rejectDecision(
+    tenantId: string,
     decisionId: string,
     operatorName: string,
     reason: string
   ): Promise<DecisionRequest> {
-    const dec = db.getDecisionRequestById(decisionId);
-    if (!dec) throw new Error(`DecisionRequest not found: ${decisionId}`);
+    const dec = db.getDecisionRequestById(tenantId, decisionId);
+    if (!dec) throw new NotFoundError("Decision request", decisionId);
 
     if (dec.approval_id) {
-      db.updateApprovalRequest(dec.approval_id, {
+      db.updateApprovalRequest(tenantId, dec.approval_id, {
         status: ApprovalStatus.REJECTED,
         rejected_by: operatorName,
         rejected_at: new Date().toISOString(),
@@ -179,12 +182,12 @@ export class DecisionService {
       });
     }
 
-    const updated = db.updateDecisionRequest(dec.id, {
+    const updated = db.updateDecisionRequest(tenantId, dec.id, {
       status: "REJECTED",
     });
 
     if (dec.recommendation_id) {
-      db.updateRecommendation(dec.recommendation_id, {
+      db.updateRecommendation(tenantId, dec.recommendation_id, {
         status: "REJECTED",
         reviewed_by: operatorName,
         reviewed_at: new Date().toISOString(),
@@ -210,7 +213,7 @@ export class DecisionService {
     });
 
     // Start execution loop
-    await workflowEngine.startWorkflow(workflow.id);
+    await workflowEngine.startWorkflow(workflow.tenant_id, workflow.id);
 
     return workflow;
   }

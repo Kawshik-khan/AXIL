@@ -69,7 +69,7 @@ export class ExperimentService {
 
     if (existing) return existing;
 
-    const exp = db.getExperimentById(experimentId);
+    const exp = db.getExperimentById(tenantId, experimentId);
     if (!exp) throw new Error(`Experiment not found: ${experimentId}`);
 
     // Deterministic hash based on customerId + experimentId
@@ -129,7 +129,7 @@ export class ExperimentService {
    * Evaluates experiment statistical significance and winner status
    */
   public evaluateExperiment(tenantId: string, experimentId: string): ExperimentResult {
-    const exp = db.getExperimentById(experimentId);
+    const exp = db.getExperimentById(tenantId, experimentId);
     if (!exp || exp.tenant_id !== tenantId) {
       throw new Error(`Experiment not found: ${experimentId}`);
     }
@@ -190,7 +190,7 @@ export class ExperimentService {
     };
 
     if (bestVariantId) {
-      db.updateExperiment(experimentId, {
+      db.updateExperiment(tenantId, experimentId, {
         winning_variant_id: bestVariantId,
         status: "COMPLETED",
         concluded_at: new Date().toISOString(),

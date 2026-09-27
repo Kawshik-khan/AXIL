@@ -12,15 +12,15 @@ export async function GET(
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.AI_READ);
 
-    const workflow = db.getWorkflowById(params.id);
+    const workflow = db.getWorkflowById(context.tenant.id, params.id);
     if (!workflow || workflow.tenant_id !== context.tenant.id) {
       throw new NotFoundError(`Workflow '${params.id}' not found`);
     }
 
     const tasks = db.getTasks(context.tenant.id, workflow.id);
-    const workflowContext = db.getWorkflowContext(workflow.id);
-    const artifacts = db.getWorkflowArtifacts(workflow.id);
-    const checkpoints = db.getWorkflowCheckpoints(workflow.id);
+    const workflowContext = db.getWorkflowContext(context.tenant.id, workflow.id);
+    const artifacts = db.getWorkflowArtifacts(context.tenant.id, workflow.id);
+    const checkpoints = db.getWorkflowCheckpoints(context.tenant.id, workflow.id);
     const messages = db.getAgentMessages(context.tenant.id, workflow.id);
 
     return apiSuccess({

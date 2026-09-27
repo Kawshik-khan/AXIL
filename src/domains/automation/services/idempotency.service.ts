@@ -43,7 +43,7 @@ export class IdempotencyService {
       // Check expiration
       if (new Date(existing.expires_at) < now) {
         // Expired record, re-open for processing
-        db.updateIdempotencyRecord(existing.id, {
+        db.updateIdempotencyRecord(tenantId, existing.id, {
           status: "PROCESSING",
           request_hash: this.hashPayload(payload),
           response_data: undefined,
@@ -70,7 +70,7 @@ export class IdempotencyService {
       }
 
       // If previous attempt failed, allow retry by updating status back to PROCESSING
-      db.updateIdempotencyRecord(existing.id, {
+      db.updateIdempotencyRecord(tenantId, existing.id, {
         status: "PROCESSING",
         request_hash: this.hashPayload(payload),
         expires_at: new Date(now.getTime() + ttlMs).toISOString(),
@@ -106,7 +106,7 @@ export class IdempotencyService {
     const existing = db.getIdempotencyRecord(tenantId, idempotencyKey, operation);
     if (!existing) return;
 
-    db.updateIdempotencyRecord(existing.id, {
+    db.updateIdempotencyRecord(tenantId, existing.id, {
       status: "COMPLETED",
       response_data: responseData,
     });
@@ -124,7 +124,7 @@ export class IdempotencyService {
     const existing = db.getIdempotencyRecord(tenantId, idempotencyKey, operation);
     if (!existing) return;
 
-    db.updateIdempotencyRecord(existing.id, {
+    db.updateIdempotencyRecord(tenantId, existing.id, {
       status: "FAILED",
       response_data: errorDetails,
     });

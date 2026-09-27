@@ -50,7 +50,7 @@ export async function PUT(
       return apiError(new Error("Audience not found"));
     }
 
-    const updated = db.updateAudience(id, body);
+    const updated = db.updateAudience(context.tenant.id, id, body);
     return apiSuccess({ audience: updated });
   } catch (err) {
     return apiError(err);

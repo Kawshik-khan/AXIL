@@ -1,3 +1,4 @@
+import { resolveOrganizationId } from "@/domains/enterprise/organization-access";
 import { PERMISSIONS } from "@/lib/permissions";
 import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
@@ -9,7 +10,7 @@ export async function GET(request: Request) {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.STORE_READ);
     const { searchParams } = new URL(request.url);
-    const orgId = searchParams.get("organization_id") || "org_default";
+    const orgId = resolveOrganizationId(context, searchParams.get("organization_id"));
 
     const stores = db.getEnterpriseStores(orgId);
     return apiSuccess({
@@ -27,7 +28,7 @@ export async function POST(request: Request) {
     RbacService.assertCan(context, PERMISSIONS.STORE_MANAGE);
     const body = await request.json();
 
-    const orgId = body.organization_id || "org_default";
+    const orgId = resolveOrganizationId(context, body.organization_id);
     const created = enterpriseHierarchyService.createStore(orgId, {
       business_unit_id: body.business_unit_id || "bu_default",
       brand_id: body.brand_id || "br_default",

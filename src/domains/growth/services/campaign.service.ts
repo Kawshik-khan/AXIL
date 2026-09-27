@@ -87,7 +87,7 @@ export class CampaignService {
   }): GrowthCampaign {
     const { tenantId, name, objective, audienceId, channel, variants, offerId, targetProducts, budgetBdt, scheduledStartAt, createdBy } = params;
 
-    const audience = db.getAudienceById(audienceId);
+    const audience = db.getAudienceById(tenantId, audienceId);
     if (!audience || audience.tenant_id !== tenantId) {
       throw new Error(`Audience not found: ${audienceId}`);
     }
@@ -95,7 +95,7 @@ export class CampaignService {
     let discountVal = 0;
     let discountType = "";
     if (offerId) {
-      const offer = db.getOfferById(offerId);
+      const offer = db.getOfferById(tenantId, offerId);
       if (offer) {
         discountVal = offer.value;
         discountType = offer.type;
@@ -154,7 +154,7 @@ export class CampaignService {
       scheduled_end_at?: string | null;
     }
   ): GrowthCampaign {
-    const campaign = db.getCampaignById(campaignId);
+    const campaign = db.getCampaignById(tenantId, campaignId);
     if (!campaign || campaign.tenant_id !== tenantId) {
       throw new NotFoundError("Campaign", campaignId);
     }
@@ -163,12 +163,12 @@ export class CampaignService {
     }
 
     const audienceId = patch.audience_id ?? campaign.audience_id;
-    const audience = db.getAudienceById(audienceId);
+    const audience = db.getAudienceById(tenantId, audienceId);
     if (!audience || audience.tenant_id !== tenantId) {
       throw new NotFoundError("Audience", audienceId);
     }
     const offerId = patch.offer_id === null ? undefined : patch.offer_id ?? campaign.offer_id;
-    const offer = offerId ? db.getOfferById(offerId) : undefined;
+    const offer = offerId ? db.getOfferById(tenantId, offerId) : undefined;
     if (offerId && (!offer || offer.tenant_id !== tenantId)) {
       throw new NotFoundError("Offer", offerId);
     }
@@ -180,7 +180,7 @@ export class CampaignService {
       discountType: offer?.type ?? "",
     });
 
-    return db.updateCampaign(campaignId, {
+    return db.updateCampaign(tenantId, campaignId, {
       ...(patch.name !== undefined ? { name: patch.name } : {}),
       ...(patch.objective !== undefined ? { objective: patch.objective } : {}),
       ...(patch.channel !== undefined ? { channel: patch.channel } : {}),
@@ -202,12 +202,12 @@ export class CampaignService {
    * Simulates expected campaign outcome and financial impact
    */
   public simulateCampaign(tenantId: string, campaignId: string): CampaignSimulationSnapshot {
-    const campaign = db.getCampaignById(campaignId);
+    const campaign = db.getCampaignById(tenantId, campaignId);
     if (!campaign || campaign.tenant_id !== tenantId) {
       throw new Error(`Campaign not found: ${campaignId}`);
     }
 
-    const audience = db.getAudienceById(campaign.audience_id);
+    const audience = db.getAudienceById(tenantId, campaign.audience_id);
     const audienceSize = audience?.estimated_size || 100;
 
     // Simulation assumptions based on channel
@@ -230,7 +230,7 @@ export class CampaignService {
       simulated_label: "SIMULATED",
     };
 
-    db.updateCampaign(campaignId, { simulation_snapshot: snapshot });
+    db.updateCampaign(tenantId, campaignId, { simulation_snapshot: snapshot });
     return snapshot;
   }
 
@@ -238,7 +238,7 @@ export class CampaignService {
    * Submits high-risk campaign for Phase 5 approval
    */
   public requestCampaignApproval(tenantId: string, campaignId: string, requestedBy: string): GrowthCampaign {
-    const campaign = db.getCampaignById(campaignId);
+    const campaign = db.getCampaignById(tenantId, campaignId);
     if (!campaign || campaign.tenant_id !== tenantId) {
       throw new Error(`Campaign not found: ${campaignId}`);
     }
@@ -267,7 +267,7 @@ export class CampaignService {
       created_at: new Date().toISOString(),
     });
 
-    return db.updateCampaign(campaignId, {
+    return db.updateCampaign(tenantId, campaignId, {
       status: "REVIEW",
       approval_request_id: approval.id,
       updated_at: new Date().toISOString(),
@@ -278,7 +278,7 @@ export class CampaignService {
    * Approves a pending campaign
    */
   public approveCampaign(tenantId: string, campaignId: string, approvedBy: string): GrowthCampaign {
-    const campaign = db.getCampaignById(campaignId);
+    const campaign = db.getCampaignById(tenantId, campaignId);
     if (!campaign || campaign.tenant_id !== tenantId) {
       throw new Error(`Campaign not found: ${campaignId}`);
     }
@@ -289,14 +289,14 @@ export class CampaignService {
     }
 
     if (campaign.approval_request_id) {
-      db.updateApprovalRequest(campaign.approval_request_id, {
+      db.updateApprovalRequest(tenantId, campaign.approval_request_id, {
         status: ApprovalStatus.APPROVED,
         approved_by: approvedBy,
         approved_at: new Date().toISOString(),
       });
     }
 
-    return db.updateCampaign(campaignId, {
+    return db.updateCampaign(tenantId, campaignId, {
       status: "APPROVED",
       updated_at: new Date().toISOString(),
     })!;
@@ -306,13 +306,13 @@ export class CampaignService {
    * Rejects a pending campaign
    */
   public rejectCampaign(tenantId: string, campaignId: string, rejectedBy: string, reason: string): GrowthCampaign {
-    const campaign = db.getCampaignById(campaignId);
+    const campaign = db.getCampaignById(tenantId, campaignId);
     if (!campaign || campaign.tenant_id !== tenantId) {
       throw new Error(`Campaign not found: ${campaignId}`);
     }
 
     if (campaign.approval_request_id) {
-      db.updateApprovalRequest(campaign.approval_request_id, {
+      db.updateApprovalRequest(tenantId, campaign.approval_request_id, {
         status: ApprovalStatus.REJECTED,
         rejected_by: rejectedBy,
         rejected_at: new Date().toISOString(),
@@ -320,7 +320,7 @@ export class CampaignService {
       });
     }
 
-    return db.updateCampaign(campaignId, {
+    return db.updateCampaign(tenantId, campaignId, {
       status: "CANCELLED",
       updated_at: new Date().toISOString(),
     })!;
@@ -330,7 +330,7 @@ export class CampaignService {
    * Schedules a campaign
    */
   public scheduleCampaign(tenantId: string, campaignId: string, scheduledStart: string): GrowthCampaign {
-    const campaign = db.getCampaignById(campaignId);
+    const campaign = db.getCampaignById(tenantId, campaignId);
     if (!campaign || campaign.tenant_id !== tenantId) {
       throw new Error(`Campaign not found: ${campaignId}`);
     }
@@ -339,7 +339,7 @@ export class CampaignService {
       throw new Error(`High-risk campaign must be APPROVED before scheduling`);
     }
 
-    return db.updateCampaign(campaignId, {
+    return db.updateCampaign(tenantId, campaignId, {
       status: "SCHEDULED",
       scheduled_start_at: scheduledStart,
       updated_at: new Date().toISOString(),
@@ -350,12 +350,12 @@ export class CampaignService {
    * Pauses an active or scheduled campaign
    */
   public pauseCampaign(tenantId: string, campaignId: string): GrowthCampaign {
-    const campaign = db.getCampaignById(campaignId);
+    const campaign = db.getCampaignById(tenantId, campaignId);
     if (!campaign || campaign.tenant_id !== tenantId) {
       throw new Error(`Campaign not found: ${campaignId}`);
     }
 
-    return db.updateCampaign(campaignId, {
+    return db.updateCampaign(tenantId, campaignId, {
       status: "PAUSED",
       updated_at: new Date().toISOString(),
     })!;
@@ -365,12 +365,12 @@ export class CampaignService {
    * Resumes a paused campaign
    */
   public resumeCampaign(tenantId: string, campaignId: string): GrowthCampaign {
-    const campaign = db.getCampaignById(campaignId);
+    const campaign = db.getCampaignById(tenantId, campaignId);
     if (!campaign || campaign.tenant_id !== tenantId) {
       throw new Error(`Campaign not found: ${campaignId}`);
     }
 
-    return db.updateCampaign(campaignId, {
+    return db.updateCampaign(tenantId, campaignId, {
       status: "RUNNING",
       updated_at: new Date().toISOString(),
     })!;
@@ -380,7 +380,7 @@ export class CampaignService {
    * Executes a campaign immediately across recipient audience
    */
   public async executeCampaign(tenantId: string, campaignId: string): Promise<CampaignResult> {
-    const campaign = db.getCampaignById(campaignId);
+    const campaign = db.getCampaignById(tenantId, campaignId);
     if (!campaign || campaign.tenant_id !== tenantId) {
       throw new Error(`Campaign not found: ${campaignId}`);
     }
@@ -390,7 +390,7 @@ export class CampaignService {
     }
 
     // Mark RUNNING
-    db.updateCampaign(campaignId, {
+    db.updateCampaign(tenantId, campaignId, {
       status: "RUNNING",
       actual_started_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -423,8 +423,8 @@ export class CampaignService {
 
     for (const custId of customerIds) {
       if (this.isKillSwitchActive(tenantId)) {
-        db.updateCampaign(campaignId, { status: "PAUSED" });
-        db.updateCampaignExecution(execRecord.id, { status: "PAUSED" });
+        db.updateCampaign(tenantId, campaignId, { status: "PAUSED" });
+        db.updateCampaignExecution(tenantId, execRecord.id, { status: "PAUSED" });
         break;
       }
 
@@ -493,13 +493,13 @@ export class CampaignService {
       evaluated_at: new Date().toISOString(),
     };
 
-    db.updateCampaign(campaignId, {
+    db.updateCampaign(tenantId, campaignId, {
       status: "COMPLETED",
       completed_at: new Date().toISOString(),
       result_metrics: result,
     });
 
-    db.updateCampaignExecution(execRecord.id, {
+    db.updateCampaignExecution(tenantId, execRecord.id, {
       processed_count: customerIds.length,
       successful_count: delivered,
       failed_count: failed,

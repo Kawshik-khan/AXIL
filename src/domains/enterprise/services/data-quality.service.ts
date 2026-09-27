@@ -65,8 +65,8 @@ export class DataQualityService {
   /**
    * Resolves a data quality defect with notes
    */
-  public resolveIssue(issueId: string, notes: string): DataQualityIssue {
-    return db.resolveDataQualityIssue(issueId, notes);
+  public resolveIssue(orgId: string, issueId: string, notes: string): DataQualityIssue {
+    return db.resolveDataQualityIssue(orgId, issueId, notes);
   }
 }
 

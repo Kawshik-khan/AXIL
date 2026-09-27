@@ -1388,9 +1388,8 @@ export class ConnectorService {
         for (const [k, v] of Object.entries(parsed.credentials)) {
           stringCreds[k] = String(v);
         }
-        const existingInst =
-          db.getIntegrationInstallations(context.tenant.id).find((i) => i.provider_id === provider.id) ||
-          db.getIntegrationInstallations("org_default").find((i) => i.provider_id === provider.id);
+        // Only this workspace's own installation; there is no fallback to the shared demo organization (FX-13).
+        const existingInst = db.getIntegrationInstallations(context.tenant.id).find((i) => i.provider_id === provider.id);
 
         const entCategory: "ERP" | "CRM" | "ACCOUNTING" | "MARKETPLACE" =
           provider.id.includes("sap") || provider.id.includes("netsuite")
@@ -1400,7 +1399,7 @@ export class ConnectorService {
             : "MARKETPLACE";
 
         if (existingInst) {
-          db.updateIntegrationInstallation(existingInst.id, {
+          db.updateIntegrationInstallation(existingInst.organization_id, existingInst.id, {
             status: "HEALTHY",
             credentials_encrypted: encryptedCredentials,
             sync_frequency_minutes: Number(parsed.credentials.sync_frequency_minutes || 15),
@@ -1724,11 +1723,12 @@ export class ConnectorService {
 
     if (existing.category === "ENTERPRISE") {
       try {
+        // Only this workspace's installations: deleting a connector used to disconnect every organization's (FX-13).
         const insts = db.data.integration_installations.filter(
-          (i) => i.provider_id === existing.provider_id
+          (i) => i.provider_id === existing.provider_id && i.organization_id === context.tenant.id
         );
         for (const inst of insts) {
-          db.updateIntegrationInstallation(inst.id, {
+          db.updateIntegrationInstallation(inst.organization_id, inst.id, {
             status: "DISCONNECTED",
             updated_at: new Date().toISOString(),
           });

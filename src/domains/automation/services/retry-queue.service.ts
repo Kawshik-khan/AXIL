@@ -114,7 +114,7 @@ export class RetryQueueService {
     // Check if attempts exhausted
     if (currentAttempt > maxAttempts) {
       if (existingRetry) {
-        db.updateAutomationRetry(existingRetry.id, {
+        db.updateAutomationRetry(tenantId, existingRetry.id, {
           status: "EXHAUSTED",
           last_error: params.error.message,
         });
@@ -140,7 +140,7 @@ export class RetryQueueService {
 
     let retryRecord: AutomationRetry;
     if (existingRetry) {
-      retryRecord = db.updateAutomationRetry(existingRetry.id, {
+      retryRecord = db.updateAutomationRetry(tenantId, existingRetry.id, {
         attempt_number: currentAttempt,
         next_retry_at: nextRetryAt,
         delay_ms: delayMs,

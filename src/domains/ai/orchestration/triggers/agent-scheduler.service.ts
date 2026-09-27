@@ -37,12 +37,12 @@ export class AgentSchedulerService {
         // Compute next run: default next 24 hours
         const nextDate = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
 
-        db.updateAgentSchedule(schedule.id, {
+        db.updateAgentSchedule(tenantId, schedule.id, {
           last_run_at: now.toISOString(),
           next_run_at: nextDate,
         });
 
-        workflowEngine.startWorkflow(workflow.id).catch((err) => {
+        workflowEngine.startWorkflow(workflow.tenant_id, workflow.id).catch((err) => {
           console.error(`Error starting scheduled workflow ${workflow.id}:`, err);
         });
 

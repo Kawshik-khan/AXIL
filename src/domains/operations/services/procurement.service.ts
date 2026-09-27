@@ -203,7 +203,7 @@ export class ProcurementService {
       }
     }
 
-    return db.updatePurchaseOrder(poId, updates);
+    return db.updatePurchaseOrder(tenantId, poId, updates);
   }
 }
 

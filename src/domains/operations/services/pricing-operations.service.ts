@@ -218,7 +218,7 @@ export class PricingOperationsService {
     };
 
     db.recordPriceChangeExecution(execution);
-    db.updatePriceChangeRequest(request.id, {
+    db.updatePriceChangeRequest(tenantId, request.id, {
       status: "EXECUTED",
       executed_at: execution.executed_at,
     });

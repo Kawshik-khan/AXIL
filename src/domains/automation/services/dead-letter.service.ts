@@ -99,7 +99,7 @@ export class DeadLetterService {
     const now = new Date().toISOString();
 
     // Mark DLQ as RETRIED
-    const updated = db.updateAutomationDeadLetter(id, {
+    const updated = db.updateAutomationDeadLetter(tenantId, id, {
       status: "RETRIED",
       resolved_at: now,
       resolved_by: actorId,
@@ -136,7 +136,7 @@ export class DeadLetterService {
     const dlq = db.findAutomationDeadLetterById(tenantId, id);
     if (!dlq) throw new Error(`Dead letter record not found: ${id}`);
 
-    const updated = db.updateAutomationDeadLetter(id, {
+    const updated = db.updateAutomationDeadLetter(tenantId, id, {
       status: "CANCELLED",
       resolved_at: new Date().toISOString(),
       resolved_by: actorId,
@@ -169,7 +169,7 @@ export class DeadLetterService {
     const dlq = db.findAutomationDeadLetterById(tenantId, id);
     if (!dlq) throw new Error(`Dead letter record not found: ${id}`);
 
-    const updated = db.updateAutomationDeadLetter(id, {
+    const updated = db.updateAutomationDeadLetter(tenantId, id, {
       status: "RESOLVED",
       resolved_at: new Date().toISOString(),
       resolved_by: actorId,

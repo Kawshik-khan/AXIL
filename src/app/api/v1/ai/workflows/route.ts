@@ -44,7 +44,7 @@ export async function POST(request: Request) {
 
     if (body.auto_start) {
       // Start workflow asynchronously
-      workflowEngine.startWorkflow(workflow.id).catch((err) => {
+      workflowEngine.startWorkflow(workflow.tenant_id, workflow.id).catch((err) => {
         console.error(`Auto-start workflow failed: ${err}`);
       });
     }

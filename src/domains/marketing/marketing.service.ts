@@ -136,7 +136,7 @@ export class MarketingService {
   }): Promise<NudgeResult> {
     const { tenantId, cartId, customOfferCode } = params;
 
-    const cart = db.getAbandonedCartById(cartId);
+    const cart = db.getAbandonedCartById(tenantId, cartId);
     if (!cart || cart.tenant_id !== tenantId) {
       throw new Error(`Abandoned cart not found: ${cartId}`);
     }
@@ -188,7 +188,7 @@ export class MarketingService {
     const cartTime = new Date(cart.abandoned_at).getTime();
     const placedAfter = recentOrders.some((o) => new Date(o.created_at).getTime() >= cartTime);
     if (placedAfter) {
-      db.updateAbandonedCart(cartId, { recovery_stage: "EXPIRED" });
+      db.updateAbandonedCart(tenantId, cartId, { recovery_stage: "EXPIRED" });
       return {
         success: false,
         cart_id: cartId,
@@ -255,7 +255,7 @@ export class MarketingService {
     }
 
     // 7. Update status to MESSAGED
-    db.updateAbandonedCart(cartId, { recovery_stage: "MESSAGED" });
+    db.updateAbandonedCart(tenantId, cartId, { recovery_stage: "MESSAGED" });
 
     return {
       success: true,
@@ -282,12 +282,12 @@ export class MarketingService {
   }): AbandonedCartRecoveryItem {
     const { tenantId, cartId, orderId } = params;
 
-    const cart = db.getAbandonedCartById(cartId);
+    const cart = db.getAbandonedCartById(tenantId, cartId);
     if (!cart || cart.tenant_id !== tenantId) {
       throw new Error(`Cart not found: ${cartId}`);
     }
 
-    const updated = db.updateAbandonedCart(cartId, {
+    const updated = db.updateAbandonedCart(tenantId, cartId, {
       recovery_stage: "RECOVERED",
       recovered_order_id: orderId,
     });
@@ -387,7 +387,7 @@ export class MarketingService {
    * Evaluates and returns customer members for an audience cohort
    */
   public getAudienceMembers(tenantId: string, audienceId: string): any[] {
-    const audience = db.getAudienceById(audienceId);
+    const audience = db.getAudienceById(tenantId, audienceId);
     if (!audience || audience.tenant_id !== tenantId) {
       throw new Error(`Audience not found: ${audienceId}`);
     }
@@ -516,7 +516,7 @@ export class MarketingService {
       userId,
     } = params;
 
-    const audience = db.getAudienceById(audienceId);
+    const audience = db.getAudienceById(tenantId, audienceId);
     if (!audience || audience.tenant_id !== tenantId) {
       throw new Error(`Target audience not found: ${audienceId}`);
     }

@@ -13,7 +13,7 @@ export async function POST(
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.AI_RUN);
 
-    const workflow = db.getWorkflowById(params.id);
+    const workflow = db.getWorkflowById(context.tenant.id, params.id);
     if (!workflow || workflow.tenant_id !== context.tenant.id) {
       throw new NotFoundError(`Workflow '${params.id}' not found`);
     }
@@ -25,19 +25,19 @@ export async function POST(
     let updatedWorkflow;
     switch (action) {
       case "START":
-        updatedWorkflow = await workflowEngine.startWorkflow(workflow.id);
+        updatedWorkflow = await workflowEngine.startWorkflow(workflow.tenant_id, workflow.id);
         break;
       case "PAUSE":
-        updatedWorkflow = await workflowEngine.pauseWorkflow(workflow.id, reason);
+        updatedWorkflow = await workflowEngine.pauseWorkflow(workflow.tenant_id, workflow.id, reason);
         break;
       case "RESUME":
-        updatedWorkflow = await workflowEngine.resumeWorkflow(workflow.id);
+        updatedWorkflow = await workflowEngine.resumeWorkflow(workflow.tenant_id, workflow.id);
         break;
       case "CANCEL":
-        updatedWorkflow = await workflowEngine.cancelWorkflow(workflow.id, reason);
+        updatedWorkflow = await workflowEngine.cancelWorkflow(workflow.tenant_id, workflow.id, reason);
         break;
       case "RETRY":
-        updatedWorkflow = await workflowEngine.retryWorkflow(workflow.id);
+        updatedWorkflow = await workflowEngine.retryWorkflow(workflow.tenant_id, workflow.id);
         break;
       default:
         throw new BadRequestError(`Invalid workflow action: ${action}. Expected START, PAUSE, RESUME, CANCEL, or RETRY.`);

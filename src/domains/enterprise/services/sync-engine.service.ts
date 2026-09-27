@@ -68,10 +68,12 @@ export class SyncEngineService {
     db.createIntegrationSync(record);
 
     // Update integration installation status
-    const installation = db.data.integration_installations.find((i) => i.id === params.integrationId);
+    const installation = db.data.integration_installations.find(
+      (i) => i.id === params.integrationId && i.organization_id === params.organizationId
+    );
     if (installation) {
       const newStatus = finalStatus === "FAILED" ? "FAILED" : conflicts > 0 ? "DEGRADED" : "HEALTHY";
-      integrationHubService.updateStatus(installation.id, newStatus, record.error_summary);
+      integrationHubService.updateStatus(installation.organization_id, installation.id, newStatus, record.error_summary);
     }
 
     return record;

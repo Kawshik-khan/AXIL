@@ -1,3 +1,4 @@
+import { resolveOrganizationId } from "@/domains/enterprise/organization-access";
 /**
  * CommerceOS Phase 9: Enterprise Intelligence & Ecosystem Tools
  * Implements the 16 authoritative enterprise tools grounded in domain services.
@@ -26,15 +27,15 @@ import { enterpriseInventoryService } from "@/domains/enterprise/services/enterp
 import { enterpriseProcurementService } from "@/domains/enterprise/services/enterprise-procurement.service";
 import { EnterpriseUserRecord } from "@/types/enterprise";
 
-function buildCaller(context: RequestContext): EnterpriseUserRecord {
+function buildCaller(context: RequestContext, organizationId: string): EnterpriseUserRecord {
   return {
     id: context.user?.id || "usr_system",
-    organization_id: "org_default",
+    organization_id: organizationId,
     user_id: context.user?.id || "usr_system",
     name: context.user?.name || "Enterprise User",
     email: context.user?.email || "user@enterprise.com",
     enterprise_role: "ENTERPRISE_ADMIN",
-    assigned_scope: { organization_id: "org_default", all_access: true },
+    assigned_scope: { organization_id: organizationId, all_access: true },
     status: "ACTIVE",
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
@@ -45,7 +46,7 @@ function buildCaller(context: RequestContext): EnterpriseUserRecord {
 // 1. GET ENTERPRISE OVERVIEW TOOL
 // ============================================================
 const GetEnterpriseOverviewInputSchema = z.object({
-  organization_id: z.string().default("org_default").describe("Enterprise organization ID"),
+  organization_id: z.string().optional().describe("Enterprise organization ID"),
 });
 
 export class GetEnterpriseOverviewTool implements IAgentTool<z.infer<typeof GetEnterpriseOverviewInputSchema>> {
@@ -79,7 +80,7 @@ export class GetEnterpriseOverviewTool implements IAgentTool<z.infer<typeof GetE
   }
 
   public async execute(context: RequestContext, input: z.infer<typeof GetEnterpriseOverviewInputSchema>): Promise<any> {
-    return enterpriseOperationsService.getOverview(input.organization_id, context.tenant.id);
+    return enterpriseOperationsService.getOverview(resolveOrganizationId(context, input.organization_id), context.tenant.id);
   }
 }
 
@@ -87,7 +88,7 @@ export class GetEnterpriseOverviewTool implements IAgentTool<z.infer<typeof GetE
 // 2. GET CROSS-ENTITY ANALYTICS TOOL
 // ============================================================
 const GetCrossEntityAnalyticsInputSchema = z.object({
-  organization_id: z.string().default("org_default").describe("Enterprise organization ID"),
+  organization_id: z.string().optional().describe("Enterprise organization ID"),
 });
 
 export class GetCrossEntityAnalyticsTool implements IAgentTool<z.infer<typeof GetCrossEntityAnalyticsInputSchema>> {
@@ -121,8 +122,8 @@ export class GetCrossEntityAnalyticsTool implements IAgentTool<z.infer<typeof Ge
   }
 
   public async execute(context: RequestContext, input: z.infer<typeof GetCrossEntityAnalyticsInputSchema>): Promise<any> {
-    const caller = buildCaller(context);
-    return enterpriseAnalyticsService.getConsolidatedAnalytics(input.organization_id, caller, context.tenant.id);
+    const caller = buildCaller(context, resolveOrganizationId(context, input.organization_id));
+    return enterpriseAnalyticsService.getConsolidatedAnalytics(resolveOrganizationId(context, input.organization_id), caller, context.tenant.id);
   }
 }
 
@@ -130,7 +131,7 @@ export class GetCrossEntityAnalyticsTool implements IAgentTool<z.infer<typeof Ge
 // 3. RUN ENTERPRISE BENCHMARK TOOL
 // ============================================================
 const RunEnterpriseBenchmarkInputSchema = z.object({
-  organization_id: z.string().default("org_default"),
+  organization_id: z.string().optional(),
   metric_key: z.string().describe("Metric to benchmark, e.g. gross_revenue, average_order_value, delivery_sla_pct"),
 });
 
@@ -166,8 +167,8 @@ export class RunEnterpriseBenchmarkTool implements IAgentTool<z.infer<typeof Run
   }
 
   public async execute(context: RequestContext, input: z.infer<typeof RunEnterpriseBenchmarkInputSchema>): Promise<any> {
-    const caller = buildCaller(context);
-    return enterpriseBenchmarkingService.generateStoreBenchmark(input.organization_id, input.metric_key, caller, context.tenant.id);
+    const caller = buildCaller(context, resolveOrganizationId(context, input.organization_id));
+    return enterpriseBenchmarkingService.generateStoreBenchmark(resolveOrganizationId(context, input.organization_id), input.metric_key, caller, context.tenant.id);
   }
 }
 
@@ -175,7 +176,7 @@ export class RunEnterpriseBenchmarkTool implements IAgentTool<z.infer<typeof Run
 // 4. GENERATE ENTERPRISE REPORT TOOL
 // ============================================================
 const GenerateEnterpriseReportInputSchema = z.object({
-  organization_id: z.string().default("org_default"),
+  organization_id: z.string().optional(),
   title: z.string().describe("Title of report"),
   format: z.enum(["JSON", "CSV", "PDF"]).default("CSV"),
   metrics: z.array(z.string()).default(["gross_revenue", "order_count"]),
@@ -215,15 +216,15 @@ export class GenerateEnterpriseReportTool implements IAgentTool<z.infer<typeof G
   }
 
   public async execute(context: RequestContext, input: z.infer<typeof GenerateEnterpriseReportInputSchema>): Promise<any> {
-    const caller = buildCaller(context);
-    const def = enterpriseReportingService.createReportDefinition(input.organization_id, {
+    const caller = buildCaller(context, resolveOrganizationId(context, input.organization_id));
+    const def = enterpriseReportingService.createReportDefinition(resolveOrganizationId(context, input.organization_id), {
       title: input.title,
       category: "EXECUTIVE",
       metrics: input.metrics,
       dimensions: ["STORE"],
       format: input.format,
     });
-    return enterpriseReportingService.executeReport(input.organization_id, def.id, caller, context.tenant.id);
+    return enterpriseReportingService.executeReport(resolveOrganizationId(context, input.organization_id), def.id, caller, context.tenant.id);
   }
 }
 
@@ -231,7 +232,7 @@ export class GenerateEnterpriseReportTool implements IAgentTool<z.infer<typeof G
 // 5. RESOLVE SEMANTIC METRIC TOOL
 // ============================================================
 const ResolveSemanticMetricInputSchema = z.object({
-  organization_id: z.string().default("org_default"),
+  organization_id: z.string().optional(),
   metric_key: z.string().describe("Semantic metric key, e.g. gross_revenue, net_revenue, average_order_value"),
 });
 
@@ -271,7 +272,7 @@ export class ResolveSemanticMetricTool implements IAgentTool<z.infer<typeof Reso
       {
         metric_key: input.metric_key,
         entity_type: "ORGANIZATION",
-        entity_id: input.organization_id,
+        entity_id: resolveOrganizationId(context, input.organization_id),
       },
       context.tenant.id
     );
@@ -282,7 +283,7 @@ export class ResolveSemanticMetricTool implements IAgentTool<z.infer<typeof Reso
 // 6. GET INTEGRATION STATUS TOOL
 // ============================================================
 const GetIntegrationStatusInputSchema = z.object({
-  organization_id: z.string().default("org_default"),
+  organization_id: z.string().optional(),
 });
 
 export class GetIntegrationStatusTool implements IAgentTool<z.infer<typeof GetIntegrationStatusInputSchema>> {
@@ -316,7 +317,7 @@ export class GetIntegrationStatusTool implements IAgentTool<z.infer<typeof GetIn
   }
 
   public async execute(context: RequestContext, input: z.infer<typeof GetIntegrationStatusInputSchema>): Promise<any> {
-    const installations = db.getIntegrationInstallations(input.organization_id);
+    const installations = db.getIntegrationInstallations(resolveOrganizationId(context, input.organization_id));
     return {
       total_connectors: installations.length,
       connectors: installations,
@@ -328,7 +329,7 @@ export class GetIntegrationStatusTool implements IAgentTool<z.infer<typeof GetIn
 // 7. TRIGGER INTEGRATION SYNC TOOL
 // ============================================================
 const TriggerIntegrationSyncInputSchema = z.object({
-  organization_id: z.string().default("org_default"),
+  organization_id: z.string().optional(),
   integration_id: z.string().describe("Integration connector ID"),
   entity_type: z.string().default("ORDER").describe("Entity type to sync: ORDER, PRODUCT, INVENTORY"),
 });
@@ -367,7 +368,7 @@ export class TriggerIntegrationSyncTool implements IAgentTool<z.infer<typeof Tri
 
   public async execute(context: RequestContext, input: z.infer<typeof TriggerIntegrationSyncInputSchema>): Promise<any> {
     return syncEngineService.executeSync({
-      organizationId: input.organization_id,
+      organizationId: resolveOrganizationId(context, input.organization_id),
       integrationId: input.integration_id,
       entityType: input.entity_type,
       direction: "INBOUND",
@@ -429,7 +430,7 @@ export class ResolveIntegrationConflictTool implements IAgentTool<z.infer<typeof
 // 9. GET DATA QUALITY ISSUES TOOL
 // ============================================================
 const GetDataQualityIssuesInputSchema = z.object({
-  organization_id: z.string().default("org_default"),
+  organization_id: z.string().optional(),
 });
 
 export class GetDataQualityIssuesTool implements IAgentTool<z.infer<typeof GetDataQualityIssuesInputSchema>> {
@@ -463,7 +464,7 @@ export class GetDataQualityIssuesTool implements IAgentTool<z.infer<typeof GetDa
   }
 
   public async execute(context: RequestContext, input: z.infer<typeof GetDataQualityIssuesInputSchema>): Promise<any> {
-    const issues = dataQualityService.runQualityAudit(input.organization_id, context.tenant.id);
+    const issues = dataQualityService.runQualityAudit(resolveOrganizationId(context, input.organization_id), context.tenant.id);
     return {
       total_defects: issues.length,
       issues,
@@ -475,7 +476,7 @@ export class GetDataQualityIssuesTool implements IAgentTool<z.infer<typeof GetDa
 // 10. TRACE DATA LINEAGE TOOL
 // ============================================================
 const TraceDataLineageInputSchema = z.object({
-  organization_id: z.string().default("org_default"),
+  organization_id: z.string().optional(),
   asset_name: z.string().default("orders").describe("Data asset name, e.g. orders, inventory, customers"),
 });
 
@@ -511,7 +512,7 @@ export class TraceDataLineageTool implements IAgentTool<z.infer<typeof TraceData
   }
 
   public async execute(context: RequestContext, input: z.infer<typeof TraceDataLineageInputSchema>): Promise<any> {
-    return dataLineageService.getProvenance(input.organization_id, input.asset_name);
+    return dataLineageService.getProvenance(resolveOrganizationId(context, input.organization_id), input.asset_name);
   }
 }
 
@@ -519,7 +520,7 @@ export class TraceDataLineageTool implements IAgentTool<z.infer<typeof TraceData
 // 11. GET ENTERPRISE INCIDENTS TOOL
 // ============================================================
 const GetEnterpriseIncidentsInputSchema = z.object({
-  organization_id: z.string().default("org_default"),
+  organization_id: z.string().optional(),
   status: z.enum(["OPEN", "INVESTIGATING", "RESOLVED"]).optional(),
 });
 
@@ -555,7 +556,7 @@ export class GetEnterpriseIncidentsTool implements IAgentTool<z.infer<typeof Get
   }
 
   public async execute(context: RequestContext, input: z.infer<typeof GetEnterpriseIncidentsInputSchema>): Promise<any> {
-    let incidents = db.getEnterpriseIncidents(input.organization_id);
+    let incidents = db.getEnterpriseIncidents(resolveOrganizationId(context, input.organization_id));
     if (input.status) {
       incidents = incidents.filter((i: any) => i.status === input.status);
     }
@@ -572,6 +573,7 @@ export class GetEnterpriseIncidentsTool implements IAgentTool<z.infer<typeof Get
 const ResolveEnterpriseIncidentInputSchema = z.object({
   incident_id: z.string().describe("Incident ID to resolve"),
   resolution_notes: z.string().describe("Details of corrective action taken"),
+  organization_id: z.string().optional().describe("Organization ID (defaults to this workspace's organization)"),
 });
 
 export class ResolveEnterpriseIncidentTool implements IAgentTool<z.infer<typeof ResolveEnterpriseIncidentInputSchema>> {
@@ -606,7 +608,7 @@ export class ResolveEnterpriseIncidentTool implements IAgentTool<z.infer<typeof 
   }
 
   public async execute(context: RequestContext, input: z.infer<typeof ResolveEnterpriseIncidentInputSchema>): Promise<any> {
-    return enterpriseIncidentService.transitionStatus(input.incident_id, "RESOLVED", input.resolution_notes);
+    return enterpriseIncidentService.transitionStatus(resolveOrganizationId(context, input.organization_id), input.incident_id, "RESOLVED", input.resolution_notes);
   }
 }
 
@@ -614,7 +616,7 @@ export class ResolveEnterpriseIncidentTool implements IAgentTool<z.infer<typeof 
 // 13. AUDIT CUSTOMER IDENTITY TOOL
 // ============================================================
 const AuditCustomerIdentityInputSchema = z.object({
-  organization_id: z.string().default("org_default"),
+  organization_id: z.string().optional(),
   phone: z.string().describe("Customer phone number to resolve cross-store identities"),
 });
 
@@ -651,7 +653,7 @@ export class AuditCustomerIdentityTool implements IAgentTool<z.infer<typeof Audi
 
   public async execute(context: RequestContext, input: z.infer<typeof AuditCustomerIdentityInputSchema>): Promise<any> {
     return enterpriseCustomerIdentityService.resolveIdentity({
-      organizationId: input.organization_id,
+      organizationId: resolveOrganizationId(context, input.organization_id),
       storeId: "store_main",
       name: "Customer",
       phone: input.phone,
@@ -663,7 +665,7 @@ export class AuditCustomerIdentityTool implements IAgentTool<z.infer<typeof Audi
 // 14. CHECK ENTERPRISE AI BUDGET TOOL
 // ============================================================
 const CheckEnterpriseAIBudgetInputSchema = z.object({
-  organization_id: z.string().default("org_default"),
+  organization_id: z.string().optional(),
   store_id: z.string().optional().describe("Store ID to check budget for"),
 });
 
@@ -700,8 +702,8 @@ export class CheckEnterpriseAIBudgetTool implements IAgentTool<z.infer<typeof Ch
 
   public async execute(context: RequestContext, input: z.infer<typeof CheckEnterpriseAIBudgetInputSchema>): Promise<any> {
     const entityId = input.store_id || "store_default";
-    const budget = db.getEnterpriseAIBudget(input.organization_id, entityId);
-    const executionCheck = enterpriseAiGovernanceService.canExecute(input.organization_id, entityId, 0.05, 500);
+    const budget = db.getEnterpriseAIBudget(resolveOrganizationId(context, input.organization_id), entityId);
+    const executionCheck = enterpriseAiGovernanceService.canExecute(resolveOrganizationId(context, input.organization_id), entityId, 0.05, 500);
     return {
       budget,
       can_execute: executionCheck.allowed,
@@ -714,7 +716,7 @@ export class CheckEnterpriseAIBudgetTool implements IAgentTool<z.infer<typeof Ch
 // 15. BALANCE CROSS-STORE INVENTORY TOOL
 // ============================================================
 const BalanceCrossStoreInventoryInputSchema = z.object({
-  organization_id: z.string().default("org_default"),
+  organization_id: z.string().optional(),
 });
 
 export class BalanceCrossStoreInventoryTool implements IAgentTool<z.infer<typeof BalanceCrossStoreInventoryInputSchema>> {
@@ -748,7 +750,7 @@ export class BalanceCrossStoreInventoryTool implements IAgentTool<z.infer<typeof
   }
 
   public async execute(context: RequestContext, input: z.infer<typeof BalanceCrossStoreInventoryInputSchema>): Promise<any> {
-    return enterpriseInventoryService.proposeNetworkBalancing(input.organization_id, context.tenant.id);
+    return enterpriseInventoryService.proposeNetworkBalancing(resolveOrganizationId(context, input.organization_id), context.tenant.id);
   }
 }
 
@@ -756,7 +758,7 @@ export class BalanceCrossStoreInventoryTool implements IAgentTool<z.infer<typeof
 // 16. CONSOLIDATE PROCUREMENT DEMAND TOOL
 // ============================================================
 const ConsolidateProcurementDemandInputSchema = z.object({
-  organization_id: z.string().default("org_default"),
+  organization_id: z.string().optional(),
 });
 
 export class ConsolidateProcurementDemandTool implements IAgentTool<z.infer<typeof ConsolidateProcurementDemandInputSchema>> {
@@ -790,6 +792,6 @@ export class ConsolidateProcurementDemandTool implements IAgentTool<z.infer<type
   }
 
   public async execute(context: RequestContext, input: z.infer<typeof ConsolidateProcurementDemandInputSchema>): Promise<any> {
-    return enterpriseProcurementService.consolidateDemand(input.organization_id, context.tenant.id);
+    return enterpriseProcurementService.consolidateDemand(resolveOrganizationId(context, input.organization_id), context.tenant.id);
   }
 }

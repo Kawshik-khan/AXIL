@@ -1,3 +1,4 @@
+import { resolveOrganizationId } from "@/domains/enterprise/organization-access";
 import { PERMISSIONS } from "@/lib/permissions";
 import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
@@ -12,7 +13,7 @@ export async function POST(
     RbacService.assertCan(context, PERMISSIONS.INTEGRATIONS_SYNC);
     const { id } = await params;
     const body = await request.json().catch(() => ({}));
-    const orgId = body.organization_id || "org_default";
+    const orgId = resolveOrganizationId(context, body.organization_id);
 
     const result = await syncEngineService.executeSync({
       organizationId: orgId,

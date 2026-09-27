@@ -16,7 +16,7 @@ export async function POST(
     const action = body.action?.toUpperCase();
 
     if (action === "APPROVE") {
-      const result = await approvalEngine.approveAction(params.id, context.user.name || context.user.email);
+      const result = await approvalEngine.approveAction(context.tenant.id, params.id, context.user.id);
       if (!result.success) {
         return apiSuccess({
           success: false,
@@ -29,8 +29,9 @@ export async function POST(
     } else if (action === "REJECT") {
       const reason = body.reason || "Rejected by operator";
       const result = await approvalEngine.rejectAction(
+        context.tenant.id,
         params.id,
-        context.user.name || context.user.email,
+        context.user.id,
         reason
       );
       return apiSuccess(result);

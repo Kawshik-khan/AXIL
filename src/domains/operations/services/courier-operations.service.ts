@@ -97,7 +97,7 @@ export class CourierOperationsService {
     const created = db.createShipment(replacementShipment);
 
     // Mark exception resolved
-    db.updateShipmentException(exception.id, {
+    db.updateShipmentException(tenantId, exception.id, {
       status: "RESOLVED",
       recovery_action_taken: `Re-dispatched via alternate courier ${alternateCourier} (${newTracking}) due to ${oldCourier} transit exception.`,
       alternative_courier: alternateCourier,

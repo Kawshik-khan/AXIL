@@ -61,13 +61,13 @@ export class EventTriggerService {
       });
 
       // Update trigger rule stats
-      db.updateAgentTriggerRule(rule.id, {
+      db.updateAgentTriggerRule(rule.tenant_id, rule.id, {
         last_triggered_at: new Date().toISOString(),
         runs_today: rule.runs_today + 1,
       });
 
       // Start workflow execution asynchronously
-      workflowEngine.startWorkflow(workflow.id).catch((err) => {
+      workflowEngine.startWorkflow(workflow.tenant_id, workflow.id).catch((err) => {
         console.error(`Error starting triggered workflow ${workflow.id}:`, err);
       });
 

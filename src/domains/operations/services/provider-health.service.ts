@@ -126,7 +126,7 @@ export class ProviderHealthService {
    * Resolves an incident and resets circuit breaker
    */
   public resolveIncident(tenantId: string, incidentId: string): ProviderIncident {
-    const incident = db.updateProviderIncident(incidentId, {
+    const incident = db.updateProviderIncident(tenantId, incidentId, {
       status: "RESOLVED",
       failover_active: false,
       resolved_at: new Date().toISOString(),

@@ -252,7 +252,7 @@ export class GetCampaignMetricsTool implements IAgentTool<{ campaign_id?: string
 
   public async execute(context: RequestContext, input: { campaign_id?: string }) {
     if (input.campaign_id) {
-      const cmp = db.getCampaignById(input.campaign_id);
+      const cmp = db.getCampaignById(context.tenant.id, input.campaign_id);
       return { success: true, metrics: cmp?.result_metrics };
     }
     const all = db.getCampaigns(context.tenant.id);
@@ -557,7 +557,7 @@ export class ScheduleCampaignTool implements IAgentTool<{ campaign_id: string; s
   }
 
   public async execute(context: RequestContext, input: any) {
-    const updated = db.updateCampaign(input.campaign_id, {
+    const updated = db.updateCampaign(context.tenant.id, input.campaign_id, {
       status: "SCHEDULED",
       scheduled_start_at: input.scheduled_start,
     });
@@ -630,7 +630,7 @@ export class PauseCampaignTool implements IAgentTool<{ campaign_id: string }> {
   }
 
   public async execute(context: RequestContext, input: { campaign_id: string }) {
-    const updated = db.updateCampaign(input.campaign_id, { status: "PAUSED" });
+    const updated = db.updateCampaign(context.tenant.id, input.campaign_id, { status: "PAUSED" });
     return { success: true, status: updated.status };
   }
 }
@@ -665,7 +665,7 @@ export class ResumeCampaignTool implements IAgentTool<{ campaign_id: string }> {
   }
 
   public async execute(context: RequestContext, input: { campaign_id: string }) {
-    const updated = db.updateCampaign(input.campaign_id, { status: "RUNNING" });
+    const updated = db.updateCampaign(context.tenant.id, input.campaign_id, { status: "RUNNING" });
     return { success: true, status: updated.status };
   }
 }
@@ -700,7 +700,7 @@ export class GetCampaignResultTool implements IAgentTool<{ campaign_id: string }
   }
 
   public async execute(context: RequestContext, input: { campaign_id: string }) {
-    const cmp = db.getCampaignById(input.campaign_id);
+    const cmp = db.getCampaignById(context.tenant.id, input.campaign_id);
     return { success: true, result: cmp?.result_metrics };
   }
 }

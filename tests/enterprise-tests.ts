@@ -545,10 +545,11 @@ export async function runEnterpriseTests() {
     assert.strictEqual(incident.status, "DETECTED");
     assert.strictEqual(incident.severity, "HIGH");
 
-    const investigating = enterpriseIncidentService.transitionStatus(incident.id, "INVESTIGATING");
+    const investigating = enterpriseIncidentService.transitionStatus(orgId, incident.id, "INVESTIGATING");
     assert.strictEqual(investigating.status, "INVESTIGATING");
 
     const resolved = enterpriseIncidentService.transitionStatus(
+      orgId,
       incident.id,
       "RESOLVED",
       "Credentials successfully renewed and backoff queue drained"

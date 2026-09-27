@@ -116,12 +116,12 @@ export class WorkflowEngine {
   /**
    * Starts executing tasks in a workflow
    */
-  public async startWorkflow(workflowId: string): Promise<AgentWorkflow> {
-    const workflow = db.getWorkflowById(workflowId);
+  public async startWorkflow(tenantId: string, workflowId: string): Promise<AgentWorkflow> {
+    const workflow = db.getWorkflowById(tenantId, workflowId);
     if (!workflow) throw new Error(`Workflow not found: ${workflowId}`);
 
     workflowStateMachine.assertWorkflowTransition(workflow.status, WorkflowStatus.RUNNING);
-    const runningWf = db.updateWorkflow(workflowId, {
+    const runningWf = db.updateWorkflow(tenantId, workflowId, {
       status: WorkflowStatus.RUNNING,
       started_at: workflow.started_at || new Date().toISOString(),
     });
@@ -135,7 +135,7 @@ export class WorkflowEngine {
   private async executeWorkflowLoop(workflow: AgentWorkflow): Promise<AgentWorkflow> {
     const tenantId = workflow.tenant_id;
     let currentWorkflow = workflow;
-    const context = db.getWorkflowContext(workflow.id);
+    const context = db.getWorkflowContext(tenantId, workflow.id);
 
     while (true) {
       const allTasks = db.getTasks(tenantId, currentWorkflow.id);
@@ -153,18 +153,18 @@ export class WorkflowEngine {
         );
 
         if (hasFailed) {
-          currentWorkflow = db.updateWorkflow(currentWorkflow.id, {
+          currentWorkflow = db.updateWorkflow(tenantId, currentWorkflow.id, {
             status: WorkflowStatus.FAILED,
             error: "One or more tasks failed during execution.",
             completed_at: new Date().toISOString(),
           });
         } else if (hasWaiting) {
-          currentWorkflow = db.updateWorkflow(currentWorkflow.id, {
+          currentWorkflow = db.updateWorkflow(tenantId, currentWorkflow.id, {
             status: WorkflowStatus.WAITING,
           });
         } else {
           // Everything completed!
-          currentWorkflow = db.updateWorkflow(currentWorkflow.id, {
+          currentWorkflow = db.updateWorkflow(tenantId, currentWorkflow.id, {
             status: WorkflowStatus.COMPLETED,
             completed_at: new Date().toISOString(),
           });
@@ -188,14 +188,14 @@ export class WorkflowEngine {
         // Deadlock or waiting for external approval
         const isWaitingApproval = allTasks.some((t) => t.status === TaskStatus.WAITING_APPROVAL);
         if (isWaitingApproval) {
-          currentWorkflow = db.updateWorkflow(currentWorkflow.id, {
+          currentWorkflow = db.updateWorkflow(tenantId, currentWorkflow.id, {
             status: WorkflowStatus.WAITING,
           });
           return currentWorkflow;
         }
 
         // Otherwise dependency deadlock
-        currentWorkflow = db.updateWorkflow(currentWorkflow.id, {
+        currentWorkflow = db.updateWorkflow(tenantId, currentWorkflow.id, {
           status: WorkflowStatus.FAILED,
           error: "Workflow deadlocked: No tasks are ready to run.",
         });
@@ -207,7 +207,7 @@ export class WorkflowEngine {
         const result = await taskExecutor.executeTask(task, context?.relevant_entities);
 
         if (result.approvalRequired || result.status === TaskStatus.WAITING_APPROVAL) {
-          currentWorkflow = db.updateWorkflow(currentWorkflow.id, {
+          currentWorkflow = db.updateWorkflow(tenantId, currentWorkflow.id, {
             status: WorkflowStatus.WAITING,
           });
           this.createCheckpoint(currentWorkflow, `Waiting for approval on task ${task.id}`);
@@ -215,7 +215,7 @@ export class WorkflowEngine {
         }
 
         if (result.status === TaskStatus.FAILED) {
-          currentWorkflow = db.updateWorkflow(currentWorkflow.id, {
+          currentWorkflow = db.updateWorkflow(tenantId, currentWorkflow.id, {
             status: WorkflowStatus.FAILED,
             error: result.error || `Task ${task.id} failed`,
           });
@@ -225,7 +225,7 @@ export class WorkflowEngine {
       }
 
       // Checkpoint step
-      currentWorkflow = db.updateWorkflow(currentWorkflow.id, {
+      currentWorkflow = db.updateWorkflow(tenantId, currentWorkflow.id, {
         current_step: currentWorkflow.current_step + 1,
       });
       this.createCheckpoint(currentWorkflow, `Step ${currentWorkflow.current_step} completed`);
@@ -235,12 +235,12 @@ export class WorkflowEngine {
   /**
    * Pauses an active workflow
    */
-  public async pauseWorkflow(workflowId: string, reason: string): Promise<AgentWorkflow> {
-    const workflow = db.getWorkflowById(workflowId);
+  public async pauseWorkflow(tenantId: string, workflowId: string, reason: string): Promise<AgentWorkflow> {
+    const workflow = db.getWorkflowById(tenantId, workflowId);
     if (!workflow) throw new Error(`Workflow not found: ${workflowId}`);
 
     workflowStateMachine.assertWorkflowTransition(workflow.status, WorkflowStatus.PAUSED);
-    const updated = db.updateWorkflow(workflowId, { status: WorkflowStatus.PAUSED });
+    const updated = db.updateWorkflow(tenantId, workflowId, { status: WorkflowStatus.PAUSED });
     this.createCheckpoint(updated, `Workflow paused: ${reason}`);
     return updated;
   }
@@ -248,24 +248,24 @@ export class WorkflowEngine {
   /**
    * Resumes a paused or waiting workflow
    */
-  public async resumeWorkflow(workflowId: string): Promise<AgentWorkflow> {
-    const workflow = db.getWorkflowById(workflowId);
+  public async resumeWorkflow(tenantId: string, workflowId: string): Promise<AgentWorkflow> {
+    const workflow = db.getWorkflowById(tenantId, workflowId);
     if (!workflow) throw new Error(`Workflow not found: ${workflowId}`);
 
     workflowStateMachine.assertWorkflowTransition(workflow.status, WorkflowStatus.RUNNING);
-    const updated = db.updateWorkflow(workflowId, { status: WorkflowStatus.RUNNING });
+    const updated = db.updateWorkflow(tenantId, workflowId, { status: WorkflowStatus.RUNNING });
     return this.executeWorkflowLoop(updated);
   }
 
   /**
    * Cancels a workflow and terminates all pending tasks
    */
-  public async cancelWorkflow(workflowId: string, reason: string): Promise<AgentWorkflow> {
-    const workflow = db.getWorkflowById(workflowId);
+  public async cancelWorkflow(tenantId: string, workflowId: string, reason: string): Promise<AgentWorkflow> {
+    const workflow = db.getWorkflowById(tenantId, workflowId);
     if (!workflow) throw new Error(`Workflow not found: ${workflowId}`);
 
     workflowStateMachine.assertWorkflowTransition(workflow.status, WorkflowStatus.CANCELLED);
-    const updated = db.updateWorkflow(workflowId, {
+    const updated = db.updateWorkflow(tenantId, workflowId, {
       status: WorkflowStatus.CANCELLED,
       error: `Cancelled: ${reason}`,
       completed_at: new Date().toISOString(),
@@ -274,7 +274,7 @@ export class WorkflowEngine {
     const tasks = db.getTasks(workflow.tenant_id, workflowId);
     for (const t of tasks) {
       if (t.status !== TaskStatus.COMPLETED && t.status !== TaskStatus.FAILED) {
-        db.updateTask(t.id, { status: TaskStatus.CANCELLED });
+        db.updateTask(tenantId, t.id, { status: TaskStatus.CANCELLED });
       }
     }
 
@@ -285,12 +285,12 @@ export class WorkflowEngine {
   /**
    * Retries a failed workflow by resetting failed tasks
    */
-  public async retryWorkflow(workflowId: string): Promise<AgentWorkflow> {
-    const workflow = db.getWorkflowById(workflowId);
+  public async retryWorkflow(tenantId: string, workflowId: string): Promise<AgentWorkflow> {
+    const workflow = db.getWorkflowById(tenantId, workflowId);
     if (!workflow) throw new Error(`Workflow not found: ${workflowId}`);
 
     workflowStateMachine.assertWorkflowTransition(workflow.status, WorkflowStatus.QUEUED);
-    const updated = db.updateWorkflow(workflowId, {
+    const updated = db.updateWorkflow(tenantId, workflowId, {
       status: WorkflowStatus.QUEUED,
       error: undefined,
     });
@@ -298,7 +298,7 @@ export class WorkflowEngine {
     const tasks = db.getTasks(workflow.tenant_id, workflowId);
     for (const t of tasks) {
       if (t.status === TaskStatus.FAILED) {
-        db.updateTask(t.id, {
+        db.updateTask(tenantId, t.id, {
           status: TaskStatus.PENDING,
           attempt_count: 0,
           error: undefined,
@@ -306,7 +306,7 @@ export class WorkflowEngine {
       }
     }
 
-    return this.startWorkflow(workflowId);
+    return this.startWorkflow(tenantId, workflowId);
   }
 
   /**
@@ -314,7 +314,7 @@ export class WorkflowEngine {
    */
   public createCheckpoint(workflow: AgentWorkflow, reason: string): WorkflowCheckpoint {
     const tasks = db.getTasks(workflow.tenant_id, workflow.id);
-    const context = db.getWorkflowContext(workflow.id) || {
+    const context = db.getWorkflowContext(workflow.tenant_id, workflow.id) || {
       id: `ctx_${workflow.id}`,
       tenant_id: workflow.tenant_id,
       workflow_id: workflow.id,

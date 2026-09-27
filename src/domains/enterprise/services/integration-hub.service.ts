@@ -131,8 +131,8 @@ export class IntegrationHubService {
   /**
    * Updates integration status (e.g. on error, circuit breaker, or recovery)
    */
-  public updateStatus(installationId: string, status: IntegrationStatus, errorSummary?: string): IntegrationInstallation {
-    return db.updateIntegrationInstallation(installationId, {
+  public updateStatus(orgId: string, installationId: string, status: IntegrationStatus, errorSummary?: string): IntegrationInstallation {
+    return db.updateIntegrationInstallation(orgId, installationId, {
       status,
       last_error: errorSummary,
       updated_at: new Date().toISOString(),

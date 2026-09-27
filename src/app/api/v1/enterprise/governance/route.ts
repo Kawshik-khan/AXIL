@@ -1,3 +1,4 @@
+import { resolveOrganizationId } from "@/domains/enterprise/organization-access";
 import { PERMISSIONS } from "@/lib/permissions";
 import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
@@ -9,7 +10,7 @@ export async function GET(request: Request) {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.GOVERNANCE_READ);
     const { searchParams } = new URL(request.url);
-    const orgId = searchParams.get("organization_id") || "org_default";
+    const orgId = resolveOrganizationId(context, searchParams.get("organization_id"));
 
     let assets = db.getDataAssets(orgId);
     if (assets.length === 0) {

@@ -66,7 +66,7 @@ export class OperationalSLAService {
           const elapsedMins = (now - new Date(ticket.created_at).getTime()) / 60000;
           if (elapsedMins >= policy.target_duration_minutes) {
             ticket.is_sla_breached = true;
-            db.updateSupportTicket(ticket.id, { is_sla_breached: true });
+            db.updateSupportTicket(tenantId, ticket.id, { is_sla_breached: true });
             const breach: SLABreach = {
               id: `sla_br_t_${ticket.id}`,
               tenant_id: tenantId,

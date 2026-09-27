@@ -284,7 +284,7 @@ export class AudienceService {
    * Creates an immutable snapshot of audience members for campaign execution
    */
   public createAudienceSnapshot(tenantId: string, audienceId: string, campaignId?: string): AudienceSnapshot {
-    const audience = db.getAudienceById(audienceId);
+    const audience = db.getAudienceById(tenantId, audienceId);
     if (!audience || audience.tenant_id !== tenantId) {
       throw new Error(`Audience not found: ${audienceId}`);
     }
@@ -303,7 +303,7 @@ export class AudienceService {
     };
 
     db.insertAudienceSnapshot(snapshot);
-    db.updateAudience(audienceId, {
+    db.updateAudience(tenantId, audienceId, {
       estimated_size: memberIds.length,
       last_evaluated_at: new Date().toISOString(),
     });
@@ -322,7 +322,7 @@ export class AudienceService {
    * Gets audience by ID
    */
   public getAudience(tenantId: string, id: string): Audience | undefined {
-    const aud = db.getAudienceById(id);
+    const aud = db.getAudienceById(tenantId, id);
     if (!aud || aud.tenant_id !== tenantId) return undefined;
     return aud;
   }

@@ -55,7 +55,7 @@ export class JourneyEngineService {
   }): JourneyEnrollment {
     const { tenantId, journeyId, customerId, contextData = {} } = params;
 
-    const journey = db.getJourneyById(journeyId);
+    const journey = db.getJourneyById(tenantId, journeyId);
     if (!journey || journey.tenant_id !== tenantId || journey.status !== "ACTIVE") {
       throw new Error(`Journey not found or not active: ${journeyId}`);
     }
@@ -79,7 +79,7 @@ export class JourneyEngineService {
     };
 
     db.insertJourneyEnrollment(enrollment);
-    db.updateJourney(journeyId, { enrolled_count: journey.enrolled_count + 1 });
+    db.updateJourney(tenantId, journeyId, { enrolled_count: journey.enrolled_count + 1 });
 
     return enrollment;
   }
@@ -97,12 +97,12 @@ export class JourneyEngineService {
       return enrollment;
     }
 
-    const journey = db.getJourneyById(enrollment.journey_id);
+    const journey = db.getJourneyById(tenantId, enrollment.journey_id);
     if (!journey) throw new Error(`Journey not found: ${enrollment.journey_id}`);
 
     const currentStep = journey.steps.find((s) => s.id === enrollment.current_step_id);
     if (!currentStep) {
-      db.updateJourneyEnrollment(enrollmentId, { status: "COMPLETED" });
+      db.updateJourneyEnrollment(tenantId, enrollmentId, { status: "COMPLETED" });
       return { ...enrollment, status: "COMPLETED" };
     }
 
@@ -112,7 +112,7 @@ export class JourneyEngineService {
       const waitUntil = new Date(Date.now() + waitMinutes * 60000).toISOString();
 
       if (!enrollment.wait_until) {
-        db.updateJourneyEnrollment(enrollmentId, {
+        db.updateJourneyEnrollment(tenantId, enrollmentId, {
           status: "WAITING",
           wait_until: waitUntil,
         });
@@ -144,7 +144,7 @@ export class JourneyEngineService {
 
     // 3. Exit node handling
     if (currentStep.type === "EXIT") {
-      db.updateJourneyEnrollment(enrollmentId, {
+      db.updateJourneyEnrollment(tenantId, enrollmentId, {
         status: "EXITED",
         exit_reason: currentStep.config.exit_reason || "REACHED_EXIT_NODE",
       });
@@ -166,7 +166,7 @@ export class JourneyEngineService {
 
     // Advance to next step
     if (currentStep.next_step_id) {
-      db.updateJourneyEnrollment(enrollmentId, {
+      db.updateJourneyEnrollment(tenantId, enrollmentId, {
         current_step_id: currentStep.next_step_id,
         status: "EXECUTING",
         wait_until: undefined,
@@ -179,11 +179,11 @@ export class JourneyEngineService {
       };
     } else {
       // Reached journey end
-      db.updateJourneyEnrollment(enrollmentId, {
+      db.updateJourneyEnrollment(tenantId, enrollmentId, {
         status: "COMPLETED",
         last_action_at: new Date().toISOString(),
       });
-      db.updateJourney(journey.id, { completed_count: journey.completed_count + 1 });
+      db.updateJourney(tenantId, journey.id, { completed_count: journey.completed_count + 1 });
       return { ...enrollment, status: "COMPLETED" };
     }
   }
@@ -192,22 +192,22 @@ export class JourneyEngineService {
    * Pauses a journey
    */
   public pauseJourney(tenantId: string, journeyId: string): CustomerJourney {
-    const journey = db.getJourneyById(journeyId);
+    const journey = db.getJourneyById(tenantId, journeyId);
     if (!journey || journey.tenant_id !== tenantId) {
       throw new Error(`Journey not found: ${journeyId}`);
     }
-    return db.updateJourney(journeyId, { status: "PAUSED" });
+    return db.updateJourney(tenantId, journeyId, { status: "PAUSED" });
   }
 
   /**
    * Resumes a journey
    */
   public resumeJourney(tenantId: string, journeyId: string): CustomerJourney {
-    const journey = db.getJourneyById(journeyId);
+    const journey = db.getJourneyById(tenantId, journeyId);
     if (!journey || journey.tenant_id !== tenantId) {
       throw new Error(`Journey not found: ${journeyId}`);
     }
-    return db.updateJourney(journeyId, { status: "ACTIVE" });
+    return db.updateJourney(tenantId, journeyId, { status: "ACTIVE" });
   }
 }
 

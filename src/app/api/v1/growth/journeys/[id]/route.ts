@@ -25,7 +25,7 @@ export async function GET(
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.MARKETING_READ);
     const { id } = await params;
-    const journey = db.getJourneyById(id);
+    const journey = db.getJourneyById(context.tenant.id, id);
     if (!journey || journey.tenant_id !== context.tenant.id) {
       return apiError(new Error("Journey not found"));
     }
@@ -46,12 +46,12 @@ export async function PUT(
     const { id } = await params;
     const body = parseOrThrow(JourneyPatch, await readJson(request)) as Partial<CustomerJourney>;
 
-    const journey = db.getJourneyById(id);
+    const journey = db.getJourneyById(context.tenant.id, id);
     if (!journey || journey.tenant_id !== context.tenant.id) {
       return apiError(new Error("Journey not found"));
     }
 
-    const updated = db.updateJourney(id, body);
+    const updated = db.updateJourney(context.tenant.id, id, body);
     return apiSuccess({ journey: updated });
   } catch (err) {
     return apiError(err);

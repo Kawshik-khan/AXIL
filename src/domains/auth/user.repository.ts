@@ -171,18 +171,18 @@ export class UserRepository extends GlobalRepository<UserRecord> {
     );
   }
 
-  async updateInvitation(id: string, patch: Partial<InvitationRecord>): Promise<InvitationRecord | null> {
+  async updateInvitation(tenantId: string, id: string, patch: Partial<InvitationRecord>): Promise<InvitationRecord | null> {
     if (!this.isNeonConfigured()) {
-      return db.updateInvitation(id, patch) || null;
+      return db.updateInvitation(tenantId, id, patch) || null;
     }
-    const sets = Object.keys(patch).map((k, i) => `${k} = $${i + 2}`).join(', ');
+    const sets = Object.keys(patch).map((k, i) => `${k} = $${i + 3}`).join(', ');
     const values = Object.values(patch);
     const rows = await query<InvitationRecord>(
-      `UPDATE invitations SET ${sets} WHERE id = $1 RETURNING *`,
-      [id, ...values]
+      `UPDATE invitations SET ${sets} WHERE id = $1 AND tenant_id = $2 RETURNING *`,
+      [id, tenantId, ...values]
     );
     if (rows[0]) {
-      db.updateInvitation(id, patch);
+      db.updateInvitation(tenantId, id, patch);
     }
     return rows[0] || null;
   }

@@ -393,7 +393,7 @@ export async function runIntelligenceTests() {
 
     if (decision.status === "PENDING_APPROVAL") {
       assert(decision.approval_id !== undefined, "Must create Phase 5 ApprovalRequest ID");
-      const approval = db.getApprovalRequest(decision.approval_id!);
+      const approval = db.getApprovalRequest(decision.tenant_id, decision.approval_id!);
       assert(approval !== undefined, "Approval request must be stored in database");
     }
   });

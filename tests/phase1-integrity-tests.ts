@@ -275,7 +275,7 @@ async function main() {
     } as never);
     const res = await sendJson(`growth/campaigns/[id]`, id, "PUT", ownerToken, { status: "APPROVED" });
     assert.strictEqual(res.status, 400);
-    assert.strictEqual(db.getCampaignById(id)?.status, "DRAFT");
+    assert.strictEqual(db.getCampaignById(tenantId, id)?.status, "DRAFT");
   });
 
   await runTest("editing a draft campaign re-classifies its risk from the new budget", async () => {
@@ -292,7 +292,7 @@ async function main() {
     } as never);
     const res = await sendJson(`growth/campaigns/[id]`, id, "PUT", ownerToken, { budget_bdt: 50000 });
     assert.strictEqual(res.status, 200);
-    const stored = db.getCampaignById(id);
+    const stored = db.getCampaignById(tenantId, id);
     assert.strictEqual(stored?.risk_class, "HIGH");
     assert.strictEqual(stored?.required_approval, true);
   });
@@ -329,6 +329,86 @@ async function main() {
     const target = await member(tenantId, "SALES");
     assert.strictEqual((await sendJson(`users/[id]`, target.id, "PATCH", admin.token, { role: "OWNER" })).status, 403);
     assert.strictEqual((await sendJson(`users/[id]`, shop.user.id, "PATCH", admin.token, { status: "SUSPENDED" })).status, 403);
+  });
+
+  // ---------------------------------------------------------------------------
+  console.log(`\n${ANSI_BOLD}[FX-13] Tenant-scoped lookups (H13)${ANSI_RESET}`);
+  // ---------------------------------------------------------------------------
+
+  const otherToken = (await AuthService.login(other.user.email, "Phase1-Other-Pass-5582!", other.tenant.id)).token;
+  const getRoute = async (route: string, id: string, token: string, query = ""): Promise<Response> => {
+    type Handler = (r: Request, ctx: { params: { id: string } }) => Promise<Response>;
+    const mod = (await import(`@/app/api/v1/${route}/route`)) as { GET: Handler };
+    return mod.GET(
+      new Request(`${BASE}/${route.replace("[id]", id)}${query}`, { headers: { authorization: `Bearer ${token}` } }),
+      { params: { id } }
+    );
+  };
+
+  await runTest("another workspace cannot approve this workspace's AI approval request → 404", async () => {
+    const approvalId = uid("apr_p1");
+    db.insertApprovalRequest({
+      id: approvalId, tenant_id: tenantId, workflow_id: "wf_none", task_id: "task_none", requested_by_agent: "SALES_AGENT",
+      action: "APPLY_DISCOUNT", risk_level: "HIGH", target_entity_type: "ORDER", target_entity_id: "ord_none",
+      entity_state_snapshot: {}, payload: {}, reason: "test", status: "PENDING",
+      expires_at: new Date(Date.now() + 3600_000).toISOString(), created_at: nowIso(),
+    } as never);
+    const mod = (await import("@/app/api/v1/ai/approvals/[id]/route")) as {
+      POST: (r: Request, ctx: { params: { id: string } }) => Promise<Response>;
+    };
+    const res = await mod.POST(new Request(`${BASE}/ai/approvals/${approvalId}`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${otherToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ action: "APPROVE" }),
+    }), { params: { id: approvalId } });
+    assert.strictEqual(res.status, 404);
+    assert.strictEqual(db.getApprovalRequestById(tenantId, approvalId)?.status, "PENDING");
+  });
+
+  await runTest("another workspace cannot read this workspace's executive digest → 404", async () => {
+    const digestId = uid("dig_p1");
+    db.insertExecutiveDigest({ id: digestId, tenant_id: tenantId, period_type: "DAILY", title: "Private digest" } as never);
+    assert.strictEqual((await getRoute("analytics/digests/[id]", digestId, otherToken)).status, 404);
+    assert.strictEqual((await getRoute("analytics/digests/[id]", digestId, ownerToken)).status, 200);
+  });
+
+  await runTest("store accessors return nothing for another tenant's id", () => {
+    const campaignId = uid("camp_p1");
+    db.insertCampaign({
+      id: campaignId, tenant_id: tenantId, name: "Mine", objective: "ENGAGEMENT", status: "DRAFT", audience_id: "aud_x",
+      channel: "WHATSAPP", variants: [], action_risk_level: "LOW", required_approval: false, risk_class: "LOW",
+      created_by: shop.user.id, created_at: nowIso(), updated_at: nowIso(),
+    } as never);
+    assert.strictEqual(db.getCampaignById(other.tenant.id, campaignId), undefined);
+    assert.throws(() => db.updateCampaign(other.tenant.id, campaignId, { name: "Stolen" }));
+    assert.strictEqual(db.getCampaignById(tenantId, campaignId)?.name, "Mine");
+  });
+
+  await runTest("enterprise: a workspace can't use another workspace's organization → 404", async () => {
+    const mod = (await import("@/app/api/v1/enterprise/organizations/route")) as { POST: (r: Request) => Promise<Response> };
+    const created = await mod.POST(new Request(`${BASE}/enterprise/organizations`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${ownerToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ name: "Phase One Group" }),
+    }));
+    assert.strictEqual(created.status, 201);
+    const orgId = ((await created.json()) as { data: { id: string } }).data.id;
+    assert.strictEqual(db.findOrganizationById(orgId)?.tenant_id, tenantId, "the new organization is owned by its creator");
+
+    const overview = (token: string, query: string) =>
+      import("@/app/api/v1/enterprise/overview/route").then((m: { GET: (r: Request) => Promise<Response> }) =>
+        m.GET(new Request(`${BASE}/enterprise/overview${query}`, { headers: { authorization: `Bearer ${token}` } })));
+    assert.strictEqual((await overview(otherToken, `?organization_id=${orgId}`)).status, 404, "foreign org id");
+    assert.strictEqual((await overview(otherToken, "?organization_id=org_default")).status, 404, "the shared demo org");
+    assert.strictEqual((await overview(otherToken, "")).status, 404, "no organization of its own");
+    assert.notStrictEqual((await overview(ownerToken, "")).status, 404, "the owner resolves its own organization");
+  });
+
+  await runTest("enterprise: the organization list shows only this workspace's organizations", async () => {
+    const mod = (await import("@/app/api/v1/enterprise/organizations/route")) as { GET: (r: Request) => Promise<Response> };
+    const res = await mod.GET(new Request(`${BASE}/enterprise/organizations`, { headers: { authorization: `Bearer ${otherToken}` } }));
+    const body = (await res.json()) as { data: { organizations: Array<{ tenant_id?: string }> } };
+    assert.ok(body.data.organizations.every((o) => o.tenant_id === other.tenant.id));
   });
 
   console.log(`\n${ANSI_BOLD}====================================================${ANSI_RESET}`);

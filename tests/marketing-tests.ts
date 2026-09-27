@@ -211,7 +211,7 @@ export async function runMarketingTests() {
     assert.ok(nudge.message_content.includes("1,850"));
 
     // Verify stage updated to MESSAGED
-    const cart = db.getAbandonedCartById(recordedCartId);
+    const cart = db.getAbandonedCartById(tenantId, recordedCartId);
     assert.strictEqual(cart?.recovery_stage, "MESSAGED");
   });
 
@@ -391,7 +391,7 @@ export async function runMarketingTests() {
     assert.strictEqual(result.messages_delivered, 1);
     assert.ok(result.attributed_revenue_bdt > 0);
 
-    const updatedCmp = db.getCampaignById(highRiskCampaignId);
+    const updatedCmp = db.getCampaignById(tenantId, highRiskCampaignId);
     assert.strictEqual(updatedCmp?.status, "COMPLETED");
   });
 

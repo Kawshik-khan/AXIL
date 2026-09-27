@@ -19,6 +19,8 @@ export type EntityType =
 
 export interface Organization {
   id: string;
+  /** Owning workspace. Only that workspace can use the organization (FX-13); legacy rows without one are unusable. */
+  tenant_id?: string;
   name: string;
   slug: string;
   legal_name: string;

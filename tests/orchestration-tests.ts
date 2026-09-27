@@ -406,7 +406,7 @@ export async function runOrchestrationTests() {
     db.updateOrderStatus(contextA.tenant.id, sampleOrder.id, "DELIVERED");
 
     // 3. Human tries to approve the stale action
-    const result = await approvalEngine.approveAction(approvalReq.id, "Operator");
+    const result = await approvalEngine.approveAction(contextA.tenant.id, approvalReq.id, "Operator");
 
     assert.strictEqual(result.success, false, "Must fail pre-execution validation");
     assert.strictEqual(result.stale, true, "Must flag stale entity");
@@ -542,19 +542,19 @@ export async function runOrchestrationTests() {
     assert.ok(workflow.tasks.length > 0);
 
     // Verify initial checkpoint exists
-    const chks = db.getWorkflowCheckpoints(workflow.id);
+    const chks = db.getWorkflowCheckpoints(workflow.tenant_id, workflow.id);
     assert.ok(chks.length >= 1, "Initial plan checkpoint must be stored");
 
     // Pause workflow
-    const paused = await workflowEngine.pauseWorkflow(workflow.id, "Operator hold");
+    const paused = await workflowEngine.pauseWorkflow(workflow.tenant_id, workflow.id, "Operator hold");
     assert.strictEqual(paused.status, WorkflowStatus.PAUSED);
 
     // Checkpoint after pause
-    const pausedChks = db.getWorkflowCheckpoints(workflow.id);
+    const pausedChks = db.getWorkflowCheckpoints(workflow.tenant_id, workflow.id);
     assert.ok(pausedChks.some((c) => c.reason.includes("paused")));
 
     // Resume workflow
-    const resumed = await workflowEngine.resumeWorkflow(workflow.id);
+    const resumed = await workflowEngine.resumeWorkflow(workflow.tenant_id, workflow.id);
     assert.ok([WorkflowStatus.RUNNING, WorkflowStatus.COMPLETED, WorkflowStatus.WAITING].includes(resumed.status));
   });
 
@@ -619,7 +619,7 @@ export async function runOrchestrationTests() {
     assert.strictEqual(schedule.is_active, true);
 
     // Force schedule to be due by setting next_run_at in the past
-    db.updateAgentSchedule(schedule.id, {
+    db.updateAgentSchedule(schedule.tenant_id, schedule.id, {
       next_run_at: new Date(Date.now() - 1000).toISOString(),
     });
 

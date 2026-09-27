@@ -47,6 +47,7 @@ export class EnterpriseIncidentService {
    * Advances the incident status along its lifecycle
    */
   public transitionStatus(
+    orgId: string,
     incidentId: string,
     nextStatus: IncidentStatus,
     notes?: string
@@ -59,7 +60,7 @@ export class EnterpriseIncidentService {
       if (notes) updates.postmortem_notes = notes;
     }
 
-    return db.updateEnterpriseIncident(incidentId, updates);
+    return db.updateEnterpriseIncident(orgId, incidentId, updates);
   }
 }
 

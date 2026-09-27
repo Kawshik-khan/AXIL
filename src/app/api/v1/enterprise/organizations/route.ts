@@ -8,7 +8,8 @@ export async function GET(request: Request) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.ORGANIZATION_READ);
-    const orgs = db.getOrganizations();
+    // Only this workspace's own organizations (FX-13).
+    const orgs = db.getOrganizations().filter((o) => o.tenant_id === context.tenant.id);
     return apiSuccess({
       total: orgs.length,
       organizations: orgs,
@@ -25,6 +26,7 @@ export async function POST(request: Request) {
     const body = await request.json();
 
     const created = enterpriseHierarchyService.createOrganization({
+      tenantId: context.tenant.id,
       name: body.name,
       slug: body.slug || body.name.toLowerCase().replace(/\s+/g, "-"),
       legal_name: body.legal_name || body.name,
