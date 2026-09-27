@@ -1,5 +1,6 @@
 import { randomSuffix } from "@/lib/ids";
 import { NextResponse } from "next/server";
+import { ZodError } from "zod";
 import {
   AppError,
   PlatformAuthRequiredError,
@@ -58,6 +59,21 @@ export function apiError(error: unknown, requestId?: string) {
         status: error.statusCode,
         ...(typeof retryAfter === "number" ? { headers: { "Retry-After": String(retryAfter) } } : {}),
       }
+    );
+  }
+
+  // A Zod schema used with .parse() is a client error, not a server error.
+  if (error instanceof ZodError) {
+    return NextResponse.json(
+      {
+        error: {
+          code: "VALIDATION_ERROR",
+          message: "Request body is invalid.",
+          details: { issues: error.issues.map((i) => ({ path: i.path.join("."), message: i.message })) },
+          request_id: reqId,
+        },
+      },
+      { status: 400 }
     );
   }
 

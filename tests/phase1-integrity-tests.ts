@@ -626,6 +626,16 @@ async function main() {
     assert.ok(/"request_id":"req_/.test(text));
   });
 
+  await runTest("a Zod validation error from .parse() is a 400, not a generic 500", async () => {
+    const { apiError } = await import("@/lib/api-response");
+    const { z } = await import("zod");
+    const parsed = z.object({ name: z.string() }).strict().safeParse({ name: 1, extra: true });
+    assert.ok(!parsed.success);
+    const res = apiError(parsed.error);
+    assert.strictEqual(res.status, 400);
+    assert.ok((await res.text()).includes("VALIDATION_ERROR"));
+  });
+
   await runTest("a missing record is a 404, not a 500", async () => {
     const fresh = (await AuthService.login(shop.user.email, "Phase1-Owner-Pass-4471!")).token; // earlier test revoked sessions
     const res = await sendJson(`growth/campaigns/[id]`, "camp_does_not_exist", "PUT", fresh, { name: "x" });
