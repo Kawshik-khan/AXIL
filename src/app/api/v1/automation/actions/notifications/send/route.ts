@@ -1,3 +1,5 @@
+import { RbacService } from "@/domains/rbac/service";
+import { PERMISSIONS } from "@/lib/permissions";
 import { randomSuffix } from "@/lib/ids";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { IdempotencyService } from "@/domains/automation/services/idempotency.service";
@@ -7,6 +9,7 @@ import { BadRequestError } from "@/lib/errors";
 export async function POST(request: Request) {
   try {
     const context = await extractRequestContext(request);
+    RbacService.assertCan(context, PERMISSIONS.NOTIFICATIONS_SEND); // was unguarded (FX-18)
     const idempotencyKey =
       request.headers.get("idempotency-key") ||
       request.headers.get("x-idempotency-key");

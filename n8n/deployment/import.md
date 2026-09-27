@@ -24,6 +24,20 @@ Before importing or activating workflows, configure the shared header credential
    - **Header Value**: `Bearer <your_commerceos_service_token>`
 4. Click **Save**.
 
+**Getting the service token (FX-18).** In CommerceOS, an OWNER or ADMIN opens **Settings → Service Tokens** and
+creates a token. Give it only the scopes the workflows need:
+
+| Workflow calls | Scope |
+|---|---|
+| `/api/v1/automation/actions/notifications/send` | `notifications.send` |
+| `/api/v1/automation/actions/inventory/adjust` | `inventory.adjust` |
+| `/api/v1/automation/actions/orders/{id}/{confirm\|cancel}` | `orders.update` |
+| `/api/v1/automation/actions/shipments/{id}/create` | `shipments.create` |
+| `/api/v1/products/bulk` | `products.create` |
+
+The token (`cos_svc_…`) is shown once and acts only in that workspace, with only those scopes. Revoke it in the same
+screen; it stops working immediately. A user's session JWT no longer belongs in n8n.
+
 > [!NOTE]
 > All HTTP Request nodes in the exported workflows reference the credential name `CommerceOS API`. Configuring this once binds all workflows automatically.
 

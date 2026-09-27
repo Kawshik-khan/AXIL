@@ -32,7 +32,13 @@ export interface WebhookVerificationResult {
   reason?: string;
   webhook?: AutomationWebhook;
   deliveryId: string;
+  /** The event was already processed or is being processed now: callers must not process it again (N2). */
+  duplicate?: boolean;
+  /** Idempotency key for this delivery; callers mark it completed after processing, or failed so a retry can run. */
+  idempotencyKey?: string;
 }
+
+export const WEBHOOK_INGESTION_OPERATION = "WEBHOOK_INGESTION";
 
 export class WebhookGatewayService {
   private static readonly MAX_TIMESTAMP_DRIFT_SECONDS = 300; // 5 minutes
@@ -193,37 +199,38 @@ export class WebhookGatewayService {
       return rejectDelivery("INVALID_SIGNATURE", "Invalid webhook cryptographic signature.", signatureHeader);
     }
 
-    // 4. Provider event ID replay check (Replay protection step 2)
-    const providerEventId =
-      (req.parsedBody.event_id as string) ||
-      (req.parsedBody.id as string) ||
-      (req.headers["x-event-id"] as string) ||
-      req.headers["x-request-id"];
+    // 4. Duplicate suppression (replay protection step 2, STATUS N2). The key comes only from signed data: the event id
+    //    in the body, or else the signature itself (which covers the timestamp). Unsigned headers such as x-request-id
+    //    are not used, since a replayed request could change them.
+    const bodyEventId = (req.parsedBody.event_id as string) || (req.parsedBody.id as string) || undefined;
+    const providerEventId = bodyEventId || (req.headers["x-event-id"] as string) || undefined;
+    const idempotencyKey = bodyEventId
+      ? `wh_${webhook.id}_evt_${bodyEventId}`
+      : `wh_${webhook.id}_sig_${crypto.createHash("sha256").update(cleanSignature).digest("hex")}`;
+    const lock = IdempotencyService.acquireLock(tenantId, idempotencyKey, WEBHOOK_INGESTION_OPERATION, req.parsedBody);
+    if (lock.isDuplicate) {
+      db.createAutomationWebhookDelivery({
+        id: deliveryId,
+        tenant_id: tenantId,
+        webhook_id: webhook.id,
+        provider: req.provider,
+        provider_event_id: providerEventId,
+        status: "PROCESSED",
+        failure_reason:
+          lock.status === "COMPLETED" ? "Duplicate event suppressed via idempotency" : "Duplicate of an event still being processed",
+        payload_size_bytes: payloadSize,
+        timestamp: new Date().toISOString(),
+      });
 
-    if (providerEventId) {
-      const idempotencyKey = `wh_${req.provider}_${providerEventId}`;
-      const lock = IdempotencyService.acquireLock(tenantId, idempotencyKey, "WEBHOOK_INGESTION", req.parsedBody);
-      if (lock.isDuplicate && lock.status === "COMPLETED") {
-        db.createAutomationWebhookDelivery({
-          id: deliveryId,
-          tenant_id: tenantId,
-          webhook_id: webhook.id,
-          provider: req.provider,
-          provider_event_id: providerEventId,
-          status: "PROCESSED",
-          failure_reason: "Duplicate event suppressed via idempotency",
-          payload_size_bytes: payloadSize,
-          timestamp: new Date().toISOString(),
-        });
-
-        return {
-          verified: true,
-          code: "SUCCESS",
-          reason: "Duplicate event already processed.",
-          webhook,
-          deliveryId,
-        };
-      }
+      return {
+        verified: true,
+        code: "SUCCESS",
+        reason: lock.status === "COMPLETED" ? "Duplicate event already processed." : "Duplicate of an event in progress.",
+        webhook,
+        deliveryId,
+        duplicate: true,
+        idempotencyKey,
+      };
     }
 
     // 5. Success delivery logging
@@ -248,6 +255,7 @@ export class WebhookGatewayService {
       code: "SUCCESS",
       webhook,
       deliveryId,
+      idempotencyKey,
     };
   }
 }

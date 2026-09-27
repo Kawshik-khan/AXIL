@@ -10,10 +10,11 @@ import { Badge } from "@/components/ui/Badge/Badge";
 import { Modal } from "@/components/ui/Modal/Modal";
 import { LoadingSkeleton, PermissionDenied } from "@/components/ui/States/States";
 import styles from "./settings.module.css";
+import { ServiceTokensPanel } from "@/components/settings/ServiceTokensPanel";
 import dashStyles from "../dashboard.module.css";
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<"workspace" | "users" | "security">("workspace");
+  const [activeTab, setActiveTab] = useState<"workspace" | "users" | "security" | "service-tokens">("workspace");
   const [session, setSession] = useState<any>(null);
   const [tenant, setTenant] = useState<any>(null);
   const [users, setUsers] = useState<any[]>([]);
@@ -198,6 +199,13 @@ export default function SettingsPage() {
   const canReadUsers = permissions.includes("user.read");
   const canInviteUsers = permissions.includes("user.invite");
   const canReadAudit = permissions.includes("audit.read");
+  const canManageServiceTokens = permissions.includes("service_tokens.manage");
+
+  const handleSignOutEverywhere = async () => {
+    if (!confirm("Sign out of every browser and device, including this one?")) return;
+    await fetch("/api/v1/auth/sessions/revoke-all", { method: "POST", credentials: "include" });
+    window.location.assign("/login");
+  };
 
   return (
     <>
@@ -235,6 +243,14 @@ export default function SettingsPage() {
         >
           Security &amp; Audit Logs ({auditLogs.length})
         </button>
+        {canManageServiceTokens && (
+          <button
+            className={`${dashStyles.tabButton} ${activeTab === "service-tokens" ? dashStyles.tabActive : ""}`}
+            onClick={() => setActiveTab("service-tokens")}
+          >
+            Service Tokens
+          </button>
+        )}
       </div>
 
       {/* Tab 1: Workspace Settings */}
@@ -478,6 +494,9 @@ export default function SettingsPage() {
         </>
       )}
 
+      {/* Tab 4: Service tokens for automations (FX-18) */}
+      {activeTab === "service-tokens" && canManageServiceTokens && <ServiceTokensPanel />}
+
       {/* Tab 3: Security & Audit Logs */}
       {activeTab === "security" && (
         <>
@@ -485,11 +504,16 @@ export default function SettingsPage() {
             <PermissionDenied resource="audit logs" requiredPermission="audit.read" />
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-              <div>
-                <h3 style={{ fontSize: "16px", fontWeight: 600 }}>Immutable Workspace Audit Trail</h3>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "12px" }}>
+                <div>
+                  <h3 style={{ fontSize: "16px", fontWeight: 600 }}>Immutable Workspace Audit Trail</h3>
                 <p style={{ fontSize: "12px", color: "var(--color-text-secondary)" }}>
                   All authentication, role updates, and settings changes are recorded permanently.
                 </p>
+                </div>
+                <Button type="button" variant="secondary" onClick={handleSignOutEverywhere}>
+                  Sign out everywhere
+                </Button>
               </div>
 
               <div className={dashStyles.tableContainer}>

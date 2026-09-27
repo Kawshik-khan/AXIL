@@ -57,7 +57,9 @@ export const PERMISSIONS = {
   // Payments & Finance
   PAYMENTS_READ: "payments.read",
   PAYMENTS_REFUND: "payments.refund",
-  PAYMENTS_VERIFY: "payments.verify", // mark a payment PAID (FX-11); PAYMENTS_READ alone no longer can
+  PAYMENTS_VERIFY: "payments.verify",
+  NOTIFICATIONS_SEND: "notifications.send", // automation notification action (FX-18)
+  SERVICE_TOKENS_MANAGE: "service_tokens.manage", // create/revoke machine credentials (FX-18) // mark a payment PAID (FX-11); PAYMENTS_READ alone no longer can
   FINANCE_READ: "finance.read",
 
   // Shipments & Courier
@@ -427,7 +429,9 @@ export type RoleName =
   | "MARKETING"
   | "INVENTORY"
   | "FINANCE"
-  | "ANALYST";
+  | "ANALYST"
+  /** Machine credential (FX-18): permissions come from the token's scopes, never from this role. */
+  | "SERVICE";
 
 export const ROLE_PERMISSIONS: Record<RoleName, Permission[]> = {
   OWNER: Object.values(PERMISSIONS), // Owner has all tenant permissions
@@ -472,6 +476,8 @@ export const ROLE_PERMISSIONS: Record<RoleName, Permission[]> = {
   ],
 
   ADMIN: [
+    PERMISSIONS.NOTIFICATIONS_SEND,
+    PERMISSIONS.SERVICE_TOKENS_MANAGE,
     PERMISSIONS.WORKSPACE_READ,
     PERMISSIONS.WORKSPACE_UPDATE,
     PERMISSIONS.USER_READ,
@@ -794,7 +800,23 @@ export const ROLE_PERMISSIONS: Record<RoleName, Permission[]> = {
     PERMISSIONS.SOCIAL_CONVERSATION_READ,
     PERMISSIONS.SOCIAL_ANALYTICS_READ,
   ],
+
+  SERVICE: [], // service tokens carry explicit scopes (FX-18)
 };
+
+/**
+ * Scopes a service token may hold (FX-18). Automation callers need only these; a token never gets more than the
+ * user who creates it holds.
+ */
+export const SERVICE_TOKEN_SCOPES: readonly Permission[] = [
+  PERMISSIONS.INVENTORY_ADJUST,
+  PERMISSIONS.ORDERS_UPDATE,
+  PERMISSIONS.SHIPMENTS_CREATE,
+  PERMISSIONS.NOTIFICATIONS_SEND,
+  PERMISSIONS.PRODUCTS_CREATE,
+  PERMISSIONS.ORDERS_READ,
+  PERMISSIONS.PRODUCTS_READ,
+];
 
 import { EnterpriseRoleName } from "@/types/enterprise";
 

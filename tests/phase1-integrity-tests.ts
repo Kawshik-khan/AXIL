@@ -643,6 +643,106 @@ async function main() {
     }
   });
 
+  // ---------------------------------------------------------------------------
+  console.log(`\n${ANSI_BOLD}[FX-18] Service tokens for automations; webhook duplicates (N2)${ANSI_RESET}`);
+  // ---------------------------------------------------------------------------
+
+  const ownerNow = (await AuthService.login(shop.user.email, "Phase1-Owner-Pass-4471!")).token;
+  const tokensRoute = (await import("@/app/api/v1/service-tokens/route")) as {
+    GET: (r: Request) => Promise<Response>;
+    POST: (r: Request) => Promise<Response>;
+  };
+  const createToken = (token: string, body: unknown) =>
+    tokensRoute.POST(new Request(`${BASE}/service-tokens`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }));
+  const notify = async (bearer: string) => {
+    const route = (await import("@/app/api/v1/automation/actions/notifications/send/route")) as Route;
+    return route.POST(new Request(`${BASE}/automation/actions/notifications/send`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json", "idempotency-key": uid("idem") },
+      body: JSON.stringify({ channel: "SMS", recipient: "+8801811000001", message: "Your order shipped" }),
+    }));
+  };
+  let serviceToken = "";
+
+  await runTest("an OWNER creates a service token; it is shown once and never listed", async () => {
+    const res = await createToken(ownerNow, { name: "n8n", scopes: ["notifications.send"], expires_in_days: 30 });
+    assert.strictEqual(res.status, 201);
+    serviceToken = ((await res.json()) as { data: { token: string } }).data.token;
+    assert.ok(serviceToken.startsWith("cos_svc_"));
+    const list = await tokensRoute.GET(new Request(`${BASE}/service-tokens`, { headers: { authorization: `Bearer ${ownerNow}` } }));
+    const text = await list.text();
+    assert.ok(!text.includes(serviceToken) && !text.includes("key_hash"), "neither the token nor its hash is listed");
+  });
+
+  await runTest("the token works for its scope and nothing else", async () => {
+    assert.strictEqual((await notify(serviceToken)).status, 200);
+    const inventory = (await import("@/app/api/v1/automation/actions/inventory/adjust/route")) as Route;
+    const res = await inventory.POST(new Request(`${BASE}/automation/actions/inventory/adjust`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${serviceToken}`, "content-type": "application/json", "idempotency-key": uid("idem") },
+      body: JSON.stringify({ warehouse_id: "wh_x", product_variant_id: "var_x", quantity_delta: 5 }),
+    }));
+    assert.strictEqual(res.status, 403);
+  });
+
+  await runTest("tokens can't carry disallowed scopes or scopes the creator lacks", async () => {
+    assert.strictEqual((await createToken(ownerNow, { name: "too much", scopes: ["user.invite"] })).status, 400);
+    const analyst2 = await member(tenantId, "ANALYST");
+    assert.strictEqual((await createToken(analyst2.token, { name: "nope", scopes: ["orders.read"] })).status, 403);
+  });
+
+  await runTest("revoked and expired tokens are refused (401)", async () => {
+    const created = await createToken(ownerNow, { name: "short", scopes: ["notifications.send"] });
+    const { token, service_token } = ((await created.json()) as { data: { token: string; service_token: { id: string } } }).data;
+    const del = (await import("@/app/api/v1/service-tokens/[id]/route")) as {
+      DELETE: (r: Request, ctx: { params: { id: string } }) => Promise<Response>;
+    };
+    assert.strictEqual((await del.DELETE(new Request(`${BASE}/service-tokens/${service_token.id}`, {
+      method: "DELETE", headers: { authorization: `Bearer ${ownerNow}` },
+    }), { params: { id: service_token.id } })).status, 200);
+    assert.strictEqual((await notify(token)).status, 401);
+
+    const expiring = await createToken(ownerNow, { name: "expiring", scopes: ["notifications.send"], expires_in_days: 1 });
+    const exp = ((await expiring.json()) as { data: { token: string; service_token: { id: string } } }).data;
+    db.updateServiceToken(tenantId, exp.service_token.id, { expires_at: new Date(Date.now() - 1000).toISOString() });
+    assert.strictEqual((await notify(exp.token)).status, 401);
+  });
+
+  await runTest("notification actions now need notifications.send (SUPPORT gets 403)", async () => {
+    const support = await member(tenantId, "SUPPORT");
+    assert.strictEqual((await notify(support.token)).status, 403);
+  });
+
+  await runTest("N2: an identical signed courier webhook is applied once; the repeat is acknowledged as a duplicate", async () => {
+    const secret = crypto.randomBytes(24).toString("hex");
+    process.env.P1_TEST_STEADFAST_SECRET = secret;
+    const whId = uid("wh_p1");
+    db.createAutomationWebhook({
+      id: whId, tenant_id: tenantId, provider: "STEADFAST", endpoint_path: "/api/v1/automation/webhooks/steadfast",
+      secret_reference: "P1_TEST_STEADFAST_SECRET", signature_algorithm: "HMAC_SHA256", is_active: true, created_at: nowIso(), updated_at: nowIso(),
+    });
+    const route = (await import("@/app/api/v1/automation/webhooks/[provider]/route")) as {
+      POST: (r: Request, ctx: { params: { provider: string } }) => Promise<Response>;
+    };
+    const body = JSON.stringify({ tracking_number: "TRK-P1-NOT-REAL", status: "in_transit" });
+    const ts = Date.now().toString();
+    const sig = crypto.createHmac("sha256", secret).update(`${ts}.${body}`).digest("hex");
+    const send = () => route.POST(new Request(`${BASE}/automation/webhooks/steadfast?wh=${whId}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-webhook-timestamp": ts, "x-webhook-signature": sig, "x-request-id": uid("rq") },
+      body,
+    }), { params: { provider: "steadfast" } });
+    const first = (await (await send()).json()) as { duplicate?: boolean; verified?: boolean };
+    assert.strictEqual(first.verified, true);
+    assert.notStrictEqual(first.duplicate, true);
+    const second = (await (await send()).json()) as { duplicate?: boolean };
+    assert.strictEqual(second.duplicate, true, "a changed x-request-id does not bypass duplicate detection");
+  });
+
   console.log(`\n${ANSI_BOLD}====================================================${ANSI_RESET}`);
   console.log(`  Tests Passed: ${passedCount} | Tests Failed: ${failedCount}`);
   console.log(`${ANSI_BOLD}====================================================${ANSI_RESET}\n`);

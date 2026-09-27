@@ -13,6 +13,7 @@ import {
   verifyStepUpToken,
 } from "@/lib/security";
 import { AuthService } from "@/domains/auth/service";
+import { ServiceTokenService, SERVICE_TOKEN_PREFIX } from "@/domains/automation/services/service-token.service";
 import {
   RequestContext,
   PlatformContext,
@@ -104,6 +105,11 @@ export async function extractRequestContext(request: Request): Promise<RequestCo
     const devContext = devAuthBypassContext(request, requestId);
     if (devContext) return devContext;
     throw new AppError("AUTHENTICATION_REQUIRED", "No authentication session token provided.", 401);
+  }
+
+  // Machine credentials (FX-18): `Authorization: Bearer cos_svc_…` acts in its workspace with exactly its scopes.
+  if (token.startsWith(SERVICE_TOKEN_PREFIX)) {
+    return ServiceTokenService.resolveContext(token, requestId);
   }
 
   // A presented token is always verified; an invalid or expired token is never replaced by a fallback identity (audit H1).

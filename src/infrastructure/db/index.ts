@@ -88,6 +88,21 @@ export interface UserRecord {
   updated_at: string;
 }
 
+/** Machine credential for automation callers such as n8n (FX-18). Only a SHA-256 hash of the token is stored. */
+export interface ServiceTokenRecord {
+  id: string;
+  tenant_id: string;
+  name: string;
+  key_prefix: string;
+  key_hash: string;
+  scopes: string[];
+  created_by: string;
+  created_at: string;
+  last_used_at?: string;
+  expires_at?: string;
+  revoked_at?: string;
+}
+
 export interface MembershipRecord {
   id: string;
   tenant_id: string;
@@ -532,6 +547,7 @@ export interface DatabaseSchema {
   connector_configurations: ConnectorConfigRecord[];
   // Phase 12: Platform & Super Admin Collections
   platform_memberships: PlatformMembershipRecord[];
+  service_tokens: ServiceTokenRecord[];
   plans: PlanRecord[];
   plan_versions: PlanVersionRecord[];
   subscriptions: SubscriptionRecord[];
@@ -797,6 +813,7 @@ class CommerceDatabase {
           automation_webhook_deliveries: parsed.automation_webhook_deliveries || [],
           automation_audit_logs: parsed.automation_audit_logs || [],
           connector_configurations: parsed.connector_configurations || [],
+          service_tokens: parsed.service_tokens || [],
           // MFA was recorded as enabled without any factor existing (STATUS N4); only an enrolled secret counts.
           platform_memberships: (parsed.platform_memberships || []).map((m: PlatformMembershipRecord) =>
             m.mfa_enabled && !m.mfa_secret_encrypted ? { ...m, mfa_enabled: false } : m
@@ -1040,6 +1057,7 @@ class CommerceDatabase {
       automation_audit_logs: [],
       connector_configurations: [],
       platform_memberships: [],
+      service_tokens: [],
       plans: [],
       plan_versions: [],
       subscriptions: [],
@@ -4054,6 +4072,29 @@ class CommerceDatabase {
     this.data.users[idx] = { ...this.data.users[idx], session_version: next, updated_at: new Date().toISOString() };
     this.persist();
     return next;
+  }
+
+  // ==================== SERVICE TOKENS (FX-18) ====================
+  public createServiceToken(token: ServiceTokenRecord): ServiceTokenRecord {
+    this.data.service_tokens.push(token);
+    this.persist();
+    return token;
+  }
+
+  public getServiceTokens(tenantId: string): ServiceTokenRecord[] {
+    return this.data.service_tokens.filter((t) => t.tenant_id === tenantId);
+  }
+
+  public findServiceTokenByHash(keyHash: string): ServiceTokenRecord | undefined {
+    return this.data.service_tokens.find((t) => t.key_hash === keyHash);
+  }
+
+  public updateServiceToken(tenantId: string, id: string, patch: Partial<ServiceTokenRecord>): ServiceTokenRecord | undefined {
+    const idx = this.data.service_tokens.findIndex((t) => t.tenant_id === tenantId && t.id === id);
+    if (idx === -1) return undefined;
+    this.data.service_tokens[idx] = { ...this.data.service_tokens[idx], ...safePatch(patch) };
+    this.persist();
+    return this.data.service_tokens[idx];
   }
 
   public updateMembershipStatus(tenantId: string, userId: string, status: "ACTIVE" | "SUSPENDED"): MembershipRecord | undefined {
@@ -7913,6 +7954,7 @@ class CommerceDatabase {
       automation_audit_logs: [],
       connector_configurations: [],
       platform_memberships: [],
+      service_tokens: [],
       plans: [],
       plan_versions: [],
       subscriptions: [],

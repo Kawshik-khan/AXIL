@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
-import { WebhookGatewayService } from "@/domains/automation/services/webhook-gateway.service";
+import { WebhookGatewayService, WEBHOOK_INGESTION_OPERATION } from "@/domains/automation/services/webhook-gateway.service";
 import { CourierSyncService } from "@/domains/automation/services/courier-sync.service";
 import { WebhookProvider } from "@/types/automation";
 import { CourierProviderName } from "@/types/commerce";
 import { logger } from "@/lib/logger";
+import { IdempotencyService } from "@/domains/automation/services/idempotency.service";
 import { checkRateLimit, MINUTE } from "@/lib/rate-limit";
 
 const COURIER_PROVIDERS = new Set<string>(["STEADFAST", "PATHAO", "REDX", "PAPERFLY", "ECOURIER", "SUNDARBAN"]);
@@ -65,30 +66,28 @@ export async function POST(request: Request, { params }: { params: { provider: s
       return reject(authFailure ? 401 : 400, verification.code, verification.reason || "Webhook rejected.", verification.deliveryId);
     }
 
-    // 2. Courier webhooks: apply the canonical status to the webhook tenant's shipment.
-    if (COURIER_PROVIDERS.has(provider)) {
-      const syncResult = await CourierSyncService.processCourierWebhook(webhook.tenant_id, provider as CourierProviderName, {
-        tracking_number: (parsedBody.tracking_code || parsedBody.tracking_number || parsedBody.consignment_id) as string,
-        consignment_id: (parsedBody.consignment_id || parsedBody.invoice_id) as string,
-        raw_status: (parsedBody.status || parsedBody.delivery_status || "in_transit") as string,
-        status_details: (parsedBody.status_details || parsedBody.reason || parsedBody.notes) as string,
-        location: (parsedBody.current_hub || parsedBody.location) as string,
-      });
-
-      return NextResponse.json({
-        success: true,
-        verified: true,
-        delivery_id: verification.deliveryId,
-        courier_sync: syncResult,
-      });
+    // A duplicate (already processed, or in progress) is acknowledged without being applied again (STATUS N2).
+    if (verification.duplicate) {
+      return NextResponse.json({ success: true, verified: true, duplicate: true, delivery_id: verification.deliveryId });
     }
 
-    return NextResponse.json({
-      success: true,
-      verified: true,
-      delivery_id: verification.deliveryId,
-      message: `Webhook for ${provider} verified and recorded.`,
-    });
+    try {
+      const result = await applyWebhook(provider, webhook.tenant_id, parsedBody, verification.deliveryId);
+      if (verification.idempotencyKey) {
+        IdempotencyService.markCompleted(webhook.tenant_id, verification.idempotencyKey, WEBHOOK_INGESTION_OPERATION, {
+          delivery_id: verification.deliveryId,
+        });
+      }
+      return result;
+    } catch (processingError) {
+      // Release the lock so the provider's retry is processed instead of being dropped as a duplicate.
+      if (verification.idempotencyKey) {
+        IdempotencyService.markFailed(webhook.tenant_id, verification.idempotencyKey, WEBHOOK_INGESTION_OPERATION, {
+          error: processingError instanceof Error ? processingError.message : String(processingError),
+        });
+      }
+      throw processingError;
+    }
   } catch (err) {
     logger.error("webhook.processing_failed", {
       provider: params.provider,
@@ -96,4 +95,36 @@ export async function POST(request: Request, { params }: { params: { provider: s
     });
     return reject(500, "WEBHOOK_PROCESSING_FAILED", "Error processing webhook.");
   }
+}
+
+async function applyWebhook(
+  provider: WebhookProvider,
+  tenantId: string,
+  parsedBody: Record<string, unknown>,
+  deliveryId: string
+): Promise<NextResponse> {
+  // 2. Courier webhooks: apply the canonical status to the webhook tenant's shipment.
+  if (COURIER_PROVIDERS.has(provider)) {
+    const syncResult = await CourierSyncService.processCourierWebhook(tenantId, provider as CourierProviderName, {
+      tracking_number: (parsedBody.tracking_code || parsedBody.tracking_number || parsedBody.consignment_id) as string,
+      consignment_id: (parsedBody.consignment_id || parsedBody.invoice_id) as string,
+      raw_status: (parsedBody.status || parsedBody.delivery_status || "in_transit") as string,
+      status_details: (parsedBody.status_details || parsedBody.reason || parsedBody.notes) as string,
+      location: (parsedBody.current_hub || parsedBody.location) as string,
+    });
+
+    return NextResponse.json({
+      success: true,
+      verified: true,
+      delivery_id: deliveryId,
+      courier_sync: syncResult,
+    });
+  }
+
+  return NextResponse.json({
+    success: true,
+    verified: true,
+    delivery_id: deliveryId,
+    message: `Webhook for ${provider} verified and recorded.`,
+  });
 }
