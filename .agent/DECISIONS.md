@@ -1174,7 +1174,10 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
   7. **Social ingress resolves the channel strictly and always verifies.**
      - Meta signatures use the channel's app secret or `META_APP_SECRET`; when neither is set, verification fails.
      - Verify tokens come only from `META_VERIFY_TOKEN`; the endpoint returns 503 when it is unset.
-     - The only unsigned path is the public website widget, and only for an ACTIVE `WEBSITE_CHAT` channel.
+     - The only unsigned path is the public website widget, and only for an ACTIVE `WEBSITE_CHAT` channel. Phone and email typed into the widget are unverified, so they are not used to match existing customers.
+     - Meta batches carry events for several Pages or numbers. Every entry is routed to, and signature-checked against, its own channel.
+     - A Meta account id (Page id or WhatsApp phone number id) belongs to at most one channel. A duplicate connect gets 409, and ingress ignores ambiguous ids.
+  8. **The dev bypass is local only.** Even with `DEV_AUTH_BYPASS=1`, only loopback-host, non-cross-site requests get the dev identity.
 - **Consequences**:
   - Every existing session becomes invalid, so everyone signs in again.
   - The app doesn't serve authenticated requests until `.env.local` has both new secrets.
@@ -1182,3 +1185,14 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
   - Credentials that can't be re-encrypted are marked ERROR and must be reconnected.
   - The n8n courier/payment relay workflows get 401 until they sign their requests (FX-18).
   - Guarded by `tests/security-regression-tests.ts` (part of `npm test`) and `scripts/smoke-security.mjs` (live exploit replay).
+  - Provisioned tenant owners start without a usable password until an owner-setup flow exists (STATUS N8).
+  - Webhook secrets are one per provider, shared across tenants, so the `?wh=` id routes a call but does not authenticate it per tenant. Per-row secrets, or signing `wh`, come with FX-18.
+- **Deviations from FIX_IMPLEMENTATION_PLAN Phase 0**:
+  - FX-06: no bearer/TOKEN webhook mode (see decision 6).
+  - FX-06 step 4: courier sync refuses terminal-state orders and logs a warning. No operational-exception record is created yet, and the route still answers `success: true` with `courier_sync.success: false`.
+  - FX-06 step 5: the Automations tab shows the callback path with `?wh=`, not the absolute URL.
+  - FX-02 step 4 / D6: there is no `SEED_DEMO_DATA` gate. The demo tenant and accounts are still seeded in every environment, disabled until `SEED_ADMIN_PASSWORD` is set. `reset-seed-passwords.ts` deactivates the four staff accounts by default.
+  - FX-05: no in-app banner while the dev bypass is active; it is logged on every use instead.
+  - FX-07 steps 5–6: no widget key or Origin allow-list (it comes with rate limiting, FX-14), and the adapters' generated "Facebook User ####" display names remain (FX-30).
+  - §11 check 8 (UI step-up → 200) is 501 by design until FX-15, and so is kill-switch deactivate, which requires step-up.
+  - FX-08: the release tag is created after merge, not on the branch.

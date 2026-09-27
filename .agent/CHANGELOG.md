@@ -18,6 +18,10 @@ See [ADR-103](DECISIONS.md#adr-103-fail-closed-authentication-secrets-and-webhoo
 - Courier and payment webhooks require a per-endpoint `?wh=` id and an HMAC of `<timestamp>.<raw body>` within 300 s. The tenant comes from the webhook row, and rows are never auto-created (C4).
 - Social webhooks resolve the channel strictly, always verify the Meta signature, and have no built-in secrets or verify tokens (H5).
 - Accepting an invitation for an existing account requires that account's password (N1).
+- Meta batches are routed per entry, a Meta account can be connected to only one channel, and ambiguous ids are ignored (H5).
+- The website widget no longer uses unverified phone/email to match existing customers (N6). The widget session endpoint no longer returns other visitors' IP or user agent, and widget visitor ids are 128-bit random.
+- The opt-in dev bypass serves only loopback, same-site requests.
+- `reset-seed-passwords.ts` deactivates the four seeded staff accounts by default (`--keep-staff` to opt out). `rotate-credential-key.ts` no longer disables website-chat channels and warns that its backup is effectively plaintext.
 - `.env.example` holds placeholders only, and `.gitignore` / `.gitattributes` were added (C5).
 
 ### Changed (action required)
