@@ -101,7 +101,8 @@ export class WorkflowEngine {
       budget: defaultBudget,
       context_id: contextId,
       created_by: params.createdBy || "system",
-      created_by_type: params.createdByType || "USER",
+      // No creator means a system-started workflow (it runs with read-only access, FX-19), not a "USER" named "system".
+      created_by_type: params.createdByType || (params.createdBy ? "USER" : "SYSTEM"),
       created_at: now,
       updated_at: now,
     };

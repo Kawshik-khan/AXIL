@@ -743,6 +743,53 @@ async function main() {
     assert.strictEqual(second.duplicate, true, "a changed x-request-id does not bypass duplicate detection");
   });
 
+  // ---------------------------------------------------------------------------
+  console.log(`\n${ANSI_BOLD}[FX-19] AI workflows act with their creator's permissions (M12)${ANSI_RESET}`);
+  // ---------------------------------------------------------------------------
+
+  const { taskExecutor } = await import("@/domains/ai/orchestration/engine/task-executor");
+  type ExecutionContext = { role: string; permissions: string[]; user: { id: string } };
+  const contextOf = (task: unknown) =>
+    (taskExecutor as unknown as { executionContextFor(t: unknown): ExecutionContext }).executionContextFor(task);
+  const workflowWithTask = (createdBy: string, createdByType: "USER" | "SYSTEM") => {
+    const wfId = uid("wf_p1");
+    db.insertWorkflow({ id: wfId, tenant_id: tenantId, name: "P1", objective: "test", status: "RUNNING", created_by: createdBy, created_by_type: createdByType, created_at: nowIso(), updated_at: nowIso() } as never);
+    const task = {
+      id: uid("task_p1"), tenant_id: tenantId, workflow_id: wfId, agent_id: "agent_x", agent_type: "INVENTORY", task_type: "CHECK", objective: "check",
+      status: "PENDING", priority: "NORMAL", risk_level: "LOW", input: { variant_id: "var_none" }, dependencies: [], assigned_tools: [],
+      attempt_count: 1, max_attempts: 1, timeout_ms: 5000, idempotency_key: uid("idem"), created_at: nowIso(), updated_at: nowIso(),
+    };
+    db.insertTask(task as never);
+    return task;
+  };
+
+  await runTest("a user-created workflow acts with its creator's current role, not OWNER", () => {
+    const creator = db.findMembership(tenantId, analyst.id);
+    assert.ok(creator);
+    const ctx = contextOf(workflowWithTask(analyst.id, "USER"));
+    assert.strictEqual(ctx.role, "ANALYST");
+    assert.strictEqual(ctx.user.id, analyst.id);
+    assert.ok(!ctx.permissions.includes("orders.update"));
+  });
+
+  await runTest("if the creator lost access, the workflow's task fails instead of running", async () => {
+    const creator = await member(tenantId, "MANAGER");
+    const task = workflowWithTask(creator.id, "USER");
+    db.updateMembershipStatus(tenantId, creator.id, "SUSPENDED");
+    await taskExecutor.executeTask(task as never);
+    const stored = db.getTaskById(tenantId, task.id);
+    assert.strictEqual(stored?.status, "FAILED");
+    assert.ok(/no longer has access/i.test(stored?.error || ""), stored?.error);
+  });
+
+  await runTest("system workflows get read-only access, not OWNER", () => {
+    const ctx = contextOf(workflowWithTask("system", "SYSTEM"));
+    assert.strictEqual(ctx.role, "SERVICE");
+    for (const write of ["orders.update", "payments.verify", "inventory.adjust", "user.invite"]) {
+      assert.ok(!ctx.permissions.includes(write), `system workflow must not hold ${write}`);
+    }
+  });
+
   console.log(`\n${ANSI_BOLD}====================================================${ANSI_RESET}`);
   console.log(`  Tests Passed: ${passedCount} | Tests Failed: ${failedCount}`);
   console.log(`${ANSI_BOLD}====================================================${ANSI_RESET}\n`);

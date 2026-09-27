@@ -16,7 +16,23 @@ import { inventoryAgent } from '../agents/operations-inventory.agent';
 import { shippingAgent } from '../agents/operations-shipping.agent';
 import { paymentAgent } from '../agents/operations-payment.agent';
 import { RequestContext } from '@/lib/context';
-import { ROLE_PERMISSIONS } from '@/lib/permissions';
+import { PERMISSIONS, Permission } from '@/lib/permissions';
+import { RbacService } from '@/domains/rbac/service';
+import { ForbiddenError } from '@/lib/errors';
+
+/**
+ * What system- and event-started workflows may do (FX-19, audit M12). They have no human creator, and the agents
+ * they run only read (stock, shipping estimates, payment status), so they get read access, not OWNER.
+ */
+const SYSTEM_WORKFLOW_PERMISSIONS: Permission[] = [
+  PERMISSIONS.INVENTORY_READ,
+  PERMISSIONS.SHIPMENTS_READ,
+  PERMISSIONS.PAYMENTS_READ,
+  PERMISSIONS.ORDERS_READ,
+  PERMISSIONS.CUSTOMERS_READ,
+  PERMISSIONS.PRODUCTS_READ,
+  PERMISSIONS.AI_RUN,
+];
 
 export interface TaskExecutionResult {
   task: AgentTask;
@@ -233,35 +249,63 @@ export class TaskExecutor {
   }
 
   /**
+   * The identity a task acts with (FX-19, audit M12). A user-created workflow acts with its creator's CURRENT role in
+   * the workspace, so a creator who lost access (or a permission) can't keep acting through a workflow. System and
+   * event workflows get read-only access. Tasks used to run as a synthetic OWNER.
+   */
+  private executionContextFor(task: AgentTask): RequestContext {
+    const tenantId = task.tenant_id;
+    const tenant = db.findTenantById(tenantId);
+    if (!tenant || tenant.status !== "ACTIVE") {
+      throw new ForbiddenError("This workspace is not active.");
+    }
+    const tenantInfo = {
+      id: tenant.id,
+      name: tenant.name,
+      slug: tenant.slug,
+      currency: tenant.currency,
+      timezone: tenant.timezone,
+      language: tenant.language,
+      status: tenant.status,
+    };
+    const base = {
+      requestId: `req_${randomUUID().substring(0, 8)}`,
+      traceId: `trc_${randomUUID().substring(0, 8)}`,
+      tenant: tenantInfo,
+      timestamp: new Date().toISOString(),
+    };
+
+    const workflow = db.getWorkflowById(tenantId, task.workflow_id);
+    if (workflow?.created_by_type === "USER") {
+      const user = db.findUserById(workflow.created_by);
+      const membership = user ? db.findMembership(tenantId, user.id) : undefined;
+      if (!user || user.status !== "ACTIVE" || !membership || membership.status === "SUSPENDED") {
+        throw new ForbiddenError("The workflow's creator no longer has access to this workspace, so it can't run.");
+      }
+      return {
+        ...base,
+        user: { id: user.id, email: user.email, name: user.name, status: user.status },
+        role: membership.role,
+        permissions: RbacService.getPermissionsForRole(membership.role),
+      };
+    }
+
+    return {
+      ...base,
+      user: { id: "sys_agent_runner", email: "system@commerceos.io", name: "System Agent", status: "ACTIVE" },
+      role: "SERVICE",
+      permissions: SYSTEM_WORKFLOW_PERMISSIONS,
+    };
+  }
+
+  /**
    * Dispatches task to appropriate specialized agent
    */
   private async dispatchAgentAction(
     task: AgentTask,
     contextEntities?: Record<string, unknown>
   ): Promise<Record<string, unknown>> {
-    const tenantId = task.tenant_id;
-    const mockContext: RequestContext = {
-      requestId: `req_${randomUUID().substring(0, 8)}`,
-      traceId: `trc_${randomUUID().substring(0, 8)}`,
-      tenant: {
-        id: tenantId,
-        name: "Test Tenant",
-        slug: "test-tenant",
-        currency: "BDT",
-        timezone: "Asia/Dhaka",
-        language: "bn-BD",
-        status: "ACTIVE",
-      },
-      user: {
-        id: "sys_agent_runner",
-        email: "system@commerceos.io",
-        name: "System Agent",
-        status: "ACTIVE",
-      },
-      role: "OWNER",
-      permissions: ROLE_PERMISSIONS.OWNER,
-      timestamp: new Date().toISOString(),
-    };
+    const mockContext = this.executionContextFor(task);
 
     switch (task.agent_type) {
       case "INVENTORY": {
