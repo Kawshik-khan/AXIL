@@ -15,8 +15,8 @@ const reject = (status: number, code: string, message: string, deliveryId?: stri
  * Inbound courier / payment webhooks (audit C4, FIX_IMPLEMENTATION_PLAN FX-06, ADR-103).
  *
  * - The endpoint is identified by `?wh=<webhook id>`, a public identifier of one configured webhook row.
- * - The request must carry `x-webhook-signature` (HMAC over the raw body with that row's secret) and a fresh
- *   `x-webhook-timestamp` (<= 300 s). An Authorization header never replaces the signature.
+ * - The request must carry a fresh `x-webhook-timestamp` (<= 300 s) and `x-webhook-signature`: the hex HMAC of
+ *   `<timestamp>.<raw body>` with that row's secret. An Authorization header never replaces the signature.
  * - The tenant is the webhook row's tenant. Client headers and query parameters never choose it, and unknown
  *   endpoints are rejected without writing anything.
  */

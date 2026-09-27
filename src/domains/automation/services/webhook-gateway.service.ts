@@ -55,6 +55,12 @@ export class WebhookGatewayService {
     return value;
   }
 
+  /** Whether the secret named by `secret_reference` is usable. Never returns or logs the value. */
+  public static isWebhookSecretConfigured(secretReference: string): boolean {
+    const value = process.env[secretReference];
+    return typeof value === "string" && value.length >= this.MIN_SECRET_LENGTH;
+  }
+
   /**
    * Server-side lookup of the webhook row an inbound request targets, by its public id and provider.
    * Only active rows qualify; the row's tenant is the only tenant the request can affect.
@@ -158,9 +164,9 @@ export class WebhookGatewayService {
       );
     }
 
-    // 3. HMAC signature over the raw body is mandatory for every webhook. Legacy rows marked "TOKEN" (or
-    //    unsupported algorithms) are verified as HMAC-SHA256; an Authorization header never replaces the
-    //    signature (audit C4, ADR-103).
+    // 3. An HMAC signature is mandatory for every webhook. Legacy rows marked "TOKEN" (or unsupported
+    //    algorithms) are verified as HMAC-SHA256; an Authorization header never replaces the signature
+    //    (audit C4, ADR-103).
     const signatureHeader =
       req.headers["x-signature"] ||
       req.headers["x-webhook-signature"] ||
@@ -180,13 +186,10 @@ export class WebhookGatewayService {
 
     const algorithm: WebhookSignatureAlgorithm = webhook.signature_algorithm === "HMAC_SHA512" ? "HMAC_SHA512" : "HMAC_SHA256";
     const cleanSignature = signatureHeader.replace(/^sha256=|^sha512=/i, "");
-    // Accept a signature over "<timestamp>.<rawBody>" (preferred: binds the timestamp) or over the raw body.
-    const expectedSigTimestamped = this.computeSignature(`${timestampHeader}.${req.rawBody}`, secret, algorithm);
-    const expectedSigRaw = this.computeSignature(req.rawBody, secret, algorithm);
-    const isValid =
-      this.verifyConstantTime(expectedSigTimestamped, cleanSignature) ||
-      this.verifyConstantTime(expectedSigRaw, cleanSignature);
-    if (!isValid) {
+    // The signature must cover "<timestamp>.<rawBody>". A signature over the body alone could be replayed with
+    // a fresh timestamp header, which would make the 300 s window meaningless (ADR-103).
+    const expectedSignature = this.computeSignature(`${timestampHeader}.${req.rawBody}`, secret, algorithm);
+    if (!this.verifyConstantTime(expectedSignature, cleanSignature)) {
       return rejectDelivery("INVALID_SIGNATURE", "Invalid webhook cryptographic signature.", signatureHeader);
     }
 

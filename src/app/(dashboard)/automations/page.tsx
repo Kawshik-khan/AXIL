@@ -29,7 +29,23 @@ import {
   AutomationDeadLetter,
   AutomationHealth,
   StandardWorkflowTemplate,
+  N8nInstance,
+  WebhookProvider,
+  WebhookSignatureAlgorithm,
 } from "@/types/automation";
+
+/** Row shape returned by GET /api/v1/automation/providers (webhooks). */
+interface WebhookEndpointRow {
+  id: string;
+  provider: WebhookProvider;
+  endpoint_path: string;
+  ingress_path: string;
+  secret_configured: boolean;
+  signature_algorithm: WebhookSignatureAlgorithm;
+  is_active: boolean;
+  last_event_at?: string;
+  failure_rate: number;
+}
 
 type ActiveTab =
   | "overview"
@@ -52,8 +68,8 @@ export default function AutomationsHubPage() {
   const [deadLetters, setDeadLetters] = useState<AutomationDeadLetter[]>([]);
   const [providersData, setProvidersData] = useState<{
     circuit_breakers: Record<string, { state: string; failures: number }>;
-    n8n_instances: any[];
-    webhooks: any[];
+    n8n_instances: N8nInstance[];
+    webhooks: WebhookEndpointRow[];
   } | null>(null);
 
   const [loading, setLoading] = useState(true);
@@ -954,86 +970,49 @@ export default function AutomationsHubPage() {
             </div>
           </div>
           <div className={styles.tableContainer}>
-            <table className={styles.table}>
-              <thead>
-                <tr>
-                  <th>Provider</th>
-                  <th>Endpoint Path</th>
-                  <th>Signature Algorithm</th>
-                  <th>Verification Status</th>
-                  <th>Secret Security</th>
-                </tr>
-              </thead>
-              <tbody>
-                {providersData?.webhooks && providersData.webhooks.length > 0 ? (
-                  providersData.webhooks.map((w: any) => (
+            {providersData?.webhooks && providersData.webhooks.length > 0 ? (
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th>Provider</th>
+                    <th>Callback URL (give this to the provider)</th>
+                    <th>Signature Algorithm</th>
+                    <th>Status</th>
+                    <th>Signing Secret</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {providersData.webhooks.map((w) => (
                     <tr key={w.id}>
                       <td>
                         <strong>{w.provider}</strong>
                       </td>
-                      <td style={{ fontFamily: "monospace" }}>{w.endpoint_path}</td>
+                      <td style={{ fontFamily: "monospace" }}>{w.ingress_path}</td>
                       <td>
                         <span className={`${styles.badge} ${styles.badgeMuted}`}>{w.signature_algorithm}</span>
                       </td>
                       <td>
-                        <span className={`${styles.badge} ${styles.badgeActive}`}>VERIFIED</span>
+                        {!w.is_active ? (
+                          <span className={`${styles.badge} ${styles.badgeMuted}`}>INACTIVE</span>
+                        ) : w.secret_configured ? (
+                          <span className={`${styles.badge} ${styles.badgeActive}`}>ACCEPTING SIGNED CALLS</span>
+                        ) : (
+                          <span className={`${styles.badge} ${styles.badgeWarning}`}>REJECTING ALL CALLS</span>
+                        )}
                       </td>
-                      <td>
-                        <button className={`${styles.btnSecondary} ${styles.btnSmall}`}>Rotate Secret</button>
-                      </td>
+                      <td>{w.secret_configured ? "Set on the server" : "Not set on the server"}</td>
                     </tr>
-                  ))
-                ) : (
-                  <>
-                    <tr>
-                      <td>
-                        <strong>STEADFAST</strong>
-                      </td>
-                      <td style={{ fontFamily: "monospace" }}>/api/v1/automation/webhooks/steadfast</td>
-                      <td>
-                        <span className={`${styles.badge} ${styles.badgeMuted}`}>HMAC_SHA256</span>
-                      </td>
-                      <td>
-                        <span className={`${styles.badge} ${styles.badgeActive}`}>VERIFIED</span>
-                      </td>
-                      <td>
-                        <button className={`${styles.btnSecondary} ${styles.btnSmall}`}>Rotate Secret</button>
-                      </td>
-                    </tr>
-                    <tr>
-                      <td>
-                        <strong>PATHAO</strong>
-                      </td>
-                      <td style={{ fontFamily: "monospace" }}>/api/v1/automation/webhooks/pathao</td>
-                      <td>
-                        <span className={`${styles.badge} ${styles.badgeMuted}`}>HMAC_SHA256</span>
-                      </td>
-                      <td>
-                        <span className={`${styles.badge} ${styles.badgeActive}`}>VERIFIED</span>
-                      </td>
-                      <td>
-                        <button className={`${styles.btnSecondary} ${styles.btnSmall}`}>Rotate Secret</button>
-                      </td>
-                    </tr>
-                    <tr>
-                      <td>
-                        <strong>BKASH</strong>
-                      </td>
-                      <td style={{ fontFamily: "monospace" }}>/api/v1/automation/webhooks/bkash</td>
-                      <td>
-                        <span className={`${styles.badge} ${styles.badgeMuted}`}>HMAC_SHA256</span>
-                      </td>
-                      <td>
-                        <span className={`${styles.badge} ${styles.badgeActive}`}>VERIFIED</span>
-                      </td>
-                      <td>
-                        <button className={`${styles.btnSecondary} ${styles.btnSmall}`}>Rotate Secret</button>
-                      </td>
-                    </tr>
-                  </>
-                )}
-              </tbody>
-            </table>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <div className={styles.emptyState}>
+                <div className={styles.emptyStateTitle}>No Inbound Webhook Endpoints</div>
+                <p className={styles.emptyStateText}>
+                  No courier or payment webhook endpoint is configured for this workspace, so provider callbacks are rejected.
+                </p>
+              </div>
+            )}
           </div>
         </div>
       )}

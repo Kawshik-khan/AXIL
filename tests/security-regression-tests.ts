@@ -355,21 +355,27 @@ async function main() {
 
   await runTest("C4: a signed request without a timestamp is rejected", async () => {
     const res = await postCourier("steadfast", `wh=${hmacWebhookId}&tenant_id=${tenantA.tenant.id}`, { "x-webhook-signature": hmacHex(webhookSecret, courierBody) });
-    assert.notStrictEqual(res.status, 200);
+    assert.strictEqual(res.status, 401);
   });
 
   await runTest("C4: a stale timestamp (> 300 s) is rejected", async () => {
     const stale = (Date.now() - 10 * 60 * 1000).toString();
-    const res = await postCourier("steadfast", `wh=${hmacWebhookId}&tenant_id=${tenantA.tenant.id}`, { "x-webhook-signature": hmacHex(webhookSecret, courierBody), "x-webhook-timestamp": stale });
-    assert.notStrictEqual(res.status, 200);
+    const res = await postCourier("steadfast", `wh=${hmacWebhookId}&tenant_id=${tenantA.tenant.id}`, { "x-webhook-signature": hmacHex(webhookSecret, `${stale}.${courierBody}`), "x-webhook-timestamp": stale });
+    assert.strictEqual(res.status, 401);
+  });
+
+  await runTest("C4: a body-only signature replayed with a fresh timestamp is rejected", async () => {
+    const res = await postCourier("steadfast", `wh=${hmacWebhookId}&tenant_id=${tenantA.tenant.id}`, { "x-webhook-signature": hmacHex(webhookSecret, courierBody), "x-webhook-timestamp": Date.now().toString() });
+    assert.strictEqual(res.status, 401);
   });
 
   await runTest("C4: a correctly signed, fresh webhook is accepted and attributed to the webhook's own tenant", async () => {
     const body = JSON.stringify({ event_id: `evt_${crypto.randomUUID()}`, tracking_number: "TRK-SEC-NOT-A-REAL-PARCEL", status: "in_transit" });
     const before = db.getAutomationWebhookDeliveries(tenantB.tenant.id).length;
+    const timestamp = Date.now().toString();
     const res = await postCourier("steadfast", `wh=${hmacWebhookId}&tenant_id=${tenantA.tenant.id}`, {
-      "x-webhook-signature": hmacHex(webhookSecret, body),
-      "x-webhook-timestamp": Date.now().toString(),
+      "x-webhook-signature": hmacHex(webhookSecret, `${timestamp}.${body}`),
+      "x-webhook-timestamp": timestamp,
       "x-tenant-id": tenantB.tenant.id,
     }, body);
     assert.strictEqual(res.status, 200);
@@ -377,6 +383,20 @@ async function main() {
     assert.strictEqual(json.verified, true);
     assert.strictEqual(db.getAutomationWebhookDeliveries(tenantB.tenant.id).length, before, "x-tenant-id header must be ignored");
     assert.ok(db.getAutomationWebhookDeliveries(tenantA.tenant.id).some((d) => d.webhook_id === hmacWebhookId && d.status === "VERIFIED"));
+  });
+
+  await runTest("FX-06: Automations lists each callback URL and whether its secret is set, never the secret", async () => {
+    const { token } = await AuthService.login(tenantA.user.email, ownerPassword);
+    const { GET } = await import("@/app/api/v1/automation/providers/route");
+    const res = await GET(new Request(`${BASE}/api/v1/automation/providers`, { headers: { authorization: `Bearer ${token}` } }));
+    assert.strictEqual(res.status, 200);
+    const text = await res.text();
+    assert.ok(!text.includes(webhookSecret), "the webhook secret must never be returned");
+    const json = JSON.parse(text) as { data?: { webhooks?: Array<{ id: string; ingress_path?: string; secret_configured?: boolean }> } };
+    const row = json.data?.webhooks?.find((w) => w.id === hmacWebhookId);
+    assert.ok(row, "the tenant's webhook is listed");
+    assert.strictEqual(row.ingress_path, `/api/v1/automation/webhooks/steadfast?wh=${hmacWebhookId}`);
+    assert.strictEqual(row.secret_configured, true);
   });
 
   await runTest("C4: there is no predictable fallback webhook secret", () => {

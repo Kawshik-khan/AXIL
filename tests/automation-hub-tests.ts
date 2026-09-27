@@ -190,14 +190,15 @@ async function main() {
       status: "delivered",
       amount: 1500,
     });
-    const validSignature = WebhookGatewayService.computeSignature(rawPayload, testSecret, "HMAC_SHA256");
+    const timestamp = Date.now().toString();
+    const validSignature = WebhookGatewayService.computeSignature(`${timestamp}.${rawPayload}`, testSecret, "HMAC_SHA256");
 
     const result = await WebhookGatewayService.processInboundWebhook(tenantA, {
       provider: "STEADFAST",
       endpointPath: "/api/v1/automation/webhooks/steadfast",
       headers: {
         "x-signature": validSignature,
-        "x-webhook-timestamp": Date.now().toString(),
+        "x-webhook-timestamp": timestamp,
       },
       rawBody: rawPayload,
       parsedBody: JSON.parse(rawPayload),
@@ -228,8 +229,8 @@ async function main() {
 
   await runTest("Rejects webhook with expired timestamp exceeding maximum allowed drift (300s)", async () => {
     const rawPayload = JSON.stringify({ tracking_number: "TRK-DRIFT", status: "in_transit" });
-    const signature = WebhookGatewayService.computeSignature(rawPayload, testSecret, "HMAC_SHA256");
     const staleTimestamp = (Date.now() - 600000).toString(); // 10 minutes ago
+    const signature = WebhookGatewayService.computeSignature(`${staleTimestamp}.${rawPayload}`, testSecret, "HMAC_SHA256");
 
     const result = await WebhookGatewayService.processInboundWebhook(tenantA, {
       provider: "STEADFAST",
