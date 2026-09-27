@@ -61,18 +61,31 @@ export class PaymentOperationsService {
       actor: string;
     }
   ): { matched: boolean; payment?: Payment; error?: string } {
+    // Same rules as PaymentService.verifyPayment (FX-11): normalized single-use TrxIDs, no re-verifying a PAID
+    // payment, and the order is PAID only when verified payments cover its total.
+    const transactionId = String(params.transactionId ?? "").trim().toUpperCase();
+    if (!/^[A-Z0-9]{6,32}$/.test(transactionId)) {
+      return { matched: false, error: "Transaction ID format is invalid (6-32 letters or digits)." };
+    }
+    params = { ...params, transactionId };
+
+    const order = db.findOrderById(tenantId, params.orderId);
     const payments = db.getPayments(tenantId, params.orderId);
-    if (payments.length === 0) {
+    if (!order || payments.length === 0) {
       return { matched: false, error: `No payment record exists for order ${params.orderId}` };
     }
 
-    const targetPayment = payments[0];
+    const alreadyVerified = payments.find((p) => p.status === "PAID" && (p.transaction_id || "").toUpperCase() === transactionId);
+    if (alreadyVerified) {
+      return { matched: true, payment: alreadyVerified }; // idempotent
+    }
+    const targetPayment = payments.find((p) => p.status !== "PAID");
+    if (!targetPayment) {
+      return { matched: false, error: `All payments for order ${params.orderId} are already verified.` };
+    }
 
     // Check for duplicate transaction ID across tenant payments
-    const allPayments = db.getPayments(tenantId);
-    const duplicate = allPayments.find(
-      (p) => p.transaction_id === params.transactionId && p.id !== targetPayment.id
-    );
+    const duplicate = db.findPaymentByTransactionId(tenantId, targetPayment.provider, transactionId);
 
     if (duplicate) {
       const exc: PaymentException = {
@@ -112,8 +125,18 @@ export class PaymentOperationsService {
     }
 
     // Authoritative update
-    const updated = db.updatePaymentStatus(tenantId, targetPayment.id, "PAID", params.transactionId);
-    db.updateOrderPaymentStatus(tenantId, params.orderId, "PAID");
+    const updated = db.recordPaymentVerification(tenantId, targetPayment.id, {
+      transactionId,
+      verifiedBy: params.actor,
+      method: "MANUAL",
+    });
+    const paidTotal = db
+      .getPayments(tenantId, params.orderId)
+      .filter((p) => p.status === "PAID")
+      .reduce((sum, p) => sum + p.amount, 0);
+    if (paidTotal >= order.grand_total - 0.5) {
+      db.updateOrderPaymentStatus(tenantId, params.orderId, "PAID");
+    }
 
     const op: PaymentOperation = {
       id: `pop_${Date.now()}`,

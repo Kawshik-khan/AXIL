@@ -259,6 +259,10 @@ export interface Payment {
   currency: string;
   status: PaymentStatus;
   idempotency_key?: string;
+  /** How a PAID payment was confirmed: MANUAL (a user checked the TrxID) until provider gateways exist (FX-52). */
+  verification_method?: "MANUAL" | "GATEWAY";
+  verified_by?: string;
+  verified_at?: string;
   created_at: string;
 }
 

@@ -3,7 +3,7 @@ import { Payment, PaymentMethod, PaymentStatus } from "@/types/commerce";
 import { RequestContext } from "@/lib/context";
 import { RbacService } from "@/domains/rbac/service";
 import { PERMISSIONS } from "@/lib/permissions";
-import { BadRequestError, NotFoundError, ConflictError } from "@/lib/errors";
+import { NotFoundError, ConflictError, ValidationError } from "@/lib/errors";
 
 export class PaymentService {
   public static async listPayments(
@@ -29,6 +29,12 @@ export class PaymentService {
     const order = db.findOrderById(context.tenant.id, payload.order_id);
     if (!order) {
       throw new NotFoundError(`Order '${payload.order_id}' not found.`);
+    }
+    if (typeof payload.amount !== "number" || !Number.isFinite(payload.amount) || payload.amount <= 0 || payload.amount > order.grand_total + 0.5) {
+      throw new ValidationError("Payment amount must be greater than 0 and no more than the order total.", {
+        amount: payload.amount,
+        grand_total: order.grand_total,
+      });
     }
 
     // Idempotency check
@@ -91,12 +97,25 @@ export class PaymentService {
     return created;
   }
 
+  /**
+   * Marks a payment PAID after a user checked its provider transaction id (FX-11, audit H3).
+   * - Needs PAYMENTS_VERIFY (PAYMENTS_READ alone used to be enough).
+   * - A TrxID can be attached to only one payment; re-verifying with the same TrxID is idempotent.
+   * - A payment may be partial (e.g. a bKash advance for the delivery fee), but it can't exceed what is still due,
+   *   and the order becomes PAID only once verified payments cover its grand total.
+   * No provider is contacted yet: the verification is recorded as MANUAL with the verifying user (FX-52 adds gateways).
+   */
   public static async verifyPayment(
     context: RequestContext,
     paymentId: string,
     transactionId: string
   ): Promise<Payment> {
-    RbacService.assertCan(context, PERMISSIONS.PAYMENTS_READ);
+    RbacService.assertCan(context, PERMISSIONS.PAYMENTS_VERIFY);
+
+    const trx = String(transactionId ?? "").trim().toUpperCase();
+    if (!/^[A-Z0-9]{6,32}$/.test(trx)) {
+      throw new ValidationError("Transaction ID format is invalid (6-32 letters or digits).");
+    }
 
     const payment = db.findPaymentById(context.tenant.id, paymentId);
     if (!payment) {
@@ -104,16 +123,45 @@ export class PaymentService {
     }
 
     if (payment.status === "PAID") {
-      return payment; // Idempotent return
+      if ((payment.transaction_id || "").trim().toUpperCase() === trx) return payment; // idempotent
+      throw new ConflictError("Payment is already verified with a different transaction ID.");
     }
 
-    const updated = db.updatePaymentStatus(context.tenant.id, paymentId, "PAID", transactionId);
+    const reused = db.findPaymentByTransactionId(context.tenant.id, payment.provider, trx);
+    if (reused && reused.id !== payment.id) {
+      throw new ConflictError("This transaction ID is already attached to another payment.", { payment_id: reused.id });
+    }
+
+    const order = db.findOrderById(context.tenant.id, payment.order_id);
+    if (!order) {
+      throw new NotFoundError(`Order '${payment.order_id}' not found.`);
+    }
+    const paidSoFar = db
+      .getPayments(context.tenant.id, order.id)
+      .filter((p) => p.status === "PAID" && p.id !== payment.id)
+      .reduce((sum, p) => sum + p.amount, 0);
+    const due = order.grand_total - paidSoFar;
+    if (!(payment.amount > 0) || payment.amount > due + 0.5) {
+      throw new ValidationError("Payment amount must be positive and no more than the amount still due.", {
+        amount: payment.amount,
+        due,
+      });
+    }
+
+    const updated = db.recordPaymentVerification(context.tenant.id, paymentId, {
+      transactionId: trx,
+      verifiedBy: context.user.id,
+      method: "MANUAL",
+    });
     if (!updated) {
       throw new NotFoundError(`Payment '${paymentId}' could not be updated.`);
     }
 
-    // Synchronize order payment status
-    db.updateOrderPaymentStatus(context.tenant.id, payment.order_id, "PAID");
+    const fullyPaid = paidSoFar + payment.amount >= order.grand_total - 0.5;
+    if (fullyPaid) {
+      db.updateOrderPaymentStatus(context.tenant.id, payment.order_id, "PAID");
+    }
+    const transactionIdForRecords = trx;
 
     db.recordEvent({
       id: `evt_${Date.now()}_payment_completed`,
@@ -123,12 +171,12 @@ export class PaymentService {
       aggregate_type: "payment",
       aggregate_id: paymentId,
       actor_id: context.user.id,
-      correlation_id: transactionId,
+      correlation_id: transactionIdForRecords,
       timestamp: new Date().toISOString(),
       payload: {
         order_id: payment.order_id,
         amount: payment.amount,
-        transaction_id: transactionId,
+        transaction_id: transactionIdForRecords,
       },
     });
 
@@ -139,7 +187,7 @@ export class PaymentService {
       action: "PAYMENT_VERIFIED",
       resource_type: "payment",
       resource_id: paymentId,
-      metadata: { transaction_id: transactionId, amount: payment.amount },
+      metadata: { transaction_id: transactionIdForRecords, amount: payment.amount, order_fully_paid: fullyPaid, method: "MANUAL" },
       created_at: new Date().toISOString(),
     });
 

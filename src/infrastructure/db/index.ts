@@ -4752,6 +4752,33 @@ class CommerceDatabase {
     return this.data.payments.find((p) => p.tenant_id === tenantId && p.id === id);
   }
 
+  /** A payment in this tenant already carrying this provider transaction id (TrxIDs are single-use, FX-11). */
+  public findPaymentByTransactionId(tenantId: string, provider: Payment["provider"], transactionId: string): Payment | undefined {
+    const trx = transactionId.trim().toUpperCase();
+    return this.data.payments.find(
+      (p) => p.tenant_id === tenantId && p.provider === provider && (p.transaction_id || "").trim().toUpperCase() === trx
+    );
+  }
+
+  public recordPaymentVerification(
+    tenantId: string,
+    id: string,
+    verification: { transactionId: string; verifiedBy: string; method: "MANUAL" | "GATEWAY" }
+  ): Payment | undefined {
+    const idx = this.data.payments.findIndex((p) => p.tenant_id === tenantId && p.id === id);
+    if (idx === -1) return undefined;
+    this.data.payments[idx] = {
+      ...this.data.payments[idx],
+      status: "PAID",
+      transaction_id: verification.transactionId,
+      verification_method: verification.method,
+      verified_by: verification.verifiedBy,
+      verified_at: new Date().toISOString(),
+    };
+    this.persist();
+    return this.data.payments[idx];
+  }
+
   public findPaymentByIdempotency(tenantId: string, key: string): Payment | undefined {
     return this.data.payments.find((p) => p.tenant_id === tenantId && p.idempotency_key === key);
   }

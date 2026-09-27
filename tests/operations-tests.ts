@@ -439,14 +439,14 @@ export async function runOperationsTests() {
 
     const recon = paymentOperationsService.reconcileTransaction(tenantId, {
       orderId: "ord_ops_fulfill_01",
-      transactionId: "TRX-BKASH-887766",
+      transactionId: "8N7A6C5D4E",
       amount: 2600,
       actor: "test_reconciler",
     });
 
     assert.strictEqual(recon.matched, true);
     assert.strictEqual(recon.payment.status, "PAID");
-    assert.strictEqual(recon.payment.transaction_id, "TRX-BKASH-887766");
+    assert.strictEqual(recon.payment.transaction_id, "8N7A6C5D4E");
   });
 
   console.log(`\n${ANSI_BOLD}[8. Finance Operations & Daily Reconciliation Run]${ANSI_RESET}`);
