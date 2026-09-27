@@ -102,6 +102,7 @@ export class AuthService {
       role: "OWNER",
       email: user.email,
       name: user.name,
+      sv: user.session_version ?? 1,
     });
 
     return {
@@ -135,24 +136,9 @@ export class AuthService {
     if (allMemberships.length > 0 && memberships.length === 0) {
       throw new MembershipSuspendedError();
     }
+    // Platform operators get no implicit workspace role: they need a real membership, or audited impersonation
+    // (audit M10, FX-15). They used to become OWNER of the first tenant.
     let activeMembership = memberships[0];
-
-    if (!activeMembership) {
-      const platformMembership = db.findPlatformMembershipByUserId(user.id);
-      if (platformMembership && platformMembership.is_active) {
-        const defaultTenant = db.getTenants()[0];
-        if (defaultTenant) {
-          activeMembership = {
-            id: `mem_plat_view_${user.id}`,
-            tenant_id: defaultTenant.id,
-            user_id: user.id,
-            role: "OWNER",
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          };
-        }
-      }
-    }
 
     if (!activeMembership) {
       throw new AuthenticationError("No active workspaces associated with this user account.");
@@ -191,6 +177,7 @@ export class AuthService {
       role: activeMembership.role,
       email: user.email,
       name: user.name,
+      sv: user.session_version ?? 1,
     });
 
     return {
@@ -214,6 +201,9 @@ export class AuthService {
     if (user.status !== "ACTIVE") {
       throw new UserSuspendedError();
     }
+    if ((payload.sv ?? 1) !== (user.session_version ?? 1)) {
+      throw new AuthenticationError("This session was signed out. Please sign in again.");
+    }
 
     const tenant = db.findTenantById(payload.tenantId);
     if (!tenant) {
@@ -223,21 +213,8 @@ export class AuthService {
       throw new TenantSuspendedError(tenant.name);
     }
 
-    let membership = db.findMembership(payload.tenantId, payload.userId);
-    if (!membership) {
-      // Allow active platform operators (e.g. Super Admin or Platform Staff) to inspect workspace
-      const platformMembership = db.findPlatformMembershipByUserId(payload.userId);
-      if (platformMembership && platformMembership.is_active) {
-        membership = {
-          id: `mem_plat_view_${payload.userId}`,
-          tenant_id: payload.tenantId,
-          user_id: payload.userId,
-          role: "OWNER",
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        };
-      }
-    }
+    // Only a real membership grants workspace access; platform operators no longer map to OWNER (audit M10).
+    const membership = db.findMembership(payload.tenantId, payload.userId);
     if (!membership) {
       throw new AuthenticationError("User is no longer a member of this workspace.");
     }

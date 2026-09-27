@@ -3,7 +3,8 @@ import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { db } from "@/infrastructure/db";
 import { apiSuccess, apiError } from "@/lib/api-response";
-import { signPlatformSessionToken, verifyPassword, PLATFORM_AUTH_COOKIE_NAME } from "@/lib/security";
+import { signPlatformSessionToken, signMfaPendingToken, verifyPassword, PLATFORM_AUTH_COOKIE_NAME } from "@/lib/security";
+import { PlatformMfaService } from "@/domains/platform/services/platform-mfa.service";
 import { PLATFORM_ROLE_PERMISSIONS } from "@/lib/permissions";
 import { AppError } from "@/lib/errors";
 import { enforceRateLimit, clientKey, MINUTE } from "@/lib/rate-limit";
@@ -59,14 +60,19 @@ export async function POST(request: Request) {
       throw new AppError("PLATFORM_MEMBERSHIP_REQUIRED", "Account is not authorized for Platform Control Plane access.", 403);
     }
 
-    // No second factor is verified here yet (step-up TOTP is FIX_IMPLEMENTATION_PLAN FX-15), so the session
-    // is not marked MFA-verified.
+    // Operators with an authenticator finish sign-in at /platform/auth/mfa/verify (FX-15). No session yet.
+    if (PlatformMfaService.isEnrolled(user.id)) {
+      return apiSuccess({ mfa_required: true, mfa_token: await signMfaPendingToken(user.id) });
+    }
+
+    // Operators without an authenticator get a session that is not MFA-verified; step-up asks them to set one up.
     const token = await signPlatformSessionToken({
       userId: user.id,
       email: user.email,
       name: user.name,
       platformRole: platformMembership.role,
       mfaVerified: false,
+      sv: user.session_version ?? 1,
     });
 
     // The token travels only in the httpOnly cookie; it is not returned in the JSON body.

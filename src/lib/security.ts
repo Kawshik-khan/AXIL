@@ -19,6 +19,8 @@ export const TOKEN_AUDIENCE = {
   platform: "commerceos:platform",
   stepUp: "commerceos:step-up",
   impersonation: "commerceos:impersonation",
+  /** Password checked, TOTP still required (5 minutes). Never a session (FX-15). */
+  mfaPending: "commerceos:mfa-pending",
 } as const;
 
 /** Stored for accounts that must not be able to log in until a real password is set. Never matches bcrypt. */
@@ -76,6 +78,8 @@ export interface SessionPayload {
   role: string;
   email: string;
   name: string;
+  /** The user's session_version when signed; a bump revokes every older session (FX-15). */
+  sv?: number;
 }
 
 export async function hashPassword(password: string): Promise<string> {
@@ -117,6 +121,7 @@ export async function verifySessionToken(token: string): Promise<SessionPayload 
       role: claims.role as string,
       email: claims.email as string,
       name: claims.name as string,
+      sv: typeof claims.sv === "number" ? claims.sv : 1,
     };
   } catch {
     return null;
@@ -184,6 +189,8 @@ export interface PlatformSessionPayload {
   scope: "PLATFORM";
   mfaVerified: boolean;
   sessionId: string;
+  /** The user's session_version when signed (FX-15). */
+  sv: number;
 }
 
 export async function signPlatformSessionToken(
@@ -194,6 +201,7 @@ export async function signPlatformSessionToken(
     platformRole: string;
     mfaVerified?: boolean;
     sessionId?: string;
+    sv?: number;
   },
   expiresIn = "4h"
 ): Promise<string> {
@@ -231,7 +239,29 @@ export async function verifyPlatformSessionToken(token: string): Promise<Platfor
       scope: "PLATFORM",
       mfaVerified: claims.mfaVerified === true,
       sessionId: typeof claims.sessionId === "string" ? claims.sessionId : "",
+      sv: typeof claims.sv === "number" ? claims.sv : 1,
     };
+  } catch {
+    return null;
+  }
+}
+
+/** Issued after a correct password for an operator with MFA; exchanged for a session only with a valid TOTP code. */
+export async function signMfaPendingToken(userId: string): Promise<string> {
+  return new SignJWT({ userId, scope: "MFA_PENDING" })
+    .setProtectedHeader({ alg: "HS256" })
+    .setIssuer(TOKEN_ISSUER)
+    .setAudience(TOKEN_AUDIENCE.mfaPending)
+    .setIssuedAt()
+    .setExpirationTime("5m")
+    .sign(jwtKey());
+}
+
+export async function verifyMfaPendingToken(token: string): Promise<{ userId: string } | null> {
+  try {
+    const claims = await verifyToken(token, TOKEN_AUDIENCE.mfaPending);
+    if (claims.scope !== "MFA_PENDING" || typeof claims.userId !== "string") return null;
+    return { userId: claims.userId };
   } catch {
     return null;
   }

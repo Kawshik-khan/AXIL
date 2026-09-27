@@ -34,27 +34,8 @@ export async function POST(request: Request) {
       maxAge: 7 * 24 * 60 * 60,
     });
 
-    // If user is also a platform operator, issue platform session cookie
-    if (platformMembership && platformMembership.is_active) {
-      const { signPlatformSessionToken, PLATFORM_AUTH_COOKIE_NAME } = await import("@/lib/security");
-      const platToken = await signPlatformSessionToken({
-        userId: result.user.id,
-        email: result.user.email,
-        name: result.user.name,
-        platformRole: platformMembership.role,
-        // No second factor is checked at login (TOTP is FX-15); a stored `mfa_enabled` flag is not a verification.
-        mfaVerified: false,
-      });
-      response.cookies.set({
-        name: PLATFORM_AUTH_COOKIE_NAME,
-        value: platToken,
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "lax",
-        path: "/",
-        maxAge: 3600 * 8,
-      });
-    }
+    // Platform operators sign in to the control plane separately at /super-admin/login, where TOTP applies. The
+    // workspace login no longer issues a platform session (it bypassed the operator MFA step, FX-15).
 
     return response;
   } catch (err) {

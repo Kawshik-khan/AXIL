@@ -105,6 +105,10 @@ export default function SuperAdminPage() {
   const [stepUpCode, setStepUpCode] = useState("");
   const [stepUpToken, setStepUpToken] = useState<string | null>(null);
   const [stepUpVerified, setStepUpVerified] = useState(false);
+  const [stepUpError, setStepUpError] = useState<string | null>(null);
+  const [mfaSetupNeeded, setMfaSetupNeeded] = useState(false);
+  const [mfaEnrollment, setMfaEnrollment] = useState<{ secret: string; otpauth_uri: string } | null>(null);
+  const [mfaEnrollCode, setMfaEnrollCode] = useState("");
   const [operator, setOperator] = useState<{ name: string; role: string } | null>(null);
 
   // Tenant Provisioning Form State
@@ -414,17 +418,27 @@ export default function SuperAdminPage() {
   };
 
   // Step-Up Elevation Handler
+  const readError = async (res: Response, fallback: string): Promise<{ code?: string; message: string }> => {
+    const body = (await res.json().catch(() => null)) as { error?: { code?: string; message?: string } } | null;
+    return { code: body?.error?.code, message: body?.error?.message || fallback };
+  };
+
+  // Step-up with a fresh TOTP code (FX-15). Elevation is granted only when the server returns a signed step-up token.
   const handleStepUpElevation = async (e: React.FormEvent) => {
     e.preventDefault();
+    setStepUpError(null);
     try {
-      // Step-up needs a real TOTP/WebAuthn factor. Until that exists the server fails closed (501) and this
-      // shows its message; elevation is granted only when the server returns a signed step-up token.
       const res = await platformFetch(
         "/api/v1/platform/auth/step-up",
         { method: "POST", body: JSON.stringify({ code: stepUpCode.trim(), action: "CRITICAL_PLATFORM_OPERATION" }) },
         null
       );
-      if (!res.ok) throw new Error(await readPlatformError(res, "Step-up elevation failed"));
+      if (!res.ok) {
+        const err = await readError(res, "Step-up elevation failed.");
+        if (err.code === "MFA_NOT_ENROLLED") setMfaSetupNeeded(true);
+        setStepUpError(err.message);
+        return;
+      }
       const data = await res.json();
       if (!data.data?.stepUpToken) throw new Error("Step-up elevation was not granted.");
       setStepUpToken(data.data.stepUpToken);
@@ -432,8 +446,37 @@ export default function SuperAdminPage() {
       setShowStepUpModal(false);
       setStepUpCode("");
     } catch (err) {
-      alert(err instanceof Error ? err.message : "Step-up elevation failed");
+      setStepUpError(err instanceof Error ? err.message : "Step-up elevation failed.");
     }
+  };
+
+  const handleStartMfaSetup = async () => {
+    setStepUpError(null);
+    const res = await platformFetch("/api/v1/platform/auth/mfa/enroll", { method: "POST" }, null);
+    if (!res.ok) {
+      setStepUpError((await readError(res, "Authenticator setup could not start.")).message);
+      return;
+    }
+    const data = await res.json();
+    setMfaEnrollment(data.data);
+  };
+
+  const handleConfirmMfaSetup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setStepUpError(null);
+    const res = await platformFetch(
+      "/api/v1/platform/auth/mfa/confirm",
+      { method: "POST", body: JSON.stringify({ code: mfaEnrollCode.trim() }) },
+      null
+    );
+    if (!res.ok) {
+      setStepUpError((await readError(res, "The code could not be verified.")).message);
+      return;
+    }
+    setMfaEnrollment(null);
+    setMfaEnrollCode("");
+    setMfaSetupNeeded(false);
+    setStepUpError("Authenticator set up. Wait for the next code, then enter it to elevate.");
   };
 
   // Sign out of the platform control plane (clears the httpOnly platform session cookie server-side).
@@ -2276,8 +2319,8 @@ export default function SuperAdminPage() {
               <div>
                 <h3 className={styles.modalTitle}>Step-Up MFA Elevation</h3>
                 <p className={styles.modalSubtitle}>
-                  High-risk platform operations require step-up with a TOTP authenticator. That factor is not set up
-                  yet, so step-up is currently unavailable and high-risk actions stay disabled.
+                  High-risk platform operations need a fresh code from your authenticator app. Elevation lasts 5
+                  minutes.
                 </p>
               </div>
               <button type="button" className={styles.modalCloseBtn} onClick={() => setShowStepUpModal(false)}>
@@ -2285,36 +2328,77 @@ export default function SuperAdminPage() {
               </button>
             </div>
 
-            <form onSubmit={handleStepUpElevation} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-              <div className={styles.formGroup}>
-                <label className={styles.formLabel}>TOTP Authenticator Code</label>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  maxLength={6}
-                  placeholder="6-digit code"
-                  value={stepUpCode}
-                  onChange={(e) => setStepUpCode(e.target.value)}
-                  className={styles.formInput}
-                  autoFocus
-                />
-                <span className={styles.formHint}>No code is accepted until TOTP enrollment exists.</span>
-              </div>
+            {stepUpError && (
+              <p className={styles.formHint} role="alert">
+                {stepUpError}
+              </p>
+            )}
 
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "12px" }}>
-                <button
-                  type="button"
-                  className={`${styles.btn} ${styles.btnSecondary}`}
-                  onClick={() => setShowStepUpModal(false)}
-                >
-                  Cancel
-                </button>
-                <button type="submit" className={`${styles.btn} ${styles.btnPrimary}`}>
-                  Authorize Elevation
-                </button>
-              </div>
-            </form>
+            {mfaEnrollment ? (
+              <form onSubmit={handleConfirmMfaSetup} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+                <div className={styles.formGroup}>
+                  <label className={styles.formLabel}>1. Add this key to your authenticator app</label>
+                  <code style={{ wordBreak: "break-all", fontSize: "13px" }}>{mfaEnrollment.secret}</code>
+                  <span className={styles.formHint}>
+                    Or paste this setup link into an app that accepts one:{" "}
+                    <code style={{ wordBreak: "break-all" }}>{mfaEnrollment.otpauth_uri}</code>
+                  </span>
+                </div>
+                <div className={styles.formGroup}>
+                  <label className={styles.formLabel}>2. Enter the 6-digit code it shows</label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    maxLength={6}
+                    placeholder="6-digit code"
+                    value={mfaEnrollCode}
+                    onChange={(e) => setMfaEnrollCode(e.target.value.replace(/\D/g, ""))}
+                    className={styles.formInput}
+                    autoFocus
+                  />
+                </div>
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "12px" }}>
+                  <button type="button" className={`${styles.btn} ${styles.btnSecondary}`} onClick={() => setMfaEnrollment(null)}>
+                    Cancel
+                  </button>
+                  <button type="submit" className={`${styles.btn} ${styles.btnPrimary}`} disabled={mfaEnrollCode.length !== 6}>
+                    Confirm authenticator
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <form onSubmit={handleStepUpElevation} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+                <div className={styles.formGroup}>
+                  <label className={styles.formLabel}>TOTP Authenticator Code</label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    maxLength={6}
+                    placeholder="6-digit code"
+                    value={stepUpCode}
+                    onChange={(e) => setStepUpCode(e.target.value.replace(/\D/g, ""))}
+                    className={styles.formInput}
+                    autoFocus
+                  />
+                </div>
+
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "12px" }}>
+                  {mfaSetupNeeded && (
+                    <button type="button" className={`${styles.btn} ${styles.btnSecondary}`} onClick={handleStartMfaSetup}>
+                      Set up authenticator
+                    </button>
+                  )}
+                  <button type="button" className={`${styles.btn} ${styles.btnSecondary}`} onClick={() => setShowStepUpModal(false)}>
+                    Cancel
+                  </button>
+                  <button type="submit" className={`${styles.btn} ${styles.btnPrimary}`} disabled={stepUpCode.length !== 6}>
+                    Authorize Elevation
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}

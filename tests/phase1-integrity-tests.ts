@@ -462,6 +462,121 @@ async function main() {
     assert.strictEqual(checkRateLimit(key, 30, 60_000, now + 61_000).allowed, true, "the window slides");
   });
 
+  // ---------------------------------------------------------------------------
+  console.log(`\n${ANSI_BOLD}[FX-15] Session hygiene and real MFA (H10, M9, M10)${ANSI_RESET}`);
+  // ---------------------------------------------------------------------------
+
+  const { generateTotp } = await import("@/lib/totp");
+  const { hashPassword, PLATFORM_AUTH_COOKIE_NAME } = await import("@/lib/security");
+  type Route = { POST: (r: Request) => Promise<Response> };
+  const platformRoute = async (path: string) => (await import(`@/app/api/v1/platform/auth/${path}/route`)) as Route;
+  const postPlatform = async (path: string, body: unknown, cookie?: string) =>
+    (await platformRoute(path)).POST(new Request(`${BASE}/platform/auth/${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) },
+      body: JSON.stringify(body),
+    }));
+  const cookieFrom = (res: Response) => {
+    const c = res.headers.getSetCookie().find((v) => v.startsWith(`${PLATFORM_AUTH_COOKIE_NAME}=`));
+    return c ? c.split(";")[0] : undefined;
+  };
+  const newOperator = async (password: string) => {
+    const id = uid("usr_op");
+    const email = `${id}@operators.test`;
+    db.createUser({ id, email, name: "Operator", password_hash: await hashPassword(password), status: "ACTIVE", created_at: nowIso(), updated_at: nowIso() });
+    db.savePlatformMembership({ id: `pm_${id}`, user_id: id, role: "SUPER_ADMIN", mfa_enabled: false, is_active: true, created_at: nowIso(), updated_at: nowIso() });
+    return { id, email };
+  };
+
+  await runTest("TOTP matches the RFC 6238 test vectors", () => {
+    const secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
+    assert.strictEqual(generateTotp(secret, 59_000), "287082");
+    assert.strictEqual(generateTotp(secret, 1111111109_000), "081804");
+    assert.strictEqual(generateTotp(secret, 2000000000_000), "279037");
+  });
+
+  await runTest("step-up needs an enrolled authenticator; enroll → confirm → step-up works; a code can't be replayed", async () => {
+    const op = await newOperator("Operator-Enroll-Pass-3321!");
+    const login = await postPlatform("login", { email: op.email, password: "Operator-Enroll-Pass-3321!" });
+    assert.strictEqual(login.status, 200);
+    const cookie = cookieFrom(login);
+    assert.ok(cookie, "operator without MFA gets a (non-MFA) session");
+
+    const notEnrolled = await postPlatform("step-up", { code: "123456" }, cookie);
+    assert.strictEqual(notEnrolled.status, 409);
+
+    const enroll = await postPlatform("mfa/enroll", {}, cookie);
+    assert.strictEqual(enroll.status, 200);
+    const { secret } = ((await enroll.json()) as { data: { secret: string } }).data;
+    assert.strictEqual(db.findPlatformMembershipByUserId(op.id)?.mfa_enabled, false, "not enabled before confirmation");
+    assert.strictEqual((await postPlatform("mfa/confirm", { code: "000000" }, cookie)).status, 401, "wrong code refused");
+    assert.strictEqual((await postPlatform("mfa/confirm", { code: generateTotp(secret) }, cookie)).status, 200);
+    assert.strictEqual(db.findPlatformMembershipByUserId(op.id)?.mfa_enabled, true);
+    assert.ok(!JSON.stringify(db.findPlatformMembershipByUserId(op.id)).includes(secret), "the secret is stored encrypted");
+
+    const nextCode = generateTotp(secret, Date.now() + 30_000);
+    const stepUp = await postPlatform("step-up", { code: nextCode }, cookie);
+    assert.strictEqual(stepUp.status, 200);
+    assert.ok(((await stepUp.json()) as { data: { stepUpToken?: string } }).data.stepUpToken);
+    assert.strictEqual((await postPlatform("step-up", { code: nextCode }, cookie)).status, 401, "replayed code refused");
+  });
+
+  await runTest("an operator with MFA needs a TOTP code to sign in; only then is the session MFA-verified", async () => {
+    const op = await newOperator("Operator-Login-Pass-4432!");
+    const first = await postPlatform("login", { email: op.email, password: "Operator-Login-Pass-4432!" });
+    const cookie = cookieFrom(first);
+    const enroll = await postPlatform("mfa/enroll", {}, cookie);
+    const { secret } = ((await enroll.json()) as { data: { secret: string } }).data;
+    assert.strictEqual((await postPlatform("mfa/confirm", { code: generateTotp(secret) }, cookie)).status, 200);
+
+    const login = await postPlatform("login", { email: op.email, password: "Operator-Login-Pass-4432!" });
+    assert.strictEqual(login.status, 200);
+    assert.strictEqual(cookieFrom(login), undefined, "no session after the password alone");
+    const { mfa_token } = ((await login.json()) as { data: { mfa_required: boolean; mfa_token: string } }).data;
+    assert.strictEqual((await postPlatform("mfa/verify", { mfa_token, code: "000000" })).status, 401);
+    const verified = await postPlatform("mfa/verify", { mfa_token, code: generateTotp(secret, Date.now() + 30_000) });
+    assert.strictEqual(verified.status, 200);
+    const session = cookieFrom(verified);
+    assert.ok(session);
+    const ctx = await (await import("@/lib/api-response")).extractPlatformContext(
+      new Request(`${BASE}/platform/overview`, { headers: { cookie: session } })
+    );
+    assert.strictEqual(ctx.mfaVerified, true);
+  });
+
+  await runTest("'sign out everywhere' revokes existing sessions", async () => {
+    const { token } = await AuthService.login(shop.user.email, "Phase1-Owner-Pass-4471!");
+    await AuthService.resolveRequestContext(token); // valid now
+    const route = (await import("@/app/api/v1/auth/sessions/revoke-all/route")) as Route;
+    const res = await route.POST(new Request(`${BASE}/auth/sessions/revoke-all`, { method: "POST", headers: { authorization: `Bearer ${token}` } }));
+    assert.strictEqual(res.status, 200);
+    await assert.rejects(() => AuthService.resolveRequestContext(token), /signed out/i);
+    const fresh = await AuthService.login(shop.user.email, "Phase1-Owner-Pass-4471!");
+    await AuthService.resolveRequestContext(fresh.token); // a new sign-in works
+  });
+
+  await runTest("changing an account's status revokes its sessions", async () => {
+    const user = await member(tenantId, "SALES");
+    await AuthService.resolveRequestContext(user.token);
+    db.updateUser(user.id, { status: "SUSPENDED" });
+    db.updateUser(user.id, { status: "ACTIVE" });
+    await assert.rejects(() => AuthService.resolveRequestContext(user.token), /signed out/i);
+  });
+
+  await runTest("platform operators get no implicit OWNER role in workspaces they don't belong to (M10)", async () => {
+    const op = await newOperator("Operator-NoTenant-Pass-5543!");
+    await assert.rejects(() => AuthService.login(op.email, "Operator-NoTenant-Pass-5543!"), /no active workspaces/i);
+    const forged = await signSessionToken({ userId: op.id, tenantId, role: "OWNER", email: op.email, name: "Operator" });
+    await assert.rejects(() => AuthService.resolveRequestContext(forged), /no longer a member/i);
+  });
+
+  await runTest("logout clears both the workspace and the platform session cookies", async () => {
+    const route = (await import("@/app/api/v1/auth/logout/route")) as { POST: () => Promise<Response> };
+    const cleared = (await route.POST()).headers.getSetCookie();
+    assert.ok(cleared.some((c) => c.startsWith("commerceos_session=;") && /max-age=0/i.test(c)));
+    assert.ok(cleared.some((c) => c.startsWith(`${PLATFORM_AUTH_COOKIE_NAME}=;`) && /max-age=0/i.test(c)));
+  });
+
   console.log(`\n${ANSI_BOLD}====================================================${ANSI_RESET}`);
   console.log(`  Tests Passed: ${passedCount} | Tests Failed: ${failedCount}`);
   console.log(`${ANSI_BOLD}====================================================${ANSI_RESET}\n`);

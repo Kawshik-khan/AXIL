@@ -80,6 +80,8 @@ export interface UserRecord {
   avatar?: string;
   password_hash: string;
   status: "ACTIVE" | "INVITED" | "SUSPENDED" | "DEACTIVATED";
+  /** Bumped to revoke every existing session of this user (FX-15). Missing means 1. */
+  session_version?: number;
   last_login_at?: string;
   created_at: string;
   updated_at: string;
@@ -794,7 +796,10 @@ class CommerceDatabase {
           automation_webhook_deliveries: parsed.automation_webhook_deliveries || [],
           automation_audit_logs: parsed.automation_audit_logs || [],
           connector_configurations: parsed.connector_configurations || [],
-          platform_memberships: parsed.platform_memberships || [],
+          // MFA was recorded as enabled without any factor existing (STATUS N4); only an enrolled secret counts.
+          platform_memberships: (parsed.platform_memberships || []).map((m: PlatformMembershipRecord) =>
+            m.mfa_enabled && !m.mfa_secret_encrypted ? { ...m, mfa_enabled: false } : m
+          ),
           plans: parsed.plans || [],
           plan_versions: parsed.plan_versions || [],
           subscriptions: parsed.subscriptions || [],
@@ -1199,7 +1204,7 @@ class CommerceDatabase {
         id: "pm_superadmin_01",
         user_id: saUser.id,
         role: "SUPER_ADMIN",
-        mfa_enabled: true,
+        mfa_enabled: false, // set only by TOTP enrollment (FX-15)
         is_active: true,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
@@ -1249,7 +1254,7 @@ class CommerceDatabase {
           id: `pm_${staff.role.toLowerCase()}_01`,
           user_id: staffUser.id,
           role: staff.role,
-          mfa_enabled: true,
+          mfa_enabled: false, // set only by TOTP enrollment (FX-15)
           is_active: true,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
@@ -3998,9 +4003,15 @@ class CommerceDatabase {
   public updateUser(id: string, updates: Partial<UserRecord>): UserRecord | undefined {
     const idx = this.data.users.findIndex((u) => u.id === id);
     if (idx === -1) return undefined;
+    const current = this.data.users[idx];
+    // A new password or an account status change signs the user out everywhere (FX-15).
+    const revokeSessions =
+      ("password_hash" in updates && updates.password_hash !== current.password_hash) ||
+      ("status" in updates && updates.status !== current.status);
     this.data.users[idx] = {
-      ...this.data.users[idx],
+      ...current,
       ...safePatch(updates),
+      ...(revokeSessions ? { session_version: (current.session_version ?? 1) + 1 } : {}),
       updated_at: new Date().toISOString(),
     };
     this.persist();
@@ -4032,6 +4043,16 @@ class CommerceDatabase {
     this.data.memberships[idx].updated_at = new Date().toISOString();
     this.persist();
     return this.data.memberships[idx];
+  }
+
+  /** Revokes every session of a user ("sign out everywhere", FX-15). */
+  public bumpSessionVersion(userId: string): number | undefined {
+    const idx = this.data.users.findIndex((u) => u.id === userId);
+    if (idx === -1) return undefined;
+    const next = (this.data.users[idx].session_version ?? 1) + 1;
+    this.data.users[idx] = { ...this.data.users[idx], session_version: next, updated_at: new Date().toISOString() };
+    this.persist();
+    return next;
   }
 
   public updateMembershipStatus(tenantId: string, userId: string, status: "ACTIVE" | "SUSPENDED"): MembershipRecord | undefined {

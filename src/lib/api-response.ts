@@ -208,6 +208,9 @@ export async function extractPlatformContext(request: Request): Promise<Platform
   if (!user || user.status !== "ACTIVE") {
     throw new PlatformAuthRequiredError("Platform operator account is suspended or not found.");
   }
+  if (claims.sv !== (user.session_version ?? 1)) {
+    throw new PlatformAuthRequiredError("This session was signed out. Please sign in again.");
+  }
 
   // The role is resolved from the stored membership, not from the token, so deactivation or a role change
   // takes effect immediately instead of when the token expires.

@@ -4,8 +4,17 @@ export interface PlatformMembershipRecord {
   id: string;
   user_id: string;
   role: PlatformRole;
+  /** True only after the operator confirmed a TOTP code (FX-15); never a default. */
   mfa_enabled: boolean;
+  /** Legacy plaintext field; unused. */
   mfa_secret?: string;
+  /** TOTP secret, encrypted with CREDENTIALS_ENCRYPTION_KEY. */
+  mfa_secret_encrypted?: string;
+  /** Secret issued by /mfa/enroll, waiting for /mfa/confirm. */
+  mfa_pending_secret_encrypted?: string;
+  /** Last accepted TOTP time-step, so a code can't be replayed inside its window. */
+  mfa_last_step?: number;
+  mfa_enrolled_at?: string;
   is_active: boolean;
   created_at: string;
   updated_at: string;

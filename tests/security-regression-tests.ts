@@ -277,7 +277,7 @@ async function main() {
     assert.strictEqual(payload.mfaVerified, false);
   });
 
-  await runTest("H10: the workspace login never marks an operator's platform session MFA-verified", async () => {
+  await runTest("H10/FX-15: the workspace login never issues a platform session (operators use /super-admin/login + TOTP)", async () => {
     const password = "Operator-Pass-5521!";
     const operator = await createPlatformOperator("SUPER_ADMIN", password);
     const now = new Date().toISOString();
@@ -290,12 +290,9 @@ async function main() {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ email: operator.email, password }),
     }));
-    assert.strictEqual(res.status, 200);
-    const platformCookie = res.headers.getSetCookie().find((c) => c.startsWith(`${PLATFORM_AUTH_COOKIE_NAME}=`));
-    assert.ok(platformCookie, "an operator signing in through the workspace login also gets a platform session");
-    const claims = await verifyPlatformSessionToken(decodeURIComponent(platformCookie.split(";")[0].slice(PLATFORM_AUTH_COOKIE_NAME.length + 1)));
-    assert.ok(claims);
-    assert.strictEqual(claims.mfaVerified, false);
+    assert.strictEqual(res.status, 200, "the workspace session itself still works");
+    const platformCookie = res.headers.getSetCookie().find((c) => c.startsWith(`${PLATFORM_AUTH_COOKIE_NAME}=`) && !c.startsWith(`${PLATFORM_AUTH_COOKIE_NAME}=;`));
+    assert.strictEqual(platformCookie, undefined, "no platform session from the workspace login");
   });
 
   await runTest("M14: credentials encrypted with a key derived from the default JWT secret no longer decrypt", () => {

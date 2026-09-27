@@ -75,6 +75,7 @@ export async function POST(
       role: invitation.role,
       email: user.email,
       name: user.name,
+      sv: user.session_version ?? 1,
     });
 
     const response = apiSuccess({

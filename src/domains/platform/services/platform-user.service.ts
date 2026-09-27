@@ -52,7 +52,7 @@ export class PlatformUserService {
       id: existing?.id || `pm_${crypto.randomUUID().substring(0, 10)}`,
       user_id: user.id,
       role: input.role,
-      mfa_enabled: existing?.mfa_enabled ?? true,
+      mfa_enabled: existing?.mfa_enabled ?? false, // only TOTP enrollment turns MFA on (FX-15)
       is_active: true,
       created_at: existing?.created_at || now,
       updated_at: now,
