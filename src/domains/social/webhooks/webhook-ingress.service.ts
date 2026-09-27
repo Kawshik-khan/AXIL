@@ -1,6 +1,8 @@
 import { db } from "@/infrastructure/db";
-import { ChannelType } from "@/types/social";
+import { ChannelType, ConnectedChannel } from "@/types/social";
 import { ChannelService } from "../channels/channel.service";
+import { ChannelCredentials } from "../channels/channel-provider.interface";
+import { logger } from "@/lib/logger";
 import { IdentityResolutionService } from "../identity/identity-resolution.service";
 import { ConversationService } from "../conversations/conversation.service";
 import { MessageService } from "../messages/message.service";
@@ -25,22 +27,24 @@ export class WebhookIngressService {
     rawBody: string,
     signature: string | null,
     headers: Record<string, string | string[] | undefined>,
-    channelIdOverride?: string
+    channelIdOverride?: string,
+    options: { unsignedWidget?: boolean } = {}
   ): Promise<WebhookIngressResult> {
     const adapter = ChannelService.getAdapter(channelType);
 
-    // 1. Identify Channel
-    let channel;
-    const parsedPayload = typeof rawBody === "string" ? JSON.parse(rawBody) : rawBody;
-
-    if (channelIdOverride) {
-      // Direct lookup by ID
-      const allChannels = db.getConnectedChannels(""); // Search across tenants safely
-      channel = db.findConnectedChannelById(channelIdOverride.split("_")[0] || "", channelIdOverride);
+    let parsedPayload: Record<string, unknown>;
+    try {
+      parsedPayload = JSON.parse(rawBody) as Record<string, unknown>;
+    } catch {
+      throw new BadRequestError("Webhook payload is not valid JSON.");
     }
 
-    if (!channel) {
-      // Match provider account ID (e.g. Page ID or Phone Number ID) from payload
+    // 1. Resolve the channel strictly (audit H5): by its public id, or by the provider account id in the
+    //    payload. There is no "first active channel" or sandbox-tenant fallback — an unknown channel is ignored.
+    let channel: ConnectedChannel | undefined;
+    if (channelIdOverride) {
+      channel = db.findConnectedChannelForIngress(channelIdOverride);
+    } else {
       let providerAccountId = "";
       if (channelType === "FACEBOOK_MESSENGER" || channelType === "INSTAGRAM") {
         const entry = (parsedPayload.entry as Array<Record<string, unknown>>)?.[0];
@@ -51,37 +55,31 @@ export class WebhookIngressService {
         const meta = changes?.value?.metadata as { phone_number_id?: string } | undefined;
         providerAccountId = String(meta?.phone_number_id || "");
       }
-
       if (providerAccountId) {
         channel = db.findConnectedChannelByProviderId(channelType, providerAccountId);
       }
     }
 
-    // Fallback for test/sandboxes if channel not yet registered
-    let tenantId = channel?.tenant_id;
-    let channelId = channel?.id;
-
-    if (!channel) {
-      // Check if any active channel of this type exists
-      const allActive = (db as any).data.connected_channels.filter(
-        (c: any) => c.type === channelType && c.status === "ACTIVE"
-      );
-      if (allActive.length > 0) {
-        channel = allActive[0];
-        tenantId = channel.tenant_id;
-        channelId = channel.id;
-      } else {
-        // Mock channel for sandbox verification
-        tenantId = "ten_default_dhaka";
-        channelId = `chn_${channelType.toLowerCase().slice(0, 3)}_default`;
-      }
+    if (!channel || channel.type !== channelType || channel.status !== "ACTIVE") {
+      logger.warn("social_webhook.unknown_channel", { channel_type: channelType });
+      return { success: false, messagesProcessed: 0, receiptsProcessed: 0 };
     }
 
-    // 2. Cryptographic Signature Verification
-    if (channel) {
-      const credentials = ChannelService.getDecryptedCredentials(channel);
-      const isValid = adapter.verifyWebhook(rawBody, signature, headers, credentials);
-      if (!isValid) {
+    const tenantId = channel.tenant_id;
+    const channelId = channel.id;
+
+    // 2. Signature verification is mandatory, except for the public browser widget, which by design cannot hold
+    //    a secret (it is restricted to active WEBSITE_CHAT channels and validated/capped by its route).
+    if (!(options.unsignedWidget && channelType === "WEBSITE_CHAT")) {
+      let credentials: ChannelCredentials = {};
+      try {
+        credentials = ChannelService.getDecryptedCredentials(channel);
+      } catch {
+        // Unreadable per-channel credentials: the adapter can still use a platform-level secret (e.g. META_APP_SECRET)
+        // or reject; it never falls back to a built-in default.
+        logger.warn("social_webhook.channel_credentials_unreadable", { tenant_id: tenantId, channel_id: channelId });
+      }
+      if (!adapter.verifyWebhook(rawBody, signature, headers, credentials)) {
         throw new AuthenticationError("Webhook signature verification failed.");
       }
     }

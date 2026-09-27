@@ -17,9 +17,26 @@ interface WebsiteChatWidgetProps {
 }
 
 export const WebsiteChatWidget: React.FC<WebsiteChatWidgetProps> = ({
-  channelId = "chn_dhaka_webchat_01",
+  channelId: channelIdProp,
   onNewMessageSent,
 }) => {
+  // The widget ingress only accepts an ACTIVE WEBSITE_CHAT channel (audit H5). Without an explicit id, use the
+  // signed-in workspace's own active website chat channel; if there is none, say so instead of guessing.
+  const [channelId, setChannelId] = useState<string | null>(channelIdProp ?? null);
+  const [channelLookupDone, setChannelLookupDone] = useState(Boolean(channelIdProp));
+
+  useEffect(() => {
+    if (channelIdProp) return;
+    fetch("/api/v1/social/channels")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((json: { data?: { channels?: Array<{ id: string; type: string; status: string }> } } | null) => {
+        const channel = json?.data?.channels?.find((c) => c.type === "WEBSITE_CHAT" && c.status === "ACTIVE");
+        setChannelId(channel?.id ?? null);
+      })
+      .catch(() => setChannelId(null))
+      .finally(() => setChannelLookupDone(true));
+  }, [channelIdProp]);
+
   const [anonymousId] = useState(() => `anon_vis_${Math.random().toString(36).slice(2, 8)}`);
   const [visitorName, setVisitorName] = useState("Tanvir Rahman");
   const [visitorPhone, setVisitorPhone] = useState("01711223344");
@@ -44,6 +61,14 @@ export const WebsiteChatWidget: React.FC<WebsiteChatWidgetProps> = ({
   const handleSendMessage = async (textToSend?: string) => {
     const text = (textToSend || inputText).trim();
     if (!text || isSending) return;
+    if (!channelId) {
+      setStatusMsg(
+        channelLookupDone
+          ? "No active website chat channel in this workspace — connect one in the Social dashboard first."
+          : "Looking up this workspace's website chat channel…"
+      );
+      return;
+    }
 
     const userMsg: WidgetMessage = {
       id: `vis_${Date.now()}`,
@@ -71,13 +96,13 @@ export const WebsiteChatWidget: React.FC<WebsiteChatWidgetProps> = ({
         }),
       });
 
-      if (res.ok) {
+      const data = (await res.json().catch(() => null)) as { success?: boolean; error?: { message?: string } } | null;
+      if (res.ok && data?.success) {
         setStatusMsg("Delivered to Unified Inbox ✓");
         setTimeout(() => setStatusMsg(null), 3000);
         if (onNewMessageSent) onNewMessageSent();
       } else {
-        const data = await res.json();
-        setStatusMsg(`Failed: ${data.error || "Unknown error"}`);
+        setStatusMsg(`Failed: ${data?.error?.message || "Message was not accepted"}`);
       }
     } catch (err) {
       setStatusMsg("Delivery error (check network)");
@@ -125,7 +150,7 @@ export const WebsiteChatWidget: React.FC<WebsiteChatWidgetProps> = ({
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "0.6875rem", color: "var(--color-text-muted)" }}>
-          <Globe size={12} /> ID: <code>{anonymousId}</code> • Channel: <code>{channelId}</code>
+          <Globe size={12} /> ID: <code>{anonymousId}</code> • Channel: <code>{channelId ?? (channelLookupDone ? "none connected" : "…")}</code>
         </div>
       </div>
 

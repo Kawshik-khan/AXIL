@@ -5118,6 +5118,14 @@ class CommerceDatabase {
     return this.data.connected_channels.find((c) => c.tenant_id === tenantId && c.id === id);
   }
 
+  /**
+   * Server-side lookup for inbound webhook/widget traffic by the channel's public id. The caller must still
+   * verify the request (signature, or the widget's channel-type check); the row's tenant_id is authoritative.
+   */
+  public findConnectedChannelForIngress(id: string): ConnectedChannel | undefined {
+    return this.data.connected_channels.find((c) => c.id === id);
+  }
+
   public findConnectedChannelByProviderId(type: ChannelType, providerAccountId: string): ConnectedChannel | undefined {
     return this.data.connected_channels.find(
       (c) => c.type === type && c.provider_account_id === providerAccountId && c.status === "ACTIVE"

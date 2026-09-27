@@ -7,7 +7,11 @@ export async function GET(request: Request) {
   const token = searchParams.get("hub.verify_token");
   const challenge = searchParams.get("hub.challenge");
 
-  const expectedToken = process.env.META_VERIFY_TOKEN || "commerceos_meta_verify_token_2026";
+  // No built-in default token (audit H5): without configuration the handshake is refused.
+  const expectedToken = process.env.META_VERIFY_TOKEN;
+  if (!expectedToken) {
+    return new NextResponse("Webhook verification is not configured", { status: 503 });
+  }
 
   if (mode === "subscribe" && token === expectedToken) {
     return new NextResponse(challenge, { status: 200 });

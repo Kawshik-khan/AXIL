@@ -4,6 +4,7 @@ import { RequestContext } from "@/lib/context";
 import { RbacService } from "@/domains/rbac/service";
 import { PERMISSIONS } from "@/lib/permissions";
 import { ChannelService } from "../channels/channel.service";
+import { ChannelCredentials } from "../channels/channel-provider.interface";
 import { ChannelPolicyService } from "../channels/policy.service";
 import { ChannelRateLimiter } from "./rate-limiter";
 import { SocialEventService } from "../events/social-event.service";
@@ -123,7 +124,17 @@ export class OutboundMessageService {
     payload: SendOutboundPayload
   ): Promise<Message> {
     const adapter = ChannelService.getAdapter(channel.type);
-    const credentials = ChannelService.getDecryptedCredentials(channel);
+    let credentials: ChannelCredentials;
+    try {
+      credentials = ChannelService.getDecryptedCredentials(channel);
+    } catch (err) {
+      // No usable credentials: record the truth instead of attempting (or pretending) delivery (FX-03, rules/truthfulness.md).
+      return db.updateMessage(context.tenant.id, messageId, {
+        status: "FAILED",
+        failed_at: new Date().toISOString(),
+        failure_reason: err instanceof Error ? err.message : "Channel credentials could not be read.",
+      });
+    }
 
     // Resolve external recipient ID (e.g. PSID, Phone, WhatsApp ID)
     const identity = db.getCustomerIdentities(context.tenant.id, customerId).find(

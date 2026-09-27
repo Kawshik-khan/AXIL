@@ -4,7 +4,7 @@ import { RequestContext } from "@/lib/context";
 import { RbacService } from "@/domains/rbac/service";
 import { PERMISSIONS } from "@/lib/permissions";
 import { encryptCredential, decryptCredential, maskSecret } from "@/lib/security";
-import { BadRequestError, NotFoundError } from "@/lib/errors";
+import { AppError, BadRequestError, NotFoundError } from "@/lib/errors";
 import { IChannelProvider, ChannelCredentials } from "./channel-provider.interface";
 import { FacebookAdapter } from "./adapters/facebook.adapter";
 import { InstagramAdapter } from "./adapters/instagram.adapter";
@@ -159,11 +159,19 @@ export class ChannelService {
     return { success: deleted };
   }
 
+  /**
+   * Decrypts a channel's stored credentials. Fails loudly (FX-03, audit H5-b): returning {} used to make
+   * webhook verification fall back to built-in default secrets. Callers decide how to degrade.
+   */
   public static getDecryptedCredentials(channel: ConnectedChannel): ChannelCredentials {
     try {
       return decryptCredential<ChannelCredentials>(channel.credentials_encrypted);
     } catch {
-      return {};
+      throw new AppError(
+        "CHANNEL_CREDENTIALS_INVALID",
+        "This channel's stored credentials could not be read. Reconnect the channel to update them.",
+        424
+      );
     }
   }
 
@@ -174,7 +182,14 @@ export class ChannelService {
     RbacService.assertCan(context, PERMISSIONS.SOCIAL_CHANNEL_READ);
     const channel = await this.getChannelById(context, channelId);
     const adapter = this.getAdapter(channel.type);
-    const creds = this.getDecryptedCredentials(channel);
+    let creds: ChannelCredentials;
+    try {
+      creds = this.getDecryptedCredentials(channel);
+    } catch (err) {
+      const error = err instanceof Error ? err.message : "Channel credentials could not be read.";
+      db.updateConnectedChannel(context.tenant.id, channelId, { status: "ERROR", error_message: error });
+      return { healthy: false, status: "ERROR", error };
+    }
 
     const result = await adapter.validateCredentials(creds);
     if (!result.valid) {

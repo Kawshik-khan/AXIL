@@ -18,7 +18,9 @@ export class InstagramAdapter implements IChannelProvider {
     credentials: ChannelCredentials
   ): boolean {
     if (!signature) return false;
-    const appSecret = credentials.appSecret || credentials.apiKey || process.env.META_APP_SECRET || "meta_test_secret";
+    // Per-channel app secret, else the platform-wide META_APP_SECRET. No literal fallback (audit H5).
+    const appSecret = credentials.appSecret || process.env.META_APP_SECRET;
+    if (!appSecret) return false;
     const cleanSig = signature.startsWith("sha256=") ? signature.substring(7) : signature;
     const bodyStr = typeof payload === "string" ? payload : payload.toString("utf8");
 

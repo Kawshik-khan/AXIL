@@ -24,6 +24,8 @@ export async function GET(request: Request) {
       },
       widget: {
         enabled: !!channel,
+        channelId: channel?.id ?? null, // required by POST /api/v1/social/widget/message
+
         title: channel?.name || `${tenant.name} Support`,
         welcomeMessage: channel?.configuration.welcome_message || "স্বাগতম! আমরা কীভাবে আপনাকে সাহায্য করতে পারি?",
         offlineMessage: businessHours?.offline_message || "আমরা বর্তমানে অফলাইনে আছি। অনুগ্রহ করে আপনার বার্তাটি রেখে যান।",

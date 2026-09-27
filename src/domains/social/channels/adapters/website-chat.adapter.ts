@@ -17,17 +17,16 @@ export class WebsiteChatAdapter implements IChannelProvider {
     _headers: Record<string, string | string[] | undefined>,
     credentials: ChannelCredentials
   ): boolean {
-    // If webhook secret is configured, verify HMAC signature; otherwise allow authorized internal widget ingress
-    if (credentials.webhookSecret && signature) {
-      const bodyStr = typeof payload === "string" ? payload : payload.toString("utf8");
-      const hmac = crypto.createHmac("sha256", credentials.webhookSecret).update(bodyStr).digest("hex");
-      try {
-        return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(hmac));
-      } catch {
-        return false;
-      }
+    // Server-to-server website ingress must be signed with the channel's webhook secret (audit H5).
+    // The public browser widget does not come through here; it uses WebhookIngressService's unsigned-widget path.
+    if (!credentials.webhookSecret || !signature) return false;
+    const bodyStr = typeof payload === "string" ? payload : payload.toString("utf8");
+    const hmac = crypto.createHmac("sha256", credentials.webhookSecret).update(bodyStr).digest("hex");
+    try {
+      return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(hmac));
+    } catch {
+      return false;
     }
-    return true;
   }
 
   public normalizeIncomingEvent(
