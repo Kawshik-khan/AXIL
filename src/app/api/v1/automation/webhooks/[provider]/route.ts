@@ -2,38 +2,40 @@ import { NextResponse } from "next/server";
 import { WebhookGatewayService } from "@/domains/automation/services/webhook-gateway.service";
 import { CourierSyncService } from "@/domains/automation/services/courier-sync.service";
 import { WebhookProvider } from "@/types/automation";
-import { db } from "@/infrastructure/db";
+import { CourierProviderName } from "@/types/commerce";
+import { logger } from "@/lib/logger";
 
-export async function POST(
-  request: Request,
-  { params }: { params: { provider: string } }
-) {
+const COURIER_PROVIDERS = new Set<string>(["STEADFAST", "PATHAO", "REDX", "PAPERFLY", "ECOURIER", "SUNDARBAN"]);
+const MAX_BODY_BYTES = 256 * 1024;
+
+const reject = (status: number, code: string, message: string, deliveryId?: string) =>
+  NextResponse.json({ error: { code, message, ...(deliveryId ? { delivery_id: deliveryId } : {}) } }, { status });
+
+/**
+ * Inbound courier / payment webhooks (audit C4, FIX_IMPLEMENTATION_PLAN FX-06, ADR-103).
+ *
+ * - The endpoint is identified by `?wh=<webhook id>`, a public identifier of one configured webhook row.
+ * - The request must carry `x-webhook-signature` (HMAC over the raw body with that row's secret) and a fresh
+ *   `x-webhook-timestamp` (<= 300 s). An Authorization header never replaces the signature.
+ * - The tenant is the webhook row's tenant. Client headers and query parameters never choose it, and unknown
+ *   endpoints are rejected without writing anything.
+ */
+export async function POST(request: Request, { params }: { params: { provider: string } }) {
   try {
-    const providerUpper = params.provider.toUpperCase() as WebhookProvider;
-    const { searchParams } = new URL(request.url);
-
-    // Resolve tenant context safely from query or header
-    let tenantId: string =
-      request.headers.get("x-tenant-id") ||
-      searchParams.get("tenant_id") ||
-      searchParams.get("tenant") ||
-      "";
-
-    if (!tenantId) {
-      // Resolve from registered active webhook configuration for this provider
-      const allWebhooks = (db as any).data.automation_webhooks || [];
-      const match = allWebhooks.find((w: any) => w.provider === providerUpper && w.is_active);
-      if (match) {
-        tenantId = match.tenant_id;
-      } else {
-        tenantId = "tenant_default";
-      }
+    const provider = params.provider.toUpperCase() as WebhookProvider;
+    const webhookId = new URL(request.url).searchParams.get("wh") || "";
+    const webhook = webhookId ? WebhookGatewayService.findIngressWebhook(webhookId, provider) : undefined;
+    if (!webhook) {
+      return reject(401, "UNKNOWN_WEBHOOK", "Unknown or inactive webhook endpoint.");
     }
 
     const rawBody = await request.text();
+    if (Buffer.byteLength(rawBody, "utf8") > MAX_BODY_BYTES) {
+      return reject(413, "PAYLOAD_TOO_LARGE", "Webhook payload exceeds the maximum size.");
+    }
     let parsedBody: Record<string, unknown> = {};
     try {
-      parsedBody = rawBody ? JSON.parse(rawBody) : {};
+      parsedBody = rawBody ? (JSON.parse(rawBody) as Record<string, unknown>) : {};
     } catch {
       parsedBody = {};
     }
@@ -43,41 +45,30 @@ export async function POST(
       headers[key.toLowerCase()] = value;
     });
 
-    // 1. Cryptographic Signature & Timestamp Freshness Verification
-    const verification = await WebhookGatewayService.processInboundWebhook(tenantId, {
-      provider: providerUpper,
+    // 1. Signature + timestamp verification against this webhook's own secret.
+    const verification = await WebhookGatewayService.processInboundWebhook(webhook.tenant_id, {
+      provider,
       endpointPath: `/api/v1/automation/webhooks/${params.provider}`,
       headers,
       rawBody,
       parsedBody,
+      webhookId: webhook.id,
     });
 
     if (!verification.verified) {
-      return NextResponse.json(
-        {
-          error: {
-            code: verification.code,
-            message: verification.reason,
-            delivery_id: verification.deliveryId,
-          },
-        },
-        { status: verification.code === "INVALID_SIGNATURE" ? 401 : 400 }
-      );
+      const authFailure = ["INVALID_SIGNATURE", "EXPIRED_TIMESTAMP", "UNKNOWN_WEBHOOK"].includes(verification.code);
+      return reject(authFailure ? 401 : 400, verification.code, verification.reason || "Webhook rejected.", verification.deliveryId);
     }
 
-    // 2. If Courier Webhook, execute deterministic Courier Synchronization
-    if (["STEADFAST", "PATHAO", "REDX", "PAPERFLY", "ECOURIER", "SUNDARBAN"].includes(providerUpper)) {
-      const syncResult = await CourierSyncService.processCourierWebhook(
-        tenantId,
-        providerUpper as any,
-        {
-          tracking_number: (parsedBody.tracking_code || parsedBody.tracking_number || parsedBody.consignment_id) as string,
-          consignment_id: (parsedBody.consignment_id || parsedBody.invoice_id) as string,
-          raw_status: (parsedBody.status || parsedBody.delivery_status || "in_transit") as string,
-          status_details: (parsedBody.status_details || parsedBody.reason || parsedBody.notes) as string,
-          location: (parsedBody.current_hub || parsedBody.location) as string,
-        }
-      );
+    // 2. Courier webhooks: apply the canonical status to the webhook tenant's shipment.
+    if (COURIER_PROVIDERS.has(provider)) {
+      const syncResult = await CourierSyncService.processCourierWebhook(webhook.tenant_id, provider as CourierProviderName, {
+        tracking_number: (parsedBody.tracking_code || parsedBody.tracking_number || parsedBody.consignment_id) as string,
+        consignment_id: (parsedBody.consignment_id || parsedBody.invoice_id) as string,
+        raw_status: (parsedBody.status || parsedBody.delivery_status || "in_transit") as string,
+        status_details: (parsedBody.status_details || parsedBody.reason || parsedBody.notes) as string,
+        location: (parsedBody.current_hub || parsedBody.location) as string,
+      });
 
       return NextResponse.json({
         success: true,
@@ -91,17 +82,13 @@ export async function POST(
       success: true,
       verified: true,
       delivery_id: verification.deliveryId,
-      message: `Webhook for ${providerUpper} verified and ingested successfully.`,
+      message: `Webhook for ${provider} verified and recorded.`,
     });
   } catch (err) {
-    return NextResponse.json(
-      {
-        error: {
-          code: "WEBHOOK_PROCESSING_FAILED",
-          message: err instanceof Error ? err.message : "Error processing webhook",
-        },
-      },
-      { status: 500 }
-    );
+    logger.error("webhook.processing_failed", {
+      provider: params.provider,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return reject(500, "WEBHOOK_PROCESSING_FAILED", "Error processing webhook.");
   }
 }

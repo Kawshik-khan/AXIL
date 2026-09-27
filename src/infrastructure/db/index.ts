@@ -2420,6 +2420,8 @@ class CommerceDatabase {
       );
     }
 
+    // Demo webhook rows. Each is reachable at /api/v1/automation/webhooks/<provider>?wh=<id> and must be
+    // signed with the HMAC secret held in the env var named by secret_reference (audit C4, ADR-103).
     if (!this.data.automation_webhooks || this.data.automation_webhooks.length === 0) {
       this.data.automation_webhooks = [
         {
@@ -2428,7 +2430,7 @@ class CommerceDatabase {
           provider: "STEADFAST",
           endpoint_path: "/api/v1/automation/webhooks/steadfast",
           secret_reference: "STEADFAST_WEBHOOK_SECRET",
-          signature_algorithm: "TOKEN",
+          signature_algorithm: "HMAC_SHA256",
           is_active: true,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
@@ -2439,7 +2441,7 @@ class CommerceDatabase {
           provider: "PATHAO",
           endpoint_path: "/api/v1/automation/webhooks/pathao",
           secret_reference: "PATHAO_WEBHOOK_SECRET",
-          signature_algorithm: "TOKEN",
+          signature_algorithm: "HMAC_SHA256",
           is_active: true,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
@@ -2450,7 +2452,7 @@ class CommerceDatabase {
           provider: "BKASH",
           endpoint_path: "/api/v1/automation/webhooks/bkash",
           secret_reference: "BKASH_WEBHOOK_SECRET",
-          signature_algorithm: "TOKEN",
+          signature_algorithm: "HMAC_SHA256",
           is_active: true,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
@@ -2461,7 +2463,7 @@ class CommerceDatabase {
           provider: "NAGAD",
           endpoint_path: "/api/v1/automation/webhooks/nagad",
           secret_reference: "NAGAD_WEBHOOK_SECRET",
-          signature_algorithm: "TOKEN",
+          signature_algorithm: "HMAC_SHA256",
           is_active: true,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
@@ -8516,26 +8518,19 @@ class CommerceDatabase {
     return (this.data.automation_webhooks || []).find((w) => w.tenant_id === tenantId && w.id === id);
   }
 
+  /** Active webhook for a tenant + provider. Never creates one (audit C4: rows used to be auto-created for any tenant id). */
   public findAutomationWebhookByProvider(tenantId: string, provider: string): AutomationWebhook | undefined {
-    let match = (this.data.automation_webhooks || []).find(
+    return (this.data.automation_webhooks || []).find(
       (w) => w.tenant_id === tenantId && w.provider === provider && w.is_active
     );
-    if (!match) {
-      const now = new Date().toISOString();
-      const defaultWh: AutomationWebhook = {
-        id: `wh_${provider.toLowerCase()}_auto_${tenantId}`,
-        tenant_id: tenantId,
-        provider: provider as any,
-        endpoint_path: `/api/v1/automation/webhooks/${provider.toLowerCase()}`,
-        secret_reference: `${provider}_WEBHOOK_SECRET`,
-        signature_algorithm: "TOKEN",
-        is_active: true,
-        created_at: now,
-        updated_at: now,
-      };
-      return this.createAutomationWebhook(defaultWh);
-    }
-    return match;
+  }
+
+  /**
+   * Server-side lookup for inbound webhook requests: resolves the row by its public id + provider.
+   * The caller authenticates the request with that row's secret; the row's tenant_id is authoritative.
+   */
+  public findActiveAutomationWebhookForIngress(id: string, provider: string): AutomationWebhook | undefined {
+    return (this.data.automation_webhooks || []).find((w) => w.id === id && w.provider === provider && w.is_active);
   }
 
   public createAutomationWebhook(wh: AutomationWebhook): AutomationWebhook {

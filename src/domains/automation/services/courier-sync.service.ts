@@ -10,6 +10,7 @@ import { CourierProviderName, DeliveryStatus, Shipment } from "@/types/commerce"
 import { CourierTrackingResult } from "@/types/automation";
 import { ProviderCircuitBreakerService } from "./provider-circuit-breaker.service";
 import { IdempotencyService } from "./idempotency.service";
+import { logger } from "@/lib/logger";
 
 export class CourierSyncService {
   /**
@@ -152,6 +153,24 @@ export class CourierSyncService {
     // Check circuit breaker
     if (!ProviderCircuitBreakerService.canExecute(tenantId, provider)) {
       throw new Error(`Courier provider ${provider} circuit breaker is OPEN. Deferring sync.`);
+    }
+
+    // A courier event must never revive a closed order (audit C4/H12, FX-06 step 4). Leave everything untouched
+    // and surface it for manual review; the single order-lifecycle writer (FX-35) will replace this guard.
+    const linkedOrder = db.findOrderById(tenantId, shipment.order_id);
+    if (linkedOrder && ["CANCELLED", "RETURNED", "REFUNDED"].includes(linkedOrder.status)) {
+      logger.warn("courier_sync.closed_order_skipped", {
+        tenant_id: tenantId,
+        shipment_id: shipment.id,
+        order_status: linkedOrder.status,
+        canonical_status: canonicalStatus,
+      });
+      return {
+        success: false,
+        shipment,
+        canonical_status: canonicalStatus,
+        message: `Order is ${linkedOrder.status}; courier status "${rawStatus}" was not applied and needs manual review.`,
+      };
     }
 
     try {
