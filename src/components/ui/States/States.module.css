@@ -1,0 +1,102 @@
+.stateContainer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 56px 32px;
+  background-color: var(--color-surface-pure, #ffffff);
+  border: 1px solid var(--color-border-subtle, rgba(30, 32, 30, 0.08));
+  border-radius: var(--radius-card, 18px);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.03);
+  gap: 12px;
+  width: 100%;
+  max-width: 100%;
+  margin: 0 0 24px 0;
+  transition: all 0.2s ease;
+}
+
+.iconWrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background-color: var(--color-surface-soft, #FAFBF8);
+  border: 1px solid var(--color-border-subtle, rgba(30, 32, 30, 0.08));
+  color: var(--color-text-secondary, #70736F);
+  margin-bottom: 6px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+.title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--color-text-primary, #202124);
+  letter-spacing: -0.01em;
+}
+
+.description {
+  font-size: 13px;
+  color: var(--color-text-secondary, #70736F);
+  max-width: 440px;
+  line-height: 1.6;
+}
+
+.actionWrapper {
+  margin-top: 10px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Skeletons */
+.skeletonCard {
+  background-color: var(--color-surface-pure, #ffffff);
+  border: 1px solid var(--color-border-subtle, rgba(30, 32, 30, 0.08));
+  border-radius: var(--radius-card, 18px);
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.03);
+}
+
+.skeletonLine {
+  height: 16px;
+  border-radius: var(--radius-sm, 10px);
+  background: linear-gradient(
+    90deg,
+    rgba(36, 37, 41, 0.04) 25%,
+    rgba(36, 37, 41, 0.09) 37%,
+    rgba(36, 37, 41, 0.04) 63%
+  );
+  background-size: 400% 100%;
+  animation: pulse 1.4s ease infinite;
+}
+
+.skeletonTitle {
+  width: 40%;
+  height: 22px;
+}
+
+.skeletonShort {
+  width: 30%;
+}
+
+.skeletonMedium {
+  width: 70%;
+}
+
+.skeletonBlock {
+  width: 100%;
+  height: 90px;
+}
+
+@keyframes pulse {
+  0% { background-position: 100% 50%; }
+  100% { background-position: 0 50%; }
+}

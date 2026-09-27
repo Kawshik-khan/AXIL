@@ -1,0 +1,195 @@
+import { db } from "@/infrastructure/db";
+import { ConnectedChannel, ChannelType, ChannelStatus } from "@/types/social";
+import { RequestContext } from "@/lib/context";
+import { RbacService } from "@/domains/rbac/service";
+import { PERMISSIONS } from "@/lib/permissions";
+import { encryptCredential, decryptCredential, maskSecret } from "@/lib/security";
+import { BadRequestError, NotFoundError } from "@/lib/errors";
+import { IChannelProvider, ChannelCredentials } from "./channel-provider.interface";
+import { FacebookAdapter } from "./adapters/facebook.adapter";
+import { InstagramAdapter } from "./adapters/instagram.adapter";
+import { WhatsAppAdapter } from "./adapters/whatsapp.adapter";
+import { WebsiteChatAdapter } from "./adapters/website-chat.adapter";
+
+export class ChannelService {
+  private static adapters: Record<ChannelType, IChannelProvider> = {
+    FACEBOOK_MESSENGER: new FacebookAdapter(),
+    INSTAGRAM: new InstagramAdapter(),
+    WHATSAPP: new WhatsAppAdapter(),
+    WEBSITE_CHAT: new WebsiteChatAdapter(),
+    TIKTOK: new FacebookAdapter() as any, // Extensible fallback
+    TELEGRAM: new FacebookAdapter() as any,
+    EMAIL: new FacebookAdapter() as any,
+    SMS: new FacebookAdapter() as any,
+    MARKETPLACE: new FacebookAdapter() as any,
+  };
+
+  public static getAdapter(type: ChannelType): IChannelProvider {
+    const adapter = this.adapters[type];
+    if (!adapter) {
+      throw new BadRequestError(`Channel provider '${type}' is not supported.`);
+    }
+    return adapter;
+  }
+
+  public static async listChannels(
+    context: RequestContext
+  ): Promise<Array<Omit<ConnectedChannel, "credentials_encrypted"> & { credentials_masked: Record<string, string> }>> {
+    RbacService.assertCan(context, PERMISSIONS.SOCIAL_CHANNEL_READ);
+    const channels = db.getConnectedChannels(context.tenant.id);
+
+    return channels.map((ch) => {
+      let masked: Record<string, string> = {};
+      try {
+        const decrypted = decryptCredential<Record<string, string>>(ch.credentials_encrypted);
+        for (const [key, val] of Object.entries(decrypted)) {
+          masked[key] = maskSecret(val);
+        }
+      } catch {
+        masked = { token: "••••••••" };
+      }
+
+      const { credentials_encrypted: _, ...safeChannel } = ch;
+      return {
+        ...safeChannel,
+        credentials_masked: masked,
+      };
+    });
+  }
+
+  public static async getChannelById(
+    context: RequestContext,
+    channelId: string
+  ): Promise<ConnectedChannel> {
+    RbacService.assertCan(context, PERMISSIONS.SOCIAL_CHANNEL_READ);
+    const channel = db.findConnectedChannelById(context.tenant.id, channelId);
+    if (!channel) {
+      throw new NotFoundError(`Channel '${channelId}' not found.`);
+    }
+    return channel;
+  }
+
+  public static async connectChannel(
+    context: RequestContext,
+    payload: {
+      type: ChannelType;
+      name: string;
+      provider_account_id: string;
+      external_page_id?: string;
+      external_business_id?: string;
+      external_phone_number_id?: string;
+      credentials: Record<string, unknown>;
+      configuration?: Record<string, unknown>;
+    }
+  ): Promise<ConnectedChannel> {
+    RbacService.assertCan(context, PERMISSIONS.SOCIAL_CHANNEL_MANAGE);
+
+    if (!payload.type || !payload.provider_account_id || !payload.name) {
+      throw new BadRequestError("Channel type, name, and provider account ID are required.");
+    }
+
+    const adapter = this.getAdapter(payload.type);
+    const validation = await adapter.validateCredentials(payload.credentials);
+    if (!validation.valid) {
+      throw new BadRequestError(`Channel credentials invalid: ${validation.error}`);
+    }
+
+    const encrypted = encryptCredential(payload.credentials);
+
+    const newChannel: ConnectedChannel = {
+      id: `chn_${payload.type.toLowerCase().slice(0, 3)}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      tenant_id: context.tenant.id,
+      type: payload.type,
+      name: payload.name,
+      status: "ACTIVE",
+      provider_account_id: payload.provider_account_id,
+      external_page_id: payload.external_page_id,
+      external_business_id: payload.external_business_id,
+      external_phone_number_id: payload.external_phone_number_id,
+      credentials_encrypted: encrypted,
+      configuration: {
+        welcome_message: "স্বাগতম! আমাদের সাথে যোগাযোগ করার জন্য ধন্যবাদ। আমরা কীভাবে আপনাকে সাহায্য করতে পারি?",
+        auto_reply_enabled: true,
+        ...payload.configuration,
+      },
+      last_sync_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    return db.createConnectedChannel(newChannel);
+  }
+
+  public static async updateChannel(
+    context: RequestContext,
+    channelId: string,
+    patch: {
+      name?: string;
+      status?: ChannelStatus;
+      configuration?: Record<string, unknown>;
+      credentials?: Record<string, unknown>;
+    }
+  ): Promise<ConnectedChannel> {
+    RbacService.assertCan(context, PERMISSIONS.SOCIAL_CHANNEL_MANAGE);
+    const existing = await this.getChannelById(context, channelId);
+
+    const updateData: Partial<ConnectedChannel> = {};
+    if (patch.name) updateData.name = patch.name;
+    if (patch.status) updateData.status = patch.status;
+    if (patch.configuration) {
+      updateData.configuration = {
+        ...existing.configuration,
+        ...patch.configuration,
+      };
+    }
+    if (patch.credentials) {
+      updateData.credentials_encrypted = encryptCredential(patch.credentials);
+    }
+
+    return db.updateConnectedChannel(context.tenant.id, channelId, updateData);
+  }
+
+  public static async deleteChannel(
+    context: RequestContext,
+    channelId: string
+  ): Promise<{ success: boolean }> {
+    RbacService.assertCan(context, PERMISSIONS.SOCIAL_CHANNEL_MANAGE);
+    await this.getChannelById(context, channelId);
+    const deleted = db.deleteConnectedChannel(context.tenant.id, channelId);
+    return { success: deleted };
+  }
+
+  public static getDecryptedCredentials(channel: ConnectedChannel): ChannelCredentials {
+    try {
+      return decryptCredential<ChannelCredentials>(channel.credentials_encrypted);
+    } catch {
+      return {};
+    }
+  }
+
+  public static async testChannelHealth(
+    context: RequestContext,
+    channelId: string
+  ): Promise<{ healthy: boolean; status: ChannelStatus; error?: string }> {
+    RbacService.assertCan(context, PERMISSIONS.SOCIAL_CHANNEL_READ);
+    const channel = await this.getChannelById(context, channelId);
+    const adapter = this.getAdapter(channel.type);
+    const creds = this.getDecryptedCredentials(channel);
+
+    const result = await adapter.validateCredentials(creds);
+    if (!result.valid) {
+      db.updateConnectedChannel(context.tenant.id, channelId, {
+        status: "ERROR",
+        error_message: result.error,
+      });
+      return { healthy: false, status: "ERROR", error: result.error };
+    }
+
+    db.updateConnectedChannel(context.tenant.id, channelId, {
+      status: "ACTIVE",
+      error_message: undefined,
+      last_sync_at: new Date().toISOString(),
+    });
+    return { healthy: true, status: "ACTIVE" };
+  }
+}

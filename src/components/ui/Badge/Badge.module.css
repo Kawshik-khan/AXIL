@@ -1,0 +1,70 @@
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 3px 8px;
+  border-radius: var(--radius-pill);
+  font-size: var(--font-size-meta);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.owner {
+  background-color: var(--color-lime-soft);
+  color: var(--color-surface-dark);
+  border: 1px solid var(--color-lime-primary);
+}
+
+.admin {
+  background-color: rgba(108, 158, 255, 0.15);
+  color: #3b6bcc;
+}
+
+.dev {
+  background-color: rgba(168, 85, 247, 0.15);
+  color: #9333ea;
+  border: 1px solid rgba(168, 85, 247, 0.35);
+}
+
+.manager {
+  background-color: rgba(243, 182, 63, 0.15);
+  color: #b07e1e;
+}
+
+.sales, .support, .marketing, .inventory, .finance, .analyst {
+  background-color: var(--color-surface-soft);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border-subtle);
+}
+
+.active, .success {
+  background-color: var(--color-success-bg);
+  color: var(--color-success);
+}
+
+.invited {
+  background-color: var(--color-warning-bg);
+  color: var(--color-warning);
+}
+
+.suspended, .deactivated, .inactive {
+  background-color: var(--color-danger-bg);
+  color: var(--color-danger);
+}
+
+.pending {
+  background-color: var(--color-warning-bg);
+  color: var(--color-warning);
+}
+
+.default {
+  background-color: var(--color-surface-soft);
+  color: var(--color-text-secondary);
+}
+
+.role {
+  background-color: rgba(199, 249, 0, 0.15);
+  color: #5c7400;
+  border: 1px solid rgba(199, 249, 0, 0.3);
+}

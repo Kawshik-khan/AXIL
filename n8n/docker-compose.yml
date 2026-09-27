@@ -1,0 +1,29 @@
+services:
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: commerceos-n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - N8N_HOST=localhost
+      - N8N_WEBHOOK_URL=http://localhost:5678/
+      - GENERIC_TIMEZONE=Asia/Dhaka
+      - TZ=Asia/Dhaka
+      - COMMERCEOS_API_BASE_URL=http://host.docker.internal:3000
+      - EXECUTIONS_DATA_PRUNE=true
+      - EXECUTIONS_DATA_MAX_AGE=168
+      - EXECUTIONS_DATA_PRUNE_MAX_COUNT=50000
+      - N8N_LOG_LEVEL=info
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./workflows:/n8n/workflows:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  n8n_data:
+    name: commerceos_n8n_data

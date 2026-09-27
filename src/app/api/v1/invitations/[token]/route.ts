@@ -1,0 +1,94 @@
+import { InvitationService } from "@/domains/invitations/service";
+import { TenantService } from "@/domains/tenants/service";
+import { AuthService } from "@/domains/auth/service";
+import { db, UserRecord } from "@/infrastructure/db";
+import { hashPassword, signSessionToken, AUTH_COOKIE_NAME } from "@/lib/security";
+import { apiSuccess, apiError } from "@/lib/api-response";
+import { ValidationError } from "@/lib/errors";
+
+export async function GET(
+  _request: Request,
+  { params }: { params: { token: string } }
+) {
+  try {
+    const invitation = InvitationService.getInvitationByToken(params.token);
+    const tenant = TenantService.getTenantById(invitation.tenant_id);
+
+    return apiSuccess({
+      email: invitation.email,
+      role: invitation.role,
+      workspace_name: tenant.name,
+      expires_at: invitation.expires_at,
+    });
+  } catch (err) {
+    return apiError(err);
+  }
+}
+
+export async function POST(
+  request: Request,
+  { params }: { params: { token: string } }
+) {
+  try {
+    const invitation = InvitationService.getInvitationByToken(params.token);
+    const tenant = TenantService.getTenantById(invitation.tenant_id);
+    const body = await request.json();
+
+    let user = db.findUserByEmail(invitation.email);
+
+    if (!user) {
+      if (!body.name || body.name.trim().length < 2) {
+        throw new ValidationError("Your full name must be at least 2 characters.");
+      }
+      if (!body.password || body.password.length < 8) {
+        throw new ValidationError("Password must be at least 8 characters long.");
+      }
+
+      const passwordHash = await hashPassword(body.password);
+      const userId = `usr_${Math.random().toString(36).substring(2, 10)}`;
+
+      user = {
+        id: userId,
+        email: invitation.email,
+        name: body.name.trim(),
+        password_hash: passwordHash,
+        status: "ACTIVE",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      db.createUser(user);
+    }
+
+    // Accept invitation and create membership
+    InvitationService.acceptInvitation(params.token, user.id);
+
+    const token = await signSessionToken({
+      userId: user.id,
+      tenantId: tenant.id,
+      role: invitation.role,
+      email: user.email,
+      name: user.name,
+    });
+
+    const response = apiSuccess({
+      message: "Invitation accepted successfully.",
+      user: { id: user.id, email: user.email, name: user.name },
+      tenant: { id: tenant.id, name: tenant.name, slug: tenant.slug },
+      role: invitation.role,
+    });
+
+    response.cookies.set({
+      name: AUTH_COOKIE_NAME,
+      value: token,
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+      maxAge: 7 * 24 * 60 * 60,
+    });
+
+    return response;
+  } catch (err) {
+    return apiError(err);
+  }
+}

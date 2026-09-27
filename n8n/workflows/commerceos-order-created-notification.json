@@ -1,0 +1,236 @@
+{
+  "id": "wf_ord_01",
+  "name": "CommerceOS — Order Created Notification Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "commerceos-order-created",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Order Created Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "commerceos-order-created-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. Authoritative Validation of Standard CommerceOS Event Envelope\nconst input = $input.first().json;\nconst body = input.body || input;\nconst event = body.event || body;\n\nif (!event || typeof event !== 'object') {\n  throw new Error('VALIDATION_ERROR: Missing event payload');\n}\n\n// Non-negotiable envelope attributes check\nconst requiredFields = ['id', 'type', 'version', 'tenant_id', 'aggregate_id', 'payload'];\nfor (const field of requiredFields) {\n  if (!event[field]) {\n    throw new Error(`VALIDATION_ERROR: Missing required event field '${field}'`);\n  }\n}\n\nif (event.type !== 'order.created') {\n  throw new Error(`VALIDATION_ERROR: Unsupported event type '${event.type}', expected 'order.created'`);\n}\n\nreturn [{\n  json: {\n    valid: true,\n    event_id: event.id,\n    event_type: event.type,\n    event_version: event.version,\n    tenant_id: event.tenant_id,\n    aggregate_id: event.aggregate_id,\n    actor_id: event.actor_id || 'system',\n    correlation_id: event.correlation_id || event.aggregate_id,\n    causation_id: event.id,\n    timestamp: event.timestamp || new Date().toISOString(),\n    payload: event.payload || {}\n  }\n}];"
+      },
+      "id": "validate-event-envelope",
+      "name": "Validate Event Envelope",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 2. Prepare Context, Correlation, and Authoritative Idempotency Key\nconst validated = $input.first().json;\n\n// Deterministic idempotency key per event and side-effecting task\nconst idempotencyKey = `n8n_ord_notif_${validated.event_id}`;\n\n// Format recipient and message safely without exposing unneeded PII\nconst payload = validated.payload;\nconst recipientPhone = payload.customer_phone || payload.phone || '+8801700000000';\nconst grandTotal = payload.grand_total || 0;\nconst orderNumber = payload.order_number || validated.aggregate_id;\n\nconst notificationPayload = {\n  template_code: 'ORDER_CONFIRMATION_SMS',\n  channel: 'SMS',\n  recipient: recipientPhone,\n  customer_phone: recipientPhone,\n  order_id: validated.aggregate_id,\n  order_number: orderNumber,\n  body: `Your order #${orderNumber} of BDT ${grandTotal} has been received and is being processed.`,\n  metadata: {\n    event_id: validated.event_id,\n    tenant_id: validated.tenant_id,\n    orchestrator: 'n8n'\n  }\n};\n\nreturn [{\n  json: {\n    tenant_id: validated.tenant_id,\n    correlation_id: validated.correlation_id,\n    causation_id: validated.causation_id,\n    idempotency_key: idempotencyKey,\n    notification_payload: notificationPayload\n  }\n}];"
+      },
+      "id": "prepare-context-idempotency",
+      "name": "Prepare Context & Idempotency",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [720, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.COMMERCEOS_API_BASE_URL || 'http://localhost:3000' }}/api/v1/automation/actions/notifications/send",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Correlation-ID",
+              "value": "={{ $json.correlation_id }}"
+            },
+            {
+              "name": "X-Causation-ID",
+              "value": "={{ $json.causation_id }}"
+            },
+            {
+              "name": "X-Tenant-ID",
+              "value": "={{ $json.tenant_id }}"
+            },
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ $json.idempotency_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.notification_payload) }}",
+        "options": {
+          "timeout": 10000,
+          "retry": {
+            "maxRetries": 3,
+            "retryInterval": 1000
+          }
+        }
+      },
+      "id": "call-commerceos-notification-api",
+      "name": "Call CommerceOS Notification API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [960, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "commerceos-api-credential",
+          "name": "CommerceOS API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "verified-check",
+              "leftValue": "={{ $json.data.verified }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "verify-execution-result",
+      "name": "Verify Execution Result",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1200, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, verified: true, status: 'COMPLETED', data: $json.data, correlation_id: $('Prepare Context & Idempotency').first().json.correlation_id, timestamp: new Date().toISOString() }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1440, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, verified: false, status: 'FAILED', error: 'CommerceOS API action rejected or unverified', correlation_id: $('Prepare Context & Idempotency').first().json.correlation_id, timestamp: new Date().toISOString() }) }}",
+        "options": {
+          "responseCode": 422
+        }
+      },
+      "id": "respond-failure",
+      "name": "Respond Failure",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1440, 420]
+    }
+  ],
+  "connections": {
+    "Order Created Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Event Envelope",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Event Envelope": {
+      "main": [
+        [
+          {
+            "node": "Prepare Context & Idempotency",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Context & Idempotency": {
+      "main": [
+        [
+          {
+            "node": "Call CommerceOS Notification API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call CommerceOS Notification API": {
+      "main": [
+        [
+          {
+            "node": "Verify Execution Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Execution Result": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveExecutionProgress": true,
+    "saveManualExecutions": true
+  },
+  "versionId": "b1a78e49-81bc-4dc2-b3e1-778899001122",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "commerceos-prod-n8n"
+  },
+  "tags": [
+    {
+      "name": "CommerceOS"
+    },
+    {
+      "name": "Phase 6"
+    },
+    {
+      "name": "Order Automation"
+    }
+  ]
+}

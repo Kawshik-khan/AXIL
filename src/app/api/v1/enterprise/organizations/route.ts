@@ -1,0 +1,35 @@
+import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
+import { enterpriseHierarchyService } from "@/domains/enterprise/services/enterprise-hierarchy.service";
+import { db } from "@/infrastructure/db";
+
+export async function GET(request: Request) {
+  try {
+    const context = await extractRequestContext(request);
+    const orgs = db.getOrganizations();
+    return apiSuccess({
+      total: orgs.length,
+      organizations: orgs,
+    });
+  } catch (err) {
+    return apiError(err);
+  }
+}
+
+export async function POST(request: Request) {
+  try {
+    const context = await extractRequestContext(request);
+    const body = await request.json();
+
+    const created = enterpriseHierarchyService.createOrganization({
+      name: body.name,
+      slug: body.slug || body.name.toLowerCase().replace(/\s+/g, "-"),
+      legal_name: body.legal_name || body.name,
+      headquarters_country: body.country || "Bangladesh",
+      default_currency: body.base_currency || "BDT",
+    });
+
+    return apiSuccess(created, undefined, 201);
+  } catch (err) {
+    return apiError(err);
+  }
+}

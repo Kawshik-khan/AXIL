@@ -1,0 +1,25 @@
+import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
+import { operationalSLAService } from "@/domains/operations/services/operational-sla.service";
+import { db } from "@/infrastructure/db";
+
+export async function GET(request: Request) {
+  try {
+    const context = await extractRequestContext(request);
+    const tenantId = context.tenant.id;
+
+    const policies = db.getSLAPolicies(tenantId);
+    const breaches = db.getSLABreaches(tenantId);
+    const evaluated = operationalSLAService.auditSLAs(tenantId);
+
+    return apiSuccess({
+      policies_count: policies.length,
+      policies,
+      breaches_count: breaches.length,
+      breaches: breaches.slice(0, 20),
+      evaluated_active_breaches: evaluated.active_breaches,
+      risks_at_warning: evaluated.risks_at_warning,
+    });
+  } catch (err) {
+    return apiError(err);
+  }
+}

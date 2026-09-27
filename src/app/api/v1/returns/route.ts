@@ -1,0 +1,24 @@
+import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
+import { ReturnService } from "@/domains/returns/return.service";
+
+export async function GET(request: Request) {
+  try {
+    const context = await extractRequestContext(request);
+    const returns = await ReturnService.listReturns(context);
+    return apiSuccess({ returns });
+  } catch (err) {
+    return apiError(err);
+  }
+}
+
+export async function POST(request: Request) {
+  try {
+    const context = await extractRequestContext(request);
+    const body = await request.json();
+
+    const returnRequest = await ReturnService.requestReturn(context, body);
+    return apiSuccess({ return: returnRequest }, undefined, 201);
+  } catch (err) {
+    return apiError(err);
+  }
+}

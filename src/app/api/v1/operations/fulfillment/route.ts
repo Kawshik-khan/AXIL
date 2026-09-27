@@ -1,0 +1,41 @@
+import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
+import { fulfillmentOperationsService } from "@/domains/operations/services/fulfillment-operations.service";
+import { db } from "@/infrastructure/db";
+
+export async function GET(request: Request) {
+  try {
+    const context = await extractRequestContext(request);
+    const tenantId = context.tenant.id;
+
+    const orders = db.getOrders(tenantId).orders;
+    const readyOrders = orders.filter((o) => o.status === "CONFIRMED" || o.status === "PROCESSING");
+
+    const candidatePlans = readyOrders.slice(0, 10).map((o) => {
+      try {
+        return fulfillmentOperationsService.planFulfillment(tenantId, o.id);
+      } catch {
+        return null;
+      }
+    }).filter(Boolean);
+
+    return apiSuccess({
+      ready_orders_count: readyOrders.length,
+      candidate_plans: candidatePlans,
+    });
+  } catch (err) {
+    return apiError(err);
+  }
+}
+
+export async function POST(request: Request) {
+  try {
+    const context = await extractRequestContext(request);
+    const tenantId = context.tenant.id;
+    const body = await request.json();
+
+    const plan = fulfillmentOperationsService.planFulfillment(tenantId, body.order_id);
+    return apiSuccess(plan);
+  } catch (err) {
+    return apiError(err);
+  }
+}

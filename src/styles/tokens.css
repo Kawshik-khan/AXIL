@@ -1,0 +1,103 @@
+/* CommerceOS Master Design System Tokens */
+:root {
+  /* Brand & Accent Palette */
+  --color-lime-primary: #C7F900;
+  --color-lime-bright:  #D8FF38;
+  --color-lime-soft:    #EFFFAD;
+  --color-lime-glow:    rgba(199, 249, 0, 0.28);
+  --color-lime-hover:   #b8e800;
+
+  /* Backgrounds & Surfaces */
+  --color-bg-base:      #F5F6F3;
+  --color-surface-pure: #FFFFFF;
+  --color-surface-soft: #FAFBF8;
+  --color-surface-dark: #242529;
+  --color-dark-elevated:#2C2D31;
+  --color-dark-card:    #1D1E22;
+
+  /* Typography Colors */
+  --color-text-primary:   #202124;
+  --color-text-secondary: #70736F;
+  --color-text-muted:     #9A9D98;
+  --color-text-inverse:   #FFFFFF;
+  --color-text-dark-muted: rgba(255, 255, 255, 0.6);
+
+  /* Borders & Dividers */
+  --color-border-subtle:  rgba(30, 32, 30, 0.08);
+  --color-border-medium:  rgba(30, 32, 30, 0.14);
+  --color-border-dark:    rgba(255, 255, 255, 0.10);
+  --color-border-active:  #C7F900;
+
+  /* Semantic Alerts */
+  --color-success: #4CAF70;
+  --color-success-bg: rgba(76, 175, 112, 0.12);
+  --color-warning: #F3B63F;
+  --color-warning-bg: rgba(243, 182, 63, 0.12);
+  --color-danger:  #EF7F82;
+  --color-danger-bg: rgba(239, 127, 130, 0.12);
+  --color-info:    #6C9EFF;
+  --color-info-bg: rgba(108, 158, 255, 0.12);
+
+  /* Glassmorphism Specs */
+  --glass-bg:             rgba(255, 255, 255, 0.78);
+  --glass-bg-dark:        rgba(36, 37, 41, 0.85);
+  --glass-border:         1px solid rgba(255, 255, 255, 0.65);
+  --glass-border-dark:    1px solid rgba(255, 255, 255, 0.12);
+  --glass-backdrop-blur:  blur(18px);
+  --glass-shadow:         0 10px 30px rgba(0, 0, 0, 0.06);
+  --glass-shadow-floating:0 14px 40px rgba(0, 0, 0, 0.12);
+
+  /* Typography Scale */
+  --font-family-base: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", "Geist", Helvetica, Arial, sans-serif;
+  --font-family-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  
+  --font-size-display:    36px;
+  --line-height-display:  44px;
+  --font-size-title:      28px;
+  --line-height-title:    36px;
+  --font-size-section:    18px;
+  --line-height-section:  24px;
+  --font-size-card:       15px;
+  --line-height-card:     20px;
+  --font-size-body:       13px;
+  --line-height-body:     18px;
+  --font-size-meta:       11px;
+  --line-height-meta:     14px;
+
+  /* Spacing Scale */
+  --space-2:  2px;
+  --space-4:  4px;
+  --space-8:  8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-20: 20px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-40: 40px;
+  --space-48: 48px;
+
+  /* Border Radii */
+  --radius-sm:     10px;
+  --radius-control:12px;
+  --radius-card:   18px;
+  --radius-lg:     24px;
+  --radius-dock:   28px;
+  --radius-pill:   9999px;
+
+  /* Transitions */
+  --transition-fast: 0.12s ease;
+  --transition-normal: 0.2s ease;
+  --transition-smooth: 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* Aliases for Component Consistency */
+  --color-primary:        var(--color-lime-primary);
+  --color-surface:        var(--color-surface-pure);
+  --color-surface-hover:  var(--color-surface-soft);
+  --color-border:         var(--color-border-subtle);
+  --shadow-sm:            0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.02);
+  --shadow-md:            0 4px 12px rgba(0, 0, 0, 0.06);
+  --shadow-lg:            0 10px 25px -3px rgba(0, 0, 0, 0.08);
+  --radius-md:            12px;
+  --radius-full:          9999px;
+  --radius-xl:            20px;
+}

@@ -1,0 +1,147 @@
+{
+  "id": "wf_mkt_01",
+  "name": "CommerceOS — Abandoned Checkout Recovery Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "commerceos-abandoned-checkout",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "abandoned-checkout-trigger",
+      "name": "Abandoned Checkout Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "commerceos-abandoned-checkout"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract checkout session and consent details\nconst input = $input.first().json;\nconst event = input.event || input.body || input;\nconst payload = event.payload || {};\n\nconst customerPhone = payload.customer_phone || payload.phone;\nconst checkoutId = payload.checkout_id || event.aggregate_id;\nconst cartValue = Number(payload.subtotal || 0);\n\nif (!customerPhone) {\n  throw new Error('VALIDATION_ERROR: Missing customer_phone for abandoned checkout recovery');\n}\n\nreturn [{\n  json: {\n    tenant_id: event.tenant_id,\n    checkout_id: checkoutId,\n    customer_phone: customerPhone,\n    cart_value: cartValue,\n    correlation_id: `recov_${checkoutId}`,\n    idempotency_key: `idemp_cart_recov_${checkoutId}`,\n    notification_payload: {\n      channel: 'WhatsApp',\n      recipient: customerPhone,\n      template_code: 'ABANDONED_CART_RECOVERY',\n      body: `You left items in your cart! Complete your order now and enjoy special free delivery.`,\n      order_id: checkoutId\n    }\n  }\n}];"
+      },
+      "id": "validate-and-format-recovery",
+      "name": "Validate & Format Recovery",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.COMMERCEOS_API_BASE_URL || 'http://localhost:3000' }}/api/v1/automation/actions/notifications/send",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Correlation-ID",
+              "value": "={{ $json.correlation_id }}"
+            },
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ $json.idempotency_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.notification_payload) }}",
+        "options": {
+          "timeout": 10000,
+          "retry": {
+            "maxRetries": 3,
+            "retryInterval": 1000
+          }
+        }
+      },
+      "id": "send-recovery-message",
+      "name": "Send Recovery Message",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [720, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "commerceos-api-credential",
+          "name": "CommerceOS API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, verified: true, message: 'Recovery notification dispatched', timestamp: new Date().toISOString() }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-recovery-success",
+      "name": "Respond Recovery Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [960, 300]
+    }
+  ],
+  "connections": {
+    "Abandoned Checkout Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate & Format Recovery",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate & Format Recovery": {
+      "main": [
+        [
+          {
+            "node": "Send Recovery Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Recovery Message": {
+      "main": [
+        [
+          {
+            "node": "Respond Recovery Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveExecutionProgress": true,
+    "saveManualExecutions": true
+  },
+  "versionId": "f9988776-5544-3322-1100-eeddccbbaa99",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "commerceos-prod-n8n"
+  },
+  "tags": [
+    {
+      "name": "CommerceOS"
+    },
+    {
+      "name": "Marketing Automation"
+    },
+    {
+      "name": "Phase 6"
+    }
+  ]
+}

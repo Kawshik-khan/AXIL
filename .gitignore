@@ -1,0 +1,28 @@
+# Dependencies & build output
+node_modules/
+.next/
+*.tsbuildinfo
+tsc_errors.log
+
+# Secrets — real values live only in local env files (variable list: .env.example)
+.env
+.env.local
+.env.*.local
+
+# Runtime data (JSON store holds customer PII) and local backups
+.data/
+.backups/
+
+# Generated test output and scratch files
+tests/test-results.json
+scratch/
+
+# Large generated seed datasets (~50 MB of synthetic customers/orders with realistic phone numbers).
+# Kept out of history until the team decides how to version them (e.g. Git LFS or a download script).
+src/infrastructure/db/seeds/customers-10000.json
+src/infrastructure/db/seeds/customers-1000.json
+src/infrastructure/db/seeds/orders-5000.json
+src/infrastructure/db/seeds/growth-data.json
+src/infrastructure/db/migrations/004_seed_10000_customers.sql
+src/infrastructure/db/migrations/004_seed_1000_customers.sql
+src/infrastructure/db/migrations/005_seed_5000_orders.sql

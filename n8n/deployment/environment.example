@@ -1,0 +1,33 @@
+# ============================================================
+# COMMERCEOS PRODUCTION N8N ENVIRONMENT VARIABLES
+# ============================================================
+
+# Application Runtime URL
+# Used by n8n HTTP Request nodes to communicate with CommerceOS
+COMMERCEOS_API_BASE_URL=https://api.commerceos.com.bd
+
+# n8n General Settings
+N8N_HOST=n8n.commerceos.com.bd
+N8N_PORT=5678
+N8N_PROTOCOL=https
+NODE_ENV=production
+
+# Webhook Tunnel / Ingress URL
+WEBHOOK_URL=https://n8n.commerceos.com.bd/
+
+# n8n Security & Encryption Key (Generate via: openssl rand -hex 32)
+N8N_ENCRYPTION_KEY=replace_with_32_byte_secure_hex_key
+
+# Execution Retention & Logging
+EXECUTIONS_DATA_PRUNE=true
+EXECUTIONS_DATA_MAX_AGE=168
+EXECUTIONS_DATA_PRUNE_MAX_COUNT=50000
+N8N_LOG_LEVEL=info
+
+# Concurrency & Performance
+N8N_CONCURRENCY_PRODUCTION_LIMIT=20
+EXECUTIONS_TIMEOUT=120
+EXECUTIONS_TIMEOUT_MAX=300
+
+# Optional Sentry / Telemetry Monitoring
+# N8N_SENTRY_DSN=

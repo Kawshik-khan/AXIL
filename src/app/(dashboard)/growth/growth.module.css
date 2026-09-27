@@ -1,0 +1,628 @@
+/* CommerceOS Growth & Marketing Stylesheet */
+/* Aligned to Master Design System Tokens & Modern Bento Aesthetics */
+
+.container {
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  padding: 0 0 80px 0;
+  color: var(--color-text-primary, #202124);
+  font-family: inherit;
+  display: flex;
+  flex-direction: column;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.headerTitle {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--color-text-primary, #202124);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.headerSubtitle {
+  font-size: 13px;
+  color: var(--color-text-secondary, #70736F);
+  margin-top: 4px;
+}
+
+.headerActions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+/* Frosted Glass Segmented Pill Tab Bar */
+.navTabs {
+  display: inline-flex;
+  gap: 4px;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  padding: 4px;
+  border-radius: var(--radius-control, 12px);
+  border: 1px solid var(--color-border-subtle, rgba(30, 32, 30, 0.08));
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  margin-bottom: 24px;
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.navTab {
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-secondary, #70736F);
+  border-radius: 8px;
+  text-decoration: none;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.navTab:hover {
+  color: var(--color-text-primary, #202124);
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.navTabActive {
+  color: #121316 !important;
+  background: var(--color-lime-primary, #C7F900) !important;
+  font-weight: 600;
+  box-shadow: 0 2px 8px var(--color-lime-glow, rgba(199, 249, 0, 0.3));
+}
+
+/* Bento Grid */
+.bentoGrid {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 16px;
+  margin-bottom: 28px;
+}
+
+/* Standard Crisp White Bento Card */
+.bentoCard {
+  background: var(--color-surface-pure, #ffffff);
+  border: 1px solid var(--color-border-subtle, rgba(30, 32, 30, 0.08));
+  border-radius: var(--radius-card, 18px);
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02), 0 4px 12px rgba(0, 0, 0, 0.03);
+  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.bentoCard:hover {
+  border-color: var(--color-border-medium, rgba(30, 32, 30, 0.16));
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.06);
+  transform: translateY(-1px);
+}
+
+/* Executive / AI Highlight Dark Card */
+.bentoCardDark {
+  background: var(--color-surface-dark, #242529);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-card, 18px);
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow: hidden;
+  color: var(--color-text-inverse, #ffffff);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.bentoCardDark:hover {
+  border-color: rgba(199, 249, 0, 0.4);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2), 0 0 20px var(--color-lime-glow, rgba(199, 249, 0, 0.2));
+  transform: translateY(-1px);
+}
+
+.bentoCardAI {
+  background: var(--color-surface-dark, #242529);
+  border: 1px solid rgba(199, 249, 0, 0.35);
+  border-radius: var(--radius-card, 18px);
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow: hidden;
+  color: var(--color-text-inverse, #ffffff);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14), 0 0 18px var(--color-lime-glow, rgba(199, 249, 0, 0.16));
+  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.bentoCardAI:hover {
+  border-color: var(--color-lime-primary, #C7F900);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.25), 0 0 24px var(--color-lime-glow, rgba(199, 249, 0, 0.28));
+  transform: translateY(-1px);
+}
+
+.bentoCardAI .cardTitle {
+  color: #ffffff;
+}
+
+.bentoCardAI .cardSubtitle {
+  color: rgba(255, 255, 255, 0.65);
+}
+
+/* Grid Column Spans */
+.col3 { grid-column: span 3; }
+.col4 { grid-column: span 4; }
+.col5 { grid-column: span 5; }
+.col6 { grid-column: span 6; }
+.col7 { grid-column: span 7; }
+.col8 { grid-column: span 8; }
+.col12 { grid-column: span 12; }
+
+@media (max-width: 1024px) {
+  .col3 { grid-column: span 6; }
+  .col4 { grid-column: span 6; }
+  .col5 { grid-column: span 12; }
+  .col6 { grid-column: span 12; }
+  .col7 { grid-column: span 12; }
+  .col8 { grid-column: span 12; }
+}
+
+@media (max-width: 640px) {
+  .col3 { grid-column: span 12; }
+  .col4 { grid-column: span 12; }
+}
+
+/* Metric KPI Styling */
+.metricLabel {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-secondary, #70736F);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.metricValue {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--color-text-primary, #202124);
+  margin-top: 10px;
+  letter-spacing: -0.02em;
+}
+
+.metricSubtext {
+  font-size: 12px;
+  color: var(--color-text-secondary, #70736F);
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.badgePositive {
+  color: #1a5c2d;
+  background: rgba(76, 175, 112, 0.16);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.badgeWarning {
+  color: #92400e;
+  background: rgba(245, 158, 11, 0.14);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.badgeDanger {
+  color: #991b1b;
+  background: rgba(239, 68, 68, 0.14);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+/* Card Header */
+.cardTitle {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-text-primary, #202124);
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cardSubtitle {
+  font-size: 13px;
+  color: var(--color-text-secondary, #70736F);
+  margin-bottom: 16px;
+}
+
+/* Status Pill */
+.statusPill {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.statusRunning {
+  background: rgba(199, 249, 0, 0.2);
+  color: #4d6100;
+  border: 1px solid rgba(199, 249, 0, 0.5);
+}
+
+.statusReview {
+  background: rgba(245, 158, 11, 0.14);
+  color: #b45309;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.statusScheduled {
+  background: rgba(59, 130, 246, 0.14);
+  color: #1d4ed8;
+  border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+.statusDraft {
+  background: rgba(107, 114, 128, 0.14);
+  color: #4b5563;
+  border: 1px solid rgba(107, 114, 128, 0.3);
+}
+
+.statusActive {
+  background: rgba(16, 185, 129, 0.15);
+  color: #047857;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+/* Action Button */
+.btn {
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: var(--radius-control, 12px);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s ease;
+  border: none;
+}
+
+.btnPrimary {
+  background: var(--color-lime-primary, #C7F900);
+  color: #121316;
+  box-shadow: 0 2px 6px var(--color-lime-glow, rgba(199, 249, 0, 0.3));
+}
+
+.btnPrimary:hover {
+  background: var(--color-lime-bright, #D8FF38);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px var(--color-lime-glow, rgba(199, 249, 0, 0.4));
+}
+
+.btnSecondary {
+  background: var(--color-surface-pure, #ffffff);
+  color: var(--color-text-primary, #202124);
+  border: 1px solid var(--color-border-subtle, rgba(30, 32, 30, 0.1));
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.btnSecondary:hover {
+  background: var(--color-surface-soft, #FAFBF8);
+  border-color: var(--color-border-medium, rgba(30, 32, 30, 0.18));
+  color: #000000;
+}
+
+.btnDanger {
+  background: rgba(239, 68, 68, 0.12);
+  color: #dc2626;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.btnDanger:hover {
+  background: rgba(239, 68, 68, 0.2);
+}
+
+/* Table */
+.tableWrapper {
+  overflow-x: auto;
+  width: 100%;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  text-align: left;
+}
+
+.table th {
+  color: var(--color-text-secondary, #70736F);
+  font-weight: 600;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--color-border-subtle, rgba(30, 32, 30, 0.08));
+  background: var(--color-surface-soft, #FAFBF8);
+}
+
+.table td {
+  padding: 14px;
+  border-bottom: 1px solid var(--color-border-subtle, rgba(30, 32, 30, 0.06));
+  color: var(--color-text-primary, #202124);
+}
+
+.table tr:hover td {
+  background: rgba(0, 0, 0, 0.015);
+}
+
+/* Item List */
+.itemList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.itemCard {
+  background: var(--color-surface-soft, #FAFBF8);
+  border: 1px solid var(--color-border-subtle, rgba(30, 32, 30, 0.08));
+  border-radius: 12px;
+  padding: 14px 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  transition: all 0.15s ease;
+}
+
+.itemCard:hover {
+  background: var(--color-surface-pure, #ffffff);
+  border-color: var(--color-border-medium, rgba(30, 32, 30, 0.15));
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
+}
+
+.itemMain {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.itemTitle {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-primary, #202124);
+}
+
+.itemSubtitle {
+  font-size: 12px;
+  color: var(--color-text-secondary, #70736F);
+}
+
+/* Empty State */
+.emptyState {
+  padding: 36px 20px;
+  text-align: center;
+  color: var(--color-text-secondary, #70736F);
+  font-size: 14px;
+}
+
+/* ============================================================ */
+/* CUSTOMER LIFECYCLE FUNNEL BAR CHART STYLES                   */
+/* ============================================================ */
+.lifecycleChartWrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  margin-top: 14px;
+}
+
+.chartTopStats {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  background: var(--color-surface-soft, #FAFBF8);
+  border: 1px solid var(--color-border-subtle, rgba(30, 32, 30, 0.06));
+  border-radius: 12px;
+  font-size: 12px;
+  color: var(--color-text-secondary, #70736F);
+}
+
+.chartTopStatsLeft {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.chartStatPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  color: var(--color-text-primary, #202124);
+}
+
+.chartCanvas {
+  position: relative;
+  height: 200px;
+  width: 100%;
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  padding: 26px 8px 6px 8px;
+}
+
+.chartGridline {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-bottom: 1px dashed rgba(0, 0, 0, 0.06);
+  pointer-events: none;
+}
+
+.chartGridLabel {
+  position: absolute;
+  right: 2px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #9ca3af;
+  transform: translateY(-50%);
+}
+
+.barCol {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  position: relative;
+  cursor: pointer;
+  z-index: 2;
+  transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.18s ease;
+}
+
+.barCol:hover {
+  transform: translateY(-3px);
+}
+
+.barValuePill {
+  margin-bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  transition: transform 0.15s ease;
+}
+
+.barCountText {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-text-primary, #202124);
+  letter-spacing: -0.01em;
+  line-height: 1;
+}
+
+.barPctBadge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 6px;
+  background: var(--color-surface-soft, #FAFBF8);
+  border: 1px solid var(--color-border-subtle, rgba(0, 0, 0, 0.08));
+  color: var(--color-text-secondary, #70736F);
+}
+
+.barTrack {
+  width: 100%;
+  max-width: 44px;
+  height: 120px;
+  background: rgba(0, 0, 0, 0.035);
+  border-radius: 10px 10px 4px 4px;
+  display: flex;
+  align-items: flex-end;
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(0, 0, 0, 0.04);
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.barCol:hover .barTrack {
+  background: rgba(0, 0, 0, 0.055);
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+.barFill {
+  width: 100%;
+  border-radius: 9px 9px 3px 3px;
+  transition: height 0.6s cubic-bezier(0.16, 1, 0.3, 1), filter 0.2s ease;
+  position: relative;
+}
+
+.barCol:hover .barFill {
+  filter: brightness(1.08) drop-shadow(0 4px 8px rgba(0, 0, 0, 0.15));
+}
+
+.barAxisLabels {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.barStageName {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--color-text-secondary, #70736F);
+  text-align: center;
+  white-space: nowrap;
+  transition: color 0.15s ease;
+}
+
+.barCol:hover .barStageName {
+  color: var(--color-text-primary, #202124);
+}
+
+.barIndicatorDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.cohortHoverCard {
+  margin-top: 4px;
+  padding: 12px 16px;
+  background: var(--color-surface-soft, #FAFBF8);
+  border: 1px solid var(--color-border-subtle, rgba(30, 32, 30, 0.08));
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  animation: fadeIn 0.2s ease;
+}
+
+.cohortInfoLeft {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.cohortStageTag {
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.cohortRuleDesc {
+  font-size: 12px;
+  color: var(--color-text-secondary, #70736F);
+  line-height: 1.4;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+

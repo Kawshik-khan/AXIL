@@ -1,0 +1,935 @@
+/* CommerceOS Connector Hub CSS Module */
+
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  padding-bottom: 80px;
+}
+
+/* Header Section */
+.headerSection {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.titleArea {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.titleRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.pageTitle {
+  font-size: 28px;
+  font-weight: 600;
+  color: var(--color-text-primary, #202124);
+  letter-spacing: -0.02em;
+  margin: 0;
+}
+
+.pageSubtitle {
+  font-size: 13px;
+  color: var(--color-text-secondary, #70736F);
+  margin: 0;
+  max-width: 680px;
+  line-height: 1.5;
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Metrics Overview Bar */
+.metricsStrip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+  margin-top: 4px;
+}
+
+.metricCard {
+  background: var(--color-surface-pure, #ffffff);
+  border: 1px solid var(--color-border-subtle, rgba(30, 32, 30, 0.08));
+  border-radius: 16px;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.metricCard:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.04);
+}
+
+.metricLabel {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted, #9A9D98);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.metricValueRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.metricValue {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--color-text-primary, #202124);
+  letter-spacing: -0.02em;
+}
+
+.metricSubtext {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-secondary, #70736F);
+}
+
+/* Scope Switcher (Store vs Cloud/Admin) */
+.scopeBar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--color-surface-dark, #242529);
+  padding: 4px;
+  border-radius: 12px;
+  width: fit-content;
+}
+
+.scopeButton {
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-muted, #9A9D98);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.scopeButton:hover {
+  color: #FFFFFF;
+}
+
+.scopeButtonActive {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--color-lime-primary, #C7F900);
+  font-weight: 600;
+}
+
+/* Controls Bar (Tabs + Search) */
+.controlsBar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 8px 0;
+}
+
+.tabsList {
+  display: flex;
+  align-items: center;
+  background: var(--color-surface-soft, #FAFBF8);
+  border: 1px solid var(--color-border-subtle, rgba(30, 32, 30, 0.08));
+  padding: 4px;
+  border-radius: 14px;
+  gap: 4px;
+  overflow-x: auto;
+}
+
+.tabButton {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-secondary, #70736F);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.tabButton:hover {
+  color: var(--color-text-primary, #202124);
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.activeTab {
+  background: var(--color-surface-pure, #FFFFFF) !important;
+  color: var(--color-text-primary, #202124) !important;
+  font-weight: 600;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
+}
+
+.tabBadge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.05);
+  font-weight: 600;
+}
+
+.activeTab .tabBadge {
+  background: var(--color-lime-glow, rgba(199, 249, 0, 0.25));
+  color: #1a1a1a;
+}
+
+.searchBox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--color-surface-pure, #ffffff);
+  border: 1px solid var(--color-border-subtle, rgba(30, 32, 30, 0.08));
+  border-radius: 12px;
+  padding: 8px 14px;
+  min-width: 260px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+}
+
+.searchInput {
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 13px;
+  color: var(--color-text-primary, #202124);
+  width: 100%;
+}
+
+.searchInput::placeholder {
+  color: var(--color-text-muted, #9A9D98);
+}
+
+/* 12-Column Bento Grid */
+.bentoGrid {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 16px;
+}
+
+/* Connector Card */
+.connectorCard {
+  grid-column: span 4;
+  background: var(--color-surface-pure, #ffffff);
+  border: 1px solid var(--color-border-subtle, rgba(30, 32, 30, 0.08));
+  border-radius: 20px;
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 18px;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.02);
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.connectorCard:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.06);
+  border-color: rgba(30, 32, 30, 0.16);
+}
+
+.cardActiveBorder {
+  border-color: rgba(199, 249, 0, 0.7) !important;
+  box-shadow: 0 4px 20px rgba(199, 249, 0, 0.15) !important;
+}
+
+.cardActiveBorder::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--color-lime-primary, #C7F900);
+}
+
+.cardHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.providerInfo {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.providerIconBox {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-surface-soft, #FAFBF8);
+  border: 1px solid var(--color-border-subtle, rgba(30, 32, 30, 0.08));
+  color: var(--color-text-primary, #202124);
+  flex-shrink: 0;
+}
+
+.providerDetails {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.providerNameRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.providerName {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text-primary, #202124);
+  margin: 0;
+}
+
+.providerBadge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.04);
+  color: var(--color-text-secondary, #70736F);
+  font-weight: 500;
+}
+
+.categoryTag {
+  font-size: 11px;
+  color: var(--color-text-muted, #9A9D98);
+}
+
+.cardStatusPill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+
+.statusActive {
+  background: rgba(76, 175, 112, 0.12);
+  color: #2E7D32;
+  border: 1px solid rgba(76, 175, 112, 0.25);
+}
+
+.statusNotConfigured {
+  background: rgba(0, 0, 0, 0.04);
+  color: var(--color-text-muted, #9A9D98);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.statusTesting {
+  background: rgba(243, 182, 63, 0.15);
+  color: #B26A00;
+  border: 1px solid rgba(243, 182, 63, 0.3);
+}
+
+.statusError {
+  background: rgba(239, 127, 130, 0.15);
+  color: #C62828;
+  border: 1px solid rgba(239, 127, 130, 0.3);
+}
+
+.statusDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.cardDescription {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--color-text-secondary, #70736F);
+  margin: 0;
+  min-height: 38px;
+}
+
+/* Active Config Details inside card */
+.activeConfigSnippet {
+  background: var(--color-surface-soft, #FAFBF8);
+  border: 1px dashed var(--color-border-subtle, rgba(30, 32, 30, 0.12));
+  border-radius: 12px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.configSnippetRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11.5px;
+}
+
+.configSnippetLabel {
+  color: var(--color-text-muted, #9A9D98);
+}
+
+.configSnippetValue {
+  font-family: monospace;
+  font-weight: 500;
+  color: var(--color-text-primary, #202124);
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Card Actions */
+.cardFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--color-border-subtle, rgba(30, 32, 30, 0.06));
+}
+
+.footerLeft {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.guideButton {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--color-text-secondary, #70736F);
+  background: transparent;
+  border: 1px solid var(--color-border-subtle, rgba(30, 32, 30, 0.12));
+  padding: 6px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.guideButton:hover {
+  background: var(--color-surface-soft, #FAFBF8);
+  color: var(--color-text-primary, #202124);
+}
+
+.testPingButton {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--color-text-secondary, #70736F);
+  background: transparent;
+  border: 1px solid var(--color-border-subtle, rgba(30, 32, 30, 0.12));
+  padding: 6px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.testPingButton:hover {
+  background: var(--color-surface-soft, #FAFBF8);
+  color: var(--color-text-primary, #202124);
+}
+
+.connectButton {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 7px 14px;
+  border-radius: 10px;
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.connectButtonPrimary {
+  background: var(--color-surface-dark, #242529);
+  color: #ffffff;
+}
+
+.connectButtonPrimary:hover {
+  background: #111214;
+  transform: scale(0.98);
+}
+
+.connectButtonActive {
+  background: var(--color-lime-primary, #C7F900);
+  color: #1a1a1a;
+  box-shadow: 0 2px 8px var(--color-lime-glow, rgba(199, 249, 0, 0.25));
+}
+
+.connectButtonActive:hover {
+  background: var(--color-lime-bright, #D8FF38);
+  transform: scale(0.98);
+}
+
+/* Modal Form Styles */
+.modalForm {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  max-height: 72vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.formFieldGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.fieldLabelRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.fieldLabel {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--color-text-primary, #202124);
+}
+
+.requiredStar {
+  color: #E53935;
+  margin-left: 2px;
+}
+
+.fieldDescription {
+  font-size: 11px;
+  color: var(--color-text-muted, #9A9D98);
+  margin: 0;
+}
+
+.inputWrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.textInput,
+.selectInput {
+  width: 100%;
+  padding: 9px 12px;
+  font-size: 13px;
+  border-radius: 10px;
+  border: 1px solid var(--color-border-subtle, rgba(30, 32, 30, 0.15));
+  background: var(--color-surface-pure, #ffffff);
+  color: var(--color-text-primary, #202124);
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.textInput:focus,
+.selectInput:focus {
+  border-color: #242529;
+  box-shadow: 0 0 0 2px rgba(36, 37, 41, 0.08);
+}
+
+.passwordToggle {
+  position: absolute;
+  right: 10px;
+  background: transparent;
+  border: none;
+  color: var(--color-text-muted, #9A9D98);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  padding: 4px;
+}
+
+.passwordToggle:hover {
+  color: var(--color-text-primary, #202124);
+}
+
+/* Smart URI Parser Box */
+.smartUriBox {
+  background: #F4F8FA;
+  border: 1px solid #D6E4EB;
+  border-radius: 12px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.smartUriHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #1E6B8C;
+}
+
+.smartUriHint {
+  font-size: 11px;
+  color: #4B7385;
+}
+
+/* Model Suggestions Dropdown / Chips */
+.modelSuggestionsArea {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.suggestedChipsRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.modelChip {
+  font-size: 11px;
+  font-family: monospace;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--color-surface-soft, #FAFBF8);
+  border: 1px solid var(--color-border-subtle, rgba(30, 32, 30, 0.12));
+  cursor: pointer;
+  color: var(--color-text-secondary, #70736F);
+  transition: all 0.1s ease;
+}
+
+.modelChip:hover {
+  border-color: var(--color-text-primary, #202124);
+  color: var(--color-text-primary, #202124);
+}
+
+.activeModelChip {
+  background: var(--color-surface-dark, #242529) !important;
+  color: #ffffff !important;
+  border-color: var(--color-surface-dark, #242529) !important;
+}
+
+/* Test Connection Banner inside modal */
+.testBanner {
+  border-radius: 12px;
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+}
+
+.testBannerSuccess {
+  background: rgba(76, 175, 112, 0.1);
+  border: 1px solid rgba(76, 175, 112, 0.25);
+  color: #1B5E20;
+}
+
+.testBannerError {
+  background: rgba(239, 127, 130, 0.1);
+  border: 1px solid rgba(239, 127, 130, 0.25);
+  color: #B71C1C;
+}
+
+.testBannerTesting {
+  background: rgba(243, 182, 63, 0.1);
+  border: 1px solid rgba(243, 182, 63, 0.25);
+  color: #795548;
+}
+
+.modalFooter {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 14px;
+  border-top: 1px solid var(--color-border-subtle, rgba(30, 32, 30, 0.08));
+  gap: 10px;
+}
+
+/* Slide-Over Guidance Drawer */
+.drawerBackdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(4px);
+  z-index: 1000;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.drawerPanel {
+  width: 100%;
+  max-width: 540px;
+  height: 100%;
+  background: var(--color-surface-pure, #ffffff);
+  box-shadow: -8px 0 32px rgba(0, 0, 0, 0.15);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: slideInRight 0.2s ease-out;
+}
+
+@keyframes slideInRight {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+.drawerHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--color-border-subtle, rgba(30, 32, 30, 0.08));
+}
+
+.drawerTitleRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.drawerTitle {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--color-text-primary, #202124);
+  margin: 0;
+}
+
+.closeDrawerButton {
+  background: transparent;
+  border: none;
+  color: var(--color-text-secondary, #70736F);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 8px;
+}
+
+.closeDrawerButton:hover {
+  background: var(--color-surface-soft, #FAFBF8);
+  color: var(--color-text-primary, #202124);
+}
+
+.drawerBody {
+  padding: 24px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.portalBanner {
+  background: var(--color-surface-dark, #242529);
+  color: #ffffff;
+  border-radius: 14px;
+  padding: 16px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.portalBannerLeft {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.portalBannerTitle {
+  font-size: 13.5px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.portalBannerSubtitle {
+  font-size: 11.5px;
+  color: rgba(255, 255, 255, 0.7);
+  margin: 0;
+}
+
+.portalLinkButton {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--color-lime-primary, #C7F900);
+  color: #1a1a1a;
+  text-decoration: none;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 8px 14px;
+  border-radius: 8px;
+  white-space: nowrap;
+  transition: background 0.15s ease;
+}
+
+.portalLinkButton:hover {
+  background: var(--color-lime-bright, #D8FF38);
+}
+
+.guidelineSection {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.guidelineSectionTitle {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted, #9A9D98);
+  margin: 0;
+}
+
+.prereqList,
+.stepsList {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--color-text-secondary, #70736F);
+}
+
+.codeSnippetBox {
+  background: #1e1e24;
+  color: #e6e6e6;
+  padding: 12px 14px;
+  border-radius: 10px;
+  font-family: monospace;
+  font-size: 12px;
+  position: relative;
+  overflow-x: auto;
+  line-height: 1.4;
+}
+
+.copyCodeButton {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+  border: none;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.copyCodeButton:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.tipsBox {
+  background: rgba(199, 249, 0, 0.08);
+  border: 1px solid rgba(199, 249, 0, 0.25);
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-size: 12.5px;
+  color: #3b4200;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Empty State */
+.emptyState {
+  grid-column: span 12;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  background: var(--color-surface-pure, #ffffff);
+  border: 1px dashed var(--color-border-subtle, rgba(30, 32, 30, 0.15));
+  border-radius: 20px;
+  text-align: center;
+  gap: 12px;
+}
+
+.emptyStateTitle {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-text-primary, #202124);
+  margin: 0;
+}
+
+.emptyStateText {
+  font-size: 13px;
+  color: var(--color-text-secondary, #70736F);
+  margin: 0;
+  max-width: 420px;
+}
+
+/* Responsive Breakpoints */
+@media (max-width: 1200px) {
+  .connectorCard {
+    grid-column: span 6;
+  }
+  .metricsStrip {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 768px) {
+  .connectorCard {
+    grid-column: span 12;
+  }
+  .metricsStrip {
+    grid-template-columns: 1fr;
+  }
+  .controlsBar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .searchBox {
+    width: 100%;
+  }
+  .drawerPanel {
+    max-width: 100%;
+  }
+}

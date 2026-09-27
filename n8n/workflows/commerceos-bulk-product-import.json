@@ -1,0 +1,201 @@
+{
+  "id": "wf_prod_01",
+  "name": "CommerceOS — Bulk Product Catalog Import Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "commerceos-product-import-webhook",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "bulk-import-webhook-trigger",
+      "name": "Inbound Catalog Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [200, 300],
+      "webhookId": "commerceos-product-import-webhook"
+    },
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $env.GOOGLE_SHEET_CATALOG_ID || '' }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Products",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "google-sheets-trigger",
+      "name": "Google Sheets Catalog Sync",
+      "type": "n8n-nodes-base.googleSheetsTrigger",
+      "typeVersion": 1,
+      "position": [200, 480]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalizes incoming rows from either Webhook (CSV/JSON) or Google Sheets\nconst rawItems = $input.all();\nconst normalizedProducts = [];\n\nfor (const item of rawItems) {\n  const row = item.json.body || item.json;\n  const title = (row.Title || row.title || row.Name || row.name || row['Product Name'] || '').toString().trim();\n  if (!title) continue; // Skip header or empty rows\n\n  let sku = (row.SKU || row.sku || row['Item Code'] || row.item_code || '').toString().trim();\n  if (!sku) {\n    sku = 'SKU-' + title.slice(0, 3).toUpperCase() + '-' + Math.floor(1000 + Math.random() * 9000);\n  }\n\n  const cleanPrice = (val) => {\n    if (val === undefined || val === null || val === '') return 0;\n    const cleaned = val.toString().replace(/[৳$BDT,\\s]/gi, '').trim();\n    const parsed = parseFloat(cleaned);\n    return isNaN(parsed) ? 0 : parsed;\n  };\n\n  const basePrice = cleanPrice(row.Price || row.price || row['Base Price'] || row.base_price || row.MRP);\n  const compareAtPrice = cleanPrice(row.ComparePrice || row.compare_at_price || row['Compare At Price']);\n  const costPrice = cleanPrice(row.CostPrice || row.cost_price || row['Cost Price']);\n  const stock = parseInt((row.Stock || row.stock || row['Initial Stock'] || 0).toString().replace(/[^0-9]/g, ''), 10) || 0;\n  const category = (row.Category || row.category || row.Collection || '').toString().trim();\n  const brand = (row.Brand || row.brand || '').toString().trim();\n  const description = (row.Description || row.description || row.Details || '').toString().trim();\n  const rawImages = (row.Images || row.images || row['Image URLs'] || '').toString().trim();\n\n  const images = rawImages\n    ? rawImages.split(/[,;\\n]/).map(u => u.trim()).filter(u => u.startsWith('http://') || u.startsWith('https://'))\n    : [];\n\n  normalizedProducts.push({\n    title,\n    sku,\n    base_price: basePrice,\n    compare_at_price: compareAtPrice > 0 ? compareAtPrice : undefined,\n    cost_price: costPrice > 0 ? costPrice : undefined,\n    stock,\n    category: category || undefined,\n    brand: brand || undefined,\n    description,\n    images,\n    status: (row.Status || row.status || 'ACTIVE').toString().toUpperCase()\n  });\n}\n\nreturn [{\n  json: {\n    batch_id: 'n8n_batch_' + Date.now(),\n    total_count: normalizedProducts.length,\n    products: normalizedProducts\n  }\n}];"
+      },
+      "id": "normalize-and-clean-catalog",
+      "name": "Normalize & Clean Catalog Rows",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 380]
+    },
+    {
+      "parameters": {
+        "batchSize": 50,
+        "options": {}
+      },
+      "id": "split-in-batches",
+      "name": "Split in Batches (50 SKUs)",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [680, 380]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.COMMERCEOS_API_BASE_URL || 'http://localhost:3000' }}/api/v1/products/bulk",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Correlation-ID",
+              "value": "={{ 'n8n_corr_' + $json.batch_id }}"
+            },
+            {
+              "name": "X-Tenant-ID",
+              "value": "={{ $env.COMMERCEOS_TENANT_ID || 'ten_default_dhaka' }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ products: $json.products, options: { mode: 'upsert', auto_create_categories: true } }) }}",
+        "options": {
+          "timeout": 30000,
+          "retry": {
+            "maxRetries": 3,
+            "retryInterval": 2000
+          }
+        }
+      },
+      "id": "dispatch-bulk-products-api",
+      "name": "Dispatch POST /api/v1/products/bulk",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 380]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Aggregate results across batches and prepare operator alert\nconst response = $input.first().json;\nconst data = response.data || response;\n\nreturn [{\n  json: {\n    status: 'COMPLETE',\n    batch_id: data.batch_id,\n    total_processed: data.total_rows || 0,\n    imported_count: data.imported_count || 0,\n    updated_count: data.updated_count || 0,\n    failed_count: data.failed_count || 0,\n    created_categories: data.created_categories || [],\n    error_samples: (data.errors || []).slice(0, 5),\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "aggregate-import-summary",
+      "name": "Aggregate Import Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 380]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "respond-to-webhook",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1340, 380]
+    }
+  ],
+  "connections": {
+    "Inbound Catalog Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Normalize & Clean Catalog Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Sheets Catalog Sync": {
+      "main": [
+        [
+          {
+            "node": "Normalize & Clean Catalog Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize & Clean Catalog Rows": {
+      "main": [
+        [
+          {
+            "node": "Split in Batches (50 SKUs)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split in Batches (50 SKUs)": {
+      "main": [
+        [
+          {
+            "node": "Dispatch POST /api/v1/products/bulk",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatch POST /api/v1/products/bulk": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Import Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Import Summary": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

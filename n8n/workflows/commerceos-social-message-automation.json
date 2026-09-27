@@ -1,0 +1,212 @@
+{
+  "id": "wf_soc_01",
+  "name": "CommerceOS — Social Message Ingestion & AI Routing",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "commerceos-social-message-webhook",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "social-message-trigger",
+      "name": "Social Message Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "commerceos-social-message-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. Multi-Channel Social Ingress Normalization (Facebook / Instagram / WhatsApp)\nconst input = $input.first().json;\nconst body = input.body || input;\n\nlet channelType = 'FACEBOOK_MESSENGER';\nlet senderId = 'PSID_UNKNOWN';\nlet text = '';\nlet mid = `mid_${Date.now()}`;\n\nif (body.object === 'page' || (body.entry && body.entry[0]?.messaging)) {\n  // Standard Meta Webhook Envelope\n  const entry = body.entry[0];\n  const msgObj = entry.messaging?.[0] || {};\n  channelType = body.object === 'instagram' ? 'INSTAGRAM' : 'FACEBOOK_MESSENGER';\n  senderId = msgObj.sender?.id || 'PSID_UNKNOWN';\n  text = msgObj.message?.text || '';\n  mid = msgObj.message?.mid || mid;\n} else if (body.text || body.message) {\n  // Direct / Partner Envelope\n  channelType = body.channel_type || 'FACEBOOK_MESSENGER';\n  senderId = body.sender_id || body.customer_phone || 'USR_DIRECT';\n  text = body.text || body.message || '';\n}\n\n// Canonical Meta Ingress Payload\nconst formattedPayload = {\n  object: channelType === 'INSTAGRAM' ? 'instagram' : 'page',\n  entry: [\n    {\n      id: body.page_id || 'PAGE_ID_DEFAULT',\n      time: Date.now(),\n      messaging: [\n        {\n          sender: { id: senderId },\n          recipient: { id: body.page_id || 'PAGE_ID_DEFAULT' },\n          timestamp: Date.now(),\n          message: {\n            mid: mid,\n            text: text\n          }\n        }\n      ]\n    }\n  ]\n};\n\nreturn [{\n  json: {\n    channel_type: channelType,\n    sender_id: senderId,\n    message_text: text,\n    correlation_id: `soc_${senderId}_${Date.now()}`,\n    idempotency_key: `idemp_soc_${mid}`,\n    tenant_id: body.tenant_id || 'ten_default_dhaka',\n    meta_payload: formattedPayload\n  }\n}];"
+      },
+      "id": "normalize-social-message",
+      "name": "Normalize Social Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.COMMERCEOS_API_BASE_URL || 'http://localhost:3000' }}/api/v1/social/webhooks/facebook",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Correlation-ID",
+              "value": "={{ $json.correlation_id }}"
+            },
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ $json.idempotency_key }}"
+            },
+            {
+              "name": "X-Tenant-ID",
+              "value": "={{ $json.tenant_id }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.meta_payload) }}",
+        "options": {
+          "timeout": 10000,
+          "retry": {
+            "maxRetries": 3,
+            "retryInterval": 1000
+          }
+        }
+      },
+      "id": "post-to-social-ingress",
+      "name": "Post to Social Ingress Gateway",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [720, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "commerceos-api-credential",
+          "name": "CommerceOS API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "ingress-check",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "EVENT_RECEIVED",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "check-social-ingress-result",
+      "name": "Check Ingress Result",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [960, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, verified: true, status: 'PROCESSED', data: $json, timestamp: new Date().toISOString() }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-social-success",
+      "name": "Respond Social Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1200, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: 'Social message ingress failed', timestamp: new Date().toISOString() }) }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "respond-social-failure",
+      "name": "Respond Social Failure",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1200, 420]
+    }
+  ],
+  "connections": {
+    "Social Message Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Normalize Social Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Social Message": {
+      "main": [
+        [
+          {
+            "node": "Post to Social Ingress Gateway",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post to Social Ingress Gateway": {
+      "main": [
+        [
+          {
+            "node": "Check Ingress Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Ingress Result": {
+      "main": [
+        [
+          {
+            "node": "Respond Social Success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Social Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "saveExecutionProgress": true,
+    "saveManualExecutions": true,
+    "availableInMCP": true
+  },
+  "versionId": "e1122334-4455-6677-8899-aabbccddeeff",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "commerceos-prod-n8n"
+  },
+  "tags": [
+    {
+      "name": "CommerceOS"
+    },
+    {
+      "name": "Social Commerce"
+    },
+    {
+      "name": "Phase 6"
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
+import { consentService } from "@/domains/growth/services/consent.service";
+import { db } from "@/infrastructure/db";
+
+export async function GET(
+  request: Request,
+  { params }: { params: Promise<{ customerId: string }> }
+) {
+  try {
+    const context = await extractRequestContext(request);
+    const { customerId } = await params;
+    const preferences = db.getCommunicationPreferences(context.tenant.id, customerId);
+    return apiSuccess({ preferences });
+  } catch (err) {
+    return apiError(err);
+  }
+}
+
+export async function POST(
+  request: Request,
+  { params }: { params: Promise<{ customerId: string }> }
+) {
+  try {
+    const context = await extractRequestContext(request);
+    const { customerId } = await params;
+    const body = await request.json();
+
+    const preference = consentService.setPreference({
+      tenantId: context.tenant.id,
+      customerId,
+      channel: body.channel || "WHATSAPP",
+      purpose: body.purpose || "MARKETING",
+      status: body.status || "OPTED_IN",
+      consentSource: body.opt_in_source || "WEB_PREFERENCE_CENTER",
+    });
+
+    return apiSuccess({ preference });
+  } catch (err) {
+    return apiError(err);
+  }
+}

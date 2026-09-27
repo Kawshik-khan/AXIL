@@ -1,0 +1,147 @@
+{
+  "id": "wf_inv_01",
+  "name": "CommerceOS — Inventory Low Stock Alert Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "commerceos-low-stock-webhook",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "low-stock-trigger",
+      "name": "Low Stock Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "commerceos-low-stock-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract inventory low stock domain event\nconst input = $input.first().json;\nconst event = input.event || input.body || input;\nconst payload = event.payload || {};\n\nconst sku = payload.sku || 'SKU-UNKNOWN';\nconst available = payload.available_quantity || 0;\nconst threshold = payload.low_stock_threshold || 5;\n\nreturn [{\n  json: {\n    event_id: event.id,\n    tenant_id: event.tenant_id,\n    sku: sku,\n    product_name: payload.product_name || 'Item',\n    available_quantity: available,\n    low_stock_threshold: threshold,\n    correlation_id: `inv_alert_${sku}_${Date.now()}`,\n    idempotency_key: `idemp_inv_low_${sku}_${event.id}`,\n    notification_payload: {\n      channel: 'SMS',\n      recipient: '+8801700000000',\n      template_code: 'LOW_STOCK_OPERATOR_ALERT',\n      body: `CRITICAL: SKU ${sku} has only ${available} units remaining (Threshold: ${threshold}). Please replenish.`\n    }\n  }\n}];"
+      },
+      "id": "prepare-alert-payload",
+      "name": "Prepare Alert Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.COMMERCEOS_API_BASE_URL || 'http://localhost:3000' }}/api/v1/automation/actions/notifications/send",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Correlation-ID",
+              "value": "={{ $json.correlation_id }}"
+            },
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ $json.idempotency_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.notification_payload) }}",
+        "options": {
+          "timeout": 10000,
+          "retry": {
+            "maxRetries": 3,
+            "retryInterval": 1000
+          }
+        }
+      },
+      "id": "dispatch-operator-alert",
+      "name": "Dispatch Operator Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [720, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "commerceos-api-credential",
+          "name": "CommerceOS API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, verified: true, message: 'Low stock operator alert sent', data: $json }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-low-stock-success",
+      "name": "Respond Low Stock Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [960, 300]
+    }
+  ],
+  "connections": {
+    "Low Stock Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Prepare Alert Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Alert Payload": {
+      "main": [
+        [
+          {
+            "node": "Dispatch Operator Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatch Operator Alert": {
+      "main": [
+        [
+          {
+            "node": "Respond Low Stock Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveExecutionProgress": true,
+    "saveManualExecutions": true
+  },
+  "versionId": "e1122334-4455-6677-8899-aabbccddeeff",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "commerceos-prod-n8n"
+  },
+  "tags": [
+    {
+      "name": "CommerceOS"
+    },
+    {
+      "name": "Inventory Automation"
+    },
+    {
+      "name": "Phase 6"
+    }
+  ]
+}
