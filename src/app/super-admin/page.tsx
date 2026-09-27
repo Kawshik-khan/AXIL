@@ -35,7 +35,9 @@ import {
   Bot,
   Zap,
   Radio,
+  LogOut,
 } from "lucide-react";
+import { platformFetch, readPlatformError, PLATFORM_LOGIN_PATH } from "./platform-client";
 import styles from "./super-admin.module.css";
 
 type OperationalTab =
@@ -103,6 +105,7 @@ export default function SuperAdminPage() {
   const [stepUpCode, setStepUpCode] = useState("");
   const [stepUpToken, setStepUpToken] = useState<string | null>(null);
   const [stepUpVerified, setStepUpVerified] = useState(false);
+  const [operator, setOperator] = useState<{ name: string; role: string } | null>(null);
 
   // Tenant Provisioning Form State
   const [provisionForm, setProvisionForm] = useState({
@@ -157,11 +160,12 @@ export default function SuperAdminPage() {
     setLoading(true);
     setError(null);
     try {
-      const headers: Record<string, string> = {
-        "x-test-platform-role": "SUPER_ADMIN",
-      };
-      if (stepUpToken) {
-        headers["x-step-up-token"] = stepUpToken;
+      // Identity comes from the platform session cookie; platformFetch redirects to sign-in on 401.
+      const load = (url: string) => platformFetch(url, {}, stepUpToken).then((r) => r.json());
+
+      const sessionRes = await load("/api/v1/platform/auth/session");
+      if (sessionRes.data?.user) {
+        setOperator({ name: sessionRes.data.user.name, role: sessionRes.data.role });
       }
 
       const [
@@ -180,20 +184,20 @@ export default function SuperAdminPage() {
         settingsRes,
         flagsRes,
       ] = await Promise.all([
-        fetch("/api/v1/platform/overview", { headers }).then((r) => r.json()),
-        fetch("/api/v1/platform/tenants", { headers }).then((r) => r.json()),
-        fetch("/api/v1/platform/plans", { headers }).then((r) => r.json()),
-        fetch("/api/v1/platform/subscriptions", { headers }).then((r) => r.json()),
-        fetch("/api/v1/platform/entitlements", { headers }).then((r) => r.json()),
-        fetch("/api/v1/platform/automations", { headers }).then((r) => r.json()),
-        fetch("/api/v1/platform/n8n", { headers }).then((r) => r.json()),
-        fetch("/api/v1/platform/incidents", { headers }).then((r) => r.json()),
-        fetch("/api/v1/platform/safety/kill-switch", { headers }).then((r) => r.json()),
-        fetch("/api/v1/platform/users", { headers }).then((r) => r.json()),
-        fetch("/api/v1/platform/support/impersonate", { headers }).then((r) => r.json()),
-        fetch("/api/v1/platform/audit", { headers }).then((r) => r.json()),
-        fetch("/api/v1/platform/settings", { headers }).then((r) => r.json()),
-        fetch("/api/v1/platform/feature-flags", { headers }).then((r) => r.json()),
+        load("/api/v1/platform/overview"),
+        load("/api/v1/platform/tenants"),
+        load("/api/v1/platform/plans"),
+        load("/api/v1/platform/subscriptions"),
+        load("/api/v1/platform/entitlements"),
+        load("/api/v1/platform/automations"),
+        load("/api/v1/platform/n8n"),
+        load("/api/v1/platform/incidents"),
+        load("/api/v1/platform/safety/kill-switch"),
+        load("/api/v1/platform/users"),
+        load("/api/v1/platform/support/impersonate"),
+        load("/api/v1/platform/audit"),
+        load("/api/v1/platform/settings"),
+        load("/api/v1/platform/feature-flags"),
       ]);
 
       if (overviewRes.data) setOverview(overviewRes.data);
@@ -225,16 +229,12 @@ export default function SuperAdminPage() {
   const handleProvisionTenant = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const res = await fetch("/api/v1/platform/tenants", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-test-platform-role": "SUPER_ADMIN",
-        },
-        body: JSON.stringify(provisionForm),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error?.message || "Provisioning failed");
+      const res = await platformFetch(
+        "/api/v1/platform/tenants",
+        { method: "POST", body: JSON.stringify(provisionForm) },
+        stepUpToken
+      );
+      if (!res.ok) throw new Error(await readPlatformError(res, "Provisioning failed"));
       setShowProvisionModal(false);
       setProvisionForm({
         name: "",
@@ -254,17 +254,12 @@ export default function SuperAdminPage() {
   const handleSuspendTenant = async () => {
     if (!showSuspendModal) return;
     try {
-      const res = await fetch(`/api/v1/platform/tenants/${showSuspendModal}/suspend`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-test-platform-role": "SUPER_ADMIN",
-          ...(stepUpToken ? { "x-step-up-token": stepUpToken } : {}),
-        },
-        body: JSON.stringify({ reason: suspendReason || "Administrative governance suspension" }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error?.message || "Suspension failed");
+      const res = await platformFetch(
+        `/api/v1/platform/tenants/${encodeURIComponent(showSuspendModal)}/suspend`,
+        { method: "POST", body: JSON.stringify({ reason: suspendReason || "Administrative governance suspension" }) },
+        stepUpToken
+      );
+      if (!res.ok) throw new Error(await readPlatformError(res, "Suspension failed"));
       setShowSuspendModal(null);
       setSuspendReason("");
       await fetchData();
@@ -276,16 +271,12 @@ export default function SuperAdminPage() {
   // Activate Tenant Handler
   const handleActivateTenant = async (tenantId: string) => {
     try {
-      const res = await fetch(`/api/v1/platform/tenants/${tenantId}/activate`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-test-platform-role": "SUPER_ADMIN",
-        },
-        body: JSON.stringify({ reason: "Administrative reinstatement" }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error?.message || "Activation failed");
+      const res = await platformFetch(
+        `/api/v1/platform/tenants/${encodeURIComponent(tenantId)}/activate`,
+        { method: "POST", body: JSON.stringify({ reason: "Administrative reinstatement" }) },
+        stepUpToken
+      );
+      if (!res.ok) throw new Error(await readPlatformError(res, "Activation failed"));
       await fetchData();
     } catch (err: any) {
       alert(err.message);
@@ -297,9 +288,7 @@ export default function SuperAdminPage() {
     setSelectedTenantId(tenantId);
     setIsDetailOpen(true);
     try {
-      const res = await fetch(`/api/v1/platform/tenants/${tenantId}`, {
-        headers: { "x-test-platform-role": "SUPER_ADMIN" },
-      });
+      const res = await platformFetch(`/api/v1/platform/tenants/${encodeURIComponent(tenantId)}`, {}, stepUpToken);
       const data = await res.json();
       if (data.data) setTenantDetail(data.data);
     } catch {
@@ -312,23 +301,22 @@ export default function SuperAdminPage() {
     e.preventDefault();
     if (!showImpersonateModal) return;
     try {
-      const res = await fetch("/api/v1/platform/support/impersonate", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-test-platform-role": "SUPER_ADMIN",
-          ...(stepUpToken ? { "x-step-up-token": stepUpToken } : {}),
+      const res = await platformFetch(
+        "/api/v1/platform/support/impersonate",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            tenant_id: showImpersonateModal,
+            ticket_id: impersonateTicket || "TICK-PLAT-01",
+            reason: impersonateReason || "Customer support investigation",
+            mode: impersonateMode,
+            duration_minutes: 60,
+          }),
         },
-        body: JSON.stringify({
-          tenant_id: showImpersonateModal,
-          ticket_id: impersonateTicket || "TICK-PLAT-01",
-          reason: impersonateReason || "Customer support investigation",
-          mode: impersonateMode,
-          duration_minutes: 60,
-        }),
-      });
+        stepUpToken
+      );
+      if (!res.ok) throw new Error(await readPlatformError(res, "Impersonation session failed"));
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error?.message || "Impersonation session failed");
       setShowImpersonateModal(null);
       setImpersonateReason("");
       setImpersonateTicket("");
@@ -342,13 +330,13 @@ export default function SuperAdminPage() {
   // Revoke Impersonation Session
   const handleRevokeImpersonation = async (sessionId: string) => {
     try {
-      await fetch(`/api/v1/platform/support/impersonate/${sessionId}/revoke`, {
-        method: "POST",
-        headers: { "x-test-platform-role": "SUPER_ADMIN" },
-      });
+      // The route is DELETE /api/v1/platform/support/impersonate?sessionId=… (audit M1: the old POST …/revoke URL did not exist).
+      const query = new URLSearchParams({ sessionId, reason: "Revoked by operator from control plane" });
+      const res = await platformFetch(`/api/v1/platform/support/impersonate?${query.toString()}`, { method: "DELETE" }, stepUpToken);
+      if (!res.ok) throw new Error(await readPlatformError(res, "Revocation failed"));
       await fetchData();
-    } catch {
-      // Ignore
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Revocation failed");
     }
   };
 
@@ -360,21 +348,19 @@ export default function SuperAdminPage() {
       return;
     }
     try {
-      const res = await fetch("/api/v1/platform/safety/kill-switch", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-test-platform-role": "SUPER_ADMIN",
-          ...(stepUpToken ? { "x-step-up-token": stepUpToken } : {}),
+      const res = await platformFetch(
+        "/api/v1/platform/safety/kill-switch",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            scope: killSwitchScope,
+            targetId: killSwitchTargetId || "GLOBAL_ALL", // the route reads `targetId`
+            reason: killSwitchReason || "Emergency platform safety intervention",
+          }),
         },
-        body: JSON.stringify({
-          scope: killSwitchScope,
-          target_id: killSwitchTargetId || "GLOBAL_ALL",
-          reason: killSwitchReason || "Emergency platform safety intervention",
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error?.message || "Kill switch engagement failed");
+        stepUpToken
+      );
+      if (!res.ok) throw new Error(await readPlatformError(res, "Kill switch engagement failed"));
       setShowKillSwitchModal(false);
       setKillSwitchReason("");
       setKillSwitchConfirmation("");
@@ -387,13 +373,16 @@ export default function SuperAdminPage() {
   // Disengage Kill Switch
   const handleDisengageKillSwitch = async (id: string) => {
     try {
-      await fetch(`/api/v1/platform/safety/kill-switch/${id}/deactivate`, {
-        method: "POST",
-        headers: { "x-test-platform-role": "SUPER_ADMIN" },
-      });
+      // Deactivation is POST /api/v1/platform/safety/kill-switch with action DEACTIVATE (audit M1: …/{id}/deactivate did not exist).
+      const res = await platformFetch(
+        "/api/v1/platform/safety/kill-switch",
+        { method: "POST", body: JSON.stringify({ action: "DEACTIVATE", id, reason: "Deactivated by operator from control plane" }) },
+        stepUpToken
+      );
+      if (!res.ok) throw new Error(await readPlatformError(res, "Kill switch deactivation failed"));
       await fetchData();
-    } catch {
-      // Ignore
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Kill switch deactivation failed");
     }
   };
 
@@ -401,21 +390,20 @@ export default function SuperAdminPage() {
   const handleDeclareIncident = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const res = await fetch("/api/v1/platform/incidents", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-test-platform-role": "SUPER_ADMIN",
+      const res = await platformFetch(
+        "/api/v1/platform/incidents",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            title: incidentTitle,
+            severity: incidentSeverity,
+            affected_component: incidentComponent,
+            initial_message: incidentDescription || "Engineering team is currently investigating the incident.",
+          }),
         },
-        body: JSON.stringify({
-          title: incidentTitle,
-          severity: incidentSeverity,
-          affected_component: incidentComponent,
-          initial_message: incidentDescription || "Engineering team is currently investigating the incident.",
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error?.message || "Incident declaration failed");
+        stepUpToken
+      );
+      if (!res.ok) throw new Error(await readPlatformError(res, "Incident declaration failed"));
       setShowIncidentModal(false);
       setIncidentTitle("");
       setIncidentDescription("");
@@ -429,26 +417,31 @@ export default function SuperAdminPage() {
   const handleStepUpElevation = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const res = await fetch("/api/v1/platform/auth/step-up", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-test-platform-role": "SUPER_ADMIN",
-        },
-        body: JSON.stringify({
-          mfaCode: stepUpCode || "123456",
-          action: "CRITICAL_PLATFORM_OPERATION",
-        }),
-      });
+      // Step-up needs a real TOTP/WebAuthn factor. Until that exists the server fails closed (501) and this
+      // shows its message; elevation is granted only when the server returns a signed step-up token.
+      const res = await platformFetch(
+        "/api/v1/platform/auth/step-up",
+        { method: "POST", body: JSON.stringify({ code: stepUpCode.trim(), action: "CRITICAL_PLATFORM_OPERATION" }) },
+        null
+      );
+      if (!res.ok) throw new Error(await readPlatformError(res, "Step-up elevation failed"));
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error?.message || "Step-up elevation failed");
+      if (!data.data?.stepUpToken) throw new Error("Step-up elevation was not granted.");
       setStepUpToken(data.data.stepUpToken);
       setStepUpVerified(true);
       setShowStepUpModal(false);
       setStepUpCode("");
-      alert("Step-Up verification complete! Privileged elevation granted for 15 minutes.");
-    } catch (err: any) {
-      alert(err.message);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Step-up elevation failed");
+    }
+  };
+
+  // Sign out of the platform control plane (clears the httpOnly platform session cookie server-side).
+  const handleSignOut = async () => {
+    try {
+      await fetch("/api/v1/platform/auth/logout", { method: "POST", credentials: "same-origin" });
+    } finally {
+      window.location.assign(PLATFORM_LOGIN_PATH);
     }
   };
 
@@ -536,9 +529,19 @@ export default function SuperAdminPage() {
           )}
 
           <div className={styles.userBadge}>
-            <span className={styles.roleTag}>SUPER_ADMIN</span>
-            <span>Platform Owner</span>
+            <span className={styles.roleTag}>{operator?.role ?? "—"}</span>
+            <span>{operator?.name ?? "Platform operator"}</span>
           </div>
+
+          <button
+            type="button"
+            className={`${styles.btn} ${styles.btnSecondary} ${styles.btnSmall}`}
+            onClick={handleSignOut}
+            title="Sign out of the platform control plane"
+          >
+            <LogOut size={13} />
+            <span>Sign out</span>
+          </button>
 
           <Link
             href="/"
@@ -2271,7 +2274,8 @@ export default function SuperAdminPage() {
               <div>
                 <h3 className={styles.modalTitle}>Step-Up MFA Elevation</h3>
                 <p className={styles.modalSubtitle}>
-                  High-risk platform operations require explicit step-up authentication.
+                  High-risk platform operations require step-up with a TOTP authenticator. That factor is not set up
+                  yet, so step-up is currently unavailable and high-risk actions stay disabled.
                 </p>
               </div>
               <button type="button" className={styles.modalCloseBtn} onClick={() => setShowStepUpModal(false)}>
@@ -2281,16 +2285,19 @@ export default function SuperAdminPage() {
 
             <form onSubmit={handleStepUpElevation} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
               <div className={styles.formGroup}>
-                <label className={styles.formLabel}>TOTP Authenticator Code / Security Passkey</label>
+                <label className={styles.formLabel}>TOTP Authenticator Code</label>
                 <input
                   type="text"
-                  placeholder="Enter 6-digit TOTP (e.g. 123456 in dev)"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength={6}
+                  placeholder="6-digit code"
                   value={stepUpCode}
                   onChange={(e) => setStepUpCode(e.target.value)}
                   className={styles.formInput}
                   autoFocus
                 />
-                <span className={styles.formHint}>In local development, any 6-digit code or default passkey is accepted.</span>
+                <span className={styles.formHint}>No code is accepted until TOTP enrollment exists.</span>
               </div>
 
               <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "12px" }}>
