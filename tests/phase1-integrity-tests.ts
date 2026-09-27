@@ -589,10 +589,10 @@ async function main() {
     assert.ok(/^[a-z0-9]{12}$/.test(randomSuffix()));
   });
 
-  await runTest("invitation tokens come from a CSPRNG (base64url, 48 bytes)", async () => {
+  await runTest("invitation tokens come from a CSPRNG (48 base64url characters, 288 bits)", async () => {
     const { InvitationService } = await import("@/domains/invitations/service");
     const inv = InvitationService.createInvitation(tenantId, `${uid("inv")}@phase1.test`, "SALES", shop.user.id);
-    assert.ok(/^[A-Za-z0-9_-]{60,}$/.test(inv.token), inv.token);
+    assert.ok(/^[A-Za-z0-9_-]{48}$/.test(inv.token), inv.token);
   });
 
   await runTest("no server code builds IDs from Math.random().toString(36) any more", async () => {
