@@ -1,3 +1,4 @@
+import { AppError } from "@/lib/errors";
 import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 8: Autonomous Procurement Operations Service
@@ -88,7 +89,7 @@ export class ProcurementService {
     }
   ): PurchaseOrder {
     const supplier = db.findSupplierById(tenantId, params.supplierId);
-    if (!supplier) throw new Error(`Supplier not found: ${params.supplierId}`);
+    if (!supplier) throw new AppError("NOT_FOUND", `Supplier not found: ${params.supplierId}`, 404);
 
     const supplierProducts = db.getSupplierProducts(tenantId, params.supplierId);
     const variants = db.getAllProductVariants(tenantId);
@@ -150,7 +151,7 @@ export class ProcurementService {
     actor: string
   ): PurchaseOrder {
     const po = db.findPurchaseOrderById(tenantId, poId);
-    if (!po) throw new Error(`Purchase order not found: ${poId}`);
+    if (!po) throw new AppError("NOT_FOUND", `Purchase order not found: ${poId}`, 404);
 
     const validTransitions: Record<PurchaseOrderStatus, PurchaseOrderStatus[]> = {
       DRAFT: ["PENDING_APPROVAL", "APPROVED", "CANCELLED"],

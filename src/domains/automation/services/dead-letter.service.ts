@@ -1,3 +1,4 @@
+import { AppError } from "@/lib/errors";
 import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 6: Dead Letter Queue (DLQ) Service
@@ -93,7 +94,7 @@ export class DeadLetterService {
   ): Promise<{ success: boolean; deadLetter: AutomationDeadLetter; newExecutionId: string }> {
     const dlq = db.findAutomationDeadLetterById(tenantId, id);
     if (!dlq) {
-      throw new Error(`Dead letter record not found: ${id}`);
+      throw new AppError("NOT_FOUND", `Dead letter record not found: ${id}`, 404);
     }
 
     const newExecutionId = `exec_replay_${Date.now()}_${randomSuffix()}`;
@@ -135,7 +136,7 @@ export class DeadLetterService {
     reason?: string
   ): AutomationDeadLetter {
     const dlq = db.findAutomationDeadLetterById(tenantId, id);
-    if (!dlq) throw new Error(`Dead letter record not found: ${id}`);
+    if (!dlq) throw new AppError("NOT_FOUND", `Dead letter record not found: ${id}`, 404);
 
     const updated = db.updateAutomationDeadLetter(tenantId, id, {
       status: "CANCELLED",
@@ -168,7 +169,7 @@ export class DeadLetterService {
     notes: string
   ): AutomationDeadLetter {
     const dlq = db.findAutomationDeadLetterById(tenantId, id);
-    if (!dlq) throw new Error(`Dead letter record not found: ${id}`);
+    if (!dlq) throw new AppError("NOT_FOUND", `Dead letter record not found: ${id}`, 404);
 
     const updated = db.updateAutomationDeadLetter(tenantId, id, {
       status: "RESOLVED",

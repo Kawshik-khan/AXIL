@@ -1,3 +1,4 @@
+import { AppError } from "@/lib/errors";
 /**
  * CommerceOS Phase 10: Model Governance Service
  * Model registry, versioning, lifecycle management with mandatory evaluation/approval stages.
@@ -26,7 +27,7 @@ export class ModelGovernanceService {
 
   evaluateModel(tenantId: string, modelId: string, evaluation: ModelEvaluation): AIModel {
     const model = this.findById(tenantId, modelId);
-    if (!model) throw new Error(`Model not found: ${modelId}`);
+    if (!model) throw new AppError("NOT_FOUND", `Model not found: ${modelId}`, 404);
     model.lifecycle_status = "EVALUATION";
     model.performance_metrics = evaluation.results;
     model.quality_score = evaluation.results.quality_score || evaluation.results.accuracy || 0;
@@ -36,7 +37,7 @@ export class ModelGovernanceService {
 
   approveModel(tenantId: string, modelId: string, approvedBy: string): AIModel {
     const model = this.findById(tenantId, modelId);
-    if (!model) throw new Error(`Model not found: ${modelId}`);
+    if (!model) throw new AppError("NOT_FOUND", `Model not found: ${modelId}`, 404);
     if (model.lifecycle_status !== "EVALUATION") throw new Error("Model must be evaluated before approval");
     model.lifecycle_status = "APPROVAL";
     model.approved_by = approvedBy;
@@ -47,7 +48,7 @@ export class ModelGovernanceService {
 
   deployModel(tenantId: string, modelId: string, environment: "STAGING" | "CANARY" | "PRODUCTION"): ModelDeployment {
     const model = this.findById(tenantId, modelId);
-    if (!model) throw new Error(`Model not found: ${modelId}`);
+    if (!model) throw new AppError("NOT_FOUND", `Model not found: ${modelId}`, 404);
     const deployment: ModelDeployment = {
       id: `mdep_${modelId}_${Date.now()}`,
       tenant_id: tenantId,
@@ -68,7 +69,7 @@ export class ModelGovernanceService {
 
   retireModel(tenantId: string, modelId: string): AIModel {
     const model = this.findById(tenantId, modelId);
-    if (!model) throw new Error(`Model not found: ${modelId}`);
+    if (!model) throw new AppError("NOT_FOUND", `Model not found: ${modelId}`, 404);
     model.lifecycle_status = "RETIRED";
     model.updated_at = new Date().toISOString();
     return model;
@@ -76,7 +77,7 @@ export class ModelGovernanceService {
 
   getModelLineage(tenantId: string, modelId: string): { model: AIModel; deployments: ModelDeployment[] } {
     const model = this.findById(tenantId, modelId);
-    if (!model) throw new Error(`Model not found: ${modelId}`);
+    if (!model) throw new AppError("NOT_FOUND", `Model not found: ${modelId}`, 404);
     const deployments = db.data.model_deployments.filter((d) => d.model_id === modelId && d.tenant_id === tenantId);
     return { model, deployments };
   }

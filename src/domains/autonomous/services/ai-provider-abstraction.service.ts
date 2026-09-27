@@ -1,3 +1,4 @@
+import { AppError } from "@/lib/errors";
 /**
  * CommerceOS Phase 10: AI Provider Abstraction Service
  * Provider-agnostic AI interface with fallback chains and health checks.
@@ -87,7 +88,7 @@ export class AIProviderAbstractionService {
     total_cost_bdt: number;
   } {
     const provider = this.findById(providerId);
-    if (!provider) throw new Error(`Provider not found: ${providerId}`);
+    if (!provider) throw new AppError("NOT_FOUND", `Provider not found: ${providerId}`, 404);
     const inputCost = (inputTokens / 1000) * provider.cost_per_1k_input_tokens;
     const outputCost = (outputTokens / 1000) * provider.cost_per_1k_output_tokens;
     return {

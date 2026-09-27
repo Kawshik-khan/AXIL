@@ -1,4 +1,4 @@
-import { NotFoundError } from "@/lib/errors";
+import { NotFoundError, AppError } from "@/lib/errors";
 /**
  * CommerceOS Phase 6: Decision Engine & Phase 5 Workflow Bridge
  * Evaluates recommendation policy, manages human approval gates, and dispatches durable DAG workflows.
@@ -21,7 +21,7 @@ export class DecisionService {
   ): Promise<DecisionRequest> {
     const rec = db.getRecommendationById(tenantId, recommendationId);
     if (!rec) {
-      throw new Error(`Recommendation not found: ${recommendationId}`);
+      throw new AppError("NOT_FOUND", `Recommendation not found: ${recommendationId}`, 404);
     }
 
     // 1. Policy & Autonomy Risk Evaluation via Phase 5 Autonomy Policy

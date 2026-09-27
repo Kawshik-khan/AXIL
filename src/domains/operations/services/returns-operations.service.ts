@@ -1,3 +1,4 @@
+import { AppError } from "@/lib/errors";
 import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 8: Autonomous Returns & Refunds Operations Service
@@ -63,10 +64,10 @@ export class ReturnsOperationsService {
     actor: string
   ): Refund {
     const ret = db.getReturns(tenantId).find((r) => r.id === returnId);
-    if (!ret) throw new Error(`Return record not found: ${returnId}`);
+    if (!ret) throw new AppError("NOT_FOUND", `Return record not found: ${returnId}`, 404);
 
     const order = db.findOrderById(tenantId, ret.order_id);
-    if (!order) throw new Error(`Order not found: ${ret.order_id}`);
+    if (!order) throw new AppError("NOT_FOUND", `Order not found: ${ret.order_id}`, 404);
 
     const payments = db.getPayments(tenantId, order.id);
     const primaryPayment = payments.find((p) => p.status === "PAID") || payments[0];

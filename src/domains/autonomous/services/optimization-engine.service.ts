@@ -1,3 +1,4 @@
+import { AppError } from "@/lib/errors";
 /**
  * CommerceOS Phase 10: Optimization Engine Service
  * Multi-objective optimization with constraints, forecasts, historical performance, policies, budgets, risk.
@@ -19,7 +20,7 @@ export class OptimizationEngineService {
     tradeoffs: string[];
   }> {
     const obj = db.data.business_objectives.find((o) => o.id === objectiveId && o.tenant_id === tenantId);
-    if (!obj) throw new Error(`Objective not found: ${objectiveId}`);
+    if (!obj) throw new AppError("NOT_FOUND", `Objective not found: ${objectiveId}`, 404);
 
     // Generate domain-specific strategies based on objective type
     const candidates = [];

@@ -1,3 +1,4 @@
+import { AppError } from "@/lib/errors";
 /**
  * CommerceOS Phase 10: Continuous Learning Service
  * Learning candidate pipeline: outcome → evaluation → candidate →
@@ -54,7 +55,7 @@ export class ContinuousLearningService {
   /** Validate a candidate with offline evaluation. */
   evaluateCandidate(tenantId: string, candidateId: string): LearningCandidate {
     const candidate = this.findById(tenantId, candidateId);
-    if (!candidate) throw new Error(`Candidate not found: ${candidateId}`);
+    if (!candidate) throw new AppError("NOT_FOUND", `Candidate not found: ${candidateId}`, 404);
     candidate.status = "VALIDATING";
     candidate.validation_results = {
       passed: true,
@@ -71,7 +72,7 @@ export class ContinuousLearningService {
   /** Deploy candidate to shadow mode — runs in parallel without affecting production. */
   deployToShadow(tenantId: string, candidateId: string): LearningCandidate {
     const candidate = this.findById(tenantId, candidateId);
-    if (!candidate) throw new Error(`Candidate not found: ${candidateId}`);
+    if (!candidate) throw new AppError("NOT_FOUND", `Candidate not found: ${candidateId}`, 404);
     if (candidate.status !== "VALIDATED") throw new Error("Candidate must be validated before shadow deployment");
     candidate.status = "SHADOW_TESTING";
     candidate.shadow_results = {
@@ -88,7 +89,7 @@ export class ContinuousLearningService {
   /** Promote from shadow to canary testing. */
   promoteToCanary(tenantId: string, candidateId: string): LearningCandidate {
     const candidate = this.findById(tenantId, candidateId);
-    if (!candidate) throw new Error(`Candidate not found: ${candidateId}`);
+    if (!candidate) throw new AppError("NOT_FOUND", `Candidate not found: ${candidateId}`, 404);
     if (candidate.status !== "SHADOW_TESTING") throw new Error("Candidate must complete shadow testing");
     candidate.status = "CANARY_TESTING";
     candidate.canary_results = {
@@ -105,7 +106,7 @@ export class ContinuousLearningService {
   /** Submit for governance review before production deployment. */
   submitForGovernance(tenantId: string, candidateId: string): LearningCandidate {
     const candidate = this.findById(tenantId, candidateId);
-    if (!candidate) throw new Error(`Candidate not found: ${candidateId}`);
+    if (!candidate) throw new AppError("NOT_FOUND", `Candidate not found: ${candidateId}`, 404);
     if (candidate.status !== "CANARY_TESTING") throw new Error("Candidate must complete canary testing");
     candidate.status = "GOVERNANCE_REVIEW";
     candidate.updated_at = new Date().toISOString();
@@ -115,7 +116,7 @@ export class ContinuousLearningService {
   /** Deploy to production after governance approval. */
   promoteToProduction(tenantId: string, candidateId: string, approvedBy: string): LearningCandidate {
     const candidate = this.findById(tenantId, candidateId);
-    if (!candidate) throw new Error(`Candidate not found: ${candidateId}`);
+    if (!candidate) throw new AppError("NOT_FOUND", `Candidate not found: ${candidateId}`, 404);
     if (candidate.status !== "GOVERNANCE_REVIEW") throw new Error("Candidate must be in governance review");
     candidate.governance_review = {
       reviewer: approvedBy,
@@ -131,7 +132,7 @@ export class ContinuousLearningService {
   /** Rollback a deployed candidate when safety thresholds fail (§16). */
   rollback(tenantId: string, candidateId: string, reason: string): LearningCandidate {
     const candidate = this.findById(tenantId, candidateId);
-    if (!candidate) throw new Error(`Candidate not found: ${candidateId}`);
+    if (!candidate) throw new AppError("NOT_FOUND", `Candidate not found: ${candidateId}`, 404);
     candidate.status = "ROLLED_BACK";
     candidate.rollback_reason = reason;
     candidate.updated_at = new Date().toISOString();

@@ -1,3 +1,4 @@
+import { AppError } from "@/lib/errors";
 import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 7: Experimentation & A/B Testing Engine
@@ -71,7 +72,7 @@ export class ExperimentService {
     if (existing) return existing;
 
     const exp = db.getExperimentById(tenantId, experimentId);
-    if (!exp) throw new Error(`Experiment not found: ${experimentId}`);
+    if (!exp) throw new AppError("NOT_FOUND", `Experiment not found: ${experimentId}`, 404);
 
     // Deterministic hash based on customerId + experimentId
     let hash = 0;
@@ -132,7 +133,7 @@ export class ExperimentService {
   public evaluateExperiment(tenantId: string, experimentId: string): ExperimentResult {
     const exp = db.getExperimentById(tenantId, experimentId);
     if (!exp || exp.tenant_id !== tenantId) {
-      throw new Error(`Experiment not found: ${experimentId}`);
+      throw new AppError("NOT_FOUND", `Experiment not found: ${experimentId}`, 404);
     }
 
     const assignments = db.getExperimentAssignments(tenantId, experimentId);

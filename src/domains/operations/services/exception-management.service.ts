@@ -1,3 +1,4 @@
+import { AppError } from "@/lib/errors";
 import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 8: Central Operational Exception Engine
@@ -76,7 +77,7 @@ export class ExceptionManagementService {
     actor: string
   ): OperationalException {
     const exc = db.findOperationalExceptionById(tenantId, exceptionId);
-    if (!exc) throw new Error(`Operational exception not found: ${exceptionId}`);
+    if (!exc) throw new AppError("NOT_FOUND", `Operational exception not found: ${exceptionId}`, 404);
 
     const now = new Date().toISOString();
     const updated = db.updateOperationalException(tenantId, exceptionId, {
@@ -109,7 +110,7 @@ export class ExceptionManagementService {
     actor: string
   ): OperationalException {
     const exc = db.findOperationalExceptionById(tenantId, exceptionId);
-    if (!exc) throw new Error(`Operational exception not found: ${exceptionId}`);
+    if (!exc) throw new AppError("NOT_FOUND", `Operational exception not found: ${exceptionId}`, 404);
 
     const updated = db.updateOperationalException(tenantId, exceptionId, {
       status: "ESCALATED",

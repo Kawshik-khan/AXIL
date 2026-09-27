@@ -1,3 +1,4 @@
+import { AppError } from "@/lib/errors";
 /**
  * CommerceOS Phase 10: Strategy Engine Service
  * Strategy creation, version management, objective linking, constraint evaluation,
@@ -23,7 +24,7 @@ export class StrategyEngineService {
     const obj = db.data.business_objectives.find(
       (o) => o.id === strategy.objective_id && o.tenant_id === strategy.tenant_id
     );
-    if (!obj) throw new Error(`Linked objective not found: ${strategy.objective_id}`);
+    if (!obj) throw new AppError("NOT_FOUND", `Linked objective not found: ${strategy.objective_id}`, 404);
     strategy.status = "DRAFT";
     strategy.created_at = new Date().toISOString();
     strategy.updated_at = strategy.created_at;
@@ -33,7 +34,7 @@ export class StrategyEngineService {
 
   simulateStrategy(tenantId: string, strategyId: string): StrategySimulation {
     const strategy = this.findById(tenantId, strategyId);
-    if (!strategy) throw new Error(`Strategy not found: ${strategyId}`);
+    if (!strategy) throw new AppError("NOT_FOUND", `Strategy not found: ${strategyId}`, 404);
     strategy.status = "SIMULATING";
     strategy.updated_at = new Date().toISOString();
 
@@ -56,7 +57,7 @@ export class StrategyEngineService {
     tradeoffs: Array<{ dimension: string; positive: string; negative: string }>;
   } {
     const strategy = this.findById(tenantId, strategyId);
-    if (!strategy) throw new Error(`Strategy not found: ${strategyId}`);
+    if (!strategy) throw new AppError("NOT_FOUND", `Strategy not found: ${strategyId}`, 404);
     return {
       tradeoffs: strategy.domains_involved.map((domain) => ({
         dimension: domain,
@@ -68,7 +69,7 @@ export class StrategyEngineService {
 
   activateStrategy(tenantId: string, strategyId: string): Strategy {
     const strategy = this.findById(tenantId, strategyId);
-    if (!strategy) throw new Error(`Strategy not found: ${strategyId}`);
+    if (!strategy) throw new AppError("NOT_FOUND", `Strategy not found: ${strategyId}`, 404);
     strategy.status = "ACTIVE";
     strategy.execution = {
       started_at: new Date().toISOString(),
@@ -82,7 +83,7 @@ export class StrategyEngineService {
 
   recordOutcome(tenantId: string, strategyId: string, outcome: StrategyOutcome): Strategy {
     const strategy = this.findById(tenantId, strategyId);
-    if (!strategy) throw new Error(`Strategy not found: ${strategyId}`);
+    if (!strategy) throw new AppError("NOT_FOUND", `Strategy not found: ${strategyId}`, 404);
     strategy.outcome = outcome;
     strategy.status = "COMPLETED";
     if (strategy.execution) {

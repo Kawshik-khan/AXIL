@@ -1,3 +1,4 @@
+import { AppError } from "@/lib/errors";
 /**
  * CommerceOS Phase 10: Autonomy Adaptation Service
  * Controlled autonomy level adjustment with mandatory governance approval.
@@ -62,7 +63,7 @@ export class AutonomyAdaptationService {
     const rec = db.data.autonomy_recommendations.find(
       (r) => r.id === recommendationId && r.tenant_id === tenantId
     );
-    if (!rec) throw new Error(`Recommendation not found: ${recommendationId}`);
+    if (!rec) throw new AppError("NOT_FOUND", `Recommendation not found: ${recommendationId}`, 404);
     rec.status = "SIMULATING";
     rec.simulation_result = {
       expected_improvement: { throughput_percent: 15, cost_reduction_percent: 8 },
@@ -77,7 +78,7 @@ export class AutonomyAdaptationService {
     const rec = db.data.autonomy_recommendations.find(
       (r) => r.id === recommendationId && r.tenant_id === tenantId
     );
-    if (!rec) throw new Error(`Recommendation not found: ${recommendationId}`);
+    if (!rec) throw new AppError("NOT_FOUND", `Recommendation not found: ${recommendationId}`, 404);
     if (rec.status !== "UNDER_REVIEW" && rec.status !== "SIMULATING") {
       throw new Error("Recommendation must be under review or simulated before approval");
     }

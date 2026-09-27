@@ -1,3 +1,4 @@
+import { AppError } from "@/lib/errors";
 import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 8: Marketing & Campaigns Domain Service
@@ -139,7 +140,7 @@ export class MarketingService {
 
     const cart = db.getAbandonedCartById(tenantId, cartId);
     if (!cart || cart.tenant_id !== tenantId) {
-      throw new Error(`Abandoned cart not found: ${cartId}`);
+      throw new AppError("NOT_FOUND", `Abandoned cart not found: ${cartId}`, 404);
     }
 
     if (cart.recovery_stage === "RECOVERED") {
@@ -148,7 +149,7 @@ export class MarketingService {
 
     const customer = db.findCustomerById(tenantId, cart.customer_id);
     if (!customer) {
-      throw new Error(`Customer not found: ${cart.customer_id}`);
+      throw new AppError("NOT_FOUND", `Customer not found: ${cart.customer_id}`, 404);
     }
 
     const recipientPhone = customer.phone;
@@ -285,7 +286,7 @@ export class MarketingService {
 
     const cart = db.getAbandonedCartById(tenantId, cartId);
     if (!cart || cart.tenant_id !== tenantId) {
-      throw new Error(`Cart not found: ${cartId}`);
+      throw new AppError("NOT_FOUND", `Cart not found: ${cartId}`, 404);
     }
 
     const updated = db.updateAbandonedCart(tenantId, cartId, {
@@ -390,7 +391,7 @@ export class MarketingService {
   public getAudienceMembers(tenantId: string, audienceId: string): any[] {
     const audience = db.getAudienceById(tenantId, audienceId);
     if (!audience || audience.tenant_id !== tenantId) {
-      throw new Error(`Audience not found: ${audienceId}`);
+      throw new AppError("NOT_FOUND", `Audience not found: ${audienceId}`, 404);
     }
 
     const customers = db.getCustomers(tenantId).customers;
@@ -519,7 +520,7 @@ export class MarketingService {
 
     const audience = db.getAudienceById(tenantId, audienceId);
     if (!audience || audience.tenant_id !== tenantId) {
-      throw new Error(`Target audience not found: ${audienceId}`);
+      throw new AppError("NOT_FOUND", `Target audience not found: ${audienceId}`, 404);
     }
 
     const campaign = campaignService.createCampaign({

@@ -1,3 +1,4 @@
+import { AppError } from "@/lib/errors";
 /**
  * CommerceOS Phase 10: Global Decision Engine Service
  * Multi-objective decision making with context, options, constraints,
@@ -54,7 +55,7 @@ export class GlobalDecisionEngineService {
     ranked_options: Array<{ option_id: string; name: string; score: number; recommendation: string }>;
   } {
     const decision = this.findById(tenantId, decisionId);
-    if (!decision) throw new Error(`Decision not found: ${decisionId}`);
+    if (!decision) throw new AppError("NOT_FOUND", `Decision not found: ${decisionId}`, 404);
 
     decision.status = "EVALUATING";
     decision.updated_at = new Date().toISOString();
@@ -76,10 +77,10 @@ export class GlobalDecisionEngineService {
    */
   simulateDecision(tenantId: string, decisionId: string, optionId: string): DecisionSimulation {
     const decision = this.findById(tenantId, decisionId);
-    if (!decision) throw new Error(`Decision not found: ${decisionId}`);
+    if (!decision) throw new AppError("NOT_FOUND", `Decision not found: ${decisionId}`, 404);
 
     const option = decision.options.find((o) => o.id === optionId);
-    if (!option) throw new Error(`Option not found: ${optionId}`);
+    if (!option) throw new AppError("NOT_FOUND", `Option not found: ${optionId}`, 404);
 
     decision.status = "SIMULATING";
     decision.updated_at = new Date().toISOString();
@@ -108,7 +109,7 @@ export class GlobalDecisionEngineService {
    */
   applyPolicy(tenantId: string, decisionId: string): DecisionPolicyResult {
     const decision = this.findById(tenantId, decisionId);
-    if (!decision) throw new Error(`Decision not found: ${decisionId}`);
+    if (!decision) throw new AppError("NOT_FOUND", `Decision not found: ${decisionId}`, 404);
 
     const violations: string[] = [];
     const policiesEvaluated = ["BUDGET_POLICY", "RISK_POLICY", "AUTONOMY_POLICY", "APPROVAL_POLICY"];
@@ -147,7 +148,7 @@ export class GlobalDecisionEngineService {
    */
   approveDecision(tenantId: string, decisionId: string, approvedBy: string): GlobalDecision {
     const decision = this.findById(tenantId, decisionId);
-    if (!decision) throw new Error(`Decision not found: ${decisionId}`);
+    if (!decision) throw new AppError("NOT_FOUND", `Decision not found: ${decisionId}`, 404);
     if (decision.status !== "AWAITING_APPROVAL" && decision.status !== "SIMULATING" && decision.status !== "PENDING") {
       throw new Error(`Decision ${decisionId} is not awaiting approval (status: ${decision.status})`);
     }
@@ -165,7 +166,7 @@ export class GlobalDecisionEngineService {
    */
   rejectDecision(tenantId: string, decisionId: string, reason: string): GlobalDecision {
     const decision = this.findById(tenantId, decisionId);
-    if (!decision) throw new Error(`Decision not found: ${decisionId}`);
+    if (!decision) throw new AppError("NOT_FOUND", `Decision not found: ${decisionId}`, 404);
 
     decision.status = "REJECTED";
     decision.rejected_reason = reason;
@@ -179,7 +180,7 @@ export class GlobalDecisionEngineService {
    */
   executeDecision(tenantId: string, decisionId: string): GlobalDecision {
     const decision = this.findById(tenantId, decisionId);
-    if (!decision) throw new Error(`Decision not found: ${decisionId}`);
+    if (!decision) throw new AppError("NOT_FOUND", `Decision not found: ${decisionId}`, 404);
     if (decision.status !== "APPROVED") {
       throw new Error(`Decision ${decisionId} is not approved (status: ${decision.status})`);
     }
@@ -195,7 +196,7 @@ export class GlobalDecisionEngineService {
    */
   verifyOutcome(tenantId: string, decisionId: string, outcome: DecisionOutcomeRecord): GlobalDecision {
     const decision = this.findById(tenantId, decisionId);
-    if (!decision) throw new Error(`Decision not found: ${decisionId}`);
+    if (!decision) throw new AppError("NOT_FOUND", `Decision not found: ${decisionId}`, 404);
 
     decision.outcome = outcome;
     decision.status = (outcome.success || (outcome as any).verified) ? "VERIFIED" : "FAILED";

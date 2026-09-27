@@ -1,3 +1,4 @@
+import { AppError } from "@/lib/errors";
 /**
  * CommerceOS Phase 8: Bulk Action Safeguards Service
  * Prevents catastrophic unintended mass mutations by enforcing preview sampling,
@@ -55,7 +56,7 @@ export class BulkSafeguardService {
     processorFn: (item: T) => Promise<boolean>
   ): Promise<BulkOperationSafeguard> {
     const safeguard = db.getBulkSafeguards(tenantId).find((bs) => bs.id === safeguardId);
-    if (!safeguard) throw new Error(`Bulk operation safeguard not found: ${safeguardId}`);
+    if (!safeguard) throw new AppError("NOT_FOUND", `Bulk operation safeguard not found: ${safeguardId}`, 404);
 
     if (safeguard.kill_switch_active) {
       throw new Error(`Bulk operation ${safeguardId} was halted by emergency kill switch.`);

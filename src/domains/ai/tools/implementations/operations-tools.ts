@@ -1,3 +1,4 @@
+import { AppError } from "@/lib/errors";
 /**
  * CommerceOS Phase 8: Autonomous Commerce Operations Tools
  * Grounded strictly in authoritative domain operations services.
@@ -331,7 +332,7 @@ export class GetShipmentTrackingTool implements IAgentTool<z.infer<typeof GetShi
 
   public async execute(context: RequestContext, input: z.infer<typeof GetShipmentTrackingInputSchema>): Promise<any> {
     const shipment = db.findShipmentById(context.tenant.id, input.shipment_id);
-    if (!shipment) throw new Error(`Shipment not found: ${input.shipment_id}`);
+    if (!shipment) throw new AppError("NOT_FOUND", `Shipment not found: ${input.shipment_id}`, 404);
     return {
       shipment_id: shipment.id,
       tracking_number: shipment.tracking_number,

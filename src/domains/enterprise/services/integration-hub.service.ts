@@ -1,3 +1,4 @@
+import { AppError } from "@/lib/errors";
 /**
  * CommerceOS Phase 9: Enterprise Integration Hub Service
  * Manages external integrations (ERP, CRM, Accounting, Marketplaces), installation lifecycles, and health telemetry.
@@ -89,7 +90,7 @@ export class IntegrationHubService {
   ): IntegrationInstallation {
     this.seedDefaultProviders();
     const provider = db.getIntegrationProviders().find((p) => p.id === params.providerId);
-    if (!provider) throw new Error(`Integration provider not found: ${params.providerId}`);
+    if (!provider) throw new AppError("NOT_FOUND", `Integration provider not found: ${params.providerId}`, 404);
 
     const installation: IntegrationInstallation = {
       id: `inst_${params.providerId.replace("prov_", "")}_${Date.now()}`,
@@ -115,7 +116,7 @@ export class IntegrationHubService {
    */
   public testConnection(installationId: string): { success: boolean; latency_ms: number; message: string } {
     const inst = db.data.integration_installations.find((i) => i.id === installationId);
-    if (!inst) throw new Error(`Integration installation not found: ${installationId}`);
+    if (!inst) throw new AppError("NOT_FOUND", `Integration installation not found: ${installationId}`, 404);
 
     if (inst.status === "DISCONNECTED") {
       return { success: false, latency_ms: 45, message: "Integration is disconnected" };

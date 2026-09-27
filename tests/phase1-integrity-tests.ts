@@ -613,6 +613,36 @@ async function main() {
     assert.deepStrictEqual(offenders, []);
   });
 
+  // ---------------------------------------------------------------------------
+  console.log(`\n${ANSI_BOLD}[FX-17] Error hygiene and security headers (L1, L2, L8)${ANSI_RESET}`);
+  // ---------------------------------------------------------------------------
+
+  await runTest("unexpected errors return a generic 500 with a request id, never the internal message", async () => {
+    const { apiError } = await import("@/lib/api-response");
+    const res = apiError(new Error("JWT_SECRET is missing and db path C:/internal/secret"));
+    assert.strictEqual(res.status, 500);
+    const text = await res.text();
+    assert.ok(!text.includes("JWT_SECRET") && !text.includes("C:/internal"), text);
+    assert.ok(/"request_id":"req_/.test(text));
+  });
+
+  await runTest("a missing record is a 404, not a 500", async () => {
+    const fresh = (await AuthService.login(shop.user.email, "Phase1-Owner-Pass-4471!")).token; // earlier test revoked sessions
+    const res = await sendJson(`growth/campaigns/[id]`, "camp_does_not_exist", "PUT", fresh, { name: "x" });
+    assert.strictEqual(res.status, 404);
+  });
+
+  await runTest("security headers are configured for every path", async () => {
+    const config = (await import("../next.config.js")) as { default?: { headers: () => Promise<Array<{ source: string; headers: Array<{ key: string }> }>> }; headers?: () => Promise<Array<{ source: string; headers: Array<{ key: string }> }>> };
+    const headersFn = config.headers ?? config.default?.headers;
+    assert.ok(headersFn, "next.config.js exports headers()");
+    const rules = await headersFn();
+    const keys = rules.find((r) => r.source === "/:path*")?.headers.map((h) => h.key) ?? [];
+    for (const key of ["X-Content-Type-Options", "Referrer-Policy", "X-Frame-Options", "Permissions-Policy", "Content-Security-Policy-Report-Only"]) {
+      assert.ok(keys.includes(key), `missing ${key}`);
+    }
+  });
+
   console.log(`\n${ANSI_BOLD}====================================================${ANSI_RESET}`);
   console.log(`  Tests Passed: ${passedCount} | Tests Failed: ${failedCount}`);
   console.log(`${ANSI_BOLD}====================================================${ANSI_RESET}\n`);

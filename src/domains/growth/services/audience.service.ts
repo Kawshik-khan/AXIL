@@ -1,3 +1,4 @@
+import { AppError } from "@/lib/errors";
 import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 7: Segment & Audience Engine Service
@@ -287,7 +288,7 @@ export class AudienceService {
   public createAudienceSnapshot(tenantId: string, audienceId: string, campaignId?: string): AudienceSnapshot {
     const audience = db.getAudienceById(tenantId, audienceId);
     if (!audience || audience.tenant_id !== tenantId) {
-      throw new Error(`Audience not found: ${audienceId}`);
+      throw new AppError("NOT_FOUND", `Audience not found: ${audienceId}`, 404);
     }
 
     const { memberIds } = this.evaluateAudienceMembership(tenantId, audience);

@@ -1,3 +1,4 @@
+import { AppError } from "@/lib/errors";
 import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 8: Autonomous Order Operations Service
@@ -84,7 +85,7 @@ export class OrderOperationsService {
     actor: string
   ): Order {
     const order = db.findOrderById(tenantId, orderId);
-    if (!order) throw new Error(`Order not found: ${orderId}`);
+    if (!order) throw new AppError("NOT_FOUND", `Order not found: ${orderId}`, 404);
 
     if (order.status === "PENDING") {
       db.updateOrderStatus(tenantId, order.id, "CONFIRMED");
@@ -114,7 +115,7 @@ export class OrderOperationsService {
     actor: string
   ): Order {
     const order = db.findOrderById(tenantId, orderId);
-    if (!order) throw new Error(`Order not found: ${orderId}`);
+    if (!order) throw new AppError("NOT_FOUND", `Order not found: ${orderId}`, 404);
 
     if (order.status === "DELIVERED" || order.status === "SHIPPED") {
       throw new Error(`Cannot cancel order in '${order.status}' status. Initiating return is required.`);

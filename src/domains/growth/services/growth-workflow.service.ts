@@ -1,3 +1,4 @@
+import { AppError } from "@/lib/errors";
 /**
  * CommerceOS Phase 7: Canonical Growth Workflows Service
  * Implements the 7 core automated lifecycle, recovery, retention, and executive growth workflows.
@@ -27,7 +28,7 @@ export class GrowthWorkflowService {
    */
   public async runNewCustomerWelcomeJourney(tenantId: string, customerId: string): Promise<WorkflowExecutionResult> {
     const cust = db.findCustomerById(tenantId, customerId);
-    if (!cust) throw new Error(`Customer not found: ${customerId}`);
+    if (!cust) throw new AppError("NOT_FOUND", `Customer not found: ${customerId}`, 404);
 
     // Update lifecycle
     customerLifecycleService.evaluateCustomerLifecycle(tenantId, customerId, "customer.created");
@@ -126,7 +127,7 @@ export class GrowthWorkflowService {
    */
   public async runPostDeliveryCrossSell(tenantId: string, orderId: string): Promise<WorkflowExecutionResult> {
     const order = db.findOrderById(tenantId, orderId);
-    if (!order) throw new Error(`Order not found: ${orderId}`);
+    if (!order) throw new AppError("NOT_FOUND", `Order not found: ${orderId}`, 404);
 
     const primaryProductId = order.items?.[0]?.product_id;
     const recs = primaryProductId
@@ -152,7 +153,7 @@ export class GrowthWorkflowService {
    */
   public async runCampaignOptimization(tenantId: string, campaignId: string): Promise<WorkflowExecutionResult> {
     const campaign = db.getCampaignById(tenantId, campaignId);
-    if (!campaign) throw new Error(`Campaign not found: ${campaignId}`);
+    if (!campaign) throw new AppError("NOT_FOUND", `Campaign not found: ${campaignId}`, 404);
 
     // Check if experiment is active or create experiment recommendation
     return {

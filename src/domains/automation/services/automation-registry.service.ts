@@ -1,3 +1,4 @@
+import { AppError } from "@/lib/errors";
 import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 6: Automation Registry & Lifecycle Governance Service
@@ -104,7 +105,7 @@ export class AutomationRegistryService {
   ): { automation: AutomationRecord; workflow: AutomationWorkflow; template: StandardWorkflowTemplate } {
     const template = STANDARD_WORKFLOW_TEMPLATES.find((t) => t.id === templateId || t.code === templateId);
     if (!template) {
-      throw new Error(`Standard workflow template not found: ${templateId}`);
+      throw new AppError("NOT_FOUND", `Standard workflow template not found: ${templateId}`, 404);
     }
 
     const now = new Date().toISOString();
@@ -194,7 +195,7 @@ export class AutomationRegistryService {
     updates: Partial<AutomationRecord>
   ): AutomationRecord {
     const existing = db.findAutomationById(tenantId, id);
-    if (!existing) throw new Error(`Automation '${id}' not found.`);
+    if (!existing) throw new AppError("NOT_FOUND", `Automation '${id}' not found.`, 404);
 
     const updated = db.updateAutomation(tenantId, id, {
       ...updates,

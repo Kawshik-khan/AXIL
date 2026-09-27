@@ -1,3 +1,4 @@
+import { AppError } from "@/lib/errors";
 /**
  * CommerceOS Phase 10: Autonomous Cycles Service
  * Daily, weekly, monthly autonomous cycles: Observe → Understand → Plan → Execute → Learn (§22).
@@ -72,7 +73,7 @@ export class AutonomousCyclesService {
     const run = db.data.autonomous_workflow_runs.find(
       (w) => w.id === runId && w.tenant_id === tenantId
     );
-    if (!run) throw new Error(`Workflow run not found: ${runId}`);
+    if (!run) throw new AppError("NOT_FOUND", `Workflow run not found: ${runId}`, 404);
     run.current_loop_step = nextStep;
     run.checkpoints.push({ step: nextStep, state: { advanced: true }, checkpointed_at: new Date().toISOString() });
     return run;
@@ -83,7 +84,7 @@ export class AutonomousCyclesService {
     const run = db.data.autonomous_workflow_runs.find(
       (w) => w.id === runId && w.tenant_id === tenantId
     );
-    if (!run) throw new Error(`Workflow run not found: ${runId}`);
+    if (!run) throw new AppError("NOT_FOUND", `Workflow run not found: ${runId}`, 404);
     run.status = "COMPLETED";
     run.completed_at = new Date().toISOString();
     run.outcome = {

@@ -1,3 +1,4 @@
+import { AppError } from "@/lib/errors";
 import { randomUUID } from 'crypto';
 import {
   AgentWorkflow,
@@ -118,7 +119,7 @@ export class WorkflowEngine {
    */
   public async startWorkflow(tenantId: string, workflowId: string): Promise<AgentWorkflow> {
     const workflow = db.getWorkflowById(tenantId, workflowId);
-    if (!workflow) throw new Error(`Workflow not found: ${workflowId}`);
+    if (!workflow) throw new AppError("NOT_FOUND", `Workflow not found: ${workflowId}`, 404);
 
     workflowStateMachine.assertWorkflowTransition(workflow.status, WorkflowStatus.RUNNING);
     const runningWf = db.updateWorkflow(tenantId, workflowId, {
@@ -237,7 +238,7 @@ export class WorkflowEngine {
    */
   public async pauseWorkflow(tenantId: string, workflowId: string, reason: string): Promise<AgentWorkflow> {
     const workflow = db.getWorkflowById(tenantId, workflowId);
-    if (!workflow) throw new Error(`Workflow not found: ${workflowId}`);
+    if (!workflow) throw new AppError("NOT_FOUND", `Workflow not found: ${workflowId}`, 404);
 
     workflowStateMachine.assertWorkflowTransition(workflow.status, WorkflowStatus.PAUSED);
     const updated = db.updateWorkflow(tenantId, workflowId, { status: WorkflowStatus.PAUSED });
@@ -250,7 +251,7 @@ export class WorkflowEngine {
    */
   public async resumeWorkflow(tenantId: string, workflowId: string): Promise<AgentWorkflow> {
     const workflow = db.getWorkflowById(tenantId, workflowId);
-    if (!workflow) throw new Error(`Workflow not found: ${workflowId}`);
+    if (!workflow) throw new AppError("NOT_FOUND", `Workflow not found: ${workflowId}`, 404);
 
     workflowStateMachine.assertWorkflowTransition(workflow.status, WorkflowStatus.RUNNING);
     const updated = db.updateWorkflow(tenantId, workflowId, { status: WorkflowStatus.RUNNING });
@@ -262,7 +263,7 @@ export class WorkflowEngine {
    */
   public async cancelWorkflow(tenantId: string, workflowId: string, reason: string): Promise<AgentWorkflow> {
     const workflow = db.getWorkflowById(tenantId, workflowId);
-    if (!workflow) throw new Error(`Workflow not found: ${workflowId}`);
+    if (!workflow) throw new AppError("NOT_FOUND", `Workflow not found: ${workflowId}`, 404);
 
     workflowStateMachine.assertWorkflowTransition(workflow.status, WorkflowStatus.CANCELLED);
     const updated = db.updateWorkflow(tenantId, workflowId, {
@@ -287,7 +288,7 @@ export class WorkflowEngine {
    */
   public async retryWorkflow(tenantId: string, workflowId: string): Promise<AgentWorkflow> {
     const workflow = db.getWorkflowById(tenantId, workflowId);
-    if (!workflow) throw new Error(`Workflow not found: ${workflowId}`);
+    if (!workflow) throw new AppError("NOT_FOUND", `Workflow not found: ${workflowId}`, 404);
 
     workflowStateMachine.assertWorkflowTransition(workflow.status, WorkflowStatus.QUEUED);
     const updated = db.updateWorkflow(tenantId, workflowId, {

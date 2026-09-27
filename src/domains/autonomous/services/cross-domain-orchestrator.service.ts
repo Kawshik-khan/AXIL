@@ -1,3 +1,4 @@
+import { AppError } from "@/lib/errors";
 /**
  * CommerceOS Phase 10: Cross-Domain Orchestrator Service
  * Structured inter-agent protocol, cross-domain routing, conflict resolution,
@@ -45,7 +46,7 @@ export class CrossDomainOrchestratorService {
     const proposal = db.data.agent_proposals.find(
       (p) => p.id === proposalId && p.tenant_id === tenantId
     );
-    if (!proposal) throw new Error(`Proposal not found: ${proposalId}`);
+    if (!proposal) throw new AppError("NOT_FOUND", `Proposal not found: ${proposalId}`, 404);
     proposal.votes.push(vote);
 
     // Auto-resolve if all target agents have voted
@@ -83,7 +84,7 @@ export class CrossDomainOrchestratorService {
     const conflict = db.data.agent_conflicts.find(
       (c) => c.id === conflictId && c.tenant_id === tenantId
     );
-    if (!conflict) throw new Error(`Conflict not found: ${conflictId}`);
+    if (!conflict) throw new AppError("NOT_FOUND", `Conflict not found: ${conflictId}`, 404);
 
     conflict.resolution_strategy = strategy;
     let winner: AgentType | undefined;

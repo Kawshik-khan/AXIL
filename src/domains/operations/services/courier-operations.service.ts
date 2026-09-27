@@ -1,3 +1,4 @@
+import { AppError } from "@/lib/errors";
 import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 8: Autonomous Courier Operations & Failover Service
@@ -65,10 +66,10 @@ export class CourierOperationsService {
     newShipment: Shipment;
   } {
     const exception = db.getShipmentExceptions(tenantId).find((se) => se.id === shipmentExceptionId);
-    if (!exception) throw new Error(`Shipment exception not found: ${shipmentExceptionId}`);
+    if (!exception) throw new AppError("NOT_FOUND", `Shipment exception not found: ${shipmentExceptionId}`, 404);
 
     const oldShipment = db.findShipmentById(tenantId, exception.shipment_id);
-    if (!oldShipment) throw new Error(`Shipment not found: ${exception.shipment_id}`);
+    if (!oldShipment) throw new AppError("NOT_FOUND", `Shipment not found: ${exception.shipment_id}`, 404);
 
     const oldCourier = oldShipment.courier_provider;
     const alternateCourier = providerHealthService.getAlternateCourier(tenantId, oldCourier);

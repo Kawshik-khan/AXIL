@@ -60,13 +60,18 @@ export function apiError(error: unknown, requestId?: string) {
     );
   }
 
-  // Fallback for unhandled unexpected exceptions
-  const message = error instanceof Error ? error.message : "An unexpected server error occurred.";
+  // Unexpected failures: details go to the log only; the client gets a generic message and the request id to quote
+  // (FX-17, audit L1). Internal messages used to reach clients, including configuration errors.
+  logger.error("api.unhandled_error", {
+    request_id: reqId,
+    error: error instanceof Error ? error.message : String(error),
+    stack: error instanceof Error ? error.stack?.split("\n").slice(0, 6).join(" | ") : undefined,
+  });
   return NextResponse.json(
     {
       error: {
         code: "INTERNAL_SERVER_ERROR",
-        message,
+        message: "An unexpected server error occurred.",
         request_id: reqId,
       },
     },

@@ -1,3 +1,4 @@
+import { AppError } from "@/lib/errors";
 /**
  * CommerceOS Phase 10: Global Incident Service
  * Incident detection, classification, cross-domain diagnosis, and resolution.
@@ -54,7 +55,7 @@ export class GlobalIncidentService {
     const incident = db.data.enterprise_incidents.find(
       (i) => i.id === incidentId && ((i as any).tenant_id === tenantId || (i as any).organization_id === tenantId)
     );
-    if (!incident) throw new Error(`Incident not found: ${incidentId}`);
+    if (!incident) throw new AppError("NOT_FOUND", `Incident not found: ${incidentId}`, 404);
     if (update.status) (incident as any).status = update.status;
     if (update.root_cause) (incident as any).root_cause = update.root_cause;
     if (update.resolution) {
@@ -82,7 +83,7 @@ export class GlobalIncidentService {
     const incident = db.data.enterprise_incidents.find(
       (i) => i.id === incidentId && ((i as any).tenant_id === tenantId || (i as any).organization_id === tenantId)
     );
-    if (!incident) throw new Error(`Incident not found: ${incidentId}`);
+    if (!incident) throw new AppError("NOT_FOUND", `Incident not found: ${incidentId}`, 404);
 
     const affectedDomains = (incident as any).affected_entities?.map((e: any) => e.entity_id) || [];
     const affectedObjectives = db.data.business_objectives

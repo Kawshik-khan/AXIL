@@ -1,3 +1,4 @@
+import { AppError } from "@/lib/errors";
 import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 7: Grounded Content & Personalization Engine
@@ -125,7 +126,7 @@ export class ContentService {
 
     const product = db.findProductById(tenantId, productId);
     if (!product) {
-      throw new Error(`Product not found: ${productId}`);
+      throw new AppError("NOT_FOUND", `Product not found: ${productId}`, 404);
     }
 
     let renderedText = "";

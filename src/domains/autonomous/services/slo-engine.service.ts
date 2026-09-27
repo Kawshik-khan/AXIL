@@ -1,3 +1,4 @@
+import { AppError } from "@/lib/errors";
 /**
  * CommerceOS Phase 10: SLO Engine Service
  * Service Level Objectives with error budget tracking (§42).
@@ -36,7 +37,7 @@ export class SLOEngineService {
   /** Calculate error budget for an SLO. */
   calculateErrorBudget(tenantId: string, sloId: string): ErrorBudget {
     const slo = this.findById(tenantId, sloId);
-    if (!slo) throw new Error(`SLO not found: ${sloId}`);
+    if (!slo) throw new AppError("NOT_FOUND", `SLO not found: ${sloId}`, 404);
 
     const totalMinutes = 43200; // 30 days in minutes
     const budgetMinutes = totalMinutes * (slo.error_budget_percent / 100);

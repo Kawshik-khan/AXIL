@@ -15,7 +15,7 @@ import {
   MarketingChannelType,
 } from "@/types/growth";
 import { ActionRiskLevel, ApprovalStatus } from "@/types/orchestration";
-import { ConflictError, ForbiddenError, NotFoundError } from "@/lib/errors";
+import { ConflictError, ForbiddenError, NotFoundError, AppError } from "@/lib/errors";
 import { audienceService } from "./audience.service";
 import { consentService, frequencyCappingService } from "./consent.service";
 import { marketingChannelService } from "./marketing-channel.service";
@@ -90,7 +90,7 @@ export class CampaignService {
 
     const audience = db.getAudienceById(tenantId, audienceId);
     if (!audience || audience.tenant_id !== tenantId) {
-      throw new Error(`Audience not found: ${audienceId}`);
+      throw new AppError("NOT_FOUND", `Audience not found: ${audienceId}`, 404);
     }
 
     let discountVal = 0;
@@ -205,7 +205,7 @@ export class CampaignService {
   public simulateCampaign(tenantId: string, campaignId: string): CampaignSimulationSnapshot {
     const campaign = db.getCampaignById(tenantId, campaignId);
     if (!campaign || campaign.tenant_id !== tenantId) {
-      throw new Error(`Campaign not found: ${campaignId}`);
+      throw new AppError("NOT_FOUND", `Campaign not found: ${campaignId}`, 404);
     }
 
     const audience = db.getAudienceById(tenantId, campaign.audience_id);
@@ -241,7 +241,7 @@ export class CampaignService {
   public requestCampaignApproval(tenantId: string, campaignId: string, requestedBy: string): GrowthCampaign {
     const campaign = db.getCampaignById(tenantId, campaignId);
     if (!campaign || campaign.tenant_id !== tenantId) {
-      throw new Error(`Campaign not found: ${campaignId}`);
+      throw new AppError("NOT_FOUND", `Campaign not found: ${campaignId}`, 404);
     }
 
     const approval = db.insertApprovalRequest({
@@ -281,7 +281,7 @@ export class CampaignService {
   public approveCampaign(tenantId: string, campaignId: string, approvedBy: string): GrowthCampaign {
     const campaign = db.getCampaignById(tenantId, campaignId);
     if (!campaign || campaign.tenant_id !== tenantId) {
-      throw new Error(`Campaign not found: ${campaignId}`);
+      throw new AppError("NOT_FOUND", `Campaign not found: ${campaignId}`, 404);
     }
 
     // Four-eyes rule (FX-10 step 4): high-risk campaigns need an approver other than their creator.
@@ -309,7 +309,7 @@ export class CampaignService {
   public rejectCampaign(tenantId: string, campaignId: string, rejectedBy: string, reason: string): GrowthCampaign {
     const campaign = db.getCampaignById(tenantId, campaignId);
     if (!campaign || campaign.tenant_id !== tenantId) {
-      throw new Error(`Campaign not found: ${campaignId}`);
+      throw new AppError("NOT_FOUND", `Campaign not found: ${campaignId}`, 404);
     }
 
     if (campaign.approval_request_id) {
@@ -333,7 +333,7 @@ export class CampaignService {
   public scheduleCampaign(tenantId: string, campaignId: string, scheduledStart: string): GrowthCampaign {
     const campaign = db.getCampaignById(tenantId, campaignId);
     if (!campaign || campaign.tenant_id !== tenantId) {
-      throw new Error(`Campaign not found: ${campaignId}`);
+      throw new AppError("NOT_FOUND", `Campaign not found: ${campaignId}`, 404);
     }
 
     if (campaign.action_risk_level === ActionRiskLevel.HIGH && campaign.status !== "APPROVED") {
@@ -353,7 +353,7 @@ export class CampaignService {
   public pauseCampaign(tenantId: string, campaignId: string): GrowthCampaign {
     const campaign = db.getCampaignById(tenantId, campaignId);
     if (!campaign || campaign.tenant_id !== tenantId) {
-      throw new Error(`Campaign not found: ${campaignId}`);
+      throw new AppError("NOT_FOUND", `Campaign not found: ${campaignId}`, 404);
     }
 
     return db.updateCampaign(tenantId, campaignId, {
@@ -368,7 +368,7 @@ export class CampaignService {
   public resumeCampaign(tenantId: string, campaignId: string): GrowthCampaign {
     const campaign = db.getCampaignById(tenantId, campaignId);
     if (!campaign || campaign.tenant_id !== tenantId) {
-      throw new Error(`Campaign not found: ${campaignId}`);
+      throw new AppError("NOT_FOUND", `Campaign not found: ${campaignId}`, 404);
     }
 
     return db.updateCampaign(tenantId, campaignId, {
@@ -383,7 +383,7 @@ export class CampaignService {
   public async executeCampaign(tenantId: string, campaignId: string): Promise<CampaignResult> {
     const campaign = db.getCampaignById(tenantId, campaignId);
     if (!campaign || campaign.tenant_id !== tenantId) {
-      throw new Error(`Campaign not found: ${campaignId}`);
+      throw new AppError("NOT_FOUND", `Campaign not found: ${campaignId}`, 404);
     }
 
     if (campaign.action_risk_level === ActionRiskLevel.HIGH && campaign.status !== "APPROVED") {

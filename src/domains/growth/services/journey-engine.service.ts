@@ -1,3 +1,4 @@
+import { AppError } from "@/lib/errors";
 import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 7: Customer Journey Engine Service
@@ -58,7 +59,7 @@ export class JourneyEngineService {
 
     const journey = db.getJourneyById(tenantId, journeyId);
     if (!journey || journey.tenant_id !== tenantId || journey.status !== "ACTIVE") {
-      throw new Error(`Journey not found or not active: ${journeyId}`);
+      throw new AppError("NOT_FOUND", `Journey not found or not active: ${journeyId}`, 404);
     }
 
     const firstStep = journey.steps[0];
@@ -91,7 +92,7 @@ export class JourneyEngineService {
   public async advanceEnrollment(tenantId: string, enrollmentId: string): Promise<JourneyEnrollment> {
     const enrollment = db.getJourneyEnrollments(tenantId).find((e) => e.id === enrollmentId);
     if (!enrollment) {
-      throw new Error(`Enrollment not found: ${enrollmentId}`);
+      throw new AppError("NOT_FOUND", `Enrollment not found: ${enrollmentId}`, 404);
     }
 
     if (enrollment.status === "COMPLETED" || enrollment.status === "EXITED" || enrollment.status === "PAUSED") {
@@ -99,7 +100,7 @@ export class JourneyEngineService {
     }
 
     const journey = db.getJourneyById(tenantId, enrollment.journey_id);
-    if (!journey) throw new Error(`Journey not found: ${enrollment.journey_id}`);
+    if (!journey) throw new AppError("NOT_FOUND", `Journey not found: ${enrollment.journey_id}`, 404);
 
     const currentStep = journey.steps.find((s) => s.id === enrollment.current_step_id);
     if (!currentStep) {
@@ -195,7 +196,7 @@ export class JourneyEngineService {
   public pauseJourney(tenantId: string, journeyId: string): CustomerJourney {
     const journey = db.getJourneyById(tenantId, journeyId);
     if (!journey || journey.tenant_id !== tenantId) {
-      throw new Error(`Journey not found: ${journeyId}`);
+      throw new AppError("NOT_FOUND", `Journey not found: ${journeyId}`, 404);
     }
     return db.updateJourney(tenantId, journeyId, { status: "PAUSED" });
   }
@@ -206,7 +207,7 @@ export class JourneyEngineService {
   public resumeJourney(tenantId: string, journeyId: string): CustomerJourney {
     const journey = db.getJourneyById(tenantId, journeyId);
     if (!journey || journey.tenant_id !== tenantId) {
-      throw new Error(`Journey not found: ${journeyId}`);
+      throw new AppError("NOT_FOUND", `Journey not found: ${journeyId}`, 404);
     }
     return db.updateJourney(tenantId, journeyId, { status: "ACTIVE" });
   }

@@ -1,3 +1,4 @@
+import { AppError } from "@/lib/errors";
 /**
  * CommerceOS Phase 10: Autonomous Workflows Service
  * Cross-domain autonomous workflow execution: Observe → Understand → Predict → Plan →
@@ -48,7 +49,7 @@ export class AutonomousWorkflowsService {
   /** Transition workflow through the autonomous loop steps. */
   transitionStep(tenantId: string, runId: string, toStep: string, state?: Record<string, unknown>): AutonomousWorkflowRun {
     const run = this.findById(tenantId, runId);
-    if (!run) throw new Error(`Workflow run not found: ${runId}`);
+    if (!run) throw new AppError("NOT_FOUND", `Workflow run not found: ${runId}`, 404);
 
     const stepMap: Record<string, AutonomousWorkflowRun["status"]> = {
       "OBSERVE": "OBSERVING",
@@ -94,7 +95,7 @@ export class AutonomousWorkflowsService {
   /** Fail a workflow with reason. */
   failWorkflow(tenantId: string, runId: string, reason: string): AutonomousWorkflowRun {
     const run = this.findById(tenantId, runId);
-    if (!run) throw new Error(`Workflow run not found: ${runId}`);
+    if (!run) throw new AppError("NOT_FOUND", `Workflow run not found: ${runId}`, 404);
     run.status = "FAILED";
     run.completed_at = new Date().toISOString();
     run.outcome = {

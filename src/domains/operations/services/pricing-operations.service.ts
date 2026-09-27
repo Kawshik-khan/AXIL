@@ -1,3 +1,4 @@
+import { AppError } from "@/lib/errors";
 import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 8: Autonomous Pricing Operations Service
@@ -90,7 +91,7 @@ export class PricingOperationsService {
     proposedPrice: number
   ): PriceSimulation {
     const variant = db.findVariantById(tenantId, variantId);
-    if (!variant) throw new Error(`Product variant not found: ${variantId}`);
+    if (!variant) throw new AppError("NOT_FOUND", `Product variant not found: ${variantId}`, 404);
 
     const cost = variant.cost_price || Math.round(variant.price * 0.65);
     const currentPrice = variant.price;
@@ -184,10 +185,10 @@ export class PricingOperationsService {
     actor: string
   ): PriceChangeExecution {
     const request = db.getPriceChangeRequests(tenantId).find((r) => r.id === requestId);
-    if (!request) throw new Error(`Price change request not found: ${requestId}`);
+    if (!request) throw new AppError("NOT_FOUND", `Price change request not found: ${requestId}`, 404);
 
     const variant = db.findVariantById(tenantId, request.product_variant_id);
-    if (!variant) throw new Error(`Product variant not found: ${request.product_variant_id}`);
+    if (!variant) throw new AppError("NOT_FOUND", `Product variant not found: ${request.product_variant_id}`, 404);
 
     const oldPrice = variant.price;
     // Mutate via authoritative DB store
@@ -237,7 +238,7 @@ export class PricingOperationsService {
   ): PriceChangeExecution {
     const execution = db.getPriceChangeExecutions(tenantId).find((e) => e.id === executionId);
     if (!execution || !execution.rollback_price) {
-      throw new Error(`Valid execution or rollback price not found for: ${executionId}`);
+      throw new AppError("NOT_FOUND", `Valid execution or rollback price not found for: ${executionId}`, 404);
     }
 
     db.updateProductVariant(tenantId, execution.product_variant_id, { price: execution.rollback_price });

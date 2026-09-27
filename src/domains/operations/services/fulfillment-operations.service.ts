@@ -1,3 +1,4 @@
+import { AppError } from "@/lib/errors";
 import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 8: Autonomous Fulfillment Operations Service
@@ -15,7 +16,7 @@ export class FulfillmentOperationsService {
    */
   public planFulfillment(tenantId: string, orderId: string): FulfillmentPlan {
     const order = db.findOrderById(tenantId, orderId);
-    if (!order) throw new Error(`Order not found: ${orderId}`);
+    if (!order) throw new AppError("NOT_FOUND", `Order not found: ${orderId}`, 404);
 
     const warehouses = db.getWarehouses(tenantId);
     const defaultWarehouse = warehouses[0] || { id: "wh_default_01", name: "Central Dhaka Warehouse" };

@@ -1,3 +1,4 @@
+import { AppError } from "@/lib/errors";
 /**
  * CommerceOS Phase 10: Business Objectives Service
  * CRUD for business objectives with hierarchy (Enterprise → BU → Brand → Store → Domain → Workflow → Agent Task).
@@ -40,7 +41,7 @@ export class BusinessObjectivesService {
       const parent = db.data.business_objectives.find(
         (o) => o.id === objective.parent_objective_id && o.tenant_id === objective.tenant_id
       );
-      if (!parent) throw new Error(`Parent objective not found: ${objective.parent_objective_id}`);
+      if (!parent) throw new AppError("NOT_FOUND", `Parent objective not found: ${objective.parent_objective_id}`, 404);
     }
     db.data.business_objectives.push(objective);
     return objective;
@@ -53,7 +54,7 @@ export class BusinessObjectivesService {
     const idx = db.data.business_objectives.findIndex(
       (o) => o.id === objectiveId && o.tenant_id === tenantId
     );
-    if (idx === -1) throw new Error(`Objective not found: ${objectiveId}`);
+    if (idx === -1) throw new AppError("NOT_FOUND", `Objective not found: ${objectiveId}`, 404);
     db.data.business_objectives[idx] = {
       ...db.data.business_objectives[idx],
       ...updates,
@@ -73,7 +74,7 @@ export class BusinessObjectivesService {
     at_risk_reasons: string[];
   } {
     const obj = this.findById(tenantId, objectiveId);
-    if (!obj) throw new Error(`Objective not found: ${objectiveId}`);
+    if (!obj) throw new AppError("NOT_FOUND", `Objective not found: ${objectiveId}`, 404);
 
     const progress = obj.target_value !== 0
       ? Math.min(100, Math.abs((obj.current_value - obj.baseline_value) / (obj.target_value - obj.baseline_value)) * 100)
@@ -132,7 +133,7 @@ export class BusinessObjectivesService {
     risks: Array<{ factor: string; severity: string; description: string }>;
   } {
     const obj = this.findById(tenantId, objectiveId);
-    if (!obj) throw new Error(`Objective not found: ${objectiveId}`);
+    if (!obj) throw new AppError("NOT_FOUND", `Objective not found: ${objectiveId}`, 404);
 
     const risks: Array<{ factor: string; severity: string; description: string }> = [];
 
