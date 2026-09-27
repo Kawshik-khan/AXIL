@@ -1,5 +1,5 @@
 /**
- * Phase 0 exploit replay against a running server (FIX_IMPLEMENTATION_PLAN FX-08 / FX-65, verification matrix §11).
+ * Phase 0 + Phase 1 exploit replay against a running server (FIX_IMPLEMENTATION_PLAN FX-08 / FX-65, verification matrix §11).
  * Each check replays an attack from the 2026-09-27 audit and expects it to fail.
  *
  *   BASE_URL=http://localhost:3000 node scripts/smoke-security.mjs
@@ -45,7 +45,7 @@ async function call(method, path, { headers = {}, body } = {}) {
     headers: { ...(body === undefined ? {} : { "content-type": "application/json" }), ...headers },
     body: body === undefined ? undefined : typeof body === "string" ? body : JSON.stringify(body),
   });
-  return { status: res.status, text: await res.text(), setCookies: res.headers.getSetCookie() };
+  return { status: res.status, text: await res.text(), setCookies: res.headers.getSetCookie(), retryAfter: res.headers.get("retry-after") };
 }
 
 function expectStatus(res, ...allowed) {
@@ -183,19 +183,43 @@ async function main() {
     return "HTTP 200, 0 messages processed";
   });
 
+  // ---- Phase 1 ----
+  await check("P1-a", "A service-token-shaped bearer that isn't a real token is rejected", async () => {
+    const res = await call("GET", "/api/v1/orders", { headers: { authorization: `Bearer cos_svc_${crypto.randomBytes(32).toString("base64url")}` } });
+    return expectStatus(res, 401);
+  });
+  await check("P1-b", "Security headers are set", async () => {
+    const res = await fetch(`${BASE_URL}/login`, { redirect: "manual" });
+    const missing = ["x-content-type-options", "x-frame-options", "referrer-policy", "permissions-policy"].filter((h) => !res.headers.get(h));
+    if (missing.length) throw new Error(`missing ${missing.join(", ")}`);
+    return `X-Frame-Options ${res.headers.get("x-frame-options")}`;
+  });
+  await check("P1-c", "Password guessing against one account is rate-limited (429 after 10 tries)", async () => {
+    const email = `smoke-${crypto.randomUUID()}@nowhere.test`;
+    let last;
+    for (let i = 0; i < 11; i++) last = await call("POST", "/api/v1/auth/login", { body: { email, password: `guess-${i}` } });
+    expectStatus(last, 429);
+    if (!last.retryAfter) throw new Error("no Retry-After header");
+    return `11th attempt HTTP ${last.status}, Retry-After ${last.retryAfter}s`;
+  });
+
   // Positive checks: real sign-in still works
   const { SMOKE_TENANT_EMAIL, SMOKE_TENANT_PASSWORD, SMOKE_PLATFORM_EMAIL, SMOKE_PLATFORM_PASSWORD } = process.env;
   if (SMOKE_TENANT_EMAIL && SMOKE_TENANT_PASSWORD) {
     await check("P1", "A real workspace sign-in works and its session reads data", async () => {
       const login = await call("POST", "/api/v1/auth/login", { body: { email: SMOKE_TENANT_EMAIL, password: SMOKE_TENANT_PASSWORD } });
       expectStatus(login, 200);
-      const orders = await call("GET", "/api/v1/orders?limit=1", { headers: { cookie: sessionCookie(login, "commerceos_session") } });
+      const cookie = sessionCookie(login, "commerceos_session");
+      const orders = await call("GET", "/api/v1/orders?limit=1", { headers: { cookie } });
       expectStatus(orders, 200);
-      return `login ${login.status}, orders ${orders.status}`;
+      // Phase 1 (H4): unknown fields such as tenant_id are rejected, not merged.
+      const massAssign = await call("PATCH", "/api/v1/customers/cus_smoke_missing", { headers: { cookie }, body: { tenant_id: "ten_other", total_spent: 1 } });
+      expectStatus(massAssign, 400, 404);
+      return `login ${login.status}, orders ${orders.status}, mass-assignment PATCH ${massAssign.status}`;
     });
   }
   if (SMOKE_PLATFORM_EMAIL && SMOKE_PLATFORM_PASSWORD) {
-    await check("P2", "A real platform sign-in works; the token is only in an httpOnly cookie; step-up is unavailable", async () => {
+    await check("P2", "A real platform sign-in works; the token is only in an httpOnly cookie; step-up needs an authenticator", async () => {
       const login = await call("POST", "/api/v1/platform/auth/login", { body: { email: SMOKE_PLATFORM_EMAIL, password: SMOKE_PLATFORM_PASSWORD } });
       expectStatus(login, 200);
       const body = JSON.parse(login.text);
@@ -204,7 +228,7 @@ async function main() {
       const session = await call("GET", "/api/v1/platform/auth/session", { headers: { cookie } });
       expectStatus(session, 200);
       const stepUp = await call("POST", "/api/v1/platform/auth/step-up", { headers: { cookie }, body: { code: "123456" } });
-      expectStatus(stepUp, 501);
+      expectStatus(stepUp, 409); // MFA_NOT_ENROLLED until the operator sets up TOTP (FX-15)
       return `login ${login.status}, session ${session.status}, step-up ${stepUp.status}`;
     });
   }
