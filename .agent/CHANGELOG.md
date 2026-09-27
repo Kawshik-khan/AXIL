@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [Unreleased] - Phase 1 access control and integrity (2026-09-28, branch `phase-1-access-control`)
+See [ADR-104](DECISIONS.md#adr-104-access-control-and-integrity-phase-1).
+
+### Security
+- 140 previously unguarded handlers check permissions (H2).
+- Approvers come from the session, and high-risk campaigns need a second approver.
+- Payment verification needs `payments.verify` and a single-use TrxID, and an order is PAID only when its total is covered (H3).
+- Strict schemas on every PATCH/PUT. Store updates can't change `id`/`tenant_id`, and a campaign can no longer be set to APPROVED by editing it (H4).
+- Store lookups are tenant-scoped, and enterprise organizations are owned by a workspace (H13).
+- Rate limits on sign-in, registration, the widget, webhooks and AI endpoints (M13).
+- Operator TOTP MFA with two-step sign-in and step-up; revocable sessions and "sign out everywhere"; no implicit OWNER role for platform staff (H10, M9, M10).
+- AI workflows run with their creator's permissions (M12).
+- Generic 500s, 404s for missing records, security headers, cryptographic IDs (L1, L2, L8, M4).
+- Webhook duplicates are suppressed using signed data only (N2). Workspace-only suspension (N5). No fake MFA flags (N4).
+
+### Changed (action required)
+- Operators: sign in at `/super-admin/login`, then set up an authenticator from the step-up prompt to use high-risk actions.
+- n8n: create a service token in **Settings → Service Tokens** and put it in the `CommerceOS API` credential.
+- Workspaces that use Enterprise features must create their own organization.
+- Some roles lose access they only had because checks were missing. Review ROLE_PERMISSIONS with the product owner.
+
+### Added
+- `tests/rbac-matrix-tests.ts` and `tests/phase1-integrity-tests.ts` (both in `npm test`).
+- `src/lib/rate-limit.ts`, `src/lib/totp.ts`, `src/lib/validation.ts` and `src/lib/ids.ts`.
+- Service tokens (`/api/v1/service-tokens`) and the Settings UI for them.
+
 ## [Unreleased] - Phase 0 security containment (2026-09-27, branch `phase-0-containment`)
 See [ADR-103](DECISIONS.md#adr-103-fail-closed-authentication-secrets-and-webhook-signatures-phase-0-containment) and `.agent/STATUS.md`. Finding IDs refer to `AUDIT_REPORT_2026-09-27.md`.
 

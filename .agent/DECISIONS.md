@@ -111,6 +111,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 | [ADR-101](#adr-101-integration-of-typesafe-ai-jev-system-one-model-for-sub-20ms-decisions-and-policy-guardrails) | Integration of TypeSafe AI Jev (System One) Model for Sub-20ms Decisions and Policy Guardrails |
 | [ADR-102](#adr-102-agent-governance-restructure-status-as-source-of-truth) | Agent governance restructure: STATUS as source of truth |
 | [ADR-103](#adr-103-fail-closed-authentication-secrets-and-webhook-signatures-phase-0-containment) | Fail-closed authentication, secrets and webhook signatures (Phase 0 containment) |
+| [ADR-104](#adr-104-access-control-and-integrity-phase-1) | Access control and integrity (Phase 1) |
 
 > Several ADRs assume PostgreSQL/pgvector, Redis Streams, and real providers. Where the code differs (JSON store, Pinecone, mocked LLM), STATUS.md describes reality; the ADR still records the intended decision. Supersede an ADR with a new one rather than editing it.
 
@@ -1196,3 +1197,73 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
   - FX-07 steps 5–6: no widget key or Origin allow-list (it comes with rate limiting, FX-14), and the adapters' generated "Facebook User ####" display names remain (FX-30).
   - §11 check 8 (UI step-up → 200) is 501 by design until FX-15, and so is kill-switch deactivate, which requires step-up.
   - FX-08: the release tag is created after merge, not on the branch.
+
+---
+
+## ADR-104: Access Control and Integrity (Phase 1)
+- **Date**: 2026-09-28
+- **Status**: Approved. Builds on ADR-103; amends ADR-005 (organizations are workspace-owned) and ADR-100 (operators get no implicit workspace role).
+- **Context**: After Phase 0, authenticated users could still:
+  - call 140 handlers with no permission check (H2);
+  - mark payments paid with read access (H3);
+  - write any field through PATCH/PUT bodies, including `tenant_id` or a campaign's `status` (H4);
+  - reach other tenants' records by id (H13), including all enterprise organizations.
+
+  There was also:
+  - no rate limiting (M13) and no real MFA (H10);
+  - platform staff became OWNER of the first tenant (M10);
+  - AI workflows ran as a synthetic OWNER (M12).
+- **Decision**:
+  1. **Permissions on every route.**
+     - The six unguarded domains call `RbacService.assertCan` right after `extractRequestContext`, as listed in FIX_IMPLEMENTATION_PLAN Appendix A. New permissions: `payments.verify`, `marketing.approve`, `analytics.manage`, `notifications.send` and `service_tokens.manage`.
+     - Approvers come from the session. HIGH/CRITICAL campaigns need an approver other than their creator.
+     - Clients can't write provider health.
+  2. **Payment verification.**
+     - Requires `payments.verify` and a well-formed, single-use TrxID. Re-verifying with the same TrxID is idempotent.
+     - A payment may be partial (e.g. a bKash advance for the delivery fee) but can't exceed what is still due. The order becomes PAID only when verified payments cover its total.
+     - Verification is recorded as MANUAL with the verifier until provider gateways exist (FX-52).
+  3. **Strict update schemas.**
+     - Every PATCH/PUT that forwarded a body uses a `.strict()` Zod schema via `parseOrThrow`, so unknown keys get a 400.
+     - Store update helpers drop `id`, `tenant_id` and `created_at` from any patch.
+     - Campaigns can be edited only as DRAFT, and every edit re-classifies risk.
+     - Suspension is per workspace (`memberships.status`); the account itself is untouched. Only an OWNER can grant or change OWNER.
+  4. **Tenant-scoped lookups.**
+     - Store accessors for tenant-owned records take the tenant first. Another tenant's id is simply not found.
+     - Enterprise organizations belong to the workspace that created them; `resolveOrganizationId` returns only the caller's own. The legacy shared `org_default` belongs to the demo workspace.
+  5. **Rate limiting.** In memory, because there is exactly one replica until FX-45 (decision D3).
+     - Limits apply per account for sign-in, per user for costly AI calls, per visitor and channel for the widget, and per endpoint for webhooks.
+     - Per-client limits apply only behind a trusted proxy (`TRUST_PROXY=1`). Without one there is no client IP, and a shared bucket would let one attacker lock everyone out.
+  6. **Operator MFA and sessions.**
+     - RFC 6238 TOTP, with the secret encrypted at rest. Operators with MFA sign in in two steps, and only then is a session MFA-verified.
+     - Step-up needs an enrolled authenticator and an unused code, and yields a 5-minute step-up token.
+     - Tokens carry `sv` (the user's session version). A password or account-status change, or "sign out everywhere", revokes every older session.
+     - The workspace login no longer issues a platform session, since that bypassed operator MFA. Platform staff get no implicit workspace role.
+  7. **Machine credentials.**
+     - `cos_svc_` service tokens: shown once, stored as a SHA-256 hash.
+     - Each token belongs to one workspace and carries a fixed set of automation scopes, never more than its creator holds. They can expire and be revoked.
+     - n8n uses these instead of user sessions.
+  8. **Workflows act with their creator's permissions.** A user-created workflow uses its creator's current role and fails if the creator lost access. System and event workflows get read-only access.
+  9. **Hygiene.**
+     - Unexpected errors return a generic 500 with a request id, and missing records are 404s.
+     - Baseline security headers are set, with CSP in Report-Only mode first.
+     - IDs use a CSPRNG suffix.
+- **Consequences**:
+  - Roles that used to reach Growth, Marketing, Autonomous, Enterprise and Operations only because checks were missing no longer can. The role review with the product owner is pending (FIX_IMPLEMENTATION_PLAN FX-10 step 7).
+  - Workspaces without their own enterprise organization get 404 from enterprise endpoints until they create one.
+  - Operators sign in to the console separately. Step-up actions become available once they set up an authenticator.
+  - n8n workflows need a service token with the listed scopes (`n8n/deployment/import.md`).
+  - Guarded by:
+    - `tests/rbac-matrix-tests.ts`, where SUPPORT gets 403 on all 140 handlers and ADMIN is never refused;
+    - `tests/phase1-integrity-tests.ts`.
+- **Deviations from FIX_IMPLEMENTATION_PLAN Phase 1**:
+  - FX-10 step 6: only navigation is filtered. Pages don't all render a 403 state or hide every action button.
+  - FX-10 step 7: the role review is pending.
+  - FX-11: partial payments are allowed, as described above; the plan rejected underpayment.
+  - FX-14: in-memory limits with no Upstash; no per-client bucket without a trusted proxy.
+  - FX-16: human-facing numbers (PO numbers, SKU suffixes) wait for FX-35 sequences.
+  - FX-18 step 6: enterprise Developer API keys are neither wired nor removed (decision D2).
+  - Also done in Phase 1:
+    - enterprise organization ownership (H13 at module scale);
+    - the webhook dedup fix (N2);
+    - no platform session from the workspace login;
+    - the workflow engine records a creator-less workflow as SYSTEM.

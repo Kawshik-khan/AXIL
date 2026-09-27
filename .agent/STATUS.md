@@ -6,7 +6,7 @@
 > **target** design. When a doc and this file disagree, this file wins for "what exists"; the doc wins for
 > "what we are building toward". Never report a target-design capability as working unless this file says LIVE.
 
-**Overall posture: NOT production-ready. Do not expose to any network.** Phase 0 containment (FX-00…FX-08, [ADR-103](DECISIONS.md#adr-103-fail-closed-authentication-secrets-and-webhook-signatures-phase-0-containment)) is implemented on branch `phase-0-containment` (2026-09-27). It closes the unauthenticated exploits C1–C4, C8, H1 and H5, and contains H10. Still open, and Phase 1 (FX-10…FX-19) is next: missing RBAC (H2), payment verification (H3), mass assignment (H4), IDOR (H13), no rate limiting and no MFA.
+**Overall posture: NOT production-ready. Do not expose to any network.** Phase 0 containment (FX-00…FX-08, [ADR-103](DECISIONS.md#adr-103-fail-closed-authentication-secrets-and-webhook-signatures-phase-0-containment)) and Phase 1 access control (FX-10…FX-19, [ADR-104](DECISIONS.md#adr-104-access-control-and-integrity-phase-1)) are implemented on branch `phase-1-access-control` (2026-09-28). Remaining blockers before any network exposure: the JSON-file store (C6, C7, Phase 2/4), fabricated metrics and simulated integrations (H6–H9, H14, Phase 3), unenforced platform safety controls (H11) and N8.
 
 ---
 
@@ -32,18 +32,18 @@
 | Vectors / RAG | Pinecone client (`src/infrastructure/pinecone`) + in-process BM25; embeddings are fake | pgvector / Pinecone hybrid | SIMULATED (H14) |
 | Cache / events | Upstash Redis REST client, largely unused; no Streams consumer groups, no Redlock | Redis Streams + PubSub + locks | TARGET |
 | LLM | `src/domains/ai/providers/mock-llm.provider.ts` keyword mock | Multi-provider router | SIMULATED (H14) |
-| Auth | jose JWTs with issuer + one audience per purpose; bcrypt-only password checks; `JWT_SECRET` / `CREDENTIALS_ENCRYPTION_KEY` fail closed (no defaults); dev bypass only with `DEV_AUTH_BYPASS=1` and no token; platform role read from the stored membership; step-up returns 501 | Verified JWT, MFA, step-up | PARTIAL — backdoors removed (C1–C3, C8, H1, N1; ADR-103). No MFA/TOTP (FX-15), no rate limiting (FX-14); a workspace admin can change a member's global account status (N5) |
-| Tenant RBAC | `RbacService.assertCan` exists; ~100 mutation routes skip it | Every route guarded | PARTIAL (H2, H13) |
-| Platform control plane | Services under `src/domains/platform/services/`; kill switches / flags / entitlements not enforced. Real operator sign-in (`/super-admin/login`); the 7 step-up actions (kill-switch activate/deactivate, platform config, impersonation, tenant suspend/delete, security settings) are unavailable until TOTP (FX-15); newly provisioned tenant owners cannot sign in yet (N8) | Enforced gates | PARTIAL (H11, N8) |
-| Webhooks | Courier/payment: per-endpoint `?wh=` id, HMAC of `<timestamp>.<raw body>`, 300 s window, tenant from the webhook row. Social: strict channel resolution, Meta signature mandatory, verify token only from env | HMAC + replay defense | PARTIAL — C4 and H5 closed. Gateway event-id dedup never completes its lock (N2); provider-native signature formats not built (Phase 5); n8n relay workflows don't sign yet, so they get 401 (FX-18) |
+| Auth | jose JWTs (issuer + one audience per purpose) carrying a session version; bcrypt-only passwords; secrets fail closed; operator TOTP MFA (two-step sign-in, step-up with replay protection); per-account login rate limits; "sign out everywhere"; no implicit roles for platform staff; scoped service tokens for automations | Verified JWT, MFA, step-up | PARTIAL — workspace users have no MFA; rate limits are per process (one replica until FX-45); account-existence timing leaks (Low) |
+| Tenant RBAC | `RbacService.assertCan` on every handler of the six previously unguarded domains (140 handlers, RBAC matrix test) plus the service-layer checks elsewhere; approvers come from the session; four-eyes on high-risk campaigns; id lookups are tenant-scoped; enterprise organizations belong to a workspace | Every route guarded | LIVE (API) — the dock and command palette hide modules a role can't use, but pages don't all show a 403 state yet; role review pending (FX-10 step 7) |
+| Platform control plane | Services under `src/domains/platform/services/`; kill switches / flags / entitlements not enforced. Real operator sign-in with TOTP; step-up actions work once the operator sets up an authenticator; newly provisioned tenant owners cannot sign in yet (N8) | Enforced gates | PARTIAL (H11, N8) |
+| Webhooks | Courier/payment: per-endpoint `?wh=` id, HMAC of `<timestamp>.<raw body>`, 300 s window, tenant from the webhook row, duplicates suppressed by a key from signed data, 600/min per endpoint. Social: per-entry channel resolution, Meta signature mandatory | HMAC + replay defense | PARTIAL — secrets are per provider, not per endpoint (Low); provider-native signature formats not built (Phase 5); n8n relays must add HMAC signing (import guide) |
 | External integrations | Social send, courier booking, payment verification, connectors all stubbed but report success | Real adapters | SIMULATED (H9) |
 | Analytics | Hard-coded baselines + 50-row truncation | Real aggregates | BROKEN (H6, H7) |
 | Docker / deploy | No Dockerfile; `n8n/docker-compose.yml` only | Multi-stage image, readiness probe | TARGET (readiness probe always "ready", L3) |
 | Lint | `npm run lint` has no ESLint config | Enforced lint | TARGET |
-| Type-check | `npm run type-check` reports 12 errors, all in the unwired `customer.repository.ts` / `social.repository.ts` (H15); unchanged by Phase 0 | Zero errors | BROKEN |
-| Tests | `npm test` → 20 custom suites, 393 tests, all pass. `tests/security-regression-tests.ts` (46 tests) covers the Phase 0 exploits; `scripts/smoke-security.mjs` replays them against a running server | Unit + integration + eval + E2E | PARTIAL — no RBAC-matrix, IDOR or E2E tests yet (FX-61) |
+| Type-check | `npm run type-check` reports 12 errors, all in the unwired `customer.repository.ts` / `social.repository.ts` (H15); unchanged by Phases 0 and 1 | Zero errors | BROKEN |
+| Tests | `npm test` → 22 custom suites, 729 tests, all pass: `security-regression-tests.ts` (46, Phase 0), `rbac-matrix-tests.ts` (287, Phase 1) and `phase1-integrity-tests.ts` (49, Phase 1) among them; `scripts/smoke-security.mjs` replays the exploits against a running server | Unit + integration + eval + E2E | PARTIAL — no E2E/UI tests, no load test (FX-63) |
 | Agent evals | `src/domains/ai/eval/golden-dataset.ts` + `evaluation.service.ts`; no `test:eval` script | Gated eval suite | PARTIAL |
-| Git | Local git repository (branch `phase-0-containment`); `.gitignore` keeps out env files, `.data/`, `.backups/` and generated seeds | Versioned, PR-reviewed | PARTIAL — no remote, no CI |
+| Git | Local git repository: `main` (baseline) ← `phase-0-containment` ← `phase-1-access-control`; `.gitignore` keeps out env files, `.data/`, `.backups/` and generated seeds | Versioned, PR-reviewed | PARTIAL — no remote, no CI, branches not merged or tagged |
 
 ---
 
@@ -74,25 +74,34 @@ Basic CRUD (orders, products, inventory, customers, inbox, settings) is genuinel
 - H10 is contained: step-up fails closed and no session claims MFA. Real TOTP is FX-15.
 - C5 is closed in the repository: `.env.example` has placeholders only, and `.gitignore` is in place. **The owner must still rotate the Neon database password that was in `.env.example`.**
 
-**Phase 1, next (FIX_IMPLEMENTATION_PLAN FX-10…FX-19):** H2, H3, H4, H13, rate limiting (FX-14), TOTP and session hygiene (FX-15), n8n machine credentials (FX-18).
+**Closed by Phase 1 (2026-09-28, ADR-104):**
+- H2 (RBAC on 140 handlers), H3 (payment verification), H4 (mass assignment), H13 (IDOR, including enterprise organizations), H10 (real TOTP step-up).
+- M4 (cryptographic IDs), M9/M10 (session hygiene; no implicit OWNER for platform staff), M12 (workflows act with their creator's permissions), M13 (rate limiting).
+- L1 (generic 500s), L2/L8 (security headers).
+- Phase 0 findings: N2 (webhook dedup), N4 (fake MFA flags), N5 (workspace-only suspension). The low item "`x-request-id` feeds the idempotency key" is also closed.
 
-**New findings (found during Phase 0, not fixed yet):**
-- **N6 (Medium, contained)** — Identity resolution links a conversation to an existing customer by phone/email, and the public widget used to forward the phone/email a visitor typed. Anyone could then post as a known customer and see replies about their orders. Phase 0 stops the widget forwarding them, so visitor contact details are currently dropped. Still open: a verified-contact design, and made-up `+8801700…` placeholder phones for customers without one (`identity-resolution.service.ts`, FX-30).
-- **N8 (Medium)** — `platform-tenant.service.ts` provisions the tenant owner as `INVITED` with a disabled password, and nothing lets them set one. Invitation accept rejects non-ACTIVE accounts, and the console ignores `owner_setup_required`. Provisioned workspaces are unusable until an owner-setup flow exists (FX-37).
-- **N5 (High)** — `PATCH /api/v1/users/[id]` with `status` changes the member's *global* account (`users.status`), not their membership in this workspace. `status` is also unvalidated. Any workspace admin can therefore suspend or deactivate a member everywhere, including a platform operator such as the seeded `superadmin@`, who is a member of `ten_default_dhaka`. Fix in Phase 1 with FX-10/FX-12: add a per-membership status and validate with Zod.
-- **N2 (Medium)** — Webhook gateway replay check (`webhook-gateway.service.ts`, step 4): the idempotency lock is acquired but never marked completed, so a repeated event id is not suppressed at the gateway. Signatures now bind the timestamp, so a replay only works within 300 s, and courier sync has its own idempotency. Fix with FX-18 / FX-35.
-- **N3 (Low)** — `src/types/declarations.d.ts` declares a minimal global `process` and `fs` / `path` stubs that shadow `@types/node`; `skipLibCheck` hides it. Fold into FX-38.
-- **Low, from the Phase 0 security review:**
-  - 500s still return `error.message` (L1), which now includes configuration errors such as "JWT_SECRET is missing…".
+**Open from Phases 0 and 1:**
+- **N6 (Medium, contained)** — Phase 0 stopped the public widget from sending visitor phone/email into identity resolution, so a visitor can no longer pose as a known customer. What's still missing:
+  - a verified-contact design;
+  - real placeholders instead of the made-up `+8801700…` phones given to customers who have none (FX-30).
+- **N8 (Medium)** — `platform-tenant.service.ts` provisions the tenant owner as `INVITED` with a disabled password, and nothing lets them set one. Provisioned workspaces are unusable until an owner-setup flow exists (FX-37).
+- **N3 (Low)** — `src/types/declarations.d.ts` shadows `@types/node` (hidden by `skipLibCheck`). Fold into FX-38.
+- **Low:**
   - Timing and responses still reveal whether an account exists or is disabled: the `!disabled` hash short-circuits, tenant login has no dummy compare, and invitation accept answers differently.
-  - Courier webhook secrets are one per provider, shared across tenants, and the signature doesn't cover `wh`. A captured request can be replayed to another tenant's endpoint within 300 s. Fix: sign `<ts>.<wh>.<body>` or use per-row secrets (FX-18).
+  - Courier webhook secrets are per provider and shared across tenants, and the signature doesn't cover `wh`. Fix: per-endpoint secrets.
   - The website server-to-server HMAC has no timestamp.
-  - `x-request-id` (unsigned) feeds the gateway idempotency key.
-  - The test fixture `tests/connectors-tests.ts` contains a fake `npg_` string, so FX-00's literal `git grep npg_` check matches it. No real credential is in the history.
-- **N4 (Low)** — `platform-user.service.ts` stores `mfa_enabled: true` by default and the seed marks operators MFA-enabled, although no MFA exists. Phase 0 no longer displays or trusts the flag. Fix with FX-15.
+  - `tests/connectors-tests.ts` contains a fake `npg_` string, so FX-00's literal grep matches it. No real credential is in the history.
+- **Deferred from Phase 1** (see ADR-104 deviations):
+  - Pages don't all render a 403 state (only navigation is filtered).
+  - The role review with the product owner (FX-10 step 7) is pending.
+  - Human-facing numbers (PO numbers, SKU suffixes) wait for FX-35 sequences.
+  - Enterprise Developer API keys are neither wired nor removed (FX-18 step 6, decision D2).
+  - Rate limits and step-up replay state are per process (one replica until FX-45).
+  - Workspace users have no MFA.
 
-**Hardening:** C6, C7, H6–H9, H11–H14, M1–M3, M11, M13.
-**Hygiene:** H15, M4–M10, M12, M15–M17, L1–L8.
+**Next — Phase 2 (FX-20…FX-24):** coalesced persistence, pure GETs, the analytics truncation fix (C6, C7, H6, H8).
+**Hardening:** C6, C7, H6–H9, H11, H12, H14, M1–M3, M11.
+**Hygiene:** H15, M5–M8, M15–M17, L3–L7.
 
 When you fix a finding: update the row in §2 (if the status changed), and add a line to §5.
 
@@ -102,6 +111,7 @@ When you fix a finding: update the row in §2 (if the status changed), and add a
 
 | Date | Change | Finding IDs | Verified by |
 |---|---|---|---|
+| 2026-09-28 | Phase 1 access control and integrity (FX-10…FX-19): RBAC on 140 handlers, payment verification rules, strict update schemas, tenant-scoped lookups and enterprise organization ownership, rate limiting, TOTP MFA and revocable sessions, cryptographic IDs, generic 500s and security headers, scoped service tokens, creator-scoped workflows; Auth / Tenant RBAC / Platform / Webhooks / Tests / Git rows updated | H2, H3, H4, H10, H13, M4, M9, M10, M12, M13, L1, L2, L8, N2, N4, N5 | all 22 suites (729), `npm run type-check` (12, unchanged), `scripts/smoke-security.mjs` |
 | 2026-09-27 | Phase 0 containment (FX-00…FX-08): backdoors removed, secrets fail closed, per-purpose token audiences, HMAC-signed courier/payment webhooks, strict social ingress, real super-admin sign-in, invitation accept requires the account's password; Auth / Webhooks / Tests / Git rows updated | C1–C5, C8, H1, H5, H10, M14, N1, N6 | `npm test` (all suites pass), `npm run type-check` (12, unchanged), `scripts/smoke-security.mjs` against a throwaway dev server (16/16) |
 | 2026-09-27 | `.agent/` governance restructured; STATUS.md created to replace PROJECT_STATE.md | I2 | — |
 
