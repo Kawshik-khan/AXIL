@@ -15,9 +15,11 @@ import {
   verifyPlatformSessionToken,
   signStepUpToken,
   decryptCredential,
+  AUTH_COOKIE_NAME,
   PLATFORM_AUTH_COOKIE_NAME,
 } from "@/lib/security";
 import { extractRequestContext, extractPlatformContext } from "@/lib/api-response";
+import { InvitationService } from "@/domains/invitations/service";
 import { WebhookGatewayService } from "@/domains/automation/services/webhook-gateway.service";
 import { WebhookIngressService } from "@/domains/social/webhooks/webhook-ingress.service";
 import { ChannelService } from "@/domains/social/channels/channel.service";
@@ -198,6 +200,39 @@ async function main() {
     assert.deepStrictEqual(offenders.map((f) => path.relative(path.resolve(__dirname, ".."), f)), []);
   });
 
+  const { POST: acceptInvitation } = await import("@/app/api/v1/invitations/[token]/route");
+  const postAcceptance = (token: string, body: Record<string, unknown>) =>
+    acceptInvitation(new Request(`${BASE}/api/v1/invitations/${token}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }), { params: { token } });
+
+  // An existing account that workspace B's owner will invite and then try to accept on its behalf.
+  const inviteePassword = "Invitee-Own-Pass-6604!";
+  const invitee = await AuthService.registerTenantWithOwner({
+    email: `invitee-${Date.now()}@shop-c.test`,
+    password: inviteePassword,
+    name: "Existing Invitee",
+    workspaceName: `Security Shop C ${Date.now()}`,
+  });
+  const inviteeInvitation = InvitationService.createInvitation(tenantB.tenant.id, invitee.user.email, "ADMIN", tenantB.user.id);
+
+  await runTest("N1: an invitation link does not sign in an existing account without its password", async () => {
+    for (const body of [{}, { password: "wrong-password-123" }, { name: "Someone Else", password: "Attacker-Pass-123!" }]) {
+      const res = await postAcceptance(inviteeInvitation.token, body);
+      assert.strictEqual(res.status, 401, `accepting with ${JSON.stringify(body)} must fail`);
+      assert.ok(!res.headers.getSetCookie().some((c) => c.startsWith(`${AUTH_COOKIE_NAME}=`)), "no session cookie");
+    }
+    assert.strictEqual(db.findMembership(tenantB.tenant.id, invitee.user.id), undefined, "no membership was created");
+  });
+
+  await runTest("N1: the account's own password accepts the invitation", async () => {
+    const res = await postAcceptance(inviteeInvitation.token, { password: inviteePassword });
+    assert.strictEqual(res.status, 200);
+    assert.ok(db.findMembership(tenantB.tenant.id, invitee.user.id), "membership created");
+  });
+
   // ---------------------------------------------------------------------------
   console.log(`\n${ANSI_BOLD}[FX-03] Secrets, token audiences, credential key (C2, M14, H10)${ANSI_RESET}`);
   // ---------------------------------------------------------------------------
@@ -238,6 +273,27 @@ async function main() {
     const payload = await verifyPlatformSessionToken(token);
     assert.ok(payload);
     assert.strictEqual(payload.mfaVerified, false);
+  });
+
+  await runTest("H10: the workspace login never marks an operator's platform session MFA-verified", async () => {
+    const password = "Operator-Pass-5521!";
+    const operator = await createPlatformOperator("SUPER_ADMIN", password);
+    const now = new Date().toISOString();
+    // A stored mfa_enabled flag is not a verified factor.
+    db.savePlatformMembership({ id: `pm_${operator.id}`, user_id: operator.id, role: "SUPER_ADMIN", mfa_enabled: true, is_active: true, created_at: now, updated_at: now });
+    db.createMembership({ id: `mem_${operator.id}`, tenant_id: tenantA.tenant.id, user_id: operator.id, role: "ADMIN", created_at: now, updated_at: now });
+    const { POST } = await import("@/app/api/v1/auth/login/route");
+    const res = await POST(new Request(`${BASE}/api/v1/auth/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: operator.email, password }),
+    }));
+    assert.strictEqual(res.status, 200);
+    const platformCookie = res.headers.getSetCookie().find((c) => c.startsWith(`${PLATFORM_AUTH_COOKIE_NAME}=`));
+    assert.ok(platformCookie, "an operator signing in through the workspace login also gets a platform session");
+    const claims = await verifyPlatformSessionToken(decodeURIComponent(platformCookie.split(";")[0].slice(PLATFORM_AUTH_COOKIE_NAME.length + 1)));
+    assert.ok(claims);
+    assert.strictEqual(claims.mfaVerified, false);
   });
 
   await runTest("M14: credentials encrypted with a key derived from the default JWT secret no longer decrypt", () => {

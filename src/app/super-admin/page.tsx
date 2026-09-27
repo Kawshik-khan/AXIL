@@ -1017,7 +1017,7 @@ export default function SuperAdminPage() {
                   <span className={styles.statLabel}>
                     <UserCheck size={14} /> Platform Operators
                   </span>
-                  <span className={styles.statValue}>{operators.length || 5} active (100% MFA)</span>
+                  <span className={styles.statValue}>{operators.length} active · MFA not available yet</span>
                 </div>
                 <div className={styles.statRow}>
                   <span className={styles.statLabel}>
@@ -1597,7 +1597,9 @@ export default function SuperAdminPage() {
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                       <span className={styles.roleTag}>{op.platformRole || "OPERATOR"}</span>
-                      <span className={`${styles.statusPill} ${styles.statusPillActive}`}>MFA ON</span>
+                      <span className={`${styles.statusPill} ${styles.statusPillTrial}`} title="TOTP enrollment is not implemented yet (FX-15)">
+                        NO MFA
+                      </span>
                     </div>
                   </div>
                 ))}

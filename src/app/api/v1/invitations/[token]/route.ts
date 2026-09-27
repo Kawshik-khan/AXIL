@@ -2,9 +2,9 @@ import { InvitationService } from "@/domains/invitations/service";
 import { TenantService } from "@/domains/tenants/service";
 import { AuthService } from "@/domains/auth/service";
 import { db, UserRecord } from "@/infrastructure/db";
-import { hashPassword, signSessionToken, AUTH_COOKIE_NAME } from "@/lib/security";
+import { hashPassword, verifyPassword, signSessionToken, AUTH_COOKIE_NAME } from "@/lib/security";
 import { apiSuccess, apiError } from "@/lib/api-response";
-import { ValidationError } from "@/lib/errors";
+import { AuthenticationError, ValidationError } from "@/lib/errors";
 
 export async function GET(
   _request: Request,
@@ -36,7 +36,14 @@ export async function POST(
 
     let user = db.findUserByEmail(invitation.email);
 
-    if (!user) {
+    if (user) {
+      // The link alone is not proof of identity: an existing account accepts only with its own password.
+      // Otherwise anyone who can create an invitation could mint a session for any existing email (ADR-103).
+      const password = typeof body.password === "string" ? body.password : "";
+      if (user.status !== "ACTIVE" || !(await verifyPassword(password, user.password_hash))) {
+        throw new AuthenticationError("Enter this account's password to accept the invitation.");
+      }
+    } else {
       if (!body.name || body.name.trim().length < 2) {
         throw new ValidationError("Your full name must be at least 2 characters.");
       }

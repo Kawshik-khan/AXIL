@@ -36,7 +36,8 @@ export async function POST(request: Request) {
         email: result.user.email,
         name: result.user.name,
         platformRole: platformMembership.role,
-        mfaVerified: platformMembership.mfa_enabled,
+        // No second factor is checked at login (TOTP is FX-15); a stored `mfa_enabled` flag is not a verification.
+        mfaVerified: false,
       });
       response.cookies.set({
         name: PLATFORM_AUTH_COOKIE_NAME,
