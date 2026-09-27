@@ -41,7 +41,7 @@
 | Docker / deploy | No Dockerfile; `n8n/docker-compose.yml` only | Multi-stage image, readiness probe | TARGET (readiness probe always "ready", L3) |
 | Lint | `npm run lint` has no ESLint config | Enforced lint | TARGET |
 | Type-check | `npm run type-check` reports 12 errors, all in the unwired `customer.repository.ts` / `social.repository.ts` (H15); unchanged by Phases 0 and 1 | Zero errors | BROKEN |
-| Tests | `npm test` → 22 custom suites, 729 tests, all pass: `security-regression-tests.ts` (46, Phase 0), `rbac-matrix-tests.ts` (287, Phase 1) and `phase1-integrity-tests.ts` (49, Phase 1) among them; `scripts/smoke-security.mjs` replays the exploits against a running server | Unit + integration + eval + E2E | PARTIAL — no E2E/UI tests, no load test (FX-63) |
+| Tests | `npm test` → 22 custom suites, 741 tests, all pass: `security-regression-tests.ts` (46, Phase 0), `rbac-matrix-tests.ts` (287, Phase 1) and `phase1-integrity-tests.ts` (61, Phase 1 + review fixes) among them; `scripts/smoke-security.mjs` replays the exploits against a running server | Unit + integration + eval + E2E | PARTIAL — no E2E/UI tests, no load test (FX-63) |
 | Agent evals | `src/domains/ai/eval/golden-dataset.ts` + `evaluation.service.ts`; no `test:eval` script | Gated eval suite | PARTIAL |
 | Git | Local git repository: `main` (baseline) ← `phase-0-containment` ← `phase-1-access-control`; `.gitignore` keeps out env files, `.data/`, `.backups/` and generated seeds | Versioned, PR-reviewed | PARTIAL — no remote, no CI, branches not merged or tagged |
 
@@ -79,6 +79,22 @@ Basic CRUD (orders, products, inventory, customers, inbox, settings) is genuinel
 - M4 (cryptographic IDs), M9/M10 (session hygiene; no implicit OWNER for platform staff), M12 (workflows act with their creator's permissions), M13 (rate limiting).
 - L1 (generic 500s), L2/L8 (security headers).
 - Phase 0 findings: N2 (webhook dedup), N4 (fake MFA flags), N5 (workspace-only suspension). The low item "`x-request-id` feeds the idempotency key" is also closed.
+- Phase 1 security review (2026-09-28), all fixed with tests:
+  - an ADMIN could invite an OWNER (High);
+  - `POST /ai/agents` UPDATE_POLICY could write another workspace's autonomy policy (High);
+  - role assignment switched operator MFA off;
+  - the dedup key could be bypassed with a re-cased signature;
+  - `X-Forwarded-For` spoofing behind a proxy;
+  - password guessing through invitation acceptance;
+  - service tokens outliving their creator's access;
+  - the payment AI tool needed only read access;
+  - an unscoped enterprise integration test that faked success;
+  - a rejected reconciliation reported as 200;
+  - a global pre-auth Meta webhook bucket;
+  - a mistyped MFA code signed the console out;
+  - MFA enrollment without re-authentication;
+  - removing the last owner;
+  - account-existence timing on login.
 
 **Open from Phases 0 and 1:**
 - **N6 (Medium, contained)** — Phase 0 stopped the public widget from sending visitor phone/email into identity resolution, so a visitor can no longer pose as a known customer. What's still missing:
@@ -87,7 +103,7 @@ Basic CRUD (orders, products, inventory, customers, inbox, settings) is genuinel
 - **N8 (Medium)** — `platform-tenant.service.ts` provisions the tenant owner as `INVITED` with a disabled password, and nothing lets them set one. Provisioned workspaces are unusable until an owner-setup flow exists (FX-37).
 - **N3 (Low)** — `src/types/declarations.d.ts` shadows `@types/node` (hidden by `skipLibCheck`). Fold into FX-38.
 - **Low:**
-  - Timing and responses still reveal whether an account exists or is disabled: the `!disabled` hash short-circuits, tenant login has no dummy compare, and invitation accept answers differently.
+  - Invitation accept still answers differently for new and existing emails.
   - Courier webhook secrets are per provider and shared across tenants, and the signature doesn't cover `wh`. Fix: per-endpoint secrets.
   - The website server-to-server HMAC has no timestamp.
   - `tests/connectors-tests.ts` contains a fake `npg_` string, so FX-00's literal grep matches it. No real credential is in the history.
@@ -98,6 +114,10 @@ Basic CRUD (orders, products, inventory, customers, inbox, settings) is genuinel
   - Enterprise Developer API keys are neither wired nor removed (FX-18 step 6, decision D2).
   - Rate limits and step-up replay state are per process (one replica until FX-45).
   - Workspace users have no MFA.
+  - A role change doesn't revoke sessions; it takes effect on the next request anyway, because the role is re-read.
+  - Authenticator setup shows the key and `otpauth://` link, not a QR code (no new dependency).
+  - Step-up tokens aren't tied to one action.
+  - The widget's 300-per-minute per-channel cap can be filled by one visitor rotating ids. It's a spam backstop; without a trusted proxy there's no client address to key on.
 
 **Next — Phase 2 (FX-20…FX-24):** coalesced persistence, pure GETs, the analytics truncation fix (C6, C7, H6, H8).
 **Hardening:** C6, C7, H6–H9, H11, H12, H14, M1–M3, M11.
@@ -111,7 +131,7 @@ When you fix a finding: update the row in §2 (if the status changed), and add a
 
 | Date | Change | Finding IDs | Verified by |
 |---|---|---|---|
-| 2026-09-28 | Phase 1 access control and integrity (FX-10…FX-19): RBAC on 140 handlers, payment verification rules, strict update schemas, tenant-scoped lookups and enterprise organization ownership, rate limiting, TOTP MFA and revocable sessions, cryptographic IDs, generic 500s and security headers, scoped service tokens, creator-scoped workflows; Auth / Tenant RBAC / Platform / Webhooks / Tests / Git rows updated | H2, H3, H4, H10, H13, M4, M9, M10, M12, M13, L1, L2, L8, N2, N4, N5 | all 22 suites (729), `npm run type-check` (12, unchanged), `scripts/smoke-security.mjs` |
+| 2026-09-28 | Phase 1 access control and integrity (FX-10…FX-19): RBAC on 140 handlers, payment verification rules, strict update schemas, tenant-scoped lookups and enterprise organization ownership, rate limiting, TOTP MFA and revocable sessions, cryptographic IDs, generic 500s and security headers, scoped service tokens, creator-scoped workflows; Auth / Tenant RBAC / Platform / Webhooks / Tests / Git rows updated | H2, H3, H4, H10, H13, M4, M9, M10, M12, M13, L1, L2, L8, N2, N4, N5 | all 22 suites (741), `npm run type-check` (12, unchanged), `scripts/smoke-security.mjs` 19/19 and a live MFA lifecycle check on the final commit, independent security review and done-check (both findings lists addressed) |
 | 2026-09-27 | Phase 0 containment (FX-00…FX-08): backdoors removed, secrets fail closed, per-purpose token audiences, HMAC-signed courier/payment webhooks, strict social ingress, real super-admin sign-in, invitation accept requires the account's password; Auth / Webhooks / Tests / Git rows updated | C1–C5, C8, H1, H5, H10, M14, N1, N6 | `npm test` (all suites pass), `npm run type-check` (12, unchanged), `scripts/smoke-security.mjs` against a throwaway dev server (16/16) |
 | 2026-09-27 | `.agent/` governance restructured; STATUS.md created to replace PROJECT_STATE.md | I2 | — |
 

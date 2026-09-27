@@ -1262,6 +1262,15 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
   - FX-14: in-memory limits with no Upstash; no per-client bucket without a trusted proxy.
   - FX-16: human-facing numbers (PO numbers, SKU suffixes) wait for FX-35 sequences.
   - FX-18 step 6: enterprise Developer API keys are neither wired nor removed (decision D2).
+  - FX-15:
+    - a role change doesn't bump the session version (the role is re-read on every request anyway);
+    - enrollment shows the key and link, not a QR code;
+    - step-up tokens aren't bound to a single action.
+  - After the security review:
+    - MFA enrollment requires the password;
+    - service tokens act with at most their creator's current permissions;
+    - Meta webhook limits are per channel after the signature check;
+    - clientKey uses the proxy-appended X-Forwarded-For entry (TRUST_PROXY_HOPS).
   - Also done in Phase 1:
     - enterprise organization ownership (H13 at module scale);
     - the webhook dedup fix (N2);

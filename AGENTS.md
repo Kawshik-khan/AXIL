@@ -19,6 +19,7 @@ Next.js 14 App Router · React 18 · TypeScript (strict) · Zod · jose/bcryptjs
 | Type-check | `npm run type-check` | Currently has pre-existing errors (H15). Record the count before and after; never increase it. |
 | All tests | `npm test` | 22 custom suites via `tests/ts-runner.cjs`; the security, RBAC-matrix and Phase 1 integrity suites run first. `&&` stops at the first failing suite, so run a suite on its own to see everything |
 | One suite | `node tests/ts-runner.cjs ./tests/<name>-tests.ts` | e.g. `security-regression-tests.ts`, `commerce-tests.ts` |
+| Proxy config | `TRUST_PROXY=1`, `TRUST_PROXY_HOPS=<n>` | Only behind your own reverse proxy; enables per-client rate limits |
 | Exploit replay | `BASE_URL=http://localhost:3000 node scripts/smoke-security.mjs` | Against a running server started without `DEV_AUTH_BYPASS`; run after touching auth, webhooks or platform routes |
 | DB integration tests | `npm run test:db` | Hits real Neon/Pinecone/Upstash — ask before running |
 | Migrations / seeds | `npm run db:migrate`, `npm run db:seed:*` | Hits real Neon — ask before running |
