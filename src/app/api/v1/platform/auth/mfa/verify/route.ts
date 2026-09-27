@@ -26,7 +26,7 @@ export async function POST(request: Request) {
 
     const user = db.findUserById(pending.userId);
     const membership = db.findPlatformMembershipByUserId(pending.userId);
-    if (!user || user.status !== "ACTIVE" || !membership?.is_active) {
+    if (!user || user.status !== "ACTIVE" || !membership?.is_active || pending.sv !== (user.session_version ?? 1)) {
       throw new AppError("INVALID_CREDENTIALS", "Invalid platform administrator credentials.", 401);
     }
     if (!PlatformMfaService.verifyCode(user.id, code)) {

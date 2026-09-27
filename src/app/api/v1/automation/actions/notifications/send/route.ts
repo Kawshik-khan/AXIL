@@ -18,7 +18,7 @@ export async function POST(request: Request) {
       throw new BadRequestError("Idempotency-Key header is strictly required for automated notifications.");
     }
 
-    const correlationId = request.headers.get("x-correlation-id") || `corr_${Date.now()}`;
+    const correlationId = request.headers.get("x-correlation-id") || `corr_${Date.now()}_${randomSuffix()}`;
     const causationId = request.headers.get("x-causation-id") || undefined;
     const body = await request.json();
 

@@ -430,19 +430,24 @@ export default function SettingsPage() {
                                 <option value="ANALYST">ANALYST</option>
                               </select>
 
-                              {u.status === "ACTIVE" ? (
+                              {u.account_status && u.account_status !== "ACTIVE" ? (
+                                // Account-level states (invited, deactivated) aren't changed from a workspace.
+                                <span style={{ fontSize: "11px", color: "var(--color-text-secondary)" }}>
+                                  Account {String(u.account_status).toLowerCase()}
+                                </span>
+                              ) : u.membership_status === "SUSPENDED" ? (
+                                <button
+                                  onClick={() => handleStatusChange(u.id, "ACTIVE")}
+                                  style={{ color: "var(--color-success)", fontSize: "11px", fontWeight: 500 }}
+                                >
+                                  Restore access
+                                </button>
+                              ) : (
                                 <button
                                   onClick={() => handleStatusChange(u.id, "SUSPENDED")}
                                   style={{ color: "var(--color-danger)", fontSize: "11px", fontWeight: 500 }}
                                 >
                                   Suspend
-                                </button>
-                              ) : (
-                                <button
-                                  onClick={() => handleStatusChange(u.id, "ACTIVE")}
-                                  style={{ color: "var(--color-success)", fontSize: "11px", fontWeight: 500 }}
-                                >
-                                  Activate
                                 </button>
                               )}
                             </div>

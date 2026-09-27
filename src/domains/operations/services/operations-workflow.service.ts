@@ -43,8 +43,8 @@ export class OperationsWorkflowService {
     const receipt: ActionReceipt = {
       id: `rcpt_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
-      workflow_id: `wf_ops_${Date.now()}`,
-      task_id: `tsk_ops_${Date.now()}`,
+      workflow_id: `wf_ops_${Date.now()}_${randomSuffix()}`,
+      task_id: `tsk_ops_${Date.now()}_${randomSuffix()}`,
       action,
       actor_agent: actorAgent,
       target_entity: targetEntity,

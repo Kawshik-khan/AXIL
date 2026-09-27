@@ -369,7 +369,7 @@ export class EvaluateGlobalDecisionTool implements IAgentTool<z.infer<typeof Eva
       requires_approval: true,
       initiated_by: context.user?.id || "autonomous_supervisor",
       initiated_at: new Date().toISOString(),
-      correlation_id: `corr_${Date.now()}`,
+      correlation_id: `corr_${Date.now()}_${randomSuffix()}`,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     });

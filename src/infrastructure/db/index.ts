@@ -6454,9 +6454,11 @@ class CommerceDatabase {
     );
   }
 
-  public upsertAutonomyPolicy(policy: AutonomyPolicy): AutonomyPolicy {
+  /** The tenant is a separate argument and always wins over any tenant_id inside the record (review fix). */
+  public upsertAutonomyPolicy(tenantId: string, input: AutonomyPolicy): AutonomyPolicy {
+    const policy: AutonomyPolicy = { ...input, tenant_id: tenantId };
     const idx = this.data.autonomy_policies.findIndex(
-      (p) => p.tenant_id === policy.tenant_id && p.agent_type === policy.agent_type
+      (p) => p.tenant_id === tenantId && p.agent_type === policy.agent_type
     );
     if (idx >= 0) {
       this.data.autonomy_policies[idx] = {

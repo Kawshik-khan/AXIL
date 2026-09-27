@@ -29,7 +29,7 @@ export class SocialEventService {
       aggregate_type: envelope.aggregateType,
       aggregate_id: envelope.aggregateId,
       actor_id: envelope.actor.id,
-      correlation_id: envelope.correlationId || `corr_${Date.now()}`,
+      correlation_id: envelope.correlationId || `corr_${Date.now()}_${randomSuffix()}`,
       timestamp: new Date().toISOString(),
       payload: envelope.payload,
     };

@@ -6,10 +6,10 @@ import { enforceRateLimit, clientKey, MINUTE } from "@/lib/rate-limit";
 
 export async function POST(request: Request) {
   try {
-    // Sign-up limits (FX-14): 5 per client per hour behind a trusted proxy; without one, a global cap of 30 per hour
-    // still stops mass workspace creation.
+    // Sign-up limits (FX-14): 5 per client per hour behind a trusted proxy, and a global cap of 30 per hour.
     const client = clientKey(request);
-    enforceRateLimit(client ? `register:client:${client}` : "register:global", client ? 5 : 30, 60 * MINUTE);
+    if (client) enforceRateLimit(`register:client:${client}`, 5, 60 * MINUTE);
+    enforceRateLimit("register:global", 30, 60 * MINUTE); // always, so no header can lift the overall cap
     const body = await request.json();
     const result = await AuthService.registerTenantWithOwner(body);
 

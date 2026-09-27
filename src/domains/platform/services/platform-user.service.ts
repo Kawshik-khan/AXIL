@@ -48,15 +48,19 @@ export class PlatformUserService {
     const existing = db.findPlatformMembershipByUserId(input.userId);
     const now = new Date().toISOString();
 
-    const membership: PlatformMembershipRecord = {
-      id: existing?.id || `pm_${crypto.randomUUID().substring(0, 10)}`,
-      user_id: user.id,
-      role: input.role,
-      mfa_enabled: existing?.mfa_enabled ?? false, // only TOTP enrollment turns MFA on (FX-15)
-      is_active: true,
-      created_at: existing?.created_at || now,
-      updated_at: now,
-    };
+    // Keep everything the operator already has (notably the enrolled TOTP secret and last used step); only the role
+    // and active flag change. Rebuilding the record used to silently switch MFA off (Phase 1 security review).
+    const membership: PlatformMembershipRecord = existing
+      ? { ...existing, role: input.role, is_active: true, updated_at: now }
+      : {
+          id: `pm_${crypto.randomUUID().substring(0, 10)}`,
+          user_id: user.id,
+          role: input.role,
+          mfa_enabled: false, // only TOTP enrollment turns MFA on (FX-15)
+          is_active: true,
+          created_at: now,
+          updated_at: now,
+        };
 
     db.savePlatformMembership(membership);
 

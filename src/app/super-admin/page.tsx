@@ -109,6 +109,7 @@ export default function SuperAdminPage() {
   const [mfaSetupNeeded, setMfaSetupNeeded] = useState(false);
   const [mfaEnrollment, setMfaEnrollment] = useState<{ secret: string; otpauth_uri: string } | null>(null);
   const [mfaEnrollCode, setMfaEnrollCode] = useState("");
+  const [mfaSetupPassword, setMfaSetupPassword] = useState("");
   const [operator, setOperator] = useState<{ name: string; role: string } | null>(null);
 
   // Tenant Provisioning Form State
@@ -452,7 +453,12 @@ export default function SuperAdminPage() {
 
   const handleStartMfaSetup = async () => {
     setStepUpError(null);
-    const res = await platformFetch("/api/v1/platform/auth/mfa/enroll", { method: "POST" }, null);
+    const res = await platformFetch(
+      "/api/v1/platform/auth/mfa/enroll",
+      { method: "POST", body: JSON.stringify({ password: mfaSetupPassword }) },
+      null
+    );
+    setMfaSetupPassword("");
     if (!res.ok) {
       setStepUpError((await readError(res, "Authenticator setup could not start.")).message);
       return;
@@ -2386,9 +2392,25 @@ export default function SuperAdminPage() {
 
                 <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "12px" }}>
                   {mfaSetupNeeded && (
-                    <button type="button" className={`${styles.btn} ${styles.btnSecondary}`} onClick={handleStartMfaSetup}>
-                      Set up authenticator
-                    </button>
+                    <>
+                      <input
+                        type="password"
+                        autoComplete="current-password"
+                        placeholder="Your password"
+                        aria-label="Confirm your password to set up an authenticator"
+                        value={mfaSetupPassword}
+                        onChange={(e) => setMfaSetupPassword(e.target.value)}
+                        className={styles.formInput}
+                      />
+                      <button
+                        type="button"
+                        className={`${styles.btn} ${styles.btnSecondary}`}
+                        onClick={handleStartMfaSetup}
+                        disabled={!mfaSetupPassword}
+                      >
+                        Set up authenticator
+                      </button>
+                    </>
                   )}
                   <button type="button" className={`${styles.btn} ${styles.btnSecondary}`} onClick={() => setShowStepUpModal(false)}>
                     Cancel

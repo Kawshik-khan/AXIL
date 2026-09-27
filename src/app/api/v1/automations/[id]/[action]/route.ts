@@ -105,7 +105,7 @@ export async function POST(
         webhookPath: workflow?.n8n_workflow_id || `commerceos-test`,
         event: body.event || { test: true, trigger: "manual_test" },
         correlationId: `test_corr_${Date.now()}_${randomSuffix()}`,
-        idempotencyKey: `test_idemp_${Date.now()}`,
+        idempotencyKey: `test_idemp_${Date.now()}_${randomSuffix()}`,
         executionMode: body.dry_run ? "DRY_RUN" : "TEST",
       });
 
@@ -128,9 +128,9 @@ export async function POST(
         n8nInstanceId: automation.n8n_instance_id,
         webhookPath: workflow?.n8n_workflow_id || `commerceos-replay`,
         event: body.event || { replay: true },
-        correlationId: body.correlation_id || `replay_corr_${Date.now()}`,
+        correlationId: body.correlation_id || `replay_corr_${Date.now()}_${randomSuffix()}`,
         causationId: body.causation_id,
-        idempotencyKey: `replay_idemp_${Date.now()}`,
+        idempotencyKey: `replay_idemp_${Date.now()}_${randomSuffix()}`,
         executionMode: "PRODUCTION",
       });
 

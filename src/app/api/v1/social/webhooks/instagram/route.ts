@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { WebhookIngressService } from "@/domains/social/webhooks/webhook-ingress.service";
-import { checkRateLimit, MINUTE } from "@/lib/rate-limit";
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -23,10 +22,6 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    // Flood backstop per provider (FX-14). Meta retries 429s, so legitimate events are delayed, not lost.
-    if (!checkRateLimit("social_webhook:INSTAGRAM", 1200, MINUTE).allowed) {
-      return NextResponse.json({ error: "rate limited" }, { status: 429, headers: { "Retry-After": "60" } });
-    }
     const rawBody = await request.text();
     const signature = request.headers.get("x-hub-signature-256");
 

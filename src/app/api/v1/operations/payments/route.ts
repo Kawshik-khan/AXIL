@@ -1,3 +1,4 @@
+import { AppError } from "@/lib/errors";
 import { PERMISSIONS } from "@/lib/permissions";
 import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
@@ -37,6 +38,10 @@ export async function POST(request: Request) {
       actor: context.user.id,
     });
 
+    if (!reconciled.matched) {
+      // A rejected reconciliation is not a success (non-negotiable 7); the exception record is kept for follow-up.
+      throw new AppError("PAYMENT_NOT_RECONCILED", reconciled.error || "The transaction could not be reconciled.", 409);
+    }
     return apiSuccess(reconciled);
   } catch (err) {
     return apiError(err);

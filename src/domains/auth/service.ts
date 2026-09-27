@@ -118,17 +118,15 @@ export class AuthService {
     const normalizedEmail = email.trim().toLowerCase();
     const user = db.findUserByEmail(normalizedEmail);
 
-    if (!user) {
+    // Same work and the same answer whether or not the account exists; suspension is revealed only to someone who
+    // knows the password (Phase 1 security review).
+    const passwordMatches = await verifyPassword(password, user?.password_hash ?? "");
+    if (!user || !passwordMatches) {
       throw new AuthenticationError("Invalid email or password.");
     }
 
     if (user.status === "SUSPENDED" || user.status === "DEACTIVATED") {
       throw new UserSuspendedError();
-    }
-
-    const passwordMatches = await verifyPassword(password, user.password_hash);
-    if (!passwordMatches) {
-      throw new AuthenticationError("Invalid email or password.");
     }
 
     // Resolve tenant memberships; a membership suspended by a workspace admin gives no access to that workspace (N5).

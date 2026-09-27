@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 7: Marketing Channel Abstraction & Orchestration Service
  * Integrates WhatsApp, Messenger, Instagram, Web Chat, Email, and Telegram for governed campaign delivery.
@@ -115,7 +116,7 @@ export class InstagramMarketingAdapter implements IMarketingChannelAdapter {
       success: true,
       channel: "INSTAGRAM",
       recipient_id: params.recipientId,
-      external_message_id: `ig_${Date.now()}`,
+      external_message_id: `ig_${Date.now()}_${randomSuffix()}`,
       delivered_at: new Date().toISOString(),
     };
   }
@@ -141,7 +142,7 @@ export class WebsiteMarketingAdapter implements IMarketingChannelAdapter {
       success: true,
       channel: "WEBSITE_CHAT",
       recipient_id: params.recipientId,
-      external_message_id: `web_${Date.now()}`,
+      external_message_id: `web_${Date.now()}_${randomSuffix()}`,
       delivered_at: new Date().toISOString(),
     };
   }
@@ -176,7 +177,7 @@ export class EmailMarketingAdapter implements IMarketingChannelAdapter {
       success: true,
       channel: "EMAIL",
       recipient_id: params.recipientId,
-      external_message_id: `email_${Date.now()}`,
+      external_message_id: `email_${Date.now()}_${randomSuffix()}`,
       delivered_at: new Date().toISOString(),
     };
   }
@@ -202,7 +203,7 @@ export class TelegramMarketingAdapter implements IMarketingChannelAdapter {
       success: true,
       channel: "TELEGRAM",
       recipient_id: params.recipientId,
-      external_message_id: `tg_${Date.now()}`,
+      external_message_id: `tg_${Date.now()}_${randomSuffix()}`,
       delivered_at: new Date().toISOString(),
     };
   }

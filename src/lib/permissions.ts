@@ -433,6 +433,10 @@ export type RoleName =
   /** Machine credential (FX-18): permissions come from the token's scopes, never from this role. */
   | "SERVICE";
 
+/** Roles a person can hold in a workspace (never SERVICE, which is only for service tokens). */
+export const ASSIGNABLE_ROLES = ["OWNER", "ADMIN", "DEV", "MANAGER", "SALES", "SUPPORT", "MARKETING", "INVENTORY", "FINANCE", "ANALYST"] as const;
+export type AssignableRole = (typeof ASSIGNABLE_ROLES)[number];
+
 export const ROLE_PERMISSIONS: Record<RoleName, Permission[]> = {
   OWNER: Object.values(PERMISSIONS), // Owner has all tenant permissions
 

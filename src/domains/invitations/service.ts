@@ -1,6 +1,6 @@
 import { randomSuffix } from "@/lib/ids";
 import { db, InvitationRecord } from "@/infrastructure/db";
-import { RoleName } from "@/lib/permissions";
+import { ASSIGNABLE_ROLES, RoleName } from "@/lib/permissions";
 import { generateSecureToken } from "@/lib/security";
 import { NotFoundError, ValidationError, ConflictError } from "@/lib/errors";
 import { AuditService } from "@/domains/audit/service";
@@ -12,6 +12,9 @@ export class InvitationService {
     role: RoleName,
     actorUserId: string
   ): InvitationRecord {
+    if (!(ASSIGNABLE_ROLES as readonly string[]).includes(role)) {
+      throw new ValidationError(`'${role}' is not a role that can be assigned.`);
+    }
     const normalizedEmail = email.trim().toLowerCase();
     if (!normalizedEmail.includes("@")) {
       throw new ValidationError("Invalid email address provided.");
@@ -71,6 +74,9 @@ export class InvitationService {
 
   public static acceptInvitation(token: string, userId: string): { tenantId: string; role: RoleName } {
     const inv = this.getInvitationByToken(token);
+    if (!(ASSIGNABLE_ROLES as readonly string[]).includes(inv.role)) {
+      throw new ValidationError("This invitation carries a role that can't be assigned.");
+    }
 
     // Create tenant membership
     db.createMembership({

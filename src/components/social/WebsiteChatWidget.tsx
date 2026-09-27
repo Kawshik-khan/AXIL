@@ -74,7 +74,7 @@ export const WebsiteChatWidget: React.FC<WebsiteChatWidgetProps> = ({
     }
 
     const userMsg: WidgetMessage = {
-      id: `vis_${Date.now()}`,
+      id: `vis_${Date.now()}_${Array.from(crypto.getRandomValues(new Uint8Array(6)), (b) => b.toString(16).padStart(2, "0")).join("")}`,
       sender: "visitor",
       text,
       timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),

@@ -1,3 +1,4 @@
+import { enforceRateLimit, MINUTE } from "@/lib/rate-limit";
 import { randomSuffix } from "@/lib/ids";
 import { InvitationService } from "@/domains/invitations/service";
 import { TenantService } from "@/domains/tenants/service";
@@ -40,6 +41,9 @@ export async function POST(
     if (user) {
       // The link alone is not proof of identity: an existing account accepts only with its own password.
       // Otherwise anyone who can create an invitation could mint a session for any existing email (ADR-103).
+      // Same per-account limit as sign-in, plus one per invitation, so this can't be used to guess passwords (FX-14).
+      enforceRateLimit(`login:tenant:email:${user.email.toLowerCase()}`, 10, 15 * MINUTE);
+      enforceRateLimit(`invite:accept:${params.token}`, 10, 15 * MINUTE);
       const password = typeof body.password === "string" ? body.password : "";
       if (user.status !== "ACTIVE" || !(await verifyPassword(password, user.password_hash))) {
         throw new AuthenticationError("Enter this account's password to accept the invitation.");

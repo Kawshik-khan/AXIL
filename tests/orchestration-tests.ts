@@ -296,7 +296,7 @@ export async function runOrchestrationTests() {
   console.log(`\n${ANSI_BOLD}Gate 4: 5-Level Autonomy Matrix & Approval Engine${ANSI_RESET}`);
 
   await runTest("Level 0 (Disabled) requires approval for ALL actions including LOW risk", () => {
-    db.upsertAutonomyPolicy({
+    db.upsertAutonomyPolicy(contextA.tenant.id, {
       id: `pol_${contextA.tenant.id}_sales`,
       tenant_id: contextA.tenant.id,
       agent_type: "SALES",
@@ -319,7 +319,7 @@ export async function runOrchestrationTests() {
   });
 
   await runTest("Level 1 (Copilot) requires human sign-off on every action", () => {
-    db.upsertAutonomyPolicy({
+    db.upsertAutonomyPolicy(contextA.tenant.id, {
       id: `pol_${contextA.tenant.id}_sales`,
       tenant_id: contextA.tenant.id,
       agent_type: "SALES",
@@ -342,7 +342,7 @@ export async function runOrchestrationTests() {
   });
 
   await runTest("Level 2 (Assisted) executes LOW risk automatically; holds HIGH risk for approval", () => {
-    db.upsertAutonomyPolicy({
+    db.upsertAutonomyPolicy(contextA.tenant.id, {
       id: `pol_${contextA.tenant.id}_sales`,
       tenant_id: contextA.tenant.id,
       agent_type: "SALES",

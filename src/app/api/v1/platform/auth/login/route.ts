@@ -62,7 +62,7 @@ export async function POST(request: Request) {
 
     // Operators with an authenticator finish sign-in at /platform/auth/mfa/verify (FX-15). No session yet.
     if (PlatformMfaService.isEnrolled(user.id)) {
-      return apiSuccess({ mfa_required: true, mfa_token: await signMfaPendingToken(user.id) });
+      return apiSuccess({ mfa_required: true, mfa_token: await signMfaPendingToken(user.id, user.session_version ?? 1) });
     }
 
     // Operators without an authenticator get a session that is not MFA-verified; step-up asks them to set one up.

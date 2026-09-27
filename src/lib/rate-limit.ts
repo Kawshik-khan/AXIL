@@ -26,6 +26,11 @@ export function checkRateLimit(key: string, limit: number, windowMs: number, now
     for (const [k, v] of Array.from(windows.entries())) {
       if (!v.length || now - v[v.length - 1] > windowMs) windows.delete(k);
     }
+    // Still full (a flood of unique keys): drop the oldest keys so memory stays bounded.
+    for (const k of Array.from(windows.keys())) {
+      if (windows.size <= MAX_KEYS * 0.9) break;
+      windows.delete(k);
+    }
   }
   return { allowed: true, retryAfterSec: 0 };
 }
@@ -45,7 +50,11 @@ export function enforceRateLimit(key: string, limit: number, windowMs: number): 
  */
 export function clientKey(request: Request): string | null {
   if (process.env.TRUST_PROXY !== "1") return null;
-  return request.headers.get("x-forwarded-for")?.split(",")[0].trim() || null;
+  // Proxies append the address they saw on the right; everything to the left of our trusted hops is client-supplied
+  // and could be forged. TRUST_PROXY_HOPS is how many proxies we run (default 1).
+  const hops = Math.max(1, Number(process.env.TRUST_PROXY_HOPS) || 1);
+  const entries = (request.headers.get("x-forwarded-for") || "").split(",").map((e) => e.trim()).filter(Boolean);
+  return entries.length >= hops ? entries[entries.length - hops] : null;
 }
 
 export const MINUTE = 60_000;

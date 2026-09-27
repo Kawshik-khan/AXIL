@@ -126,6 +126,12 @@ export class PaymentOperationsService {
     }
 
     // Authoritative update
+    // Same rule as PaymentService.verifyPayment: never more than what is still due on the order.
+    const paidSoFar = payments.filter((p) => p.status === "PAID" && p.id !== targetPayment.id).reduce((sum, p) => sum + p.amount, 0);
+    if (targetPayment.amount > order.grand_total - paidSoFar + 0.5) {
+      return { matched: false, error: `Payment amount exceeds the ৳${order.grand_total - paidSoFar} still due.` };
+    }
+
     const updated = db.recordPaymentVerification(tenantId, targetPayment.id, {
       transactionId,
       verifiedBy: params.actor,

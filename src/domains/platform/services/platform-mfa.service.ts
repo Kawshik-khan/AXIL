@@ -56,7 +56,7 @@ export class PlatformMfaService {
     }
     const step = verifyTotp(pending, String(code ?? "").trim());
     if (step === null) {
-      throw new AppError("INVALID_MFA_CODE", "The authenticator code is not valid.", 401);
+      throw new AppError("INVALID_MFA_CODE", "The authenticator code is not valid.", 400); // not 401: the session is fine, the code is not
     }
     db.savePlatformMembership({
       ...membership,

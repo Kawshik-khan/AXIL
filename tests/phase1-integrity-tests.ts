@@ -505,11 +505,11 @@ async function main() {
     const notEnrolled = await postPlatform("step-up", { code: "123456" }, cookie);
     assert.strictEqual(notEnrolled.status, 409);
 
-    const enroll = await postPlatform("mfa/enroll", {}, cookie);
+    const enroll = await postPlatform("mfa/enroll", { password: "Operator-Enroll-Pass-3321!" }, cookie);
     assert.strictEqual(enroll.status, 200);
     const { secret } = ((await enroll.json()) as { data: { secret: string } }).data;
     assert.strictEqual(db.findPlatformMembershipByUserId(op.id)?.mfa_enabled, false, "not enabled before confirmation");
-    assert.strictEqual((await postPlatform("mfa/confirm", { code: "000000" }, cookie)).status, 401, "wrong code refused");
+    assert.strictEqual((await postPlatform("mfa/confirm", { code: "000000" }, cookie)).status, 400, "wrong code refused");
     assert.strictEqual((await postPlatform("mfa/confirm", { code: generateTotp(secret) }, cookie)).status, 200);
     assert.strictEqual(db.findPlatformMembershipByUserId(op.id)?.mfa_enabled, true);
     assert.ok(!JSON.stringify(db.findPlatformMembershipByUserId(op.id)).includes(secret), "the secret is stored encrypted");
@@ -518,14 +518,14 @@ async function main() {
     const stepUp = await postPlatform("step-up", { code: nextCode }, cookie);
     assert.strictEqual(stepUp.status, 200);
     assert.ok(((await stepUp.json()) as { data: { stepUpToken?: string } }).data.stepUpToken);
-    assert.strictEqual((await postPlatform("step-up", { code: nextCode }, cookie)).status, 401, "replayed code refused");
+    assert.strictEqual((await postPlatform("step-up", { code: nextCode }, cookie)).status, 400, "replayed code refused");
   });
 
   await runTest("an operator with MFA needs a TOTP code to sign in; only then is the session MFA-verified", async () => {
     const op = await newOperator("Operator-Login-Pass-4432!");
     const first = await postPlatform("login", { email: op.email, password: "Operator-Login-Pass-4432!" });
     const cookie = cookieFrom(first);
-    const enroll = await postPlatform("mfa/enroll", {}, cookie);
+    const enroll = await postPlatform("mfa/enroll", { password: "Operator-Login-Pass-4432!" }, cookie);
     const { secret } = ((await enroll.json()) as { data: { secret: string } }).data;
     assert.strictEqual((await postPlatform("mfa/confirm", { code: generateTotp(secret) }, cookie)).status, 200);
 
@@ -798,6 +798,148 @@ async function main() {
     for (const write of ["orders.update", "payments.verify", "inventory.adjust", "user.invite"]) {
       assert.ok(!ctx.permissions.includes(write), `system workflow must not hold ${write}`);
     }
+  });
+
+  // ---------------------------------------------------------------------------
+  console.log(`\n${ANSI_BOLD}[Phase 1 review fixes]${ANSI_RESET}`);
+  // ---------------------------------------------------------------------------
+
+  const ownerTok = (await AuthService.login(shop.user.email, "Phase1-Owner-Pass-4471!")).token;
+  const post = async (route: string, token: string | null, body: unknown, params?: Record<string, string>) => {
+    type H = (r: Request, ctx?: { params: Record<string, string> }) => Promise<Response>;
+    const mod = (await import(`@/app/api/v1/${route}/route`)) as { POST: H };
+    const path = params ? Object.entries(params).reduce((p, [k, v]) => p.replace(`[${k}]`, v), route) : route;
+    return mod.POST(new Request(`${BASE}/${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify(body),
+    }), params ? { params } : undefined);
+  };
+
+  await runTest("an ADMIN can't invite an OWNER; invalid roles are rejected; an OWNER can invite an OWNER", async () => {
+    const admin = await member(tenantId, "ADMIN");
+    assert.strictEqual((await post("users", admin.token, { email: `${uid("x")}@p1.test`, role: "OWNER" })).status, 403);
+    assert.strictEqual((await post("users", admin.token, { email: `${uid("x")}@p1.test`, role: "SERVICE" })).status, 400);
+    assert.strictEqual((await post("users", admin.token, { email: `${uid("x")}@p1.test`, role: "WIZARD" })).status, 400);
+    assert.strictEqual((await post("users", ownerTok, { email: `${uid("x")}@p1.test`, role: "OWNER" })).status, 201);
+  });
+
+  await runTest("UPDATE_POLICY can't write another workspace's autonomy policy or clear its emergency stop", async () => {
+    const { autonomyPolicyService } = await import("@/domains/ai/orchestration/autonomy/autonomy-policy.service");
+    autonomyPolicyService.triggerEmergencyStop(other.tenant.id, "SALES", "test");
+    const res = await post("ai/agents", ownerTok, {
+      action: "UPDATE_POLICY", agent_type: "SALES", autonomy_level: "LEVEL_4_HIGH",
+      policy_updates: { tenant_id: other.tenant.id, is_emergency_stopped: false },
+    });
+    assert.strictEqual(res.status, 400, "unknown or forbidden keys are rejected");
+    assert.strictEqual(db.getAutonomyPolicy(other.tenant.id, "SALES")?.is_emergency_stopped, true);
+    const ok = await post("ai/agents", ownerTok, { action: "UPDATE_POLICY", agent_type: "SALES", autonomy_level: "LEVEL_2_ASSISTED", policy_updates: { max_actions_per_day: 10 } });
+    assert.strictEqual(ok.status, 200);
+    assert.strictEqual(db.getAutonomyPolicy(tenantId, "SALES")?.max_actions_per_day, 10);
+    assert.strictEqual(db.getAutonomyPolicy(other.tenant.id, "SALES")?.is_emergency_stopped, true);
+  });
+
+  await runTest("assigning a platform role keeps the operator's enrolled MFA", async () => {
+    const { PlatformUserService } = await import("@/domains/platform/services/platform-user.service");
+    const { encryptCredential } = await import("@/lib/security");
+    const { PLATFORM_ROLE_PERMISSIONS } = await import("@/lib/permissions");
+    const op = await newOperator("Operator-Role-Pass-6654!");
+    const m = db.findPlatformMembershipByUserId(op.id)!;
+    db.savePlatformMembership({ ...m, mfa_enabled: true, mfa_secret_encrypted: encryptCredential({ secret: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ" }), mfa_last_step: 5 });
+    const ctx = {
+      requestId: "req_t", traceId: "trc_t", scope: "PLATFORM", platformRole: "SUPER_ADMIN",
+      platformUser: { id: "usr_admin_t", email: "a@t", name: "A", status: "ACTIVE" },
+      permissions: PLATFORM_ROLE_PERMISSIONS.SUPER_ADMIN, mfaVerified: true, stepUpVerified: true, timestamp: nowIso(),
+    };
+    PlatformUserService.assignPlatformRole({ userId: op.id, role: "PLATFORM_ANALYST", reason: "test" }, ctx as never);
+    const after = db.findPlatformMembershipByUserId(op.id)!;
+    assert.strictEqual(after.role, "PLATFORM_ANALYST");
+    assert.ok(after.mfa_enabled && after.mfa_secret_encrypted && after.mfa_last_step === 5, "MFA state kept");
+  });
+
+  await runTest("a webhook replay with an upper-cased signature is still a duplicate", async () => {
+    const secret = crypto.randomBytes(24).toString("hex");
+    process.env.P1_TEST_PATHAO_SECRET = secret;
+    const whId = uid("wh_p1");
+    db.createAutomationWebhook({
+      id: whId, tenant_id: tenantId, provider: "PATHAO", endpoint_path: "/api/v1/automation/webhooks/pathao",
+      secret_reference: "P1_TEST_PATHAO_SECRET", signature_algorithm: "HMAC_SHA256", is_active: true, created_at: nowIso(), updated_at: nowIso(),
+    });
+    const route = (await import("@/app/api/v1/automation/webhooks/[provider]/route")) as {
+      POST: (r: Request, ctx: { params: { provider: string } }) => Promise<Response>;
+    };
+    const body = JSON.stringify({ tracking_number: "TRK-P1-CASE", status: "in_transit" });
+    const ts = Date.now().toString();
+    const sig = crypto.createHmac("sha256", secret).update(`${ts}.${body}`).digest("hex");
+    const send = (s: string) => route.POST(new Request(`${BASE}/automation/webhooks/pathao?wh=${whId}`, {
+      method: "POST", headers: { "content-type": "application/json", "x-webhook-timestamp": ts, "x-webhook-signature": s }, body,
+    }), { params: { provider: "pathao" } });
+    assert.notStrictEqual(((await (await send(sig)).json()) as { duplicate?: boolean }).duplicate, true);
+    assert.strictEqual(((await (await send(sig.toUpperCase())).json()) as { duplicate?: boolean }).duplicate, true);
+  });
+
+  await runTest("behind a proxy the client address is the proxy-appended entry, not a spoofed leftmost one", async () => {
+    const { clientKey } = await import("@/lib/rate-limit");
+    process.env.TRUST_PROXY = "1";
+    try {
+      const req = new Request(`${BASE}/x`, { headers: { "x-forwarded-for": "6.6.6.6, 203.0.113.9" } });
+      assert.strictEqual(clientKey(req), "203.0.113.9");
+    } finally {
+      delete process.env.TRUST_PROXY;
+    }
+  });
+
+  await runTest("invitation acceptance can't be used to guess a password (429 after 10 tries)", async () => {
+    const { InvitationService } = await import("@/domains/invitations/service");
+    const victim = await AuthService.registerTenantWithOwner({ email: `${uid("victim")}@p1.test`, password: "Victim-Own-Pass-1234!", name: "Victim", workspaceName: `V ${Date.now()}` });
+    const inv = InvitationService.createInvitation(tenantId, victim.user.email, "SALES", shop.user.id);
+    let last = 0;
+    for (let i = 0; i < 11; i++) last = (await post("invitations/[token]", null, { password: `guess-${i}` }, { token: inv.token })).status;
+    assert.strictEqual(last, 429);
+  });
+
+  await runTest("a service token stops working when its creator is suspended", async () => {
+    const creator = await member(tenantId, "ADMIN");
+    const created = await createToken(creator.token, { name: "creator-bound", scopes: ["notifications.send"] });
+    const { token } = ((await created.json()) as { data: { token: string } }).data;
+    assert.strictEqual((await notify(token)).status, 200);
+    db.updateMembershipStatus(tenantId, creator.id, "SUSPENDED");
+    assert.strictEqual((await notify(token)).status, 401);
+  });
+
+  await runTest("the payment AI tool needs payments.verify and confirmation", async () => {
+    const tools = await import("@/domains/ai/tools/implementations/operations-tools");
+    const tool = new (tools as unknown as { VerifyPaymentTransactionTool: new () => { requiredPermission: string; requiresConfirmation: boolean; riskLevel: string } }).VerifyPaymentTransactionTool();
+    assert.strictEqual(tool.requiredPermission, "payments.verify");
+    assert.strictEqual(tool.requiresConfirmation, true);
+    assert.strictEqual(tool.riskLevel, "HIGH_RISK");
+  });
+
+  await runTest("enterprise integration test is org-scoped and reports SIMULATED, never fake success", async () => {
+    const { integrationHubService } = await import("@/domains/enterprise/services/integration-hub.service");
+    const instId = uid("inst");
+    db.createIntegrationInstallation({ id: instId, organization_id: "org_owned_by_a", provider_id: "prov_x", provider_name: "SAP", category: "ERP", status: "HEALTHY", credentials_encrypted: "", config: {}, sync_frequency_minutes: 60, created_at: nowIso(), updated_at: nowIso() } as never);
+    assert.throws(() => integrationHubService.testConnection("org_someone_else", instId), /not found/i);
+    const own = integrationHubService.testConnection("org_owned_by_a", instId);
+    assert.strictEqual(own.success, false);
+    assert.strictEqual(own.status, "SIMULATED");
+  });
+
+  await runTest("a workspace can't lose its last owner (demote or suspend → 409)", async () => {
+    const solo = await AuthService.registerTenantWithOwner({ email: `${uid("solo")}@p1.test`, password: "Solo-Owner-Pass-7788!", name: "Solo", workspaceName: `Solo ${Date.now()}` });
+    const coOwner = await member(solo.tenant.id, "OWNER");
+    // With two owners, one may step down; then the remaining single owner can't be demoted or suspended.
+    assert.strictEqual((await sendJson(`users/[id]`, solo.user.id, "PATCH", coOwner.token, { role: "ADMIN" })).status, 200);
+    assert.strictEqual((await sendJson(`users/[id]`, coOwner.id, "PATCH", coOwner.token, { role: "ADMIN" })).status, 409);
+    const admin = await member(solo.tenant.id, "ADMIN");
+    assert.strictEqual((await sendJson(`users/[id]`, coOwner.id, "PATCH", admin.token, { status: "SUSPENDED" })).status, 403, "non-owners can't touch owners");
+  });
+
+  await runTest("a rejected reconciliation answers 409, not 200", async () => {
+    const o = order(tenantId, 800);
+    payment(tenantId, o.id, 800);
+    const res = await post("operations/payments", finance.token, { order_id: o.id, transaction_id: "MISMATCH01", amount: 5 });
+    assert.strictEqual(res.status, 409);
   });
 
   console.log(`\n${ANSI_BOLD}====================================================${ANSI_RESET}`);

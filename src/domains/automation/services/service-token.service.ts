@@ -4,7 +4,8 @@ import { RequestContext } from "@/lib/context";
 import { RbacService } from "@/domains/rbac/service";
 import { AuditService } from "@/domains/audit/service";
 import { Permission, PERMISSIONS, SERVICE_TOKEN_SCOPES } from "@/lib/permissions";
-import { AuthenticationError, ForbiddenError, NotFoundError, ValidationError } from "@/lib/errors";
+import { AuthenticationError, ForbiddenError, NotFoundError, TenantSuspendedError, ValidationError } from "@/lib/errors";
+import { logger } from "@/lib/logger";
 import { newId } from "@/lib/ids";
 
 export const SERVICE_TOKEN_PREFIX = "cos_svc_";
@@ -94,7 +95,22 @@ export class ServiceTokenService {
     if (!tenant) {
       throw new AuthenticationError("Service token workspace no longer exists.");
     }
+    if (tenant.status !== "ACTIVE") {
+      throw new TenantSuspendedError(tenant.name);
+    }
+    // A token never outlives its creator's access: the creator must still be an active member, and the token acts with
+    // at most the creator's CURRENT permissions (like FX-19 workflows; Phase 1 security review).
+    const creator = db.findUserById(record.created_by);
+    const creatorMembership = creator ? db.findMembership(record.tenant_id, creator.id) : undefined;
+    if (!creator || creator.status !== "ACTIVE" || !creatorMembership || creatorMembership.status === "SUSPENDED") {
+      throw new AuthenticationError("The person who created this service token no longer has access to the workspace.");
+    }
+    const creatorPermissions = RbacService.getPermissionsForRole(creatorMembership.role);
+    const effectiveScopes = record.scopes.filter(
+      (s): s is Permission => SERVICE_TOKEN_SCOPES.includes(s as Permission) && creatorPermissions.includes(s as Permission)
+    );
     db.updateServiceToken(record.tenant_id, record.id, { last_used_at: new Date(now).toISOString() });
+    logger.info("service_token.used", { tenant_id: record.tenant_id, service_token_id: record.id, actor_type: "SERVICE", request_id: requestId });
     return {
       requestId,
       traceId: `trc_svc_${requestId}`,
@@ -109,8 +125,8 @@ export class ServiceTokenService {
         status: tenant.status,
       },
       role: "SERVICE",
-      // Only scopes that are still allowed for service tokens take effect.
-      permissions: record.scopes.filter((s): s is Permission => SERVICE_TOKEN_SCOPES.includes(s as Permission)),
+      // Only scopes that are still allowed for service tokens AND still held by the creator take effect.
+      permissions: effectiveScopes,
       timestamp: new Date(now).toISOString(),
     };
   }

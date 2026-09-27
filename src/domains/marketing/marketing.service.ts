@@ -304,7 +304,7 @@ export class MarketingService {
         orderTotalBdt: order.grand_total || cart.abandoned_total_bdt,
         touchpoints: [
           {
-            touch_id: `touch_${Date.now()}`,
+            touch_id: `touch_${Date.now()}_${randomSuffix()}`,
             campaign_id: "cmp_cart_recovery",
             channel: "WHATSAPP",
             touched_at: new Date().toISOString(),

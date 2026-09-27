@@ -5,6 +5,22 @@ import { PERMISSIONS } from "@/lib/permissions";
 import { db } from "@/infrastructure/db";
 import { AgentDefinition } from "@/types/ai";
 import { AppError } from "@/lib/errors";
+import { z } from "zod";
+import { parseOrThrow } from "@/lib/validation";
+
+const AUTONOMY_LEVELS = ["LEVEL_0_DISABLED", "LEVEL_1_COPILOT", "LEVEL_2_ASSISTED", "LEVEL_3_CONDITIONAL", "LEVEL_4_HIGH"] as const;
+const PolicyUpdates = z
+  .object({
+    allowed_tools: z.array(z.string().max(100)).max(100),
+    approval_required_for: z.array(z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"])).max(4),
+    max_actions_per_day: z.number().int().min(0).max(100_000),
+    max_cost_usd_per_day: z.number().finite().min(0).max(100_000),
+    max_duration_ms: z.number().int().min(0).max(3_600_000),
+    allowed_channels: z.array(z.string().max(40)).max(20),
+    enabled: z.boolean(),
+  })
+  .partial()
+  .strict();
 import { agentRegistry } from "@/domains/ai/orchestration/agent-registry";
 import { autonomyPolicyService } from "@/domains/ai/orchestration/autonomy/autonomy-policy.service";
 
@@ -70,11 +86,18 @@ export async function POST(request: Request) {
       if (!body.agent_type || !body.autonomy_level) {
         throw new AppError("VALIDATION_ERROR", "agent_type and autonomy_level are required", 400);
       }
+      // Only policy fields, validated; tenant and agent come from the server. The raw body used to be spread into the
+      // record, so a policy_updates.tenant_id overwrote another workspace's policy (Phase 1 security review).
+      // is_emergency_stopped changes only through the kill-switch route.
+      const updates = parseOrThrow(PolicyUpdates, body.policy_updates ?? {});
+      const autonomyLevel = parseOrThrow(z.enum(AUTONOMY_LEVELS), body.autonomy_level);
       const existing = autonomyPolicyService.getPolicy(context.tenant.id, body.agent_type);
-      const updated = db.upsertAutonomyPolicy({
+      const updated = db.upsertAutonomyPolicy(context.tenant.id, {
         ...existing,
-        ...body.policy_updates,
-        autonomy_level: body.autonomy_level,
+        ...updates,
+        tenant_id: context.tenant.id,
+        agent_type: existing.agent_type,
+        autonomy_level: autonomyLevel,
         updated_at: new Date().toISOString(),
       });
       return apiSuccess({ success: true, policy: updated });

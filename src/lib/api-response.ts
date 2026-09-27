@@ -253,7 +253,7 @@ export async function extractPlatformContext(request: Request): Promise<Platform
   let stepUpVerified = false;
   const stepUpHeader = request.headers.get("x-step-up-token");
   if (stepUpHeader) {
-    stepUpVerified = !!(await verifyStepUpToken(stepUpHeader, user.id));
+    stepUpVerified = !!(await verifyStepUpToken(stepUpHeader, user.id, user.session_version ?? 1));
   }
 
   return {

@@ -1,3 +1,4 @@
+import { newId, randomSuffix } from "@/lib/ids";
 import { PERMISSIONS } from "@/lib/permissions";
 import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
@@ -25,7 +26,7 @@ export async function POST(request: Request) {
     const now = new Date().toISOString();
 
     const created = businessObjectivesService.createObjective({
-      id: body.id || `obj_${Date.now()}`,
+      id: newId("obj"), // never a client-chosen id (it could overwrite or collide with another record)
       tenant_id: context.tenant.id,
       organization_id: body.organization_id,
       parent_objective_id: body.parent_objective_id,

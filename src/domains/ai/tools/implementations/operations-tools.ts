@@ -403,9 +403,10 @@ export class VerifyPaymentTransactionTool implements IAgentTool<z.infer<typeof V
   public readonly name = "verify_payment_transaction";
   public readonly description = "Verifies an incoming bKash or Nagad TrxID against settlement records.";
   public readonly category = "OPERATIONS";
-  public readonly riskLevel: ToolRiskLevel = "LOW_RISK";
-  public readonly requiredPermission = PERMISSIONS.PAYMENTS_READ;
-  public readonly requiresConfirmation = false;
+  // It marks payments and orders PAID, so it needs the same permission and confirmation as a person would (FX-11).
+  public readonly riskLevel: ToolRiskLevel = "HIGH_RISK";
+  public readonly requiredPermission = PERMISSIONS.PAYMENTS_VERIFY;
+  public readonly requiresConfirmation = true;
   public readonly schema = VerifyPaymentTransactionInputSchema;
   public readonly idempotent = true;
 

@@ -88,8 +88,13 @@ export async function hashPassword(password: string): Promise<string> {
 }
 
 /** bcrypt only — no shared passwords, no hash-as-password, no special-cased hashes (audit C1). */
+let timingDummyHash: string | null = null;
+
 export async function verifyPassword(password: string, hash: string): Promise<boolean> {
   if (typeof password !== "string" || typeof hash !== "string" || !hash.startsWith("$2")) {
+    // Spend the same bcrypt time as a real check, so response time doesn't reveal disabled or missing accounts.
+    timingDummyHash ??= bcrypt.hashSync(crypto.randomUUID(), 10);
+    await bcrypt.compare(String(password ?? ""), timingDummyHash).catch(() => false);
     return false;
   }
   try {
@@ -247,8 +252,8 @@ export async function verifyPlatformSessionToken(token: string): Promise<Platfor
 }
 
 /** Issued after a correct password for an operator with MFA; exchanged for a session only with a valid TOTP code. */
-export async function signMfaPendingToken(userId: string): Promise<string> {
-  return new SignJWT({ userId, scope: "MFA_PENDING" })
+export async function signMfaPendingToken(userId: string, sv = 1): Promise<string> {
+  return new SignJWT({ userId, sv, scope: "MFA_PENDING" })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuer(TOKEN_ISSUER)
     .setAudience(TOKEN_AUDIENCE.mfaPending)
@@ -257,11 +262,11 @@ export async function signMfaPendingToken(userId: string): Promise<string> {
     .sign(jwtKey());
 }
 
-export async function verifyMfaPendingToken(token: string): Promise<{ userId: string } | null> {
+export async function verifyMfaPendingToken(token: string): Promise<{ userId: string; sv: number } | null> {
   try {
     const claims = await verifyToken(token, TOKEN_AUDIENCE.mfaPending);
     if (claims.scope !== "MFA_PENDING" || typeof claims.userId !== "string") return null;
-    return { userId: claims.userId };
+    return { userId: claims.userId, sv: typeof claims.sv === "number" ? claims.sv : 1 };
   } catch {
     return null;
   }
@@ -274,9 +279,10 @@ export interface StepUpPayload {
   verifiedAt: string;
 }
 
-export async function signStepUpToken(userId: string, action = "PRIVILEGED_ACTION"): Promise<string> {
+export async function signStepUpToken(userId: string, action = "PRIVILEGED_ACTION", sv = 1): Promise<string> {
   return new SignJWT({
     userId,
+    sv, // bound to the session version, so "sign out everywhere" also cancels step-up
     scope: "STEP_UP",
     action,
     verifiedAt: new Date().toISOString(),
@@ -289,13 +295,16 @@ export async function signStepUpToken(userId: string, action = "PRIVILEGED_ACTIO
     .sign(jwtKey());
 }
 
-export async function verifyStepUpToken(token: string, userId?: string): Promise<StepUpPayload | null> {
+export async function verifyStepUpToken(token: string, userId?: string, sv?: number): Promise<StepUpPayload | null> {
   try {
     const claims = await verifyToken(token, TOKEN_AUDIENCE.stepUp);
     if (claims.scope !== "STEP_UP") {
       return null;
     }
     if (userId && claims.userId !== userId) {
+      return null;
+    }
+    if (sv !== undefined && (typeof claims.sv === "number" ? claims.sv : 1) !== sv) {
       return null;
     }
     return {

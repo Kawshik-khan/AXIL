@@ -1,3 +1,4 @@
+import { randomSuffix } from "@/lib/ids";
 import { AppError } from "@/lib/errors";
 /**
  * CommerceOS Phase 10: Continuous Learning Service
@@ -24,7 +25,7 @@ export class ContinuousLearningService {
   recordOutcome(tenantId: string, sourceDecisionId: string, outcome: Record<string, unknown>): void {
     // Outcomes are stored for future analysis; no immediate model changes
     db.data.global_events.push({
-      event_id: `evt_learn_${Date.now()}`,
+      event_id: `evt_learn_${Date.now()}_${randomSuffix()}`,
       event_type: "autonomous.learning.outcome_recorded",
       version: "1.0",
       tenant_id: tenantId,

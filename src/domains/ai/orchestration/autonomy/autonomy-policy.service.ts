@@ -39,7 +39,7 @@ export class AutonomyPolicyService {
     let policy = db.getAutonomyPolicy(tenantId, agentType);
     if (!policy) {
       policy = this.getDefaultPolicy(tenantId, agentType);
-      db.upsertAutonomyPolicy(policy);
+      db.upsertAutonomyPolicy(tenantId, policy);
     }
     return policy;
   }
@@ -84,7 +84,7 @@ export class AutonomyPolicyService {
     const policy = this.getPolicy(tenantId, agentType);
     policy.is_emergency_stopped = true;
     policy.updated_at = new Date().toISOString();
-    db.upsertAutonomyPolicy(policy);
+    db.upsertAutonomyPolicy(tenantId, policy);
 
     // Record audit log
     db.createAuditLog({
@@ -108,7 +108,7 @@ export class AutonomyPolicyService {
     const policy = this.getPolicy(tenantId, agentType);
     policy.is_emergency_stopped = false;
     policy.updated_at = new Date().toISOString();
-    db.upsertAutonomyPolicy(policy);
+    db.upsertAutonomyPolicy(tenantId, policy);
 
     db.createAuditLog({
       id: `aud_killswitch_cleared_${Date.now()}_${randomSuffix()}`,

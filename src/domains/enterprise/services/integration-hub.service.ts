@@ -112,20 +112,25 @@ export class IntegrationHubService {
   }
 
   /**
-   * Tests integration connectivity
+   * "Tests" an integration. No provider adapter exists yet, so nothing is contacted: the result says SIMULATED instead of
+   * claiming verified credentials (non-negotiable 7). Scoped to the caller's organization (FX-13, security review).
    */
-  public testConnection(installationId: string): { success: boolean; latency_ms: number; message: string } {
-    const inst = db.data.integration_installations.find((i) => i.id === installationId);
+  public testConnection(
+    orgId: string,
+    installationId: string
+  ): { success: boolean; status: "SIMULATED" | "DISCONNECTED"; latency_ms: null; message: string } {
+    const inst = db.data.integration_installations.find((i) => i.id === installationId && i.organization_id === orgId);
     if (!inst) throw new AppError("NOT_FOUND", `Integration installation not found: ${installationId}`, 404);
 
     if (inst.status === "DISCONNECTED") {
-      return { success: false, latency_ms: 45, message: "Integration is disconnected" };
+      return { success: false, status: "DISCONNECTED", latency_ms: null, message: "Integration is disconnected." };
     }
 
     return {
-      success: true,
-      latency_ms: Math.floor(80 + Math.random() * 60),
-      message: `Successfully connected to ${inst.provider_name} endpoint. API credentials verified.`,
+      success: false,
+      status: "SIMULATED",
+      latency_ms: null,
+      message: `No live connection test exists for ${inst.provider_name} yet; nothing was contacted and the credentials were not checked.`,
     };
   }
 

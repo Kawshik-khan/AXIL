@@ -6,6 +6,7 @@ import { signStepUpToken } from "@/lib/security";
 import { parseOrThrow, readJson } from "@/lib/validation";
 import { enforceRateLimit, MINUTE } from "@/lib/rate-limit";
 import { logger } from "@/lib/logger";
+import { db } from "@/infrastructure/db";
 
 const Body = z
   .object({
@@ -29,9 +30,10 @@ export async function POST(request: Request) {
     const { code, action } = parseOrThrow(Body, await readJson(request));
     if (!PlatformMfaService.verifyCode(context.platformUser.id, code)) {
       logger.warn("platform.step_up_failed", { user_id: context.platformUser.id });
-      throw new AppError("INVALID_MFA_CODE", "The authenticator code is not valid.", 401);
+      throw new AppError("INVALID_MFA_CODE", "The authenticator code is not valid.", 400); // not 401: the session is fine, the code is not
     }
-    const stepUpToken = await signStepUpToken(context.platformUser.id, action || "PRIVILEGED_ACTION");
+    const operator = db.findUserById(context.platformUser.id);
+    const stepUpToken = await signStepUpToken(context.platformUser.id, action || "PRIVILEGED_ACTION", operator?.session_version ?? 1);
     logger.info("platform.step_up_granted", { user_id: context.platformUser.id, action: action || "PRIVILEGED_ACTION" });
     const response = apiSuccess({ stepUpToken, expires_in: 300 });
     response.headers.set("Cache-Control", "no-store");

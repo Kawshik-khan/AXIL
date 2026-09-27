@@ -3,6 +3,7 @@ import { ChannelType, ConnectedChannel } from "@/types/social";
 import { ChannelService, PROVIDER_ROUTED_TYPES } from "../channels/channel.service";
 import { ChannelCredentials, IChannelProvider } from "../channels/channel-provider.interface";
 import { logger } from "@/lib/logger";
+import { checkRateLimit, MINUTE } from "@/lib/rate-limit";
 import { IdentityResolutionService } from "../identity/identity-resolution.service";
 import { ConversationService } from "../conversations/conversation.service";
 import { MessageService } from "../messages/message.service";
@@ -19,6 +20,16 @@ export interface WebhookIngressResult {
 }
 
 type PayloadEntry = Record<string, unknown>;
+
+/**
+ * Flood cap per channel, counted only after the signature verified (FX-14 / Phase 1 review). A global pre-auth bucket
+ * would let unauthenticated traffic block every tenant's webhooks.
+ */
+function withinChannelLimit(channel: ConnectedChannel): boolean {
+  if (checkRateLimit(`social_webhook:${channel.id}`, 1200, MINUTE).allowed) return true;
+  logger.warn("social_webhook.rate_limited", { tenant_id: channel.tenant_id, channel_id: channel.id });
+  return false;
+}
 
 export class WebhookIngressService {
   /**
@@ -76,7 +87,7 @@ export class WebhookIngressService {
     //    platform-level secret such as META_APP_SECRET). The only exception is the public browser widget, which by
     //    design cannot hold a secret (restricted to active WEBSITE_CHAT channels and validated/capped by its route).
     const verified = targets.filter(({ channel }) => {
-      if (options.unsignedWidget && channelType === "WEBSITE_CHAT") return true;
+      if (options.unsignedWidget && channelType === "WEBSITE_CHAT") return true; // the widget route has its own limits
       let credentials: ChannelCredentials = {};
       try {
         credentials = ChannelService.getDecryptedCredentials(channel);
@@ -88,8 +99,9 @@ export class WebhookIngressService {
       const ok = adapter.verifyWebhook(rawBody, signature, headers, credentials);
       if (!ok) {
         logger.warn("social_webhook.signature_rejected", { tenant_id: channel.tenant_id, channel_id: channel.id });
+        return false;
       }
-      return ok;
+      return withinChannelLimit(channel);
     });
     if (verified.length === 0) {
       throw new AuthenticationError("Webhook signature verification failed.");

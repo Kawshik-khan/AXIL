@@ -206,7 +206,7 @@ export class WebhookGatewayService {
     const providerEventId = bodyEventId || (req.headers["x-event-id"] as string) || undefined;
     const idempotencyKey = bodyEventId
       ? `wh_${webhook.id}_evt_${bodyEventId}`
-      : `wh_${webhook.id}_sig_${crypto.createHash("sha256").update(cleanSignature).digest("hex")}`;
+      : `wh_${webhook.id}_sig_${crypto.createHash("sha256").update(expectedSignature).digest("hex")}`; // server-computed, so case or spacing changes to the sent signature don't make a new key
     const lock = IdempotencyService.acquireLock(tenantId, idempotencyKey, WEBHOOK_INGESTION_OPERATION, req.parsedBody);
     if (lock.isDuplicate) {
       db.createAutomationWebhookDelivery({

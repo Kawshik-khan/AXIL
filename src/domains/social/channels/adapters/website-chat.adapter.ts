@@ -34,7 +34,7 @@ export class WebsiteChatAdapter implements IChannelProvider {
     rawPayload: Record<string, unknown>,
     channelId: string
   ): NormalizedIncomingMessage[] {
-    const anonymousId = String(rawPayload.anonymous_id || rawPayload.visitor_id || `anon_${Date.now()}`);
+    const anonymousId = String(rawPayload.anonymous_id || rawPayload.visitor_id || `anon_${Date.now()}_${randomSuffix()}`);
     const text = String(rawPayload.text || rawPayload.message || "");
     const messageId = String(rawPayload.client_message_id || `web_msg_${Date.now()}_${randomSuffix()}`);
 

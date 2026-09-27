@@ -240,8 +240,8 @@ export class ToolRegistry {
     const res = await this.executeTool(context, {
       toolName,
       arguments: args,
-      agentRunId: options?.agentRunId || `run_direct_${Date.now()}`,
-      conversationId: options?.conversationId || `conv_direct_${Date.now()}`,
+      agentRunId: options?.agentRunId || `run_direct_${Date.now()}_${randomSuffix()}`,
+      conversationId: options?.conversationId || `conv_direct_${Date.now()}_${randomSuffix()}`,
       idempotencyKey: options?.idempotencyKey,
     });
     if (!res.success) {

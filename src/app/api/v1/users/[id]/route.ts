@@ -3,11 +3,10 @@ import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response"
 import { db } from "@/infrastructure/db";
 import { RbacService } from "@/domains/rbac/service";
 import { AuditService } from "@/domains/audit/service";
-import { PERMISSIONS } from "@/lib/permissions";
-import { NotFoundError, ValidationError, ForbiddenError } from "@/lib/errors";
+import { ASSIGNABLE_ROLES, PERMISSIONS } from "@/lib/permissions";
+import { ConflictError, NotFoundError, ValidationError, ForbiddenError } from "@/lib/errors";
 import { parseOrThrow, readJson } from "@/lib/validation";
 
-const ROLES = ["OWNER", "ADMIN", "DEV", "MANAGER", "SALES", "SUPPORT", "MARKETING", "INVENTORY", "FINANCE", "ANALYST"] as const;
 
 /**
  * Changes a member's role or their access to THIS workspace (FX-12, STATUS N5).
@@ -16,7 +15,7 @@ const ROLES = ["OWNER", "ADMIN", "DEV", "MANAGER", "SALES", "SUPPORT", "MARKETIN
  */
 const MemberPatch = z
   .object({
-    role: z.enum(ROLES),
+    role: z.enum(ASSIGNABLE_ROLES),
     status: z.enum(["ACTIVE", "SUSPENDED"]),
   })
   .partial()
@@ -43,6 +42,17 @@ export async function PATCH(
     // Owners are managed by owners only: nobody else can change, suspend or create an OWNER.
     if ((membership.role === "OWNER" || patch.role === "OWNER") && context.role !== "OWNER") {
       throw new ForbiddenError("Only workspace owners can grant or change owner access.");
+    }
+
+    // A workspace must keep at least one active OWNER (Phase 1 security review).
+    const losesOwner = membership.role === "OWNER" && ((patch.role && patch.role !== "OWNER") || patch.status === "SUSPENDED");
+    if (losesOwner) {
+      const activeOwners = db
+        .findMembershipsByTenantId(context.tenant.id)
+        .filter((m) => m.role === "OWNER" && m.status !== "SUSPENDED");
+      if (activeOwners.length <= 1) {
+        throw new ConflictError("A workspace needs at least one owner. Make someone else an owner first.");
+      }
     }
 
     if (patch.role && patch.role !== membership.role) {
