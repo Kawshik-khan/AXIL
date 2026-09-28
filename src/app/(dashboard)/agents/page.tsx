@@ -1,5 +1,6 @@
 "use client";
 
+import { AiModeBadge } from "@/components/ai/AiModeBadge";
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   Sparkles,
@@ -521,7 +522,7 @@ export default function AIAgentsPage() {
       if (!res.ok) throw new Error("Failed to re-index document");
       const d = await res.json();
       setKnowledgeDocs((prev) => prev.map((doc) => (doc.id === id ? { ...doc, ...d.data } : doc)));
-      alert("Document re-indexed successfully in vector database!");
+      alert("Document re-indexed.");
     } catch (err: any) {
       alert("Re-index failed: " + err.message);
     } finally {
@@ -624,7 +625,9 @@ export default function AIAgentsPage() {
               <Sparkles size={22} color="#455A00" />
             </div>
             <div>
-              <h1 className={styles.pageTitle}>AI Assistants & Control Center</h1>
+              <h1 className={styles.pageTitle}>
+                AI Assistants & Control Center <AiModeBadge style={{ marginLeft: 8, verticalAlign: "middle" }} />
+              </h1>
               <p className={styles.pageSubtitle}>
                 Your 24/7 intelligent sales team. Automatically replies to customer questions, checks live inventory, tracks orders, and manages support across Facebook, Instagram, and WhatsApp.
               </p>

@@ -867,7 +867,7 @@ async function main() {
   });
 
   await runTest("FX-34: provider and workflow kill switches are enforced by the model router and automations", async () => {
-    const router = new ModelRouter();
+    const router = ModelRouter.getInstance();
     const providerName = router.getActiveProvider().provider.providerName;
     PlatformSafetyService.activateKillSwitch({ scope: "PROVIDER", targetId: providerName, reason: "P3 provider outage" }, operatorCtx as never);
     try {
@@ -946,6 +946,82 @@ async function main() {
 
     PlatformSupportService.revokeSession(session.id, "done", operatorCtx as never);
     assert.strictEqual((await as("GET", "auth/session", `${platformCookie}; ${impCookie}`)).status, 401, "revoked");
+  });
+
+  // ---------------------------------------------------------------------------
+  console.log(`\n${ANSI_BOLD}[FX-32] A real AI provider, or an honest demo label${ANSI_RESET}`);
+  // ---------------------------------------------------------------------------
+
+  await runTest("FX-32: no provider configured means a clear 424, never a silent keyword mock", async () => {
+    const router = ModelRouter.getInstance();
+    try {
+      router.configure({} as NodeJS.ProcessEnv);
+      assert.strictEqual(router.getMode(), "NOT_CONFIGURED");
+      await assert.rejects(router.chatWithRouting("TIER_1_FAST", [{ role: "user", content: "hi" }]), (e: Error & { code?: string }) => e.code === "AI_PROVIDER_NOT_CONFIGURED");
+      const status = await call("GET", "ai/status", owner.token);
+      assert.strictEqual((status.json.data as { mode: string }).mode, "NOT_CONFIGURED");
+
+      router.configure({ AI_DEMO_MODE: "1" } as NodeJS.ProcessEnv);
+      const demo = await router.chatWithRouting("TIER_1_FAST", [{ role: "user", content: "delivery charge koto?" }]);
+      assert.strictEqual(demo.demo, true);
+      assert.strictEqual(demo.costUsd, 0, "the demo costs nothing");
+      assert.strictEqual(router.resolveModelName("TIER_1_FAST"), "demo-keyword-mock", "no gemini-1.5 names");
+    } finally {
+      router.configure({ AI_DEMO_MODE: "1" } as NodeJS.ProcessEnv);
+    }
+  });
+
+  await runTest("FX-32: a configured OpenAI-compatible provider is called for real, tool calls round-trip, usage is priced", async () => {
+    const router = ModelRouter.getInstance();
+    const realFetch = globalThis.fetch;
+    const requests: Array<{ url: string; auth: string | null; body: Record<string, unknown> }> = [];
+    let turn = 0;
+    globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+      requests.push({ url: String(url), auth: new Headers(init?.headers).get("authorization"), body });
+      if (String(url).endsWith("/embeddings")) {
+        return new Response(JSON.stringify({ data: [{ embedding: [0.1, 0.2, 0.3] }] }), { status: 200 });
+      }
+      turn++;
+      const message =
+        turn === 1
+          ? { content: null, tool_calls: [{ id: "call_1", type: "function", function: { name: "get_shipping_estimate", arguments: "{\"delivery_zone\":\"INSIDE_DHAKA\"}" } }] }
+          : { content: "ঢাকার ভেতরে ডেলিভারি চার্জ" };
+      return new Response(JSON.stringify({ model: "m-fast", choices: [{ message }], usage: { prompt_tokens: 1000, completion_tokens: 500, total_tokens: 1500 } }), { status: 200 });
+    }) as typeof fetch;
+    try {
+      router.configure({ LLM_BASE_URL: "https://llm.example.test/v1", LLM_API_KEY: "sk-p3-test", LLM_MODEL_FAST: "m-fast", LLM_EMBEDDING_MODEL: "m-embed" } as NodeJS.ProcessEnv);
+      assert.strictEqual(router.getMode(), "LIVE");
+      const tools = [{ name: "get_shipping_estimate", description: "fee", parameters: { type: "object" as const, properties: {} } }];
+      const first = await router.chatWithRouting("TIER_1_FAST", [{ role: "user", content: "charge?" }], tools);
+      assert.strictEqual(first.tool_calls?.[0]?.name, "get_shipping_estimate");
+      assert.deepStrictEqual(first.tool_calls?.[0]?.arguments, { delivery_zone: "INSIDE_DHAKA" });
+      assert.ok(first.costUsd > 0, "priced from reported usage");
+      assert.strictEqual(requests[0].url, "https://llm.example.test/v1/chat/completions");
+      assert.strictEqual(requests[0].auth, "Bearer sk-p3-test");
+      assert.strictEqual(requests[0].body.model, "m-fast");
+
+      // The assistant turn that called the tool goes back with its tool_calls, before the tool result
+      await router.chatWithRouting("TIER_1_FAST", [
+        { role: "user", content: "charge?" },
+        { role: "assistant", content: "", tool_calls: first.tool_calls },
+        { role: "tool", tool_call_id: "call_1", name: "get_shipping_estimate", content: "{\"delivery_charge\":60}" },
+      ], tools);
+      const sent = requests[1].body.messages as Array<Record<string, unknown>>;
+      assert.strictEqual((sent[1].tool_calls as Array<{ id: string }>)[0].id, "call_1");
+      assert.strictEqual(sent[2].tool_call_id, "call_1");
+
+      const vector = await router.generateEmbedding("hello");
+      assert.deepStrictEqual(vector, [0.1, 0.2, 0.3]);
+      assert.strictEqual(requests[2].body.model, "m-embed");
+
+      // A failing provider with no fallback configured fails; the mock never answers instead
+      globalThis.fetch = (async () => new Response("down", { status: 500 })) as typeof fetch;
+      await assert.rejects(router.chatWithRouting("TIER_1_FAST", [{ role: "user", content: "x" }]), (e: Error & { code?: string }) => e.code === "LLM_PROVIDER_ERROR");
+    } finally {
+      globalThis.fetch = realFetch;
+      router.configure({ AI_DEMO_MODE: "1" } as NodeJS.ProcessEnv);
+    }
   });
 
   // Clears the store, so it runs last

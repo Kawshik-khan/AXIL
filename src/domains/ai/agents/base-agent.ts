@@ -86,6 +86,7 @@ export abstract class BaseAgent {
         messages.push({
           role: "assistant",
           content: response.content || "",
+          tool_calls: response.tool_calls, // sent back with the results (FX-32)
         });
 
         for (const tc of response.tool_calls) {

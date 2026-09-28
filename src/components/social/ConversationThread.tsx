@@ -1,5 +1,6 @@
 "use client";
 
+import { AiModeBadge } from "@/components/ai/AiModeBadge";
 import React, { useState, useEffect, useRef } from "react";
 import {
   Send,
@@ -535,6 +536,7 @@ export const ConversationThread: React.FC<ConversationThreadProps> = ({
               <Sparkles size={12} style={{ marginRight: "4px" }} />
               {isLoadingCopilot ? "Thinking..." : "✦ AI Suggest"}
             </button>
+            <AiModeBadge />
           </div>
 
           <div style={{ fontSize: "0.6875rem", color: "#6B7280" }}>

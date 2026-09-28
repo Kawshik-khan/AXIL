@@ -8,6 +8,8 @@ export interface LLMMessage {
   content: string;
   name?: string;
   tool_call_id?: string;
+  /** On an assistant turn that called tools: real providers need it sent back before the tool results (FX-32). */
+  tool_calls?: LLMToolCall[];
 }
 
 export interface LLMToolCall {
