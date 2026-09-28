@@ -19,6 +19,7 @@ export default function SettingsPage() {
   const [tenant, setTenant] = useState<any>(null);
   const [users, setUsers] = useState<any[]>([]);
   const [invitations, setInvitations] = useState<any[]>([]);
+  const [lastInviteLink, setLastInviteLink] = useState<string | null>(null);
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -146,6 +147,8 @@ export default function SettingsPage() {
 
       setIsInviteOpen(false);
       setInviteEmail("");
+      // Shown once: the link is the invitation (no email delivery yet, FX-37)
+      setLastInviteLink(data.data?.invite_path ? `${window.location.origin}${data.data.invite_path}` : null);
       loadAllData();
     } catch (err: any) {
       setInviteError(err.message);
@@ -460,6 +463,32 @@ export default function SettingsPage() {
                 </table>
               </div>
 
+              {lastInviteLink && (
+                <div
+                  style={{
+                    marginTop: "16px",
+                    padding: "12px",
+                    border: "1px solid var(--color-border-subtle)",
+                    borderRadius: "var(--radius-control)",
+                    fontSize: "13px",
+                  }}
+                >
+                  <div style={{ fontWeight: 600, marginBottom: "6px" }}>Invite link (shown once)</div>
+                  <div style={{ color: "var(--color-text-secondary)", marginBottom: "8px" }}>
+                    Send this link to the person you invited. It works once and expires in 7 days.
+                  </div>
+                  <code style={{ fontSize: "12px", wordBreak: "break-all" }}>{lastInviteLink}</code>
+                  <div style={{ marginTop: "8px", display: "flex", gap: "8px" }}>
+                    <Button type="button" variant="secondary" onClick={() => void navigator.clipboard?.writeText(lastInviteLink)}>
+                      Copy invite link
+                    </Button>
+                    <Button type="button" variant="secondary" onClick={() => setLastInviteLink(null)}>
+                      Done
+                    </Button>
+                  </div>
+                </div>
+              )}
+
               {invitations.length > 0 && (
                 <div style={{ marginTop: "16px" }}>
                   <h4 style={{ fontSize: "14px", fontWeight: 600, marginBottom: "8px" }}>
@@ -471,7 +500,6 @@ export default function SettingsPage() {
                         <tr>
                           <th>Invited Email</th>
                           <th>Role</th>
-                          <th>Token Preview</th>
                           <th>Expires</th>
                         </tr>
                       </thead>
@@ -481,9 +509,6 @@ export default function SettingsPage() {
                             <td>{inv.email}</td>
                             <td>
                               <Badge variant={inv.role.toLowerCase() as any}>{inv.role}</Badge>
-                            </td>
-                            <td>
-                              <code style={{ fontSize: "11px" }}>{inv.token.substring(0, 16)}...</code>
                             </td>
                             <td style={{ fontSize: "12px", color: "var(--color-text-muted)" }}>
                               {new Date(inv.expires_at).toLocaleDateString()}

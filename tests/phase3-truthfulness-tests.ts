@@ -27,6 +27,9 @@ import { cleanDemoTelemetry, type DemoTelemetryData } from "@/infrastructure/db/
 import { fulfillmentOperationsService } from "@/domains/operations/services/fulfillment-operations.service";
 import { CreateBusinessObjectiveTool } from "@/domains/ai/tools/implementations/autonomous-tools";
 import type { IntegrationInstallation } from "@/types/enterprise";
+import { PlatformTenantService } from "@/domains/platform/services/platform-tenant.service";
+import { PLATFORM_PERMISSIONS } from "@/lib/permissions";
+import type { PlatformContext } from "@/lib/context";
 
 const ANSI_GREEN = "\x1b[32m";
 const ANSI_RED = "\x1b[31m";
@@ -578,6 +581,89 @@ async function main() {
       if (!fs.existsSync(direct) && !fs.existsSync(dynamic)) missing.push(`${provider.id}: ${url}`);
     }
     assert.deepStrictEqual(missing, []);
+  });
+
+  // ---------------------------------------------------------------------------
+  console.log(`\n${ANSI_BOLD}[FX-37 / N8] Invitations and owner setup${ANSI_RESET}`);
+  // ---------------------------------------------------------------------------
+
+  type InviteRoute = {
+    GET: (r: Request, c: { params: { token: string } }) => Promise<Response>;
+    POST: (r: Request, c: { params: { token: string } }) => Promise<Response>;
+  };
+  const invite = (await import("@/app/api/v1/invitations/[token]/route")) as InviteRoute;
+  const invGet = async (token: string) => {
+    const res = await invite.GET(new Request(`${BASE}/invitations/${token}`), { params: { token } });
+    return { status: res.status, json: (await res.json()) as { data?: Record<string, unknown>; error?: { code?: string } } };
+  };
+  const invPost = async (token: string, body: unknown) => {
+    const res = await invite.POST(
+      new Request(`${BASE}/invitations/${token}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
+      { params: { token } }
+    );
+    return { status: res.status, cookie: res.headers.get("set-cookie") ?? "", json: (await res.json()) as { data?: Record<string, unknown> } };
+  };
+  const tokenOf = (path: unknown) => String(path).split("/invite/")[1];
+
+  await runTest("FX-37: an invite link is shown once to its creator; listings never contain tokens", async () => {
+    const created = await call("POST", "users", admin.token, { body: { email: `${uid("new")}@phase3.test`, role: "SALES" } });
+    assert.strictEqual(created.status, 201);
+    const data = created.json.data as { invitation: Record<string, unknown>; invite_path: string };
+    assert.ok(!("token" in data.invitation));
+    assert.ok(data.invite_path.startsWith("/invite/"));
+    const listed = await call("GET", "users", manager.token);
+    assert.ok(!JSON.stringify(listed.json).includes(tokenOf(data.invite_path)), "a MANAGER can't read pending tokens");
+  });
+
+  await runTest("FX-37: a new person accepts with name and password, is signed in, and the link works once", async () => {
+    const email = `${uid("joiner")}@phase3.test`;
+    const created = await call("POST", "users", admin.token, { body: { email, role: "SALES" } });
+    const token = tokenOf((created.json.data as { invite_path: string }).invite_path);
+    const info = await invGet(token);
+    assert.strictEqual(info.status, 200);
+    assert.strictEqual(info.json.data?.existing_account, false);
+    assert.strictEqual((await invPost(token, { name: "Joiner", password: "short" })).status, 400);
+    const accepted = await invPost(token, { name: "Joiner", password: "Joiner-Pass-4411" });
+    assert.strictEqual(accepted.status, 200);
+    assert.ok(accepted.cookie.includes("commerceos_session="), "signed in");
+    assert.strictEqual((await invPost(token, { name: "Again", password: "Joiner-Pass-4411" })).status, 400, "used once");
+    assert.strictEqual((await invPost(token, { name: "x", password: "y", role: "OWNER" })).status, 400, "strict body");
+  });
+
+  await runTest("N8: a provisioned owner sets a password with the one-time setup link; others can't claim it", async () => {
+    const platform: PlatformContext = {
+      requestId: "req_p3_platform",
+      traceId: "trc_p3_platform",
+      scope: "PLATFORM",
+      platformUser: { id: "usr_p3_platform", email: "ops@phase3.test", name: "Ops", status: "ACTIVE" },
+      platformRole: "SUPER_ADMIN",
+      permissions: Object.values(PLATFORM_PERMISSIONS),
+      mfaVerified: true,
+      stepUpVerified: true,
+      timestamp: nowIso(),
+    };
+    const ownerEmail = `${uid("prov")}@phase3.test`;
+    const provisioned = PlatformTenantService.provisionTenant(
+      { name: "P3 Provisioned", slug: uid("p3-prov"), legal_name: "P3 Ltd", plan_id: "GROWTH", owner_email: ownerEmail, owner_name: "Prov Owner" },
+      platform
+    );
+    assert.strictEqual(provisioned.owner_setup_required, true);
+    assert.ok(provisioned.owner_setup_path);
+
+    // Another workspace invites the same email and tries to claim the not-yet-activated account first
+    const attackerInvite = await call("POST", "users", owner.token, { body: { email: ownerEmail, role: "SALES" } });
+    assert.strictEqual(attackerInvite.status, 201);
+    const claim = await invPost(tokenOf((attackerInvite.json.data as { invite_path: string }).invite_path), { name: "Attacker", password: "Attacker-Pass-9911" });
+    assert.strictEqual(claim.status, 401, "only the owner's own workspace link can activate the account");
+
+    const setupToken = tokenOf(provisioned.owner_setup_path);
+    assert.strictEqual((await invGet(setupToken)).json.data?.existing_account, false, "asks for name and password");
+    const activated = await invPost(setupToken, { name: "Prov Owner", password: "Owner-Pass-5522" });
+    assert.strictEqual(activated.status, 200);
+    const user = db.findUserByEmail(ownerEmail);
+    assert.strictEqual(user?.status, "ACTIVE");
+    const login = await AuthService.login(ownerEmail, "Owner-Pass-5522");
+    assert.ok(login, "the owner can sign in");
   });
 
   // Clears the store, so it runs last

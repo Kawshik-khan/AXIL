@@ -245,6 +245,12 @@ export default function SuperAdminPage() {
         stepUpToken
       );
       if (!res.ok) throw new Error(await readPlatformError(res, "Provisioning failed"));
+      const created = await res.json().catch(() => null);
+      const setupPath: string | null = created?.data?.owner_setup_path ?? null;
+      if (setupPath) {
+        // Shown once: the owner sets their password with it (no email delivery yet; audit N8)
+        window.prompt("Send this one-time setup link to the workspace owner (valid 7 days):", `${window.location.origin}${setupPath}`);
+      }
       setShowProvisionModal(false);
       setProvisionForm({
         name: "",

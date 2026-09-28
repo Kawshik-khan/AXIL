@@ -3,6 +3,7 @@ import { PlatformContext } from "@/lib/context";
 import { PlatformAuthorizationService } from "./platform-authorization.service";
 import { PlatformAuditService } from "./platform-audit.service";
 import { DISABLED_PASSWORD_HASH } from "@/lib/security";
+import { InvitationService } from "@/domains/invitations/service";
 import {
   AppError,
   TenantStateInvalidError,
@@ -225,10 +226,14 @@ export class PlatformTenantService {
       context
     );
 
+    // A new owner sets their password through a one-time link, shown once to the operator (audit N8, FX-37)
+    const setup = ownerSetupRequired ? InvitationService.createOwnerSetupInvitation(tenantId, owner.email) : null;
+
     return {
       tenant: newTenant,
       owner: { id: owner.id, email: owner.email, name: owner.name },
       owner_setup_required: ownerSetupRequired,
+      owner_setup_path: setup ? InvitationService.acceptPath(setup) : null,
       plan: { id: plan.id, name: plan.name },
     };
   }

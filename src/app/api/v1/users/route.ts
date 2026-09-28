@@ -44,9 +44,9 @@ export async function GET(request: Request) {
       .filter(Boolean);
 
     // Also fetch pending invitations for this tenant
-    const pendingInvitations = InvitationService.getInvitationsForTenant(context.tenant.id).filter(
-      (i) => i.status === "PENDING"
-    );
+    const pendingInvitations = InvitationService.getInvitationsForTenant(context.tenant.id)
+      .filter((i) => i.status === "PENDING")
+      .map(InvitationService.toPublic); // never the token (FX-37)
 
     return apiSuccess({
       users: usersWithRoles,
@@ -70,7 +70,12 @@ export async function POST(request: Request) {
     }
     const invitation = InvitationService.createInvitation(context.tenant.id, body.email, body.role, context.user.id);
 
-    return apiSuccess({ invitation }, undefined, 201);
+    // The accept link is shown once, to the person who created it (no email delivery yet)
+    return apiSuccess(
+      { invitation: InvitationService.toPublic(invitation), invite_path: InvitationService.acceptPath(invitation) },
+      undefined,
+      201
+    );
   } catch (err) {
     return apiError(err);
   }

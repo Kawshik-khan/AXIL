@@ -57,13 +57,46 @@ export class InvitationService {
     return created;
   }
 
+  /**
+   * An invitation without its token, for listings: the token is the credential and is shown once, to its creator
+   * (FX-37: the members list returned every pending token to anyone with users.read, who could accept an OWNER
+   * invitation meant for someone else).
+   */
+  public static toPublic(inv: InvitationRecord): Omit<InvitationRecord, "token"> {
+    const { token: _token, ...rest } = inv;
+    return rest;
+  }
+
+  /** The accept-page path for an invitation, returned once when it's created. */
+  public static acceptPath(inv: InvitationRecord): string {
+    return `/invite/${inv.token}`;
+  }
+
+  /**
+   * Owner onboarding for a workspace provisioned by platform operators (audit N8): the owner account exists as
+   * INVITED with no usable password, and already has its OWNER membership; this invitation lets them set a password.
+   */
+  public static createOwnerSetupInvitation(tenantId: string, email: string): InvitationRecord {
+    const invitation: InvitationRecord = {
+      id: `inv_${randomSuffix()}`,
+      tenant_id: tenantId,
+      email: email.trim().toLowerCase(),
+      role: "OWNER",
+      token: generateSecureToken(48),
+      status: "PENDING",
+      expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+      created_at: new Date().toISOString(),
+    };
+    return db.createInvitation(invitation);
+  }
+
+  /** Throws for an unknown, expired or used invitation. Read-only (FX-21): expiry is checked, not stored, here. */
   public static getInvitationByToken(token: string): InvitationRecord {
     const inv = db.findInvitationByToken(token);
     if (!inv) {
       throw new NotFoundError("Invitation", token);
     }
     if (new Date(inv.expires_at).getTime() < Date.now()) {
-      db.updateInvitationStatus(token, "EXPIRED");
       throw new ValidationError("Invitation token has expired.");
     }
     if (inv.status !== "PENDING") {
@@ -78,15 +111,17 @@ export class InvitationService {
       throw new ValidationError("This invitation carries a role that can't be assigned.");
     }
 
-    // Create tenant membership
-    db.createMembership({
-      id: `mem_${randomSuffix()}`,
-      tenant_id: inv.tenant_id,
-      user_id: userId,
-      role: inv.role,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    });
+    // Create tenant membership, unless it exists (a provisioned owner already holds theirs)
+    if (!db.findMembership(inv.tenant_id, userId)) {
+      db.createMembership({
+        id: `mem_${randomSuffix()}`,
+        tenant_id: inv.tenant_id,
+        user_id: userId,
+        role: inv.role,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+    }
 
     db.updateInvitationStatus(token, "ACCEPTED");
 
