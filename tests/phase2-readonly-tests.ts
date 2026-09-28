@@ -13,6 +13,8 @@ import { db } from "@/infrastructure/db";
 import { AuthService } from "@/domains/auth/service";
 import { hashPassword, PLATFORM_AUTH_COOKIE_NAME, signSessionToken } from "@/lib/security";
 import { resetRateLimitsForTesting } from "@/lib/rate-limit";
+import { mergeComputedRow } from "@/lib/computed-rows";
+import { SNAPSHOT_KINDS } from "@/domains/intelligence/services/intelligence-snapshot.service";
 import type { Customer, InventoryItem, Order, OrderItem, Payment, Product, ProductVariant, Shipment } from "@/types/commerce";
 
 const ANSI_GREEN = "\x1b[32m";
@@ -377,6 +379,39 @@ async function main() {
     const after = db.getRecommendationById(tenantId, rec.id);
     assert.strictEqual(after?.status, "PROPOSED");
     assert.strictEqual(after?.dispatched_workflow_id, undefined);
+  });
+
+  await runTest("a decision lapses at its original expiry even when recomputes run every few days", () => {
+    const day = 86_400_000;
+    const t0 = Date.parse("2026-01-01T00:00:00Z");
+    const row = (at: number, extra: Record<string, unknown> = {}) => ({
+      id: "rec_t_restock_v1", tenant_id: "t", type: "REORDER_STOCK", status: "PROPOSED",
+      affected_entities: [{ type: "INVENTORY_VARIANT", id: "v1" }], expires_at: new Date(at + 5 * day).toISOString(), ...extra,
+    });
+    let stored: Record<string, unknown> = { ...row(t0), status: "REJECTED", rejection_reason: "not now" };
+    const seen: string[] = [];
+    for (let d = 4; d <= 12; d += 4) {
+      const now = t0 + d * day;
+      stored = mergeComputedRow(stored, row(now), SNAPSHOT_KINDS.recommendations, now);
+      seen.push(`day${d}:${stored.status}`);
+    }
+    assert.deepStrictEqual(seen, ["day4:REJECTED", "day8:PROPOSED", "day12:PROPOSED"]);
+  });
+
+  await runTest("proposing an unknown recommendation id is a 404 and writes nothing", async () => {
+    type IdPost = (r: Request, ctx: { params: { id: string } }) => Promise<Response>;
+    const { POST } = (await import("@/app/api/v1/intelligence/recommendations/[id]/propose-decision/route")) as { POST: IdPost };
+    const signals = db.getWriteSignalCount();
+    const res = await POST(
+      new NextRequest(`${BASE}/intelligence/recommendations/rec_does_not_exist/propose-decision`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: "{}",
+      }),
+      { params: { id: "rec_does_not_exist" } }
+    );
+    assert.strictEqual(res.status, 404);
+    assert.strictEqual(db.getWriteSignalCount(), signals, "no recompute was stored");
   });
 
   await runTest("POST /intelligence/recompute is rate-limited per workspace (429 on the third call in a minute)", async () => {

@@ -19,7 +19,18 @@ fs.promises.rename = (async (from: fs.PathLike, to: fs.PathLike) => {
 const out = (result: Record<string, unknown>) => process.stdout.write(`RESULT ${JSON.stringify(result)}\n`);
 
 async function main() {
+  // A store that can't own the data refuses to start (process.exit). With PERSIST_TEST_CAPTURE_EXIT=1 this fixture
+  // records that refusal instead, so a scenario can report what the refused process saw. Test-only; the app has no
+  // such mode.
+  let refusedExit: number | null = null;
+  const realExit = process.exit.bind(process);
+  if (process.env.PERSIST_TEST_CAPTURE_EXIT === "1") {
+    process.exit = ((code?: number) => {
+      refusedExit = code ?? 0;
+    }) as typeof process.exit;
+  }
   const { db } = await import("@/infrastructure/db");
+  process.exit = realExit;
 
   if (scenario === "coalesce") {
     // Build a realistically large store, then time many small mutations.
@@ -55,7 +66,7 @@ async function main() {
   }
 
   if (scenario === "hold-lock") {
-    out({ lock_held: db.getPersistenceHealth().lock.held, pid: process.pid });
+    out({ lock_held: db.getPersistenceHealth().lock.held, pid: process.pid, refused_exit: refusedExit });
     await new Promise((r) => setTimeout(r, 15_000)); // keep the lock while the test runs a second writer
     return;
   }
@@ -72,8 +83,33 @@ async function main() {
     await db.flush();
     out({
       lock_held: health.lock.held, ok: health.ok, blocked: health.blocked_reason, blocked_code: health.blocked_code,
-      owner_pid: health.lock.owner?.pid ?? null, flushes: renames, write_rejected: writeRejected,
+      owner_pid: health.lock.owner?.pid ?? null, flushes: renames, write_rejected: writeRejected, refused_exit: refusedExit,
     });
+    return;
+  }
+
+  if (scenario === "lock-lost") {
+    // This process holds the lock; then the lock file is replaced by another owner (a race or a pid-namespace clash).
+    await db.flush();
+    const baseline = renames;
+    fs.writeFileSync(path.join(dataDir, "commerceos.lock"), JSON.stringify({ pid: 1, host: "other", started_at: new Date().toISOString() }));
+    db.createAuditLog({ id: "aud_after_loss", tenant_id: "t", actor_user_id: "u", action: "X", resource_type: "x", resource_id: "1", metadata: {}, created_at: new Date().toISOString() } as never);
+    await new Promise((r) => setTimeout(r, 600));
+    await db.flush();
+    let next: string | null = null;
+    try {
+      db.createAuditLog({ id: "aud_after_block", tenant_id: "t", actor_user_id: "u", action: "X", resource_type: "x", resource_id: "1", metadata: {}, created_at: new Date().toISOString() } as never);
+    } catch (err) {
+      next = (err as { code?: string }).code ?? "unknown";
+    }
+    const health = db.getPersistenceHealth();
+    out({ flushes_after_loss: renames - baseline, blocked_code: health.blocked_code, ok: health.ok, next_write: next });
+    return;
+  }
+
+  if (scenario === "unreadable-lock") {
+    const health = db.getPersistenceHealth();
+    out({ lock_held: health.lock.held, blocked_code: health.blocked_code, refused_exit: refusedExit });
     return;
   }
 
@@ -92,7 +128,7 @@ async function main() {
     const { GET } = await import("@/app/health/ready/route");
     const res = await GET();
     out({
-      lock_held: health.lock.held, blocked_code: health.blocked_code, seeded_users: db.data.users.length,
+      lock_held: health.lock.held, blocked_code: health.blocked_code, seeded_users: db.data.users.length, refused_exit: refusedExit,
       ready_status: res.status, ready_body: await res.text(), lock_left: fs.readFileSync(path.join(dataDir, "commerceos.lock"), "utf-8"),
     });
     return;

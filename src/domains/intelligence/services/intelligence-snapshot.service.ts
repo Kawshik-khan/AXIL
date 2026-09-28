@@ -26,7 +26,7 @@ export type IntelligenceKind =
   | "growth_insights"
   | "growth_recommendations";
 
-interface KindSpec {
+export interface KindSpec {
   collection: IntelligenceSnapshotCollection;
   /** Fields a user or workflow changes after detection; a recompute keeps them while unexpired and about the same entities. */
   keep?: readonly string[];
@@ -36,7 +36,7 @@ interface KindSpec {
   replace?: boolean;
 }
 
-const KINDS: Record<IntelligenceKind, KindSpec> = {
+export const SNAPSHOT_KINDS: Readonly<Record<IntelligenceKind, KindSpec>> = {
   customers: { collection: "customer_intelligence", replace: true },
   products: { collection: "product_performance", replace: true },
   inventory: { collection: "inventory_intelligence", replace: true },
@@ -44,14 +44,16 @@ const KINDS: Record<IntelligenceKind, KindSpec> = {
   anomalies: { collection: "anomalies" },
   risks: { collection: "risks" },
   data_quality: { collection: "data_quality_reports" },
-  opportunities: { collection: "opportunities", keep: ["status"] },
+  // `expires_at` travels with the decision, so a decision lapses at the expiry it was made under; otherwise every
+  // recompute would push the expiry forward and a decision would never expire (security re-review N-1).
+  opportunities: { collection: "opportunities", keep: ["status", "expires_at"] },
   recommendations: {
     collection: "recommendations",
-    keep: ["status", "reviewed_by", "reviewed_at", "dispatched_workflow_id", "rejection_reason", "updated_at"],
+    keep: ["status", "reviewed_by", "reviewed_at", "dispatched_workflow_id", "rejection_reason", "updated_at", "expires_at"],
     freeze: ["REVIEWING"],
   },
   growth_insights: { collection: "growth_insights", keep: ["status"] },
-  growth_recommendations: { collection: "growth_recommendations", keep: ["status"] },
+  growth_recommendations: { collection: "growth_recommendations", keep: ["status", "expires_at"] },
 };
 
 export interface SnapshotMeta {
@@ -71,7 +73,7 @@ export class IntelligenceSnapshotService {
    * the same id, so a recommendation the user already rejected still shows as rejected.
    */
   public read<T extends Row>(tenantId: string, kind: IntelligenceKind, compute: () => T[]): { rows: T[]; snapshot: SnapshotMeta } {
-    const spec = KINDS[kind];
+    const spec = SNAPSHOT_KINDS[kind];
     const run = db.getIntelligenceRun(tenantId, kind);
     const maxAge = SNAPSHOT_MAX_AGE_MS / 1000;
     if (run && Date.now() - Date.parse(run.computed_at) < SNAPSHOT_MAX_AGE_MS) {
@@ -85,7 +87,7 @@ export class IntelligenceSnapshotService {
 
   /** Write path: stores one recomputed snapshot of a kind in a single batched write. */
   public persist<T extends Row>(tenantId: string, kind: IntelligenceKind, rows: T[]): T[] {
-    const spec = KINDS[kind];
+    const spec = SNAPSHOT_KINDS[kind];
     return db.upsertComputedRows(spec.collection, tenantId, kind, rows, { keep: spec.keep, freeze: spec.freeze, replace: spec.replace });
   }
 

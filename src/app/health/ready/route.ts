@@ -5,6 +5,8 @@ import { logger } from "@/lib/logger";
 
 export const dynamic = "force-dynamic";
 
+let lastNotReadyLogAt = 0;
+
 /**
  * Readiness (FIX_IMPLEMENTATION_PLAN FX-20 / FX-24, audit L3). Not ready when the JSON store can't be persisted: the
  * last write failed, writing is blocked (unreadable data file, another process or host owns the store), this process
@@ -22,7 +24,9 @@ export async function GET() {
     writable = false;
   }
   const ready = persistence.ok && writable;
-  if (!ready) {
+  // Logged at most once a minute: the endpoint is polled and unauthenticated.
+  if (!ready && Date.now() - lastNotReadyLogAt > 60_000) {
+    lastNotReadyLogAt = Date.now();
     logger.warn("health.not_ready", {
       blocked_reason: persistence.blocked_reason,
       last_persist_error: persistence.last_persist_error?.message ?? null,

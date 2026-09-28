@@ -31,11 +31,11 @@ async function runTest(testName: string, testFn: () => Promise<void> | void) {
 const ROOT = path.resolve(__dirname, "..");
 const tempDir = () => fs.mkdtempSync(path.join(os.tmpdir(), "commerceos-persist-"));
 
-/** `readOnly`: start even when the store can't be owned, so a scenario can report what it saw (default: refuse). */
+/** `readOnly`: the fixture records the store's refusal to start instead of exiting, so the scenario can report. */
 function workerEnv(dataDir: string, opts: { readOnly?: boolean } = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, NODE_ENV: "development", COMMERCEOS_DATA_DIR: dataDir, PERSIST_DEBOUNCE_MS: "250" };
-  if (opts.readOnly) env.COMMERCEOS_START_READ_ONLY = "1";
-  else delete env.COMMERCEOS_START_READ_ONLY;
+  if (opts.readOnly) env.PERSIST_TEST_CAPTURE_EXIT = "1";
+  else delete env.PERSIST_TEST_CAPTURE_EXIT;
   delete env.DATABASE_URL;
   delete env.UPSTASH_REDIS_REST_URL;
   return env;
@@ -129,8 +129,9 @@ async function main() {
       assert.ok(/refused to start: the data store is in use by another process/.test(refused.stderr), refused.stderr.slice(0, 300));
       assert.ok(!/RESULT /.test(refused.stdout), "it never got as far as serving");
 
-      // Opt-in read-only start (diagnostics): it runs, but refuses every write.
+      // What the refused process saw (its exit captured by the fixture): blocked, and every write refused.
       const second = runWorker("second-writer", dir, { readOnly: true });
+      assert.strictEqual(second.refused_exit, 1);
       assert.strictEqual(second.lock_held, false);
       assert.strictEqual(second.ok, false, "the second writer reports not ready");
       assert.strictEqual(second.owner_pid, first.pid);
@@ -185,6 +186,7 @@ async function main() {
       const r = runWorker("other-host", dir, { readOnly: true });
       assert.strictEqual(r.lock_held, false);
       assert.strictEqual(r.blocked_code, "LOCK_HELD_ON_OTHER_HOST");
+      assert.strictEqual(r.refused_exit, 1, "the app refuses to start");
       assert.strictEqual(r.seeded_users, 0, "a blocked store doesn't seed accounts in memory");
       assert.strictEqual(r.ready_status, 503);
       const body = String(r.ready_body);
@@ -224,12 +226,40 @@ async function main() {
       const [ra, rb] = await Promise.all([a.result, b.result]);
       const holders = [ra, rb].filter((r) => r.lock_held === true).length;
       assert.strictEqual(holders, 1, `lock holders: ${JSON.stringify([ra, rb])}`);
+      assert.strictEqual((ra.lock_held ? rb : ra).refused_exit, 1, "the other one refuses to start");
       const owner = JSON.parse(fs.readFileSync(path.join(dir, "commerceos.lock"), "utf-8")) as { pid: number };
       assert.strictEqual(owner.pid, (ra.lock_held ? ra : rb).pid, "the lock file names the one holder");
     } finally {
       a.child.kill();
       b.child.kill();
       await new Promise((r) => setTimeout(r, 500));
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  await runTest("a writer whose lock was replaced stops writing (fencing before every flush)", () => {
+    const dir = tempDir();
+    try {
+      const r = runWorker("lock-lost", dir);
+      assert.strictEqual(r.flushes_after_loss, 0, "no write after the lock stopped naming this process");
+      assert.strictEqual(r.blocked_code, "LOCK_LOST");
+      assert.strictEqual(r.ok, false);
+      assert.strictEqual(r.next_write, "STORE_UNAVAILABLE");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  await runTest("a lock that exists but can't be read is never taken over", () => {
+    const dir = tempDir();
+    try {
+      fs.mkdirSync(path.join(dir, "commerceos.lock")); // exists, can't be read as a file (like EACCES/EBUSY)
+      const r = runWorker("unreadable-lock", dir, { readOnly: true });
+      assert.strictEqual(r.lock_held, false);
+      assert.strictEqual(r.blocked_code, "LOCK_UNAVAILABLE");
+      assert.strictEqual(r.refused_exit, 1);
+      assert.ok(fs.statSync(path.join(dir, "commerceos.lock")).isDirectory(), "left in place");
+    } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });

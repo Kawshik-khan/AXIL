@@ -589,7 +589,8 @@ export type PersistenceBlockedCode =
   | "LOCK_HELD_BY_OTHER_PROCESS"
   | "LOCK_HELD_ON_OTHER_HOST"
   | "DATA_FILE_UNREADABLE"
-  | "DATA_FILE_CORRUPT";
+  | "DATA_FILE_CORRUPT"
+  | "LOCK_LOST";
 
 export interface PersistenceHealth {
   ok: boolean;
@@ -614,7 +615,23 @@ class CommerceDatabase {
    * need the module to load: they never own, lock or write the store (Phase 2 live check: taking the lock there broke
    * dynamic routes while the dev server ran).
    */
-  private readonly helperProcess = Boolean(process.env.JEST_WORKER_ID) || process.env.NEXT_PHASE === "phase-production-build";
+  private readonly helperProcess = CommerceDatabase.isNextHelperProcess();
+
+  /**
+   * Next's jest-worker children run `jest-worker/processChild.js` (Next replaces their env, so JEST_WORKER_ID is lost);
+   * worker threads aren't the main thread; `next build` sets NEXT_PHASE for itself and its workers.
+   */
+  private static isNextHelperProcess(): boolean {
+    if (process.env.NEXT_PHASE === "phase-production-build") return true;
+    if (/jest-worker[\\/](processChild|threadChild)\.js$/.test(process.argv[1] ?? "")) return true;
+    if (process.env.JEST_WORKER_ID) return true;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      return !(require("worker_threads") as typeof import("worker_threads")).isMainThread;
+    } catch {
+      return false;
+    }
+  }
 
   // ---- Coalesced asynchronous persistence (FIX_IMPLEMENTATION_PLAN FX-20, audit C6/C7) ----
   // Mutations mark the store dirty; one flush per debounce window writes a compact snapshot to a temp file, fsyncs it and
@@ -634,6 +651,8 @@ class CommerceDatabase {
   private readonly debounceMs = Number(process.env.PERSIST_DEBOUNCE_MS ?? 250);
   private lockPath: string;
   private lockHeld = false;
+  /** The lock content this process wrote; flush() checks the file still says so (review N-2). */
+  private lockOwner: { pid: number; host: string; started_at: string } | null = null;
 
   constructor() {
     this.dataDir = process.env.COMMERCEOS_DATA_DIR ? path.resolve(process.env.COMMERCEOS_DATA_DIR) : path.join(process.cwd(), ".data");
@@ -658,14 +677,10 @@ class CommerceDatabase {
 
   /**
    * FX-24: a process that can't own the store refuses to start, so a second `next dev`, script or replica never runs
-   * with changes it can't save. COMMERCEOS_START_READ_ONLY=1 opts into starting read-only instead (diagnostics): writes
-   * then fail with 503 and /health/ready answers 503.
+   * with changes it can't save. There is deliberately no read-only mode: store methods change memory before they
+   * persist, so a "read-only" process would still act on writes it then refuses (review N-5).
    */
   private refuseToStart(): void {
-    if (process.env.COMMERCEOS_START_READ_ONLY === "1") {
-      logger.warn("db.started_read_only", { code: this.blockedCode });
-      return;
-    }
     const why =
       this.blockedCode === "LOCK_HELD_BY_OTHER_PROCESS"
         ? "the data store is in use by another process"
@@ -698,6 +713,7 @@ class CommerceDatabase {
         fs.writeSync(fd, JSON.stringify(owner));
         fs.closeSync(fd);
         this.lockHeld = true;
+        this.lockOwner = owner;
         const release = () => {
           try {
             const current = JSON.parse(fs.readFileSync(this.lockPath, "utf-8")) as { pid?: number; started_at?: string };
@@ -713,7 +729,14 @@ class CommerceDatabase {
           this.block("LOCK_UNAVAILABLE", `Writer lock ${this.lockPath} can't be created: ${(err as Error).message}`);
           return;
         }
-        const holder = CommerceDatabase.readLockOwner(this.lockPath);
+        const state = CommerceDatabase.readLockState(this.lockPath);
+        if (state.kind === "missing") continue; // released between our create attempt and this read: try again
+        if (state.kind === "unreadable") {
+          // A lock we can't read may belong to a live process (e.g. another user's service): never take it over (N-3).
+          this.block("LOCK_UNAVAILABLE", `Writer lock ${this.lockPath} exists but can't be read: ${state.error}`);
+          return;
+        }
+        const holder = state.kind === "ok" ? state.owner : null;
         if (!holder) {
           // Unreadable or still empty: another process may be between creating and writing it. Treat a young file as live.
           if (CommerceDatabase.lockAgeMs(this.lockPath) < 10_000) {
@@ -767,11 +790,46 @@ class CommerceDatabase {
   }
 
   public static readLockOwner(lockPath: string): { pid: number; host: string; started_at: string } | null {
+    const state = CommerceDatabase.readLockState(lockPath);
+    return state.kind === "ok" ? state.owner : null;
+  }
+
+  /** Missing, unreadable (permissions, busy), invalid (empty or not an owner record) or a valid owner. */
+  public static readLockState(
+    lockPath: string
+  ):
+    | { kind: "missing" }
+    | { kind: "unreadable"; error: string }
+    | { kind: "invalid" }
+    | { kind: "ok"; owner: { pid: number; host: string; started_at: string } } {
+    let raw: string;
     try {
-      return JSON.parse(fs.readFileSync(lockPath, "utf-8")) as { pid: number; host: string; started_at: string };
-    } catch {
-      return null;
+      raw = fs.readFileSync(lockPath, "utf-8");
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      return code === "ENOENT" ? { kind: "missing" } : { kind: "unreadable", error: code ?? (err as Error).message };
     }
+    try {
+      const owner = JSON.parse(raw) as { pid?: unknown; host?: unknown; started_at?: unknown };
+      if (typeof owner.pid === "number" && typeof owner.host === "string" && typeof owner.started_at === "string") {
+        return { kind: "ok", owner: { pid: owner.pid, host: owner.host, started_at: owner.started_at } };
+      }
+    } catch {
+      // fall through
+    }
+    return { kind: "invalid" };
+  }
+
+  /** True while the lock file still names this process (review N-2/N-4: fencing before every write). */
+  private stillOwnsLock(): boolean {
+    const current = CommerceDatabase.readLockOwner(this.lockPath);
+    return (
+      !!current &&
+      !!this.lockOwner &&
+      current.pid === this.lockOwner.pid &&
+      current.host === this.lockOwner.host &&
+      current.started_at === this.lockOwner.started_at
+    );
   }
 
   public static isProcessAlive(pid: number): boolean {
@@ -1338,6 +1396,14 @@ class CommerceDatabase {
   public async flush(): Promise<void> {
     if (this.flushing) await this.flushing;
     if (!this.dirty || this.persistenceBlocked || this.isTestInstance || process.env.NODE_ENV === "test") return;
+    if (!this.stillOwnsLock()) {
+      // Someone else holds the lock now (a takeover race, or a host whose pid we couldn't check). Writing would
+      // overwrite their data: stop writing, keep our changes unsaved, and report not ready (review N-2/N-4).
+      this.lockHeld = false;
+      this.block("LOCK_LOST", `The writer lock ${this.lockPath} no longer names this process; writes stopped.`);
+      logger.error("db.writer_lock_lost", { lock: this.lockPath, owner: CommerceDatabase.readLockOwner(this.lockPath) });
+      return;
+    }
     this.dirty = false;
     const tmpPath = `${this.filePath}.tmp`;
     this.flushing = (async () => {

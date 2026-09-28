@@ -10,6 +10,7 @@ import { ActionRiskLevel, ApprovalStatus } from "@/types/orchestration";
 import { autonomyPolicyService } from "@/domains/ai/orchestration/autonomy/autonomy-policy.service";
 import { workflowEngine } from "@/domains/ai/orchestration/engine/workflow-engine";
 import { recommendationService } from "./recommendation.service";
+import { intelligenceSnapshots } from "./intelligence-snapshot.service";
 
 export class DecisionService {
   /**
@@ -22,9 +23,15 @@ export class DecisionService {
   ): Promise<DecisionRequest> {
     // GETs may show recommendations computed live and not stored yet (FX-21). Proposing is a write, so store the
     // current set first; an id that isn't in it is genuinely not found.
-    const rec =
-      db.getRecommendationById(tenantId, recommendationId) ??
-      recommendationService.generateRecommendations(tenantId).find((r) => r.id === recommendationId);
+    // Look the id up in a pure computation first, and store only when it's real: an unknown id must not trigger a
+    // stored recompute (security re-review N-6).
+    let rec = db.getRecommendationById(tenantId, recommendationId);
+    if (!rec) {
+      const current = recommendationService.computeRecommendations(tenantId);
+      if (current.some((r) => r.id === recommendationId)) {
+        rec = intelligenceSnapshots.persist(tenantId, "recommendations", current).find((r) => r.id === recommendationId);
+      }
+    }
     if (!rec) {
       throw new AppError("NOT_FOUND", `Recommendation not found: ${recommendationId}`, 404);
     }
