@@ -7,6 +7,7 @@ import { randomSuffix } from "@/lib/ids";
  */
 
 import { db } from "@/infrastructure/db";
+import { OrderLifecycleService } from "@/domains/orders/order-lifecycle.service";
 import { CourierProviderName, DeliveryStatus, Shipment } from "@/types/commerce";
 import { CourierTrackingResult } from "@/types/automation";
 import { ProviderCircuitBreakerService } from "./provider-circuit-breaker.service";
@@ -156,42 +157,33 @@ export class CourierSyncService {
       throw new Error(`Courier provider ${provider} circuit breaker is OPEN. Deferring sync.`);
     }
 
-    // A courier event must never revive a closed order (audit C4/H12, FX-06 step 4). Leave everything untouched
-    // and surface it for manual review; the single order-lifecycle writer (FX-35) will replace this guard.
+    // The order follows the courier through the one lifecycle writer (FX-35). A courier event can never revive a
+    // closed order: the lifecycle refuses it and records an exception for review, and the shipment is left untouched.
     const linkedOrder = db.findOrderById(tenantId, shipment.order_id);
-    if (linkedOrder && ["CANCELLED", "RETURNED", "REFUNDED"].includes(linkedOrder.status)) {
-      logger.warn("courier_sync.closed_order_skipped", {
-        tenant_id: tenantId,
-        shipment_id: shipment.id,
-        order_status: linkedOrder.status,
-        canonical_status: canonicalStatus,
-      });
-      return {
-        success: false,
-        shipment,
-        canonical_status: canonicalStatus,
-        message: `Order is ${linkedOrder.status}; courier status "${rawStatus}" was not applied and needs manual review.`,
-      };
+    const orderTarget =
+      canonicalStatus === "DELIVERED" ? "DELIVERED" : ["PICKED_UP", "IN_TRANSIT", "OUT_FOR_DELIVERY"].includes(canonicalStatus) ? "SHIPPED" : null;
+    if (linkedOrder && orderTarget && linkedOrder.status !== orderTarget && !(orderTarget === "SHIPPED" && linkedOrder.status === "DELIVERED")) {
+      try {
+        OrderLifecycleService.advance(tenantId, linkedOrder.id, orderTarget, { type: "COURIER", id: `courier_${provider.toLowerCase()}` }, `Courier reported ${rawStatus}`);
+      } catch (err) {
+        logger.warn("courier_sync.order_transition_refused", {
+          tenant_id: tenantId,
+          shipment_id: shipment.id,
+          order_status: linkedOrder.status,
+          canonical_status: canonicalStatus,
+        });
+        return {
+          success: false,
+          shipment,
+          canonical_status: canonicalStatus,
+          message: `Order is ${linkedOrder.status}; courier status "${rawStatus}" was not applied and needs manual review. (${err instanceof Error ? err.message : "refused"})`,
+        };
+      }
     }
 
     try {
       // Update shipment status in database
       const updated = db.updateShipmentStatus(tenantId, shipment.id, canonicalStatus);
-
-      // If DELIVERED, synchronize order and COD payments
-      if (canonicalStatus === "DELIVERED") {
-        const order = db.findOrderById(tenantId, shipment.order_id);
-        if (order) {
-          db.updateOrderStatus(tenantId, order.id, "DELIVERED");
-          if (order.payment_method === "COD" && order.payment_status !== "PAID") {
-            const payments = db.getPayments(tenantId, order.id);
-            for (const p of payments) {
-              db.updatePaymentStatus(tenantId, p.id, "PAID");
-            }
-            db.updateOrderPaymentStatus(tenantId, order.id, "PAID");
-          }
-        }
-      }
 
       // Record canonical domain event
       db.recordEvent({

@@ -1,5 +1,5 @@
 import { OrderStatus } from "@/types/commerce";
-import { BadRequestError } from "@/lib/errors";
+import { ConflictError } from "@/lib/errors";
 
 const ALLOWED_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   PENDING: ["CONFIRMED", "CANCELLED"],
@@ -23,9 +23,10 @@ export class OrderStateMachine {
 
   public static assertTransition(current: OrderStatus, target: OrderStatus): void {
     if (!this.canTransition(current, target)) {
-      throw new BadRequestError(
-        `Illegal order status transition: Cannot transition from '${current}' to '${target}'.`
-      );
+      throw new ConflictError(`Illegal order status transition: Cannot transition from '${current}' to '${target}'.`, {
+        from: current,
+        to: target,
+      });
     }
   }
 

@@ -358,6 +358,8 @@ export interface DatabaseSchema {
   inventory_items: InventoryItem[];
   stock_movements: StockMovement[];
   inventory_reservations: InventoryReservation[];
+  /** Last order number issued per tenant (FX-35). */
+  order_sequences: Record<string, number>;
   customers: Customer[];
   customer_addresses: CustomerAddress[];
   orders: Order[];
@@ -697,6 +699,20 @@ class CommerceDatabase {
     process.exit(1);
   }
 
+  /** Releases lapsed holds at boot and every 5 minutes, in the store-owning process only (FX-35 step 3). */
+  private startReservationSweeper(): void {
+    const sweep = () => {
+      try {
+        const released = this.releaseExpiredReservations();
+        if (released) logger.info("reservations.expired_released", { released });
+      } catch (err) {
+        logger.error("reservations.sweep_failed", { error: err instanceof Error ? err.message : String(err) });
+      }
+    };
+    setTimeout(sweep, 5_000).unref();
+    setInterval(sweep, 5 * 60 * 1000).unref();
+  }
+
   private block(code: PersistenceBlockedCode, detail: string): void {
     this.persistenceBlocked = detail;
     this.blockedCode = code;
@@ -716,6 +732,7 @@ class CommerceDatabase {
         fs.closeSync(fd);
         this.lockHeld = true;
         this.lockOwner = owner;
+        this.startReservationSweeper();
         const release = () => {
           try {
             const current = JSON.parse(fs.readFileSync(this.lockPath, "utf-8")) as { pid?: number; started_at?: string };
@@ -902,6 +919,7 @@ class CommerceDatabase {
           inventory_items: parsed.inventory_items || [],
           stock_movements: parsed.stock_movements || [],
           inventory_reservations: parsed.inventory_reservations || [],
+          order_sequences: parsed.order_sequences || {},
           customers: parsed.customers || [],
           customer_addresses: parsed.customer_addresses || [],
           orders: parsed.orders || [],
@@ -1150,6 +1168,7 @@ class CommerceDatabase {
       inventory_items: [],
       stock_movements: [],
       inventory_reservations: [],
+      order_sequences: {},
       customers: [],
       customer_addresses: [],
       orders: [],
@@ -4754,6 +4773,9 @@ class CommerceDatabase {
       expires_minutes?: number;
     }
   ): InventoryReservation {
+    if (!Number.isInteger(params.quantity) || params.quantity <= 0) {
+      throw new Error("Reservation quantity must be a whole number above zero."); // FX-35 step 5
+    }
     const item = this.findInventoryItem(tenantId, params.warehouse_id, params.product_variant_id);
     if (!item || item.quantity_available < params.quantity) {
       throw new Error(
@@ -4767,7 +4789,10 @@ class CommerceDatabase {
     item.quantity_available = item.quantity_on_hand - item.quantity_reserved;
     item.updated_at = new Date().toISOString();
 
-    const expiresAt = new Date(Date.now() + (params.expires_minutes || 60) * 60 * 1000).toISOString();
+    // Unconfirmed orders hold stock for the tenant's setting (default 24 h, was a fixed 60 min); confirming extends it
+    const holdSetting = Number((this.findTenantById(tenantId)?.settings as Record<string, unknown> | undefined)?.reservation_hold_minutes);
+    const holdMinutes = params.expires_minutes ?? (Number.isFinite(holdSetting) && holdSetting > 0 ? holdSetting : 24 * 60);
+    const expiresAt = new Date(Date.now() + holdMinutes * 60 * 1000).toISOString();
 
     const reservation: InventoryReservation = {
       id: `res_${Date.now()}_${randomSuffix()}`,
@@ -4940,11 +4965,66 @@ class CommerceDatabase {
     return this.data.inventory_reservations.filter((r) => r.tenant_id === tenantId);
   }
 
+  public getReservationsForOrder(tenantId: string, orderId: string): InventoryReservation[] {
+    return this.data.inventory_reservations.filter((r) => r.tenant_id === tenantId && r.order_id === orderId);
+  }
+
+  /** Keeps a confirmed order's stock held (FX-35). */
+  public extendReservations(tenantId: string, orderId: string, expiresAt: string): void {
+    let changed = false;
+    for (const r of this.data.inventory_reservations) {
+      if (r.tenant_id === tenantId && r.order_id === orderId && r.status === "ACTIVE" && r.expires_at < expiresAt) {
+        r.expires_at = expiresAt;
+        changed = true;
+      }
+    }
+    if (changed) this.persist();
+  }
+
+  /**
+   * Releases stock held by unconfirmed (PENDING) orders past their hold time; the reservation becomes EXPIRED and is
+   * taken again if the order is confirmed later (FX-35 step 3). Holds of confirmed orders are left alone.
+   */
+  public releaseExpiredReservations(now = Date.now()): number {
+    let released = 0;
+    for (const r of this.data.inventory_reservations) {
+      if (r.status !== "ACTIVE" || Date.parse(r.expires_at) >= now) continue;
+      const order = this.data.orders.find((o) => o.tenant_id === r.tenant_id && o.id === r.order_id);
+      if (order && order.status !== "PENDING") continue;
+      const item = this.findInventoryItem(r.tenant_id, r.warehouse_id, r.product_variant_id);
+      if (item) {
+        item.quantity_reserved = Math.max(0, item.quantity_reserved - r.quantity);
+        item.quantity_available = item.quantity_on_hand - item.quantity_reserved;
+        item.updated_at = new Date(now).toISOString();
+      }
+      r.status = "EXPIRED";
+      released++;
+    }
+    if (released) this.persist();
+    return released;
+  }
+
   // ==================== ORDERS & ITEMS ====================
+  /**
+   * The next order number for a tenant, from a per-tenant counter (FX-35 step 4). It used to be "orders so far + 1",
+   * computed before the awaits in order creation, so two concurrent orders (or a deleted one) produced duplicates.
+   * Synchronous, so atomic within the one writer process; the counter starts past any number already issued.
+   */
   public generateOrderNumber(tenantId: string): string {
-    const currentYear = new Date().getFullYear();
-    const count = this.data.orders.filter((o) => o.tenant_id === tenantId).length + 1;
-    return `ORD-${currentYear}-${count.toString().padStart(6, "0")}`;
+    if (!this.data.order_sequences) this.data.order_sequences = {};
+    let last = this.data.order_sequences[tenantId];
+    if (last === undefined) {
+      last = 0;
+      for (const o of this.data.orders) {
+        if (o.tenant_id !== tenantId) continue;
+        const n = Number(/-(\d+)$/.exec(o.order_number ?? "")?.[1]);
+        if (Number.isFinite(n) && n > last) last = n;
+      }
+    }
+    const next = last + 1;
+    this.data.order_sequences[tenantId] = next;
+    this.persist();
+    return `ORD-${new Date().getFullYear()}-${next.toString().padStart(6, "0")}`;
   }
 
   public getOrders(
@@ -8116,6 +8196,7 @@ class CommerceDatabase {
       inventory_items: [],
       stock_movements: [],
       inventory_reservations: [],
+      order_sequences: {},
       customers: [],
       customer_addresses: [],
       orders: [],

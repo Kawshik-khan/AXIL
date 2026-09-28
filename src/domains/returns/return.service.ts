@@ -1,5 +1,6 @@
 import { randomSuffix } from "@/lib/ids";
 import { db } from "@/infrastructure/db";
+import { OrderLifecycleService } from "@/domains/orders/order-lifecycle.service";
 import { Return, Refund, ReturnStatus } from "@/types/commerce";
 import { RequestContext } from "@/lib/context";
 import { RbacService } from "@/domains/rbac/service";
@@ -48,7 +49,7 @@ export class ReturnService {
     };
 
     const created = db.createReturn(returnRecord);
-    db.updateOrderStatus(context.tenant.id, order.id, "RETURN_REQUESTED");
+    OrderLifecycleService.advance(context.tenant.id, order.id, "RETURN_REQUESTED", { type: "USER", id: context.user.id }, payload.reason);
 
     db.recordEvent({
       id: `evt_${Date.now()}_return_created`,
@@ -82,7 +83,7 @@ export class ReturnService {
       throw new NotFoundError(`Return '${returnId}' could not be updated.`);
     }
 
-    db.updateOrderStatus(context.tenant.id, ret.order_id, "RETURNED");
+    OrderLifecycleService.advance(context.tenant.id, ret.order_id, "RETURNED", { type: "USER", id: context.user.id }, `Return ${returnId} received`);
     return updated;
   }
 
@@ -130,7 +131,10 @@ export class ReturnService {
     // Update payment and order states
     db.updatePaymentStatus(context.tenant.id, primaryPayment.id, "REFUNDED");
     db.updateOrderPaymentStatus(context.tenant.id, order.id, "REFUNDED");
-    db.updateOrderStatus(context.tenant.id, order.id, "REFUNDED");
+    // Only a returned order becomes REFUNDED; a refund without a return leaves the order where it is (FX-35)
+    if (order.status === "RETURNED") {
+      OrderLifecycleService.advance(context.tenant.id, order.id, "REFUNDED", { type: "USER", id: context.user.id }, payload.reason);
+    }
 
     if (payload.return_id) {
       db.updateReturnStatus(context.tenant.id, payload.return_id, "COMPLETED");

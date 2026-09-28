@@ -7,6 +7,7 @@ import { randomSuffix } from "@/lib/ids";
  */
 
 import { db } from "@/infrastructure/db";
+import { OrderLifecycleService } from "@/domains/orders/order-lifecycle.service";
 import { Return, Refund } from "@/types/commerce";
 
 export interface ReturnEligibilityCheck {
@@ -91,7 +92,10 @@ export class ReturnsOperationsService {
 
     db.createRefund(refund);
     db.updateReturnStatus(tenantId, returnId, "COMPLETED");
-    db.updateOrderStatus(tenantId, order.id, "REFUNDED");
+    // Only a returned order becomes REFUNDED; the payment status records the refund either way (FX-35)
+    if (order.status === "RETURNED") {
+      OrderLifecycleService.advance(tenantId, order.id, "REFUNDED", { type: "USER", id: actor }, `Refund ${refundId}`);
+    }
     db.updateOrderPaymentStatus(tenantId, order.id, "REFUNDED");
 
     db.createAuditLog({

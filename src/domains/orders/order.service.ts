@@ -1,5 +1,6 @@
 import { randomSuffix } from "@/lib/ids";
 import { db } from "@/infrastructure/db";
+import { OrderLifecycleService } from "./order-lifecycle.service";
 import { findDistrict } from "@/lib/bd-geography";
 import { Order, OrderItem, OrderStatus, PaymentMethod, CustomerSource } from "@/types/commerce";
 import { RequestContext } from "@/lib/context";
@@ -265,54 +266,14 @@ export class OrderService {
 
     const order = await this.getOrderById(context, orderId);
 
-    // Validate state machine rule
-    OrderStateMachine.assertTransition(order.status, targetStatus);
-
-    // If cancelling, release all active reservations for this order
-    if (targetStatus === "CANCELLED") {
-      const reservations = db.getInventory(context.tenant.id); // Triggers db lookup
-      // In db data, find reservations matching order_id
-      const allRes = (db as any).data.inventory_reservations.filter(
-        (r: any) => r.tenant_id === context.tenant.id && r.order_id === orderId && r.status === "ACTIVE"
-      );
-      for (const res of allRes) {
-        db.releaseReservation(context.tenant.id, res.id);
-      }
-    }
-
-    // If transitioning to SHIPPED or DELIVERED, commit reservations if not committed yet
-    if (targetStatus === "SHIPPED" || targetStatus === "DELIVERED") {
-      const activeRes = (db as any).data.inventory_reservations.filter(
-        (r: any) => r.tenant_id === context.tenant.id && r.order_id === orderId && r.status === "ACTIVE"
-      );
-      for (const res of activeRes) {
-        db.commitReservation(context.tenant.id, res.id, context.user.id);
-      }
-    }
-
-    const updated = db.updateOrderStatus(context.tenant.id, orderId, targetStatus);
-    if (!updated) {
-      throw new NotFoundError(`Order '${orderId}' not found.`);
-    }
-
-    // Record domain event
-    db.recordEvent({
-      id: `evt_${Date.now()}_order_${targetStatus.toLowerCase()}`,
-      type: `order.${targetStatus.toLowerCase()}`,
-      version: "1.0",
-      tenant_id: context.tenant.id,
-      aggregate_type: "order",
-      aggregate_id: orderId,
-      actor_id: context.user.id,
-      correlation_id: order.order_number,
-      timestamp: new Date().toISOString(),
-      payload: {
-        order_number: order.order_number,
-        previous_status: order.status,
-        new_status: targetStatus,
-        reason: reason || "User initiated transition",
-      },
-    });
+    // One writer for status: state machine, reservations and events live there (FX-35)
+    const updated = OrderLifecycleService.advance(
+      context.tenant.id,
+      orderId,
+      targetStatus,
+      { type: "USER", id: context.user.id },
+      reason || "User initiated transition"
+    );
 
     db.createAuditLog({
       id: `aud_${Date.now()}_${randomSuffix()}`,

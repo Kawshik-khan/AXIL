@@ -53,7 +53,7 @@ export class PricingService {
     const computedItems: PricingCalculationResult["items"] = [];
 
     for (const item of items) {
-      if (!item.variant_id || item.quantity <= 0) {
+      if (!item.variant_id || !Number.isInteger(item.quantity) || item.quantity <= 0) {
         throw new BadRequestError("Each item must have a valid variant ID and positive quantity.");
       }
 

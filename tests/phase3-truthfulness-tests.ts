@@ -33,6 +33,9 @@ import type { PlatformContext } from "@/lib/context";
 import { applyWarehouseTenancyFix, planWarehouseTenancyFix, type WarehouseTenancyData } from "@/infrastructure/db/warehouse-tenancy-fix";
 import { fixFabricatedData } from "@/infrastructure/db/fabricated-data-fix";
 import type { Customer, Warehouse } from "@/types/commerce";
+import { OrderService } from "@/domains/orders/order.service";
+import { ShippingService } from "@/domains/shipping/shipping.service";
+import { ReturnService } from "@/domains/returns/return.service";
 
 const ANSI_GREEN = "\x1b[32m";
 const ANSI_RED = "\x1b[31m";
@@ -741,6 +744,95 @@ async function main() {
     assert.strictEqual((md.json.data as { file_format: string }).file_format, "MARKDOWN");
   });
 
+  // ---------------------------------------------------------------------------
+  console.log(`\n${ANSI_BOLD}[FX-35] One writer for order status${ANSI_RESET}`);
+  // ---------------------------------------------------------------------------
+
+  const ownerCtx = await AuthService.resolveRequestContext(owner.token);
+  assert.ok(ownerCtx);
+  const lcProduct = await ProductService.createProduct(ownerCtx, { name: "Lifecycle Panjabi", sku: uid("LC"), base_price: 500, initial_stock: 100 });
+  const lcVariant = (lcProduct as { variants?: Array<{ id: string }> }).variants?.[0]?.id as string;
+  const stockOf = () => db.getInventory(tenantId).find((i) => i.product_variant_id === lcVariant) as { quantity_on_hand: number; quantity_available: number; quantity_reserved: number };
+  const newOrder = async (quantity = 1, payment: "COD" | "BKASH" = "COD") =>
+    OrderService.createOrder(ownerCtx, {
+      customer: { first_name: "Karim", last_name: "", phone: `0171${Math.floor(1000000 + Math.random() * 8999999)}` },
+      delivery_address: { district: "Dhaka", address_line_1: "Road 1" },
+      items: [{ variant_id: lcVariant, quantity }],
+      payment_method: payment,
+    });
+
+  await runTest("FX-35: people move one legal step at a time (409 otherwise)", async () => {
+    const o = await newOrder();
+    await assert.rejects(OrderService.transitionOrderStatus(ownerCtx, o.id, "SHIPPED"), (e: Error & { statusCode?: number; code?: string }) => e.code === "CONFLICT");
+    const confirmed = await OrderService.transitionOrderStatus(ownerCtx, o.id, "CONFIRMED");
+    assert.strictEqual(confirmed.status, "CONFIRMED");
+  });
+
+  await runTest("FX-35: booking and delivering commits the stock and marks COD paid", async () => {
+    const before = stockOf();
+    const o = await newOrder(2);
+    assert.strictEqual(stockOf().quantity_reserved, before.quantity_reserved + 2, "reserved at creation");
+    await OrderService.transitionOrderStatus(ownerCtx, o.id, "CONFIRMED");
+    const shipment = await ShippingService.createShipment(ownerCtx, { order_id: o.id, courier_provider: "PATHAO", tracking_number: uid("PTH") });
+    assert.strictEqual(db.findOrderById(tenantId, o.id)?.status, "READY_TO_SHIP", "CONFIRMED walked to READY_TO_SHIP");
+    await ShippingService.updateDeliveryStatus(ownerCtx, shipment.id, "DELIVERED");
+    const after = db.findOrderById(tenantId, o.id);
+    assert.strictEqual(after?.status, "DELIVERED");
+    assert.strictEqual(after?.payment_status, "PAID");
+    assert.strictEqual(stockOf().quantity_on_hand, before.quantity_on_hand - 2, "on hand decremented");
+    assert.ok(db.getReservationsForOrder(tenantId, o.id).every((r) => r.status === "COMMITTED"));
+  });
+
+  await runTest("FX-35: a delivery on a cancelled order is refused (409) and recorded as an exception", async () => {
+    const o = await newOrder();
+    await OrderService.transitionOrderStatus(ownerCtx, o.id, "CONFIRMED");
+    const shipment = await ShippingService.createShipment(ownerCtx, { order_id: o.id, courier_provider: "REDX", tracking_number: uid("RDX") });
+    // Cancel after booking (READY_TO_SHIP -> CANCELLED is allowed), then the delivery arrives
+    await OrderService.transitionOrderStatus(ownerCtx, o.id, "CANCELLED");
+    const exceptionsBefore = db.data.operational_exceptions.filter((e) => e.entity_id === o.id).length;
+    const courier = { ...ownerCtx, user: { ...ownerCtx.user } };
+    await assert.rejects(ShippingService.updateDeliveryStatus(courier, shipment.id, "DELIVERED"), (e: Error & { code?: string }) => e.code === "CONFLICT");
+    assert.strictEqual(db.findOrderById(tenantId, o.id)?.status, "CANCELLED", "not revived");
+    assert.strictEqual(db.findShipmentById(tenantId, shipment.id)?.status, "PENDING", "shipment untouched");
+    assert.strictEqual(db.data.operational_exceptions.filter((e) => e.entity_id === o.id).length, exceptionsBefore + 1);
+  });
+
+  await runTest("FX-35: lapsed holds are released; confirming later re-reserves, or refuses when stock is gone", async () => {
+    const o = await newOrder(3);
+    const heldAvailable = stockOf().quantity_available;
+    for (const r of db.getReservationsForOrder(tenantId, o.id)) r.expires_at = new Date(Date.now() - 1000).toISOString();
+    assert.ok(db.releaseExpiredReservations() >= 1);
+    assert.strictEqual(stockOf().quantity_available, heldAvailable + 3, "availability restored");
+    const confirmed = await OrderService.transitionOrderStatus(ownerCtx, o.id, "CONFIRMED");
+    assert.strictEqual(confirmed.status, "CONFIRMED");
+    assert.strictEqual(stockOf().quantity_available, heldAvailable, "taken again on confirmation");
+    // A confirmed order's hold isn't swept
+    for (const r of db.getReservationsForOrder(tenantId, o.id)) if (r.status === "ACTIVE") assert.ok(Date.parse(r.expires_at) > Date.now() + 7 * 86400000);
+
+    const big = await newOrder(stockOf().quantity_available);
+    for (const r of db.getReservationsForOrder(tenantId, big.id)) r.expires_at = new Date(Date.now() - 1000).toISOString();
+    db.releaseExpiredReservations();
+    await newOrder(1); // someone else takes stock meanwhile
+    await assert.rejects(OrderService.transitionOrderStatus(ownerCtx, big.id, "CONFIRMED"), (e: Error & { code?: string }) => e.code === "CONFLICT");
+    assert.strictEqual(db.findOrderById(tenantId, big.id)?.status, "PENDING");
+  });
+
+  await runTest("FX-35: 20 concurrent orders get 20 different numbers", async () => {
+    const orders = await Promise.all(Array.from({ length: 20 }, () => newOrder(1, "BKASH")));
+    const numbers = orders.filter(Boolean).map((o) => (o as Order).order_number);
+    assert.strictEqual(numbers.length, 20);
+    assert.strictEqual(new Set(numbers).size, numbers.length);
+  });
+
+  await runTest("FX-35: a refund without a return leaves the order status alone", async () => {
+    const o = await newOrder(1, "BKASH");
+    db.createPayment({ id: uid("pay"), tenant_id: tenantId, order_id: o.id, provider: "BKASH", amount: o.grand_total, currency: "BDT", status: "PAID", created_at: nowIso() });
+    await ReturnService.processRefund(ownerCtx, { order_id: o.id, reason: "goodwill", amount: 50 });
+    const after = db.findOrderById(tenantId, o.id);
+    assert.strictEqual(after?.status, "PENDING");
+    assert.strictEqual(after?.payment_status, "REFUNDED");
+  });
+
   // Clears the store, so it runs last
   await runTest("demo seed: no made-up telemetry; old stores can be cleaned without touching user records", () => {
     db.clearAllForTesting();
@@ -788,17 +880,23 @@ async function main() {
       [/target_url\.includes\("fail"\)/, "URL-based fake delivery"],
       [/\(৳120\)|৳120 delivery charge|৳60-70/, "literal delivery fee in the UI"],
       [/\? "Dhaka" : "Chittagong"/, "invented outside-Dhaka district"],
+      [/db\.updateOrderStatus\(/, "order status written outside the lifecycle service"],
       [/calculatedValue = 32\.5|: 94\.2;|forecast_achievement_percent: 65/, "literal metric values"],
       [/(idx|index)\s*\*\s*[0-9.]+\)*[,;]?\s*$/m, "per-position invented values"],
       [/totalRevenue \* 0\.\d+/, "fixed revenue shares"],
       [/assigned_scope:\s*\{[^}]*all_access:\s*true[^}]*\},?\s*\n\s*status:\s*"ACTIVE"/, "synthetic all-access caller"],
     ];
     const allowed = new Set([path.normalize("src/domains/enterprise/organization-access.ts")]);
+    // The lifecycle service is the one writer; the dead Neon repository is rebuilt in Phase 4
+    const statusWriters = new Set([path.normalize("src/domains/orders/order-lifecycle.service.ts"), path.normalize("src/domains/orders/order.repository.ts")]);
     const hits: string[] = [];
     for (const file of sourceFiles("src")) {
       const text = fs.readFileSync(file, "utf8");
       for (const [re, label] of patterns) {
-        if (re.test(text) && !(label === "synthetic all-access caller" && allowed.has(path.normalize(file)))) {
+        const exempt =
+          (label === "synthetic all-access caller" && allowed.has(path.normalize(file))) ||
+          (label === "order status written outside the lifecycle service" && statusWriters.has(path.normalize(file)));
+        if (re.test(text) && !exempt) {
           hits.push(`${file}: ${label}`);
         }
       }

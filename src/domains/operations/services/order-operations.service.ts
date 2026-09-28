@@ -7,6 +7,7 @@ import { randomSuffix } from "@/lib/ids";
  */
 
 import { db } from "@/infrastructure/db";
+import { OrderLifecycleService } from "@/domains/orders/order-lifecycle.service";
 import { Order } from "@/types/commerce";
 
 export interface OrderOperationalHealth {
@@ -95,7 +96,7 @@ export class OrderOperationsService {
     if (!order) throw new AppError("NOT_FOUND", `Order not found: ${orderId}`, 404);
 
     if (order.status === "PENDING") {
-      db.updateOrderStatus(tenantId, order.id, "CONFIRMED");
+      OrderLifecycleService.advance(tenantId, order.id, "CONFIRMED", { type: "SYSTEM", id: actor }, "Prepared for fulfillment");
     }
 
     db.createAuditLog({
@@ -124,17 +125,9 @@ export class OrderOperationsService {
     const order = db.findOrderById(tenantId, orderId);
     if (!order) throw new AppError("NOT_FOUND", `Order not found: ${orderId}`, 404);
 
-    if (order.status === "DELIVERED" || order.status === "SHIPPED") {
-      throw new Error(`Cannot cancel order in '${order.status}' status. Initiating return is required.`);
-    }
-
-    db.updateOrderStatus(tenantId, order.id, "CANCELLED");
-
-    // Release all active inventory reservations
-    const reservations = db.getReservations(tenantId).filter((r) => r.order_id === order.id && r.status === "ACTIVE");
-    for (const res of reservations) {
-      db.releaseReservation(tenantId, res.id);
-    }
+    // The lifecycle refuses illegal cancellations (shipped, delivered, closed) and releases reservations (FX-35)
+    const heldBefore = db.getReservationsForOrder(tenantId, order.id).filter((r) => r.status === "ACTIVE").length;
+    OrderLifecycleService.advance(tenantId, order.id, "CANCELLED", { type: "USER", id: actor }, reason);
 
     db.createAuditLog({
       id: `aud_order_cancel_${Date.now()}_${randomSuffix()}`,
@@ -143,7 +136,7 @@ export class OrderOperationsService {
       action: "ORDER_CANCELLED_SAFELY",
       resource_type: "order",
       resource_id: order.id,
-      metadata: { reason, released_reservations_count: reservations.length },
+      metadata: { reason, released_reservations_count: heldBefore },
       created_at: new Date().toISOString(),
     });
 

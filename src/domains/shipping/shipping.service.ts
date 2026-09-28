@@ -1,5 +1,6 @@
 import { randomSuffix } from "@/lib/ids";
 import { db } from "@/infrastructure/db";
+import { OrderLifecycleService } from "@/domains/orders/order-lifecycle.service";
 import {
   Shipment,
   CourierProviderName,
@@ -8,7 +9,7 @@ import {
 import { RequestContext } from "@/lib/context";
 import { RbacService } from "@/domains/rbac/service";
 import { PERMISSIONS } from "@/lib/permissions";
-import { BadRequestError, NotFoundError, ValidationError } from "@/lib/errors";
+import { BadRequestError, NotFoundError, ValidationError, ConflictError } from "@/lib/errors";
 
 export class ShippingService {
   /**
@@ -102,6 +103,11 @@ export class ShippingService {
       );
     }
 
+    // Only orders on their way to fulfilment can be shipped (FX-35)
+    if (!["CONFIRMED", "PROCESSING", "READY_TO_SHIP"].includes(order.status)) {
+      throw new ConflictError(`A ${order.status} order can't be shipped.`, { status: order.status });
+    }
+
     const shipmentId = `shp_${Date.now()}_${randomSuffix()}`;
     const now = new Date().toISOString();
 
@@ -122,11 +128,11 @@ export class ShippingService {
 
     const created = db.createShipment(newShipment);
 
-    // Update order status to READY_TO_SHIP or SHIPPED
-    if (order.status === "CONFIRMED" || order.status === "PROCESSING") {
-      db.updateOrderStatus(context.tenant.id, order.id, "READY_TO_SHIP");
-      db.updateOrderFulfillmentStatus(context.tenant.id, order.id, "FULFILLED");
+    // The booking moves the order to READY_TO_SHIP through the lifecycle (FX-35)
+    if (order.status !== "READY_TO_SHIP") {
+      OrderLifecycleService.advance(context.tenant.id, order.id, "READY_TO_SHIP", { type: "SYSTEM", id: context.user.id }, `Shipment ${trackingNumber} booked`);
     }
+    db.updateOrderFulfillmentStatus(context.tenant.id, order.id, "FULFILLED");
 
     db.recordEvent({
       id: `evt_${Date.now()}_shipment_created`,
@@ -171,26 +177,20 @@ export class ShippingService {
       throw new NotFoundError(`Shipment '${shipmentId}' not found.`);
     }
 
+    // The order follows the shipment, through the lifecycle, before the shipment changes: a delivery on a cancelled
+    // order is a 409 and an exception to review, not a revived order (FX-35). COD is marked paid there too.
+    const orderTarget =
+      targetStatus === "DELIVERED" ? "DELIVERED" : ["PICKED_UP", "IN_TRANSIT", "OUT_FOR_DELIVERY"].includes(targetStatus) ? "SHIPPED" : null;
+    if (orderTarget) {
+      const order = db.findOrderById(context.tenant.id, shipment.order_id);
+      if (order && order.status !== orderTarget && !(orderTarget === "SHIPPED" && order.status === "DELIVERED")) {
+        OrderLifecycleService.advance(context.tenant.id, order.id, orderTarget, { type: "SYSTEM", id: context.user.id }, `Shipment ${shipment.tracking_number} is ${targetStatus}`);
+      }
+    }
+
     const updated = db.updateShipmentStatus(context.tenant.id, shipmentId, targetStatus);
     if (!updated) {
       throw new NotFoundError(`Could not update shipment '${shipmentId}'.`);
-    }
-
-    // Cross-domain automation: If DELIVERED
-    if (targetStatus === "DELIVERED") {
-      const order = db.findOrderById(context.tenant.id, shipment.order_id);
-      if (order) {
-        db.updateOrderStatus(context.tenant.id, order.id, "DELIVERED");
-
-        // If Cash on Delivery, mark payment as PAID upon delivery
-        if (order.payment_method === "COD" && order.payment_status !== "PAID") {
-          const payments = db.getPayments(context.tenant.id, order.id);
-          for (const p of payments) {
-            db.updatePaymentStatus(context.tenant.id, p.id, "PAID");
-          }
-          db.updateOrderPaymentStatus(context.tenant.id, order.id, "PAID");
-        }
-      }
     }
 
     db.recordEvent({
