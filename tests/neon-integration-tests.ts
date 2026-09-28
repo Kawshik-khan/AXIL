@@ -8,7 +8,6 @@ import { tenantRepository } from "@/domains/tenants/tenant.repository";
 import { userRepository } from "@/domains/auth/user.repository";
 import { productRepository } from "@/domains/catalog/product.repository";
 import { inventoryRepository } from "@/domains/inventory/inventory.repository";
-import { customerRepository } from "@/domains/customers/customer.repository";
 import { orderRepository } from "@/domains/orders/order.repository";
 import { paymentRepository } from "@/domains/payments/payment.repository";
 import { shippingRepository } from "@/domains/shipping/shipping.repository";
@@ -114,68 +113,8 @@ async function run() {
     assert.ok(Array.isArray(levels));
   });
 
-  console.log("\n[3. Customer & Order Repository]");
-  await test("Customer repository creates customer with phone indexing", async () => {
-    const phone = `+88017${Math.floor(10000000 + Math.random() * 90000000)}`;
-    const cust = await customerRepository.createCustomer({
-      id: testCustId,
-      tenant_id: testTenantId,
-      full_name: "Tanvir Ahmed",
-      email: `tanvir_${runId}@dhaka.com`,
-      phone: phone,
-      total_orders: 0,
-      total_spent: 0,
-      is_blacklisted: false,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    } as any);
-
-    assert.strictEqual(cust.full_name, "Tanvir Ahmed");
-
-    const byPhone = await customerRepository.findByPhone(testTenantId, phone);
-    assert.ok(byPhone);
-    assert.strictEqual(byPhone?.id, testCustId);
-  });
-
-  await test("Order repository creates order with order items", async () => {
-    const order = await orderRepository.createOrder({
-      id: testOrderId,
-      tenant_id: testTenantId,
-      order_number: `ORD-${runId.toUpperCase()}-001`,
-      customer_id: testCustId,
-      status: "PENDING_CONFIRMATION",
-      subtotal: 1850,
-      delivery_charge: 60,
-      discount: 0,
-      total: 1910,
-      payment_method: "COD",
-      payment_status: "UNPAID",
-      delivery_address: { city: "Dhaka", address: "Banani 11" } as any,
-      delivery_zone: "INSIDE_DHAKA",
-      items: [
-        {
-          id: `item_${runId}_001`,
-          tenant_id: testTenantId,
-          order_id: testOrderId,
-          product_variant_id: `var_${testProdId}_def`,
-          product_name: "Premium Cotton Panjabi",
-          variant_title: "Standard",
-          sku: `PANJ-${runId.toUpperCase()}`,
-          quantity: 1,
-          unit_price: 1850,
-          total_price: 1850,
-        },
-      ],
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    } as any);
-
-    assert.strictEqual(order.order_number, `ORD-${runId.toUpperCase()}-001`);
-
-    const fetched = await orderRepository.findById(testTenantId, testOrderId);
-    assert.ok(fetched);
-    assert.strictEqual(fetched?.total, 1910);
-  });
+  // [3. Customer & Order Repository] removed in FX-38: the customer repository was dead code with 12 type errors,
+  // and the order case needs a customer row. Phase 4 rebuilds both against the reconciled schema.
 
   console.log("\n[4. Payment & Shipping Repository]");
   await test("Payment repository stores and tracks payment records", async () => {

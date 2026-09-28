@@ -42,6 +42,10 @@ export function apiSuccess<T>(data: T, meta?: Record<string, unknown>, status = 
 }
 
 export function apiError(error: unknown, requestId?: string) {
+  // Next.js signals "this route is dynamic" by throwing during `next build`; it must propagate, not be logged as a 500
+  if (typeof error === "object" && error !== null && (error as { digest?: unknown }).digest === "DYNAMIC_SERVER_USAGE") {
+    throw error;
+  }
   const reqId = requestId || `req_${randomSuffix()}`;
 
   if (error instanceof AppError) {

@@ -56,6 +56,7 @@ import { BentoCard } from "@/components/bento/BentoCard";
 import { Badge } from "@/components/ui/Badge/Badge";
 import { Button } from "@/components/ui/Button/Button";
 import { LoadingState, EmptyState, ErrorState } from "@/components/ui/States/States";
+import Link from "next/link";
 import styles from "./agents.module.css";
 
 interface AgentDef {
@@ -636,6 +637,12 @@ export default function AIAgentsPage() {
               <p className={styles.pageSubtitle}>
                 Your 24/7 intelligent sales team. Automatically replies to customer questions, checks live inventory, tracks orders, and manages support across Facebook, Instagram, and WhatsApp.
               </p>
+              {/* These pages existed but nothing linked to them (FX-38) */}
+              <nav style={{ display: "flex", gap: 16, marginTop: 8, fontSize: 13 }} aria-label="AI sections">
+                <Link href="/ai/agents">Agent registry &amp; autonomy</Link>
+                <Link href="/ai/workflows">Workflows</Link>
+                <Link href="/ai/approvals">Approvals</Link>
+              </nav>
             </div>
           </div>
         </div>
