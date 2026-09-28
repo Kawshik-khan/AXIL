@@ -137,7 +137,7 @@ export class AnalyticsService {
     RbacService.assertCan(context, PERMISSIONS.ANALYTICS_READ);
 
     const tenantId = context.tenant.id;
-    const { orders } = db.getOrders(tenantId, { limit: 50000 });
+    const orders = db.getAllOrders(tenantId, { hydrate: true });
     const refunds = db.getRefunds(tenantId);
     const returns = db.getReturns(tenantId);
     const variants = db.getAllProductVariants(tenantId);
@@ -241,7 +241,7 @@ export class AnalyticsService {
     RbacService.assertCan(context, PERMISSIONS.ANALYTICS_READ);
 
     const tenantId = context.tenant.id;
-    const { orders } = db.getOrders(tenantId, { limit: 50000 });
+    const orders = db.getAllOrders(tenantId, { hydrate: true });
 
     // Tally actual order activity by district
     const realStats = new Map<string, { total: number; delivered: number; rto: number; cod: number }>();
@@ -382,7 +382,7 @@ export class AnalyticsService {
     RbacService.assertCan(context, PERMISSIONS.ANALYTICS_READ);
 
     const tenantId = context.tenant.id;
-    const { orders } = db.getOrders(tenantId, { limit: 50000 });
+    const orders = db.getAllOrders(tenantId, { hydrate: true });
     const { startMs, endMs } = this.resolveDateRange(preset);
 
     const filteredOrders = orders.filter((o) => {

@@ -26,7 +26,7 @@ export class OfferService {
    * Simulates the financial and margin impact of an offer before broad activation
    */
   public simulateOffer(tenantId: string, offer: GrowthOffer): OfferSimulationResult {
-    const orders = db.getOrders(tenantId).orders;
+    const orders = db.getAllOrders(tenantId, { hydrate: true });
     const sampleSize = Math.max(orders.length, 10);
 
     const avgOrderVal = sampleSize > 0

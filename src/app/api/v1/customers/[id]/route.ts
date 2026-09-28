@@ -9,7 +9,7 @@ export async function GET(
   try {
     const context = await extractRequestContext(request);
     const customer = await CustomerService.getCustomerById(context, params.id);
-    const orders = db.getOrders(context.tenant.id, { customer_id: params.id });
+    const orders = db.getOrders(context.tenant.id, { customer_id: params.id, limit: 100 });
 
     return apiSuccess({
       customer,

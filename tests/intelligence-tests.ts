@@ -312,7 +312,7 @@ export async function runIntelligenceTests() {
   console.log(`\n${ANSI_BOLD}Gate 6: Zero-Mutation What-If Simulation Sandbox${ANSI_RESET}`);
 
   await runTest("SimulationService simulates price elasticity with strictly zero database mutations", () => {
-    const ordersCountBefore = db.getOrders(tenantId).total;
+    const ordersCountBefore = db.getAllOrders(tenantId).length;
 
     const result = simulationService.simulateScenario(
       tenantId,
@@ -321,7 +321,7 @@ export async function runIntelligenceTests() {
       "PRICE_CHANGE"
     );
 
-    const ordersCountAfter = db.getOrders(tenantId).total;
+    const ordersCountAfter = db.getAllOrders(tenantId).length;
     assert.strictEqual(ordersCountBefore, ordersCountAfter, "Simulation must NEVER mutate database orders");
 
     assert(result.scenario_name === "Test Price Hike 10%", "Scenario name preserved");

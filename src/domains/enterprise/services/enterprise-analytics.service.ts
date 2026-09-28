@@ -39,7 +39,7 @@ export class EnterpriseAnalyticsService {
     tenantId: string
   ): ConsolidatedEnterpriseAnalytics {
     const authorizedStores = enterpriseDataAccessService.getAuthorizedStores(caller);
-    const orders = db.getOrders(tenantId).orders.filter((o) => o.status !== "CANCELLED");
+    const orders = db.getAllOrders(tenantId, { hydrate: true }).filter((o) => o.status !== "CANCELLED");
     const shipments = db.getShipments(tenantId);
     const inventory = db.getInventory(tenantId);
 

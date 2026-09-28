@@ -36,7 +36,7 @@ export class SalesIntelligenceService {
    * Generates a comprehensive sales performance overview for a tenant
    */
   public getOverview(tenantId: string, days: number = 30): SalesIntelligenceOverview {
-    const orders = db.getOrders(tenantId).orders;
+    const orders = db.getAllOrders(tenantId, { hydrate: true });
     const cutoff = new Date(Date.now() - days * 86400000).getTime();
 
     const periodOrders = orders.filter((o: any) => {

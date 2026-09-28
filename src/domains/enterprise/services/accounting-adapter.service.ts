@@ -26,7 +26,7 @@ export class AccountingAdapterService {
     integrationId: string;
     tenantId: string;
   }): Promise<IntegrationSyncRecord> {
-    const deliveredOrders = db.getOrders(params.tenantId).orders.filter((o) => o.status === "DELIVERED");
+    const deliveredOrders = db.getAllOrders(params.tenantId, { hydrate: true }).filter((o) => o.status === "DELIVERED");
 
     const invoices: AccountingInvoiceRecord[] = deliveredOrders.map((o) => {
       const tax = Number((o.grand_total * 0.05).toFixed(2)); // standard 5% VAT

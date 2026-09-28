@@ -54,7 +54,7 @@ export class CustomerRepository extends BaseRepository<Customer & Record<string,
     options?: { search?: string; limit?: number; offset?: number }
   ): Promise<{ customers: Customer[]; total: number }> {
     if (!this.isNeonConfigured()) {
-      return db.getCustomers(tenantId, options);
+      return db.getCustomers(tenantId, { ...options, limit: options?.limit ?? 50 });
     }
 
     let whereSQL = `tenant_id = $1`;

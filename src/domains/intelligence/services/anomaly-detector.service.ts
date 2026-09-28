@@ -14,7 +14,7 @@ export class AnomalyDetectorService {
    */
   public detectAnomalies(tenantId: string): Anomaly[] {
     const detected: Anomaly[] = [];
-    const orders = db.getOrders(tenantId).orders.filter((o) => o.status !== "CANCELLED");
+    const orders = db.getAllOrders(tenantId, { hydrate: true }).filter((o) => o.status !== "CANCELLED");
     const payments = db.getPayments(tenantId);
     const shipments = db.getShipments(tenantId);
 

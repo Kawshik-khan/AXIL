@@ -25,7 +25,7 @@ export class ForecastingService {
    */
   public generateForecast(params: GenerateForecastParams): ForecastRun {
     const { tenantId, targetType, horizon, entityId } = params;
-    const orders = db.getOrders(tenantId).orders.filter((o) => o.status !== "CANCELLED");
+    const orders = db.getAllOrders(tenantId, { hydrate: true }).filter((o) => o.status !== "CANCELLED");
 
     // 1. Determine horizon days count
     const horizonDays = horizon === "7D" ? 7 : horizon === "14D" ? 14 : horizon === "30D" ? 30 : 90;

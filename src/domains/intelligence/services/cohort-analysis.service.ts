@@ -11,7 +11,7 @@ export class CohortAnalysisService {
    * Evaluates customer cohorts based on first purchase month
    */
   public analyzeCohorts(tenantId: string): CohortRecord[] {
-    const orders = db.getOrders(tenantId).orders.filter((o) => o.status !== "CANCELLED");
+    const orders = db.getAllOrders(tenantId, { hydrate: true }).filter((o) => o.status !== "CANCELLED");
 
     // 1. Determine each customer's first purchase month
     const customerFirstMonth: Record<string, string> = {};

@@ -60,7 +60,7 @@ export class EnterpriseFinanceService {
     currency: string;
     store_breakdown: Array<{ store_id: string; revenue_bdt: number }>;
   } {
-    const orders = db.getOrders(tenantId).orders;
+    const orders = db.getAllOrders(tenantId, { hydrate: true });
     const gross = orders.reduce((sum, o) => sum + (o.grand_total || 0), 0);
     const refunds = orders.filter((o) => o.status === "REFUNDED").reduce((sum, o) => sum + (o.grand_total || 0), 0);
     const net = gross - refunds;

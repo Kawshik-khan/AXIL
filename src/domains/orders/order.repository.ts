@@ -65,7 +65,7 @@ export class OrderRepository extends BaseRepository<any> {
     }
   ): Promise<{ orders: (Order & { customer_name: string; customer_phone: string })[]; total: number }> {
     if (!this.isNeonConfigured()) {
-      return db.getOrders(tenantId, options);
+      return db.getOrders(tenantId, { ...options, limit: options?.limit ?? 50 });
     }
 
     let whereSQL = `o.tenant_id = $1`;

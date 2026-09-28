@@ -23,7 +23,7 @@ export class EnterpriseBenchmarkingService {
     tenantId: string
   ): EnterpriseBenchmark {
     const stores = enterpriseDataAccessService.getAuthorizedStores(caller);
-    const orders = db.getOrders(tenantId).orders;
+    const orders = db.getAllOrders(tenantId, { hydrate: true });
     const totalRev = orders.reduce((sum, o) => sum + (o.grand_total || 0), 0);
 
     // Assign realistic deterministic values per store

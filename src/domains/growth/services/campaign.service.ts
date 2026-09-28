@@ -420,7 +420,7 @@ export class CampaignService {
     };
     db.insertCampaignExecution(execRecord);
 
-    const allCustomers = db.getCustomers(tenantId).customers;
+    const allCustomers = db.getAllCustomers(tenantId);
 
     for (const custId of customerIds) {
       if (this.isKillSwitchActive(tenantId)) {

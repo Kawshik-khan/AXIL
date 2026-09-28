@@ -31,8 +31,8 @@ export class AnalyticsQueryService {
     );
 
     // 2. Fetch authoritative domain records scoped strictly to tenant
-    const orders = db.getOrders(query.tenantId).orders;
-    const customers = db.getCustomers(query.tenantId).customers;
+    const orders = db.getAllOrders(query.tenantId, { hydrate: true });
+    const customers = db.getAllCustomers(query.tenantId);
     const inventory = db.getInventory(query.tenantId);
     const returns = db.getReturns(query.tenantId);
 

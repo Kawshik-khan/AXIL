@@ -15,7 +15,7 @@ export class OperationalTwinService {
    */
   public getDigitalTwin(tenantId: string): OperationalDigitalTwin {
     const inventory = db.getInventory(tenantId);
-    const orders = db.getOrders(tenantId).orders;
+    const orders = db.getAllOrders(tenantId, { hydrate: true });
     const shipments = db.getShipments(tenantId);
     const payments = db.getPayments(tenantId);
     const exceptions = db.getOperationalExceptions(tenantId).filter((e) => e.status !== "RESOLVED");

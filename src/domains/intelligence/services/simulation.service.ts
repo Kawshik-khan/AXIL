@@ -22,7 +22,7 @@ export class SimulationService {
     inputs: SimulationInput,
     scenarioType: SimulationScenarioType = "CUSTOM"
   ): SimulationResult {
-    const orders = db.getOrders(tenantId).orders.filter((o) => o.status !== "CANCELLED");
+    const orders = db.getAllOrders(tenantId, { hydrate: true }).filter((o) => o.status !== "CANCELLED");
 
     // 1. Establish 30-day baseline metrics
     const baselineOrders = orders.length;

@@ -13,7 +13,7 @@ export class ProductIntelligenceService {
   public analyzeProductPerformance(tenantId: string): ProductPerformanceSnapshot[] {
     const products = db.getProducts(tenantId).products;
     const variants = db.getAllProductVariants(tenantId);
-    const orders = db.getOrders(tenantId).orders;
+    const orders = db.getAllOrders(tenantId, { hydrate: true });
     const returns = db.getReturns(tenantId);
 
     const thirtyDaysAgo = Date.now() - 30 * 86400000;

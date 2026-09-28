@@ -42,7 +42,7 @@ export class InventoryOperationsService {
    */
   public evaluateStockoutRisks(tenantId: string): StockoutRiskAssessment[] {
     const inventory = db.getInventory(tenantId);
-    const orders = db.getOrders(tenantId).orders;
+    const orders = db.getAllOrders(tenantId, { hydrate: true });
     const assessments: StockoutRiskAssessment[] = [];
 
     // Calculate 30-day velocity from completed/confirmed orders

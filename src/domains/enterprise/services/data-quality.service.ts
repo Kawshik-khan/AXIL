@@ -14,7 +14,7 @@ export class DataQualityService {
     const issues: DataQualityIssue[] = [];
 
     // 1. Check for orders without valid customer phone or empty shipping address
-    const orders = db.getOrders(tenantId).orders;
+    const orders = db.getAllOrders(tenantId, { hydrate: true });
     for (const order of orders) {
       if ((!order.shipping_address_snapshot || !order.shipping_address_snapshot.address_line_1) && order.status !== "CANCELLED") {
         issues.push({

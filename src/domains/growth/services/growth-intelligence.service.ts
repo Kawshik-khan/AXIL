@@ -24,7 +24,7 @@ export class GrowthIntelligenceService {
     }
 
     const insights: GrowthInsight[] = [];
-    const orders = db.getOrders(tenantId).orders;
+    const orders = db.getAllOrders(tenantId, { hydrate: true });
     const lifecycles = db.getCustomerLifecycles(tenantId);
     const now = new Date().toISOString();
 

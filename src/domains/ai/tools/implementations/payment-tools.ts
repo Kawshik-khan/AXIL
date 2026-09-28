@@ -50,7 +50,7 @@ export class GetPaymentStatusTool implements IAgentTool<z.infer<typeof GetPaymen
     let matchedPayment = undefined;
 
     if (input.order_number) {
-      const orders = db.getOrders(context.tenant.id, { search: input.order_number }).orders;
+      const orders = db.getOrders(context.tenant.id, { search: input.order_number, limit: 10 }).orders;
       const order = orders.find(
         (o) => o.order_number.toLowerCase() === input.order_number?.toLowerCase()
       );

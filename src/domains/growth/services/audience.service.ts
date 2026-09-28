@@ -142,8 +142,8 @@ export class AudienceService {
    * Builds customer evaluation context for a tenant's customers
    */
   private buildCustomerContexts(tenantId: string): any[] {
-    const customers = db.getCustomers(tenantId).customers;
-    const orders = db.getOrders(tenantId).orders;
+    const customers = db.getAllCustomers(tenantId);
+    const orders = db.getAllOrders(tenantId, { hydrate: true });
     const payments = db.getPayments(tenantId);
     const shipments = db.getShipments(tenantId);
     const lifecycles = db.getCustomerLifecycles(tenantId);

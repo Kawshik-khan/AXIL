@@ -29,7 +29,7 @@ export class EnterpriseOperationsService {
     const stores = db.getEnterpriseStores(orgId);
     const incidents = db.getEnterpriseIncidents(orgId);
     const syncs = db.getIntegrationSyncs(orgId);
-    const orders = db.getOrders(tenantId).orders;
+    const orders = db.getAllOrders(tenantId, { hydrate: true });
     const inventory = db.getInventory(tenantId);
 
     const totalRev = orders.reduce((sum, o) => sum + (o.grand_total || 0), 0);

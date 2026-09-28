@@ -40,7 +40,7 @@ async function verify() {
   console.log(`\n[VERIFY] Pagination offset=10 limit=10 returned: ${page2.customers.length} records.`);
 
   // Test search
-  const searchResult = db.getCustomers(tenantId, { search: "Rahman" });
+  const searchResult = db.getCustomers(tenantId, { search: "Rahman", limit: 50 });
   console.log(`[VERIFY] Search 'Rahman' returned: ${searchResult.total} matching records.`);
 
   // Verify all customers have addresses

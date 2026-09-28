@@ -91,7 +91,7 @@ export class OpportunityDetectorService {
     }
 
     // 3. Repeat Buyer Campaign Opportunity
-    const customers = db.getCustomers(tenantId).customers;
+    const customers = db.getAllCustomers(tenantId);
     if (customers.length >= 2) {
       const opp: Opportunity = {
         id: `opp_repeat_${Date.now()}_${tenantId}`,

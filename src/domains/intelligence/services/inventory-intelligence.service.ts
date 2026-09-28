@@ -14,7 +14,7 @@ export class InventoryIntelligenceService {
     const variants = db.getAllProductVariants(tenantId);
     const products = db.getProducts(tenantId).products;
     const inventory = db.getInventory(tenantId);
-    const orders = db.getOrders(tenantId).orders;
+    const orders = db.getAllOrders(tenantId, { hydrate: true });
 
     const thirtyDaysAgo = Date.now() - 30 * 86400000;
     const recentOrders = orders.filter(

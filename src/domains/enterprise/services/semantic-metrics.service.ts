@@ -159,7 +159,7 @@ export class SemanticMetricsService {
       throw new Error(`Semantic metric not registered: ${query.metric_key}`);
     }
 
-    const orders = db.getOrders(tenantId).orders;
+    const orders = db.getAllOrders(tenantId, { hydrate: true });
     const inventory = db.getInventory(tenantId);
     const shipments = db.getShipments(tenantId);
 

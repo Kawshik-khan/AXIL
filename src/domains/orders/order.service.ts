@@ -23,7 +23,7 @@ export class OrderService {
     }
   ): Promise<{ orders: (Order & { customer_name: string; customer_phone: string })[]; total: number }> {
     RbacService.assertCan(context, PERMISSIONS.ORDERS_READ);
-    return db.getOrders(context.tenant.id, options);
+    return db.getOrders(context.tenant.id, { ...options, limit: options?.limit ?? 50 }); // one page; analytics use getAllOrders
   }
 
   public static async getOrderById(

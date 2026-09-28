@@ -69,7 +69,7 @@ export class CustomerLifecycleService {
     customerId: string,
     triggerEvent: string = "manual.eval"
   ): CustomerLifecycleRecord {
-    const orders = db.getOrders(tenantId).orders.filter((o) => o.customer_id === customerId);
+    const orders = db.getAllOrders(tenantId, { hydrate: true }).filter((o) => o.customer_id === customerId);
     const existing = db.getCustomerLifecycleByCustomerId(tenantId, customerId);
 
     const totalSpend = orders.reduce((sum, o) => sum + (o.grand_total || 0), 0);
@@ -142,8 +142,8 @@ export class CustomerLifecycleService {
     totalEvaluated: number;
     distribution: Record<LifecycleStage, number>;
   } {
-    const customers = db.getCustomers(tenantId).customers;
-    const allOrders = db.getOrders(tenantId).orders;
+    const customers = db.getAllCustomers(tenantId);
+    const allOrders = db.getAllOrders(tenantId, { hydrate: true });
     const existingLifecycles = db.getCustomerLifecycles(tenantId);
 
     // Build O(1) order lookup map by customer_id

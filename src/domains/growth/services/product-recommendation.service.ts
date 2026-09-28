@@ -16,7 +16,7 @@ export class ProductRecommendationService {
    * Computes co-purchase affinities across historical order items
    */
   public computeProductAffinities(tenantId: string): ProductAffinity[] {
-    const orders = db.getOrders(tenantId).orders;
+    const orders = db.getAllOrders(tenantId, { hydrate: true });
     const pairCounts: Record<string, number> = {};
     const singleCounts: Record<string, number> = {};
 
@@ -156,7 +156,7 @@ export class ProductRecommendationService {
     const { tenantId, customerId, cartItems, abandonedAt } = params;
 
     // Check if customer already completed an order recently (anti-duplicate check)
-    const recentOrders = db.getOrders(tenantId).orders.filter((o) => o.customer_id === customerId);
+    const recentOrders = db.getAllOrders(tenantId, { hydrate: true }).filter((o) => o.customer_id === customerId);
     const abandonedTime = abandonedAt ? new Date(abandonedAt).getTime() : Date.now();
 
     const orderCompletedAfter = recentOrders.some((o) => new Date(o.created_at).getTime() >= abandonedTime);

@@ -4769,9 +4769,13 @@ class CommerceDatabase {
   }
 
   // ==================== CUSTOMERS & ADDRESSES ====================
+  /**
+   * One page of customers. `limit` is required (FX-22): analytics that need every customer must use getAllCustomers,
+   * not a silently truncated page.
+   */
   public getCustomers(
     tenantId: string,
-    options?: { search?: string; limit?: number; offset?: number }
+    options: { search?: string; limit: number; offset?: number }
   ): { customers: Customer[]; total: number } {
     let list = this.data.customers.filter((c) => c.tenant_id === tenantId);
 
@@ -4788,15 +4792,30 @@ class CommerceDatabase {
 
     list.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
     const total = list.length;
-    const offset = options?.offset || 0;
-    const limit = options?.limit || 50;
-
-    const populated = list.slice(offset, offset + limit).map((c) => ({
-      ...c,
-      addresses: this.data.customer_addresses.filter((a) => a.customer_id === c.id && a.tenant_id === tenantId),
-    }));
+    const offset = options.offset || 0;
+    const page = list.slice(offset, offset + options.limit);
+    const addressesByCustomer = this.addressesByCustomer(tenantId, new Set(page.map((c) => c.id)));
+    const populated = page.map((c) => ({ ...c, addresses: addressesByCustomer.get(c.id) ?? [] }));
 
     return { customers: populated, total };
+  }
+
+  /** Every customer of a tenant with addresses, in O(customers + addresses) (FX-22). For analytics, not UI pages. */
+  public getAllCustomers(tenantId: string): Customer[] {
+    const customers = this.data.customers.filter((c) => c.tenant_id === tenantId);
+    const addressesByCustomer = this.addressesByCustomer(tenantId);
+    return customers.map((c) => ({ ...c, addresses: addressesByCustomer.get(c.id) ?? [] }));
+  }
+
+  private addressesByCustomer(tenantId: string, only?: Set<string>): Map<string, CustomerAddress[]> {
+    const map = new Map<string, CustomerAddress[]>();
+    for (const a of this.data.customer_addresses) {
+      if (a.tenant_id !== tenantId || (only && !only.has(a.customer_id))) continue;
+      const list = map.get(a.customer_id);
+      if (list) list.push(a);
+      else map.set(a.customer_id, [a]);
+    }
+    return map;
   }
 
   public findCustomerById(tenantId: string, id: string): Customer | undefined {
@@ -4852,18 +4871,20 @@ class CommerceDatabase {
 
   public getOrders(
     tenantId: string,
-    options?: {
+    options: {
       status?: string;
       payment_status?: string;
       customer_id?: string;
       search?: string;
-      limit?: number;
+      limit: number;
       offset?: number;
     }
   ): { orders: (Order & { customer_name: string; customer_phone: string })[]; total: number } {
+    // `limit` is required (FX-22): analytics that need every order must use getAllOrders.
     let list = this.data.orders.filter((o) => o.tenant_id === tenantId);
+    const customersById = this.customersById(tenantId);
 
-    if (options?.status && options.status !== "ALL") {
+    if (options.status && options.status !== "ALL") {
       list = list.filter((o) => o.status === options.status);
     }
     if (options?.payment_status && options.payment_status !== "ALL") {
@@ -4876,7 +4897,7 @@ class CommerceDatabase {
       const q = options.search.toLowerCase().trim();
       list = list.filter((o) => {
         if (o.order_number.toLowerCase().includes(q)) return true;
-        const cust = this.data.customers.find((c) => c.id === o.customer_id);
+        const cust = customersById.get(o.customer_id);
         if (cust) {
           if (`${cust.first_name} ${cust.last_name}`.toLowerCase().includes(q)) return true;
           if (cust.phone.includes(q)) return true;
@@ -4887,20 +4908,57 @@ class CommerceDatabase {
 
     list.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
     const total = list.length;
-    const offset = options?.offset || 0;
-    const limit = options?.limit || 50;
-
-    const populated = list.slice(offset, offset + limit).map((o) => {
-      const cust = this.data.customers.find((c) => c.id === o.customer_id);
-      return {
-        ...o,
-        items: this.data.order_items.filter((item) => item.order_id === o.id && item.tenant_id === tenantId),
-        customer_name: cust ? `${cust.first_name} ${cust.last_name}` : "Walk-in Customer",
-        customer_phone: cust?.phone || "",
-      };
-    });
+    const offset = options.offset || 0;
+    const page = list.slice(offset, offset + options.limit);
+    const itemsByOrder = this.itemsByOrder(tenantId, new Set(page.map((o) => o.id)));
+    const populated = page.map((o) => this.hydrateOrder(o, itemsByOrder, customersById));
 
     return { orders: populated, total };
+  }
+
+  /**
+   * Every order of a tenant (FX-22). Plain rows by default; `hydrate` adds items, customer_name and customer_phone
+   * (the getOrders shape) using maps, so it stays O(orders + items + customers).
+   */
+  public getAllOrders(tenantId: string): Order[];
+  public getAllOrders(tenantId: string, opts: { hydrate: true }): (Order & { customer_name: string; customer_phone: string })[];
+  public getAllOrders(tenantId: string, opts: { hydrate?: boolean } = {}): Order[] {
+    const orders = this.data.orders.filter((o) => o.tenant_id === tenantId);
+    if (!opts.hydrate) return orders;
+    const itemsByOrder = this.itemsByOrder(tenantId);
+    const customersById = this.customersById(tenantId);
+    return orders.map((o) => this.hydrateOrder(o, itemsByOrder, customersById));
+  }
+
+  private customersById(tenantId: string): Map<string, Customer> {
+    const map = new Map<string, Customer>();
+    for (const c of this.data.customers) if (c.tenant_id === tenantId) map.set(c.id, c);
+    return map;
+  }
+
+  private itemsByOrder(tenantId: string, only?: Set<string>): Map<string, OrderItem[]> {
+    const map = new Map<string, OrderItem[]>();
+    for (const it of this.data.order_items) {
+      if (it.tenant_id !== tenantId || (only && !only.has(it.order_id))) continue;
+      const list = map.get(it.order_id);
+      if (list) list.push(it);
+      else map.set(it.order_id, [it]);
+    }
+    return map;
+  }
+
+  private hydrateOrder(
+    o: Order,
+    itemsByOrder: Map<string, OrderItem[]>,
+    customersById: Map<string, Customer>
+  ): Order & { customer_name: string; customer_phone: string } {
+    const cust = customersById.get(o.customer_id);
+    return {
+      ...o,
+      items: itemsByOrder.get(o.id) ?? [],
+      customer_name: cust ? `${cust.first_name} ${cust.last_name}` : "Walk-in Customer",
+      customer_phone: cust?.phone || "",
+    };
   }
 
   public findOrderById(tenantId: string, id: string): (Order & { customer_name: string; customer_phone: string }) | undefined {

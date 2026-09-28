@@ -19,7 +19,7 @@ export class FinanceOperationsService {
    * Executes deterministic daily revenue and payment reconciliation
    */
   public executeReconciliationRun(tenantId: string): ReconciliationRun {
-    const orders = db.getOrders(tenantId).orders;
+    const orders = db.getAllOrders(tenantId, { hydrate: true });
     const payments = db.getPayments(tenantId);
     const runId = `rec_run_${Date.now()}_${randomSuffix()}`;
     const today = new Date().toISOString().split("T")[0];

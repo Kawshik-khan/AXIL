@@ -11,8 +11,8 @@ export class DataQualityService {
    * Runs comprehensive data quality and consistency checks for a tenant
    */
   public runDataQualityAudit(tenantId: string): DataQualityReport {
-    const orders = db.getOrders(tenantId).orders;
-    const customers = db.getCustomers(tenantId).customers;
+    const orders = db.getAllOrders(tenantId, { hydrate: true });
+    const customers = db.getAllCustomers(tenantId);
     const products = db.getProducts(tenantId).products;
     const events = db.getAnalyticsEvents(tenantId);
 

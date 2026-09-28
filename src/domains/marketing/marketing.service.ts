@@ -78,7 +78,7 @@ export class MarketingService {
    */
   public getAbandonedCarts(tenantId: string): EnrichedAbandonedCart[] {
     const carts = db.getAbandonedCarts(tenantId);
-    const customers = db.getCustomers(tenantId).customers;
+    const customers = db.getAllCustomers(tenantId);
 
     return carts.map((cart) => {
       const cust = customers.find((c) => c.id === cart.customer_id);
@@ -186,7 +186,7 @@ export class MarketingService {
     }
 
     // 3. Duplicate protection: Ensure no order was placed after cart creation
-    const recentOrders = db.getOrders(tenantId).orders.filter((o) => o.customer_id === customer.id);
+    const recentOrders = db.getAllOrders(tenantId, { hydrate: true }).filter((o) => o.customer_id === customer.id);
     const cartTime = new Date(cart.abandoned_at).getTime();
     const placedAfter = recentOrders.some((o) => new Date(o.created_at).getTime() >= cartTime);
     if (placedAfter) {
@@ -295,7 +295,7 @@ export class MarketingService {
     });
 
     // Record recovery attribution touchpoint if campaign exists
-    const order = db.getOrders(tenantId).orders.find((o) => o.id === orderId);
+    const order = db.findOrderById(tenantId, orderId); // was a lookup inside the first 50 orders only (FX-22)
     if (order) {
       attributionService.attributeOrder({
         tenantId,
@@ -329,8 +329,8 @@ export class MarketingService {
    */
   public getAudienceCohorts(tenantId: string): Audience[] {
     const audiences = db.getAudiences(tenantId);
-    const customers = db.getCustomers(tenantId).customers;
-    const orders = db.getOrders(tenantId).orders;
+    const customers = db.getAllCustomers(tenantId);
+    const orders = db.getAllOrders(tenantId, { hydrate: true });
     const shipments = db.getShipments(tenantId);
     const abandonedCarts = db.getAbandonedCarts(tenantId);
 
@@ -394,8 +394,8 @@ export class MarketingService {
       throw new AppError("NOT_FOUND", `Audience not found: ${audienceId}`, 404);
     }
 
-    const customers = db.getCustomers(tenantId).customers;
-    const orders = db.getOrders(tenantId).orders;
+    const customers = db.getAllCustomers(tenantId);
+    const orders = db.getAllOrders(tenantId, { hydrate: true });
     const shipments = db.getShipments(tenantId);
     const abandonedCarts = db.getAbandonedCarts(tenantId);
     const now = Date.now();
@@ -599,7 +599,7 @@ export class MarketingService {
   public getAttributionReport(tenantId: string, model: AttributionModel = "LAST_TOUCH") {
     const attributions = db.getCampaignAttributions(tenantId);
     const campaigns = db.getCampaigns(tenantId);
-    const orders = db.getOrders(tenantId).orders;
+    const orders = db.getAllOrders(tenantId, { hydrate: true });
 
     let totalAttributed = 0;
     let totalIncremental = 0;

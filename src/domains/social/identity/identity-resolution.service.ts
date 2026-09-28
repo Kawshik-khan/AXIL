@@ -89,7 +89,7 @@ export class IdentityResolutionService {
 
     // 3. Priority 3: Match verified email
     if (profileData?.email) {
-      const allCustomers = db.getCustomers(tenantId, { limit: 1000 }).customers;
+      const allCustomers = db.getAllCustomers(tenantId);
       const matchedByEmail = allCustomers.find(
         (c) => c.email && c.email.toLowerCase() === profileData.email!.toLowerCase()
       );

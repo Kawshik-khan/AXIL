@@ -11,8 +11,8 @@ export class CustomerIntelligenceService {
    * Evaluates and updates RFM scores and lifetime value for all customers of a tenant
    */
   public analyzeCustomers(tenantId: string): CustomerIntelligenceRecord[] {
-    const customers = db.getCustomers(tenantId).customers;
-    const orders = db.getOrders(tenantId).orders;
+    const customers = db.getAllCustomers(tenantId);
+    const orders = db.getAllOrders(tenantId, { hydrate: true });
 
     const now = Date.now();
     const records: CustomerIntelligenceRecord[] = [];

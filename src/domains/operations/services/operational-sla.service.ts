@@ -16,7 +16,7 @@ export class OperationalSLAService {
     risks_at_warning: SLARisk[];
   } {
     const policies = db.getSLAPolicies(tenantId).filter((p) => p.enabled);
-    const orders = db.getOrders(tenantId).orders;
+    const orders = db.getAllOrders(tenantId, { hydrate: true });
     const shipments = db.getShipments(tenantId);
     const tickets = db.getSupportTickets(tenantId);
     const now = Date.now();

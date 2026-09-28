@@ -35,7 +35,7 @@ export class CustomerService {
     options?: { search?: string; limit?: number; offset?: number }
   ): Promise<{ customers: Customer[]; total: number }> {
     RbacService.assertCan(context, PERMISSIONS.CUSTOMERS_READ);
-    return db.getCustomers(context.tenant.id, options);
+    return db.getCustomers(context.tenant.id, { ...options, limit: options?.limit ?? 50 }); // one page; analytics use getAllCustomers
   }
 
   public static async getCustomerById(

@@ -10,7 +10,7 @@ export async function GET(request: Request) {
     RbacService.assertCan(context, PERMISSIONS.OPERATIONS_READ);
     const tenantId = context.tenant.id;
 
-    const orders = db.getOrders(tenantId).orders;
+    const orders = db.getAllOrders(tenantId, { hydrate: true });
     const readyOrders = orders.filter((o) => o.status === "CONFIRMED" || o.status === "PROCESSING");
 
     const candidatePlans = readyOrders.slice(0, 10).map((o) => {
