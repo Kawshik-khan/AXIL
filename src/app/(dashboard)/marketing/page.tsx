@@ -914,7 +914,7 @@ export default function MarketingPage() {
                 </div>
               </div>
               <div style={{ padding: "16px", background: "#FAFBF8", borderRadius: "12px", border: "1px solid var(--color-border-subtle, rgba(0,0,0,0.06))" }}>
-                <div style={{ fontSize: "12px", color: "var(--color-text-secondary, #70736F)", textTransform: "uppercase" }}>Incremental Lift</div>
+                <div style={{ fontSize: "12px", color: "var(--color-text-secondary)", textTransform: "uppercase" }}>Incremental Lift</div>
                 <div style={{ fontSize: "28px", fontWeight: 700, color: "var(--color-text-muted)", marginTop: "4px" }}>
                   Not measured
                 </div>

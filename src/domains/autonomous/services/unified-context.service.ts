@@ -22,10 +22,12 @@ export class UnifiedContextService {
     const opportunities = db.data.opportunities?.filter((o) => o.tenant_id === tenantId) || [];
     const risks = db.data.risks?.filter((r) => r.tenant_id === tenantId) || [];
     const exceptions = db.data.operational_exceptions?.filter((e) => e.tenant_id === tenantId) || [];
-    const stores = db.data.enterprise_stores?.filter((s) => s.organization_id) || [];
-    const brands = db.data.enterprise_brands?.filter((b) => b.organization_id) || [];
-    const integrations = db.data.integration_installations || [];
-    const incidents = db.data.enterprise_incidents || [];
+    // Only this workspace's organizations: these counted every tenant's stores, brands, integrations and incidents
+    const orgIds = new Set(db.getOrganizations().filter((o) => o.tenant_id === tenantId).map((o) => o.id));
+    const stores = db.data.enterprise_stores?.filter((s) => orgIds.has(s.organization_id)) || [];
+    const brands = db.data.enterprise_brands?.filter((b) => orgIds.has(b.organization_id)) || [];
+    const integrations = (db.data.integration_installations || []).filter((i) => orgIds.has(i.organization_id));
+    const incidents = (db.data.enterprise_incidents || []).filter((i) => orgIds.has(i.organization_id));
     const approvalRequests = db.data.approval_requests?.filter((a) => a.tenant_id === tenantId) || [];
     const agentRuns = db.data.agent_runs?.filter((r) => r.tenant_id === tenantId) || [];
     const workflows = db.data.autonomous_workflow_runs?.filter((w) => w.tenant_id === tenantId) || [];

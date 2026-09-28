@@ -5566,7 +5566,8 @@ class CommerceDatabase {
           sharePercent: totalOrders > 0 ? Number(((t.orders / totalOrders) * 100).toFixed(1)) : 0,
           revenueBDT: Math.round(t.revenue),
           conversion: null,
-          agentStatus: style.connectedAs ? (activeChannelTypes.has(style.connectedAs) ? "Connected" : "Not connected") : "—",
+          // Sending isn't integrated for any social channel yet (FX-31), so an active channel only receives messages
+          agentStatus: style.connectedAs ? (activeChannelTypes.has(style.connectedAs) ? "Receiving only" : "Not connected") : "—",
         };
       });
 

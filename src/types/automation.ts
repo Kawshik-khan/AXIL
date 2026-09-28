@@ -308,8 +308,10 @@ export interface AutomationHealth {
   dead_letter_count: number;
   average_duration_ms: number;
   queue_depth: number;
+  /** Only providers with circuit-breaker history; untracked couriers and gateways are absent, not HEALTHY (FX-31). */
   provider_health: Record<string, "HEALTHY" | "DEGRADED" | "UNAVAILABLE">;
-  n8n_health: "HEALTHY" | "DEGRADED" | "UNAVAILABLE";
+  /** NOT_CONFIGURED without an n8n instance or N8N_HOST; UNKNOWN when configured but never called. */
+  n8n_health: "HEALTHY" | "DEGRADED" | "UNAVAILABLE" | "UNKNOWN" | "NOT_CONFIGURED";
   webhook_success_rate: number;
   last_successful_execution_at?: string;
   last_failed_execution_at?: string;

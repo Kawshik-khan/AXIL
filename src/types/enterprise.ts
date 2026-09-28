@@ -635,8 +635,9 @@ export interface EnterpriseOverview {
     total_brands: number;
     total_stores: number;
     active_channels: number;
-    consolidated_revenue_bdt: number;
-    consolidated_orders: number;
+    /** Workspace-wide; null for callers without organization-wide enterprise scope (N11). */
+    consolidated_revenue_bdt: number | null;
+    consolidated_orders: number | null;
     /** null without revenue */
     blended_gross_margin_pct: number | null;
     network_stockout_risk_items: number;

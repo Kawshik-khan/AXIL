@@ -155,9 +155,9 @@ export default function EnterpriseOverviewPage() {
       <div className={styles.bentoGrid}>
         <div className={`${styles.col3} ${styles.statCard}`}>
           <div className={styles.statLabel}>Consolidated Revenue</div>
-          <div className={styles.statValue}>৳{(m?.consolidated_revenue_bdt || 0).toLocaleString()}</div>
+          <div className={styles.statValue}>{typeof m?.consolidated_revenue_bdt === "number" ? `৳${m.consolidated_revenue_bdt.toLocaleString()}` : "—"}</div>
           <div className={styles.statMeta}>
-            {m?.consolidated_orders ?? 0} orders
+            {typeof m?.consolidated_orders === "number" ? `${m.consolidated_orders} orders` : "Not in your enterprise scope"}
           </div>
         </div>
 

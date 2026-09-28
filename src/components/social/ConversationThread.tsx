@@ -400,7 +400,11 @@ export const ConversationThread: React.FC<ConversationThreadProps> = ({
                     ) : msg.status === "SENT" ? (
                       <Check size={14} color="#9CA3AF" />
                     ) : msg.status === "FAILED" ? (
-                      <span style={{ color: "#EF4444" }}>Failed</span>
+                      <span style={{ color: "var(--color-danger)" }} title={msg.failure_reason}>
+                        {msg.failure_reason?.includes("INTEGRATION_NOT_CONFIGURED") || msg.failure_reason?.includes("is not connected")
+                          ? "Not delivered: channel sending isn't connected"
+                          : "Not delivered"}
+                      </span>
                     ) : (
                       <span>Sending...</span>
                     )}

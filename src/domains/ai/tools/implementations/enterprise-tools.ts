@@ -16,7 +16,7 @@ import { enterpriseAnalyticsService } from "@/domains/enterprise/services/enterp
 import { enterpriseBenchmarkingService } from "@/domains/enterprise/services/enterprise-benchmarking.service";
 import { enterpriseReportingService } from "@/domains/enterprise/services/enterprise-reporting.service";
 import { semanticMetricsService } from "@/domains/enterprise/services/semantic-metrics.service";
-import { integrationHubService } from "@/domains/enterprise/services/integration-hub.service";
+import { integrationHubService, toPublicInstallation } from "@/domains/enterprise/services/integration-hub.service";
 import { conflictResolutionService } from "@/domains/enterprise/services/conflict-resolution.service";
 import { dataQualityService } from "@/domains/enterprise/services/data-quality.service";
 import { dataLineageService } from "@/domains/enterprise/services/data-lineage.service";
@@ -70,7 +70,8 @@ export class GetEnterpriseOverviewTool implements IAgentTool<z.infer<typeof GetE
   }
 
   public async execute(context: RequestContext, input: z.infer<typeof GetEnterpriseOverviewInputSchema>): Promise<any> {
-    return enterpriseOperationsService.getOverview(resolveOrganizationId(context, input.organization_id), context.tenant.id);
+    const orgId = resolveOrganizationId(context, input.organization_id);
+    return enterpriseOperationsService.getOverview(orgId, context.tenant.id, buildCaller(context, orgId));
   }
 }
 
@@ -307,7 +308,8 @@ export class GetIntegrationStatusTool implements IAgentTool<z.infer<typeof GetIn
   }
 
   public async execute(context: RequestContext, input: z.infer<typeof GetIntegrationStatusInputSchema>): Promise<any> {
-    const installations = db.getIntegrationInstallations(resolveOrganizationId(context, input.organization_id));
+    // Never put stored credentials into model context or tool output (Phase 3 security review F1)
+    const installations = db.getIntegrationInstallations(resolveOrganizationId(context, input.organization_id)).map(toPublicInstallation);
     return {
       total_connectors: installations.length,
       connectors: installations,

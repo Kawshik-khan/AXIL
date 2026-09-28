@@ -230,7 +230,7 @@ export default function AnalyticsExplorerPage() {
                     <tr key={coh.cohort_month}>
                       <td style={{ fontWeight: 600, color: "#fff" }}>{coh.cohort_month}</td>
                       <td>{coh.cohort_size}</td>
-                      <td style={{ color: "#C7F900" }}>{coh.periods?.[0]?.retention_rate_pct !== undefined ? `${coh.periods[0].retention_rate_pct}%` : "—"}</td>
+                      <td style={{ color: "var(--color-lime-hover)" }}>{coh.periods?.[0]?.retention_rate_pct !== undefined ? `${coh.periods[0].retention_rate_pct}%` : "—"}</td>
                       <td>{coh.periods?.[1]?.retention_rate_pct !== undefined ? `${coh.periods[1].retention_rate_pct}%` : "—"}</td>
                       <td>{coh.periods?.[2]?.retention_rate_pct !== undefined ? `${coh.periods[2].retention_rate_pct}%` : "—"}</td>
                     </tr>

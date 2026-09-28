@@ -17,15 +17,18 @@ export class EnterpriseWorkflowsService {
   public async runDailyIntelligenceWorkflow(orgId: string, tenantId: string): Promise<{
     status: "COMPLETED";
     executiveBrief: string;
-    totalRevenueBdt: number;
+    totalRevenueBdt: number | null;
     storesReporting: number;
     incidentsOpen: number;
   }> {
     const overview = enterpriseOperationsService.getOverview(orgId, tenantId);
 
     const brief = `Enterprise Intelligence Brief for ${overview.organization.name}: ` +
-      `Consolidated revenue stands at BDT ${overview.summary_metrics.consolidated_revenue_bdt.toLocaleString()} across ` +
-      `${overview.summary_metrics.total_stores} stores. Blended gross margin is ${overview.summary_metrics.blended_gross_margin_pct}%. ` +
+      `Consolidated revenue stands at BDT ${(overview.summary_metrics.consolidated_revenue_bdt ?? 0).toLocaleString()} across ` +
+      `${overview.summary_metrics.total_stores} stores. ` +
+      (overview.summary_metrics.blended_gross_margin_pct != null
+        ? `Blended gross margin is ${overview.summary_metrics.blended_gross_margin_pct}%. `
+        : "Gross margin isn't measured yet (no revenue). ") +
       `${overview.summary_metrics.active_incidents_count} open incidents require operational triage.`;
 
     return {

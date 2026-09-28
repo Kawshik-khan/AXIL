@@ -80,7 +80,7 @@ export default function EnterpriseGovernancePage() {
       <div className={styles.bentoGrid}>
         <div className={`${styles.col4} ${styles.statCard}`}>
           <div className={styles.statLabel}>Data Quality Score</div>
-          <div className={styles.statValue} style={{ color: qualityScore !== null && qualityScore >= 90 ? "#c7f900" : "#f59e0b" }}>
+          <div className={styles.statValue} style={{ color: qualityScore !== null && qualityScore >= 90 ? "var(--color-lime-hover)" : "var(--color-warning)" }}>
             {qualityScore === null ? "—" : `${qualityScore}%`}
           </div>
           <div className={styles.statMeta}>

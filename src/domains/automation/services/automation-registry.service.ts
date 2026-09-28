@@ -1,3 +1,4 @@
+import { N8nProviderService } from "./n8n-provider.service";
 import { AppError } from "@/lib/errors";
 import { randomSuffix } from "@/lib/ids";
 /**
@@ -305,10 +306,9 @@ export class AutomationRegistryService {
       else providerHealth[p] = "UNAVAILABLE";
     }
 
-    // Default provider entries if none tracked yet
-    if (!providerHealth["STEADFAST"]) providerHealth["STEADFAST"] = "HEALTHY";
-    if (!providerHealth["PATHAO"]) providerHealth["PATHAO"] = "HEALTHY";
-    if (!providerHealth["BKASH"]) providerHealth["BKASH"] = "HEALTHY";
+    // Untracked providers used to be filled in as HEALTHY (Steadfast, Pathao, bKash, n8n) although none is integrated
+    // (FX-31). They're left out; n8n reports whether it is configured at all.
+    const n8nConfigured = N8nProviderService.resolveInstance(tenantId) !== null;
 
     const lastSuccess = executions.find((e) => e.status === "SUCCESS")?.completed_at;
     const lastFailed = executions.find((e) => e.status === "FAILED")?.completed_at;
@@ -325,7 +325,7 @@ export class AutomationRegistryService {
       average_duration_ms: avgDuration,
       queue_depth: pendingRetries,
       provider_health: providerHealth,
-      n8n_health: providerHealth["N8N"] || "HEALTHY",
+      n8n_health: providerHealth["N8N"] ?? (n8nConfigured ? "UNKNOWN" : "NOT_CONFIGURED"),
       webhook_success_rate: webhookSuccessRate,
       last_successful_execution_at: lastSuccess,
       last_failed_execution_at: lastFailed,

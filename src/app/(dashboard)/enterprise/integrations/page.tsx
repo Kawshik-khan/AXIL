@@ -155,7 +155,7 @@ export default function EnterpriseIntegrationsPage() {
               Enterprise Connectors Unified in Connector Hub
             </div>
             <div style={{ fontSize: 13, color: "#9ca3af", maxWidth: 780, lineHeight: 1.4 }}>
-              All ERP, CRM, and Marketplace pipelines have moved into the unified Connectors & Server Hub. Configure SAP S/4HANA, NetSuite, Salesforce, HubSpot, Daraz, and Shopify Plus with live AES-256-GCM encryption, interactive test handshakes, and step-by-step setup guides.
+              All ERP, CRM, and Marketplace pipelines have moved into the unified Connectors & Server Hub. Configure SAP S/4HANA, NetSuite, Salesforce, HubSpot, Daraz, and Shopify Plus with AES-256-GCM encrypted credentials and step-by-step setup guides. Live connection tests and syncs aren't available for these providers yet, so saved connectors show NOT_VERIFIED.
             </div>
           </div>
         </div>

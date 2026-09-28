@@ -5,25 +5,21 @@
 
 import { db } from "@/infrastructure/db";
 import { AnalyticsService } from "@/domains/analytics/analytics.service";
-import { EnterpriseOverview, EnterpriseIncident } from "@/types/enterprise";
+import { EnterpriseOverview, EnterpriseIncident, EnterpriseUserRecord } from "@/types/enterprise";
+import { NotFoundError } from "@/lib/errors";
 
 export class EnterpriseOperationsService {
   /**
    * Generates comprehensive enterprise operations command center overview
    */
-  public getOverview(orgId: string, tenantId: string): EnterpriseOverview {
-    const org = db.findOrganizationById(orgId) || {
-      id: orgId,
-      name: "Apex Holdings Commerce",
-      slug: "apex-holdings",
-      legal_name: "Apex Holdings Ltd",
-      default_currency: "BDT",
-      supported_currencies: ["BDT", "USD"],
-      headquarters_country: "Bangladesh",
-      status: "ACTIVE",
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
+  /**
+   * `caller` limits workspace-wide money figures to organization-wide scope, like consolidated analytics (N11): orders
+   * carry no store, so a store-scoped member can't be shown a narrowed figure. Omitted only by system workflows.
+   */
+  public getOverview(orgId: string, tenantId: string, caller?: EnterpriseUserRecord): EnterpriseOverview {
+    const org = db.findOrganizationById(orgId);
+    if (!org) throw new NotFoundError("Organization", orgId); // used to fall back to a made-up "Apex Holdings"
+    const orgWide = !caller || caller.assigned_scope.all_access;
 
     const businessUnits = db.getBusinessUnits(orgId);
     const brands = db.getEnterpriseBrands(orgId);
@@ -62,9 +58,9 @@ export class EnterpriseOperationsService {
         total_brands: brands.length,
         total_stores: stores.length,
         active_channels: db.getConnectedChannels(tenantId).filter((c) => c.status === "ACTIVE").length,
-        consolidated_revenue_bdt: totalRev,
-        consolidated_orders: orders.length,
-        blended_gross_margin_pct: validRev > 0 ? Math.round(((validRev - cogs) / validRev) * 1000) / 10 : null,
+        consolidated_revenue_bdt: orgWide ? totalRev : null,
+        consolidated_orders: orgWide ? orders.length : null,
+        blended_gross_margin_pct: orgWide && validRev > 0 ? Math.round(((validRev - cogs) / validRev) * 1000) / 10 : null,
         network_stockout_risk_items: stockoutCount,
         active_incidents_count: incidents.filter((i) => i.status !== "RESOLVED" && i.status !== "POSTMORTEM").length,
         data_quality_open_issues: db.getDataQualityIssues(orgId).filter((i) => i.status === "OPEN" || i.status === "IN_REVIEW").length,

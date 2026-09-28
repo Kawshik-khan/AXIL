@@ -78,14 +78,16 @@ export default function AutonomousSystemHealthPage() {
       {/* 11 Dimensions Bento Grid */}
       <div className={styles.bentoGrid}>
         {HEALTH_DIMENSIONS.map((dim) => {
-          const status = data?.domain_health?.[dim.key]?.status || "HEALTHY";
+          // No record means nothing was measured: UNKNOWN, not HEALTHY (FX-30)
+          const record = data?.domain_health?.[dim.key];
+          const status = record?.status || "UNKNOWN";
           const isHealthy = status === "HEALTHY";
 
           return (
             <div key={dim.key} className={`${styles.card} ${styles.col4}`}>
               <div className={styles.cardHeader}>
                 <h3 className={styles.cardTitle}>
-                  <CheckCircle2 size={16} color={isHealthy ? "#22c55e" : "#f59e0b"} />
+                  <CheckCircle2 size={16} color={isHealthy ? "var(--color-success)" : "var(--color-warning)"} />
                   {dim.label}
                 </h3>
                 <span className={`${styles.statusPill} ${isHealthy ? styles.statusHealthy : styles.statusDegraded}`}>
@@ -93,9 +95,10 @@ export default function AutonomousSystemHealthPage() {
                 </span>
               </div>
               <p style={{ fontSize: 12, color: "#9ca3af", marginBottom: 12 }}>{dim.desc}</p>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#9ca3af", marginTop: "auto", borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: 8 }}>
-                <span>Availability: 99.9%</span>
-                <span style={{ color: "#c7f900" }}>Latency: 142ms</span>
+              {/* Was a literal "Availability: 99.9%" and "Latency: 142ms" on every card (FX-30) */}
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--color-text-muted)", marginTop: "auto", borderTop: "1px solid var(--color-border-subtle)", paddingTop: 8 }}>
+                <span>Score: {typeof record?.score === "number" ? record.score : "—"}</span>
+                <span>{record?.last_checked_at ? `Checked ${new Date(record.last_checked_at).toLocaleString()}` : "Not measured"}</span>
               </div>
             </div>
           );

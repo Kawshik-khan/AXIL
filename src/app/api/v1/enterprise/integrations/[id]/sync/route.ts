@@ -18,7 +18,7 @@ export async function POST(
     const { id } = await params;
     const body = await request.json().catch(() => ({}));
     const orgId = resolveOrganizationId(context, body.organization_id);
-    integrationHubService.triggerProviderSync(orgId, id);
+    return integrationHubService.triggerProviderSync(orgId, id); // always throws until adapters exist
   } catch (err) {
     return apiError(err);
   }

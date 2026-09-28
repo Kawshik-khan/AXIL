@@ -17,6 +17,7 @@ import { webhookPlatformService } from "@/domains/enterprise/services/webhook-pl
 import { ConnectorService } from "@/domains/connectors/service";
 import { N8nProviderService } from "@/domains/automation/services/n8n-provider.service";
 import { GetOrderStatusTool } from "@/domains/ai/tools/implementations/order-tools";
+import { GetIntegrationStatusTool } from "@/domains/ai/tools/implementations/enterprise-tools";
 import type { Order } from "@/types/commerce";
 
 const ANSI_GREEN = "\x1b[32m";
@@ -122,6 +123,8 @@ async function main() {
   const admin = await member(tenantId, "ADMIN");
   const scopedAdmin = await member(tenantId, "ADMIN");
   const suspendedAdmin = await member(tenantId, "ADMIN");
+  const invitedAdmin = await member(tenantId, "ADMIN");
+  const manager = await member(tenantId, "MANAGER");
 
   // An organization owned by this workspace, with two stores under one brand
   const orgId = uid("org_p3");
@@ -142,6 +145,11 @@ async function main() {
     });
   membership(scopedAdmin.id, "ACTIVE", [storeA.id]);
   membership(suspendedAdmin.id, "SUSPENDED", [storeA.id, storeB.id]);
+  db.createEnterpriseUser({
+    id: uid("eu_p3"), organization_id: orgId, user_id: invitedAdmin.id, name: "Invited", email: `${invitedAdmin.id}@phase3.test`,
+    enterprise_role: "ENTERPRISE_ADMIN", assigned_scope: { organization_id: orgId, all_access: true },
+    status: "INVITED", created_at: nowIso(), updated_at: nowIso(),
+  });
 
   // ---------------------------------------------------------------------------
   console.log(`${ANSI_BOLD}[N11] Enterprise reads use the caller's real role and scope${ANSI_RESET}`);
@@ -188,6 +196,22 @@ async function main() {
     assert.strictEqual((await call("GET", "enterprise/analytics", suspendedAdmin.token)).status, 403);
   });
 
+  await runTest("an invited (not yet accepted) membership is refused too", async () => {
+    assert.strictEqual((await call("GET", "enterprise/benchmarks", invitedAdmin.token)).status, 403);
+    assert.strictEqual((await call("GET", "enterprise/overview", invitedAdmin.token)).status, 403);
+  });
+
+  await runTest("the enterprise overview hides workspace-wide revenue from a store-scoped member", async () => {
+    const scoped = await call("GET", "enterprise/overview", scopedAdmin.token);
+    assert.strictEqual(scoped.status, 200);
+    const m = (scoped.json.data as { summary_metrics: Record<string, unknown> }).summary_metrics;
+    assert.strictEqual(m.consolidated_revenue_bdt, null);
+    assert.strictEqual(m.consolidated_orders, null);
+    assert.strictEqual(m.blended_gross_margin_pct, null);
+    const full = await call("GET", "enterprise/overview", owner.token);
+    assert.strictEqual(typeof (full.json.data as { summary_metrics: Record<string, unknown> }).summary_metrics.consolidated_revenue_bdt, "number");
+  });
+
   await runTest("benchmarks list entities without invented values (NOT_MEASURED)", async () => {
     const res = await call("GET", "enterprise/benchmarks", admin.token, { query: "?type=BRAND" });
     assert.strictEqual(res.status, 200);
@@ -206,6 +230,12 @@ async function main() {
     const missing = await call("POST", "shipments", owner.token, { body: { order_id: o.id, courier_provider: "PATHAO" } });
     assert.strictEqual(missing.status, 400);
     assert.strictEqual(db.getShipments(tenantId, o.id).length, 0, "nothing invented");
+    const numeric = await call("POST", "shipments", owner.token, { body: { order_id: o.id, courier_provider: "PATHAO", tracking_number: 12345 } });
+    assert.strictEqual(numeric.status, 400, "a non-string tracking number is a validation error, not a 500");
+    const negative = await call("POST", "shipments", owner.token, { body: { order_id: o.id, courier_provider: "PATHAO", tracking_number: "PTH1", shipping_cost: -50 } });
+    assert.strictEqual(negative.status, 400);
+    const unknownCourier = await call("POST", "shipments", owner.token, { body: { order_id: o.id, courier_provider: "DHL_FAKE", tracking_number: "X1" } });
+    assert.strictEqual(unknownCourier.status, 400);
     const ok = await call("POST", "shipments", owner.token, { body: { order_id: o.id, courier_provider: "PATHAO", tracking_number: "PTH123456" } });
     assert.strictEqual(ok.status, 201);
     const shipment = ok.json.data?.shipment as { tracking_number: string; booking_mode: string };
@@ -244,6 +274,24 @@ async function main() {
     assert.strictEqual(sync.status, 424);
     assert.strictEqual(sync.json.error?.code, "INTEGRATION_NOT_CONFIGURED");
     assert.strictEqual(db.getIntegrationSyncs(orgId).length, syncsBefore, "no placeholder sync recorded");
+
+    // Another workspace can't reach this installation
+    const other = await AuthService.registerTenantWithOwner({
+      email: `${uid("other")}@phase3.test`, password: "Phase3-Other-Pass-6633!", name: "Other", workspaceName: `Other ${Date.now()}`,
+    });
+    const otherOwner = await member(other.tenant.id, "OWNER");
+    db.createOrganization({
+      id: uid("org_other"), tenant_id: other.tenant.id, name: "Other Org", slug: uid("other"), legal_name: "Other Ltd.", default_currency: "BDT",
+      supported_currencies: ["BDT"], headquarters_country: "Bangladesh", status: "ACTIVE", created_at: nowIso(), updated_at: nowIso(),
+    });
+    const foreign = await call("POST", "enterprise/integrations/[id]/sync", otherOwner.token, { id: String(installed.json.data?.id) });
+    assert.strictEqual(foreign.status, 404);
+
+    // The AI tool never hands credentials to the model
+    const ctx = await AuthService.resolveRequestContext(admin.token);
+    assert.ok(ctx);
+    const toolOut = await new GetIntegrationStatusTool().execute(ctx, {});
+    assert.ok(JSON.stringify(toolOut).length > 20 && !JSON.stringify(toolOut).includes("credentials_encrypted"));
   });
 
   await runTest("enterprise webhooks: the secret is shown once at creation, never in the list; dispatch is NOT_SENT", async () => {
@@ -268,24 +316,77 @@ async function main() {
     assert.strictEqual(redis.latency_ms, null);
   });
 
-  await runTest("n8n: an unreachable instance fails the execution (no localhost 'mock success')", async () => {
+  await runTest("connector test route: settings.update only, no fetch to custom endpoints, rate limited", async () => {
     const realFetch = globalThis.fetch;
     const calls: string[] = [];
     globalThis.fetch = (async (url: string | URL | Request) => {
       calls.push(String(url));
-      throw new Error("connect ECONNREFUSED");
+      return new Response("{}", { status: 200 });
     }) as typeof fetch;
     try {
-      const result = await N8nProviderService.invokeWorkflow({
-        tenantId, automationId: uid("auto_p3"), workflowId: uid("wf_p3"), workflowVersionId: "v1",
-        webhookPath: "p3-test", event: { type: "p3" }, correlationId: uid("corr"), idempotencyKey: uid("idem"),
-        executionMode: "PRODUCTION",
-      });
+      const body = { provider_id: "groq", endpoint_url: "http://10.0.0.5:8080/v1", credentials: { api_key: "gsk_p3_value_0000" } };
+      assert.strictEqual((await call("POST", "connectors/test", manager.token, { body })).status, 403, "MANAGER can read settings but not change them");
+      const custom = await call("POST", "connectors/test", owner.token, { body });
+      assert.strictEqual(custom.status, 200);
+      assert.strictEqual(custom.json.data?.status, "NOT_VERIFIED");
+      assert.deepStrictEqual(calls, [], "an internal endpoint is never fetched");
+      let last = 0;
+      for (let i = 0; i < 10; i++) last = (await call("POST", "connectors/test", owner.token, { body })).status;
+      assert.strictEqual(last, 429);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  const invokeN8n = () =>
+    N8nProviderService.invokeWorkflow({
+      tenantId, automationId: uid("auto_p3"), workflowId: uid("wf_p3"), workflowVersionId: "v1",
+      webhookPath: "p3-test", event: { type: "p3" }, correlationId: uid("corr"), idempotencyKey: uid("idem"),
+      executionMode: "PRODUCTION",
+    });
+
+  await runTest("n8n: with no instance configured nothing is sent (no localhost default, no 'mock success')", async () => {
+    const saved = { host: process.env.N8N_HOST, base: process.env.COMMERCEOS_N8N_BASE_URL };
+    delete process.env.N8N_HOST;
+    delete process.env.COMMERCEOS_N8N_BASE_URL;
+    const realFetch = globalThis.fetch;
+    const calls: string[] = [];
+    globalThis.fetch = (async (url: string | URL | Request) => {
+      calls.push(String(url));
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch;
+    try {
+      const result = await invokeN8n();
+      assert.strictEqual(calls.length, 0);
+      assert.strictEqual(result.success, false);
+      assert.strictEqual(result.statusCode, 424);
+      assert.strictEqual(result.execution.error_code, "N8N_NOT_CONFIGURED");
+    } finally {
+      globalThis.fetch = realFetch;
+      if (saved.host !== undefined) process.env.N8N_HOST = saved.host;
+      if (saved.base !== undefined) process.env.COMMERCEOS_N8N_BASE_URL = saved.base;
+    }
+  });
+
+  await runTest("n8n: an unreachable configured instance fails, and the tenant sees no internal host", async () => {
+    const saved = process.env.N8N_HOST;
+    process.env.N8N_HOST = "http://n8n.internal.p3:5678";
+    const realFetch = globalThis.fetch;
+    const calls: string[] = [];
+    globalThis.fetch = (async (url: string | URL | Request) => {
+      calls.push(String(url));
+      throw new Error("connect ECONNREFUSED n8n.internal.p3:5678");
+    }) as typeof fetch;
+    try {
+      const result = await invokeN8n();
       assert.strictEqual(calls.length, 1, "a real request was attempted");
       assert.strictEqual(result.success, false);
       assert.strictEqual(result.execution.status, "FAILED");
+      assert.ok(!JSON.stringify(result).includes("n8n.internal.p3"), "no internal host in the result");
     } finally {
       globalThis.fetch = realFetch;
+      if (saved === undefined) delete process.env.N8N_HOST;
+      else process.env.N8N_HOST = saved;
     }
   });
 

@@ -45,7 +45,7 @@ export class N8nProviderService {
   /**
    * Resolves target n8n instance for tenant
    */
-  public static resolveInstance(tenantId: string, instanceId?: string): N8nInstance {
+  public static resolveInstance(tenantId: string, instanceId?: string): N8nInstance | null {
     if (instanceId) {
       const inst = db.findN8nInstanceById(tenantId, instanceId);
       if (inst) return inst;
@@ -55,15 +55,18 @@ export class N8nProviderService {
     const active = instances.find((i) => i.status === "ACTIVE");
     if (active) return active;
 
-    // Default development/fallback instance reference
+    // An instance configured by environment for the whole deployment. Without one there is no n8n to call: this used
+    // to fall back to http://localhost:5678, which the removed mock branch then reported as a success (FX-31).
+    const baseUrl = process.env.N8N_HOST || process.env.COMMERCEOS_N8N_BASE_URL;
+    if (!baseUrl) return null;
     return {
-      id: `n8n_default_${tenantId}`,
+      id: `n8n_env_${tenantId}`,
       tenant_id: tenantId,
-      name: "Default CommerceOS n8n Cluster",
-      base_url: process.env.N8N_HOST || process.env.COMMERCEOS_N8N_BASE_URL || "http://localhost:5678",
+      name: "CommerceOS n8n (environment)",
+      base_url: baseUrl,
       environment: "PRODUCTION",
       status: "ACTIVE",
-      health_status: "HEALTHY",
+      health_status: "UNKNOWN",
       credential_reference: "COMMERCEOS_N8N_API_KEY",
       workflow_namespace: "commerceos",
       created_at: new Date().toISOString(),
@@ -109,6 +112,27 @@ export class N8nProviderService {
 
     // 2. Resolve n8n instance and verify circuit breaker
     const instance = this.resolveInstance(params.tenantId, params.n8nInstanceId);
+    if (!instance && executionMode !== "DRY_RUN") {
+      const execution: AutomationExecution = {
+        id: executionId,
+        tenant_id: params.tenantId,
+        automation_id: params.automationId,
+        workflow_version_id: params.workflowVersionId,
+        status: "FAILED",
+        execution_mode: executionMode,
+        started_at: new Date(startTime).toISOString(),
+        completed_at: new Date().toISOString(),
+        duration_ms: 0,
+        error_code: "N8N_NOT_CONFIGURED",
+        error_message_reference: "No n8n instance is configured; nothing was sent.",
+        correlation_id: params.correlationId,
+        causation_id: params.causationId,
+        idempotency_key: params.idempotencyKey,
+        created_at: new Date(startTime).toISOString(),
+      };
+      db.createAutomationExecution(execution);
+      return { execution, success: false, statusCode: 424, error: "No n8n instance is configured; nothing was sent." };
+    }
     if (!ProviderCircuitBreakerService.canExecute(params.tenantId, "N8N")) {
       const errorMsg = "n8n Provider circuit breaker is OPEN. Deferring workflow invocation.";
       const execution: AutomationExecution = {
@@ -200,6 +224,7 @@ export class N8nProviderService {
     // 5. Real invocation. There used to be a "mock" branch here: any localhost or example.com URL (including the
     // localhost default used when no n8n is configured) returned success without a request (FX-31).
     try {
+      if (!instance) throw new Error("No n8n instance is configured");
       const targetUrl = `${instance.base_url.replace(/\/$/, "")}/webhook/${params.webhookPath.replace(/^\//, "")}`;
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), this.REQUEST_TIMEOUT_MS);
@@ -257,7 +282,9 @@ export class N8nProviderService {
       };
     } catch (err) {
       const duration = Date.now() - startTime;
-      const errorMsg = err instanceof Error ? err.message : "n8n invocation failed";
+      // Tenants see a generic reason: fetch errors name internal hosts and ports (Phase 3 security review F3)
+      const detail = err instanceof Error ? err.message : "";
+      const errorMsg = /^n8n responded with HTTP \d+/.test(detail) ? detail.split(":")[0] : "n8n could not be reached";
       ProviderCircuitBreakerService.recordFailure(params.tenantId, "N8N");
 
       db.updateAutomationExecutionStep(triggerStep.id, {

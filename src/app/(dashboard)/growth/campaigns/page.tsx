@@ -77,9 +77,9 @@ export default function CampaignsPage() {
             <div key={cmp.id} className={`${styles.bentoCard} ${styles.col6}`}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "8px" }}>
                 <div>
-                  <div style={{ fontSize: "16px", fontWeight: 600, color: "var(--color-text-primary, #202124)" }}>{cmp.name}</div>
-                  <div style={{ fontSize: "12px", color: "var(--color-text-secondary, #70736F)", marginTop: "2px" }}>
-                    Channel: <strong style={{ color: "var(--color-text-primary, #202124)" }}>{cmp.channel}</strong> • Goal: {cmp.objective}
+                  <div style={{ fontSize: "16px", fontWeight: 600, color: "var(--color-text-primary)" }}>{cmp.name}</div>
+                  <div style={{ fontSize: "12px", color: "var(--color-text-secondary)", marginTop: "2px" }}>
+                    Channel: <strong style={{ color: "var(--color-text-primary)" }}>{cmp.channel}</strong> • Goal: {cmp.objective}
                   </div>
                 </div>
                 <div style={{ display: "flex", gap: "6px" }}>
@@ -95,21 +95,21 @@ export default function CampaignsPage() {
               {/* Simulation metrics if present */}
               {cmp.simulation_snapshot && (
                 <div style={{ margin: "12px 0", padding: "10px 14px", background: "var(--color-surface-soft, #FAFBF8)", borderRadius: "8px", border: "1px solid var(--color-border-subtle, rgba(0,0,0,0.06))" }}>
-                  <div style={{ fontSize: "11px", color: "var(--color-text-primary, #202124)", fontWeight: 700, letterSpacing: "0.02em" }}>SIMULATED — assumptions, not a forecast</div>
-                  <div style={{ display: "flex", gap: "16px", marginTop: "6px", fontSize: "12px", color: "var(--color-text-secondary, #70736F)" }}>
+                  <div style={{ fontSize: "11px", color: "var(--color-text-primary)", fontWeight: 700, letterSpacing: "0.02em" }}>SIMULATED — assumptions, not a forecast</div>
+                  <div style={{ display: "flex", gap: "16px", marginTop: "6px", fontSize: "12px", color: "var(--color-text-secondary)" }}>
                     <span>
                       Revenue:{" "}
-                      <strong style={{ color: "var(--color-text-primary, #202124)" }}>
+                      <strong style={{ color: "var(--color-text-primary)" }}>
                         {typeof cmp.simulation_snapshot.expected_revenue_bdt === "number"
                           ? `৳${cmp.simulation_snapshot.expected_revenue_bdt.toLocaleString()}`
                           : "not estimated"}
                       </strong>
                     </span>
-                    <span>Orders: <strong style={{ color: "var(--color-text-primary, #202124)" }}>{cmp.simulation_snapshot.expected_orders ?? "—"}</strong></span>
-                    <span>Reach: <strong style={{ color: "var(--color-text-primary, #202124)" }}>{cmp.simulation_snapshot.estimated_reach ?? "—"}</strong></span>
+                    <span>Orders: <strong style={{ color: "var(--color-text-primary)" }}>{cmp.simulation_snapshot.expected_orders ?? "—"}</strong></span>
+                    <span>Reach: <strong style={{ color: "var(--color-text-primary)" }}>{cmp.simulation_snapshot.estimated_reach ?? "—"}</strong></span>
                   </div>
                   {Array.isArray(cmp.simulation_snapshot.assumptions) && (
-                    <div style={{ marginTop: "6px", fontSize: "11px", color: "var(--color-text-secondary, #70736F)" }}>
+                    <div style={{ marginTop: "6px", fontSize: "11px", color: "var(--color-text-secondary)" }}>
                       {cmp.simulation_snapshot.assumptions.join(" ")}
                     </div>
                   )}

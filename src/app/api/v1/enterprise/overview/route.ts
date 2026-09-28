@@ -1,4 +1,4 @@
-import { resolveOrganizationId } from "@/domains/enterprise/organization-access";
+import { resolveEnterpriseCaller, resolveOrganizationId } from "@/domains/enterprise/organization-access";
 import { PERMISSIONS } from "@/lib/permissions";
 import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
@@ -11,7 +11,7 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const orgId = resolveOrganizationId(context, searchParams.get("organization_id"));
 
-    const overview = enterpriseOperationsService.getOverview(orgId, context.tenant.id);
+    const overview = enterpriseOperationsService.getOverview(orgId, context.tenant.id, resolveEnterpriseCaller(context, orgId));
     return apiSuccess(overview);
   } catch (err) {
     return apiError(err);
