@@ -3,6 +3,8 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import { logger } from "@/lib/logger";
+import { AppError } from "@/lib/errors";
+import { mergeComputedRow } from "@/lib/computed-rows";
 import bcrypt from "bcryptjs";
 import { RoleName } from "@/lib/permissions";
 import { DISABLED_PASSWORD_HASH } from "@/lib/security";
@@ -581,6 +583,14 @@ function safePatch<T extends object>(patch: T): T {
   return rest as T;
 }
 
+export type PersistenceBlockedCode =
+  | "DATA_DIR_UNAVAILABLE"
+  | "LOCK_UNAVAILABLE"
+  | "LOCK_HELD_BY_OTHER_PROCESS"
+  | "LOCK_HELD_ON_OTHER_HOST"
+  | "DATA_FILE_UNREADABLE"
+  | "DATA_FILE_CORRUPT";
+
 export interface PersistenceHealth {
   ok: boolean;
   data_dir: string;
@@ -588,6 +598,8 @@ export interface PersistenceHealth {
   last_persist_at: string | null;
   last_persist_error: { at: string; message: string } | null;
   blocked_reason: string | null;
+  /** Public reason code for /health/ready; `blocked_reason` has paths and pids and stays internal (review L-1). */
+  blocked_code: PersistenceBlockedCode | null;
   lock: { held: boolean; path: string; owner?: { pid: number; host: string; started_at: string } };
   debounce_ms: number;
 }
@@ -610,6 +622,9 @@ class CommerceDatabase {
   public lastPersistAt: string | null = null;
   /** Set when writing would be unsafe (the data file couldn't be read, or another process owns the store). */
   private persistenceBlocked: string | null = null;
+  private blockedCode: PersistenceBlockedCode | null = null;
+  /** Every persist/markDirty call, counted even in tests: lets tests prove a request asked for no write (FX-21). */
+  private writeSignals = 0;
   private readonly debounceMs = Number(process.env.PERSIST_DEBOUNCE_MS ?? 250);
   private lockPath: string;
   private lockHeld = false;
@@ -623,14 +638,45 @@ class CommerceDatabase {
       try {
         fs.mkdirSync(this.dataDir, { recursive: true });
       } catch (err) {
-        this.persistenceBlocked = `Data directory ${this.dataDir} can't be created: ${(err as Error).message}`;
+        this.block("DATA_DIR_UNAVAILABLE", `Data directory ${this.dataDir} can't be created: ${(err as Error).message}`);
         logger.error("db.data_dir_unavailable", { data_dir: this.dataDir, error: (err as Error).message });
       }
       if (!this.persistenceBlocked) this.acquireWriterLock();
     }
     this.data = this.loadData();
     if (persistent && !this.persistenceBlocked) this.quarantineStaleTempFiles();
-    this.ensureDefaultSeed();
+    if (persistent && this.persistenceBlocked) this.refuseToStart();
+    // While blocked the store serves reads only; seeding would be a write that can never be saved (review L-2).
+    if (!this.persistenceBlocked) this.ensureDefaultSeed();
+  }
+
+  /**
+   * FX-24: a process that can't own the store refuses to start, so a second `next dev`, script or replica never runs
+   * with changes it can't save. COMMERCEOS_START_READ_ONLY=1 opts into starting read-only instead (diagnostics): writes
+   * then fail with 503 and /health/ready answers 503.
+   */
+  private refuseToStart(): void {
+    if (process.env.COMMERCEOS_START_READ_ONLY === "1") {
+      logger.warn("db.started_read_only", { code: this.blockedCode });
+      return;
+    }
+    const why =
+      this.blockedCode === "LOCK_HELD_BY_OTHER_PROCESS"
+        ? "the data store is in use by another process"
+        : this.blockedCode === "LOCK_HELD_ON_OTHER_HOST"
+          ? "the data store is in use by another host"
+          : "the data store can't be written";
+    logger.error("db.refusing_to_start", { code: this.blockedCode, reason: this.persistenceBlocked });
+    process.stderr.write(
+      `CommerceOS refused to start: ${why} (${this.blockedCode}). ${this.persistenceBlocked}\n` +
+        "Stop the other process first. Two writers lose each other's changes.\n"
+    );
+    process.exit(1);
+  }
+
+  private block(code: PersistenceBlockedCode, detail: string): void {
+    this.persistenceBlocked = detail;
+    this.blockedCode = code;
   }
 
   /**
@@ -640,7 +686,7 @@ class CommerceDatabase {
    */
   private acquireWriterLock(): void {
     const owner = { pid: process.pid, host: os.hostname(), started_at: new Date().toISOString() };
-    for (let attempt = 0; attempt < 2; attempt++) {
+    for (let attempt = 0; attempt < 3; attempt++) {
       try {
         const fd = fs.openSync(this.lockPath, "wx");
         fs.writeSync(fd, JSON.stringify(owner));
@@ -648,8 +694,8 @@ class CommerceDatabase {
         this.lockHeld = true;
         const release = () => {
           try {
-            const current = JSON.parse(fs.readFileSync(this.lockPath, "utf-8")) as { pid?: number };
-            if (current.pid === process.pid) fs.rmSync(this.lockPath, { force: true });
+            const current = JSON.parse(fs.readFileSync(this.lockPath, "utf-8")) as { pid?: number; started_at?: string };
+            if (current.pid === process.pid && current.started_at === owner.started_at) fs.rmSync(this.lockPath, { force: true });
           } catch {
             // lock already gone
           }
@@ -658,19 +704,59 @@ class CommerceDatabase {
         return;
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code !== "EEXIST") {
-          this.persistenceBlocked = `Writer lock ${this.lockPath} can't be created: ${(err as Error).message}`;
+          this.block("LOCK_UNAVAILABLE", `Writer lock ${this.lockPath} can't be created: ${(err as Error).message}`);
           return;
         }
         const holder = CommerceDatabase.readLockOwner(this.lockPath);
-        if (holder && holder.pid !== process.pid && holder.host === os.hostname() && CommerceDatabase.isProcessAlive(holder.pid)) {
-          this.persistenceBlocked = `Another process (pid ${holder.pid}, started ${holder.started_at}) owns the data store. Only one writer is allowed.`;
+        if (!holder) {
+          // Unreadable or still empty: another process may be between creating and writing it. Treat a young file as live.
+          if (CommerceDatabase.lockAgeMs(this.lockPath) < 10_000) {
+            this.block("LOCK_HELD_BY_OTHER_PROCESS", `Writer lock ${this.lockPath} is being created by another process.`);
+            return;
+          }
+        } else if (holder.host !== os.hostname()) {
+          // Another host (container, replica) shares this data directory. Its pid can't be checked from here, so refuse
+          // rather than take the lock over (review M-2). An operator who knows the holder is gone can force it.
+          if (process.env.COMMERCEOS_FORCE_LOCK !== "1") {
+            this.block("LOCK_HELD_ON_OTHER_HOST", `The data store is locked by host ${holder.host} (pid ${holder.pid}). Only one writer is allowed; set COMMERCEOS_FORCE_LOCK=1 only if that host is gone.`);
+            logger.error("db.writer_lock_other_host", { lock: this.lockPath, owner_host: holder.host, owner_pid: holder.pid });
+            return;
+          }
+        } else if (holder.pid !== process.pid && CommerceDatabase.isProcessAlive(holder.pid)) {
+          this.block("LOCK_HELD_BY_OTHER_PROCESS", `Another process (pid ${holder.pid}, started ${holder.started_at}) owns the data store. Only one writer is allowed.`);
           logger.error("db.writer_lock_held", { lock: this.lockPath, owner_pid: holder.pid, owner_started_at: holder.started_at });
           return;
         }
-        // Stale lock (dead process, or our own pid after a restart): take it over.
-        logger.warn("db.writer_lock_stale", { lock: this.lockPath, owner_pid: holder?.pid });
-        fs.rmSync(this.lockPath, { force: true });
+        // Stale lock: claim it with an atomic rename (only one process can move a given file), then check that the file
+        // we moved is the stale one we inspected, not a lock another process created meanwhile (review M-2).
+        const claimed = `${this.lockPath}.stale.${process.pid}.${Date.now()}`;
+        try {
+          fs.renameSync(this.lockPath, claimed);
+        } catch {
+          continue; // someone else claimed or replaced it first: look again
+        }
+        const moved = CommerceDatabase.readLockOwner(claimed);
+        if ((moved?.pid ?? null) !== (holder?.pid ?? null) || (moved?.started_at ?? null) !== (holder?.started_at ?? null)) {
+          try {
+            fs.renameSync(claimed, this.lockPath); // put the other process's fresh lock back
+          } catch {
+            // it re-created one already
+          }
+          this.block("LOCK_HELD_BY_OTHER_PROCESS", "Another process took over the data store lock at the same time. Only one writer is allowed.");
+          return;
+        }
+        fs.rmSync(claimed, { force: true });
+        logger.warn("db.writer_lock_stale", { lock: this.lockPath, owner_pid: holder?.pid, owner_host: holder?.host });
       }
+    }
+    this.block("LOCK_UNAVAILABLE", `Writer lock ${this.lockPath} could not be acquired.`);
+  }
+
+  private static lockAgeMs(lockPath: string): number {
+    try {
+      return Date.now() - fs.statSync(lockPath).mtimeMs;
+    } catch {
+      return Number.POSITIVE_INFINITY;
     }
   }
 
@@ -718,6 +804,7 @@ class CommerceDatabase {
       last_persist_at: this.lastPersistAt,
       last_persist_error: this.lastPersistError,
       blocked_reason: this.persistenceBlocked,
+      blocked_code: this.blockedCode,
       lock: { held: this.lockHeld, path: this.lockPath, ...(owner ? { owner } : {}) },
       debounce_ms: this.debounceMs,
     };
@@ -729,7 +816,7 @@ class CommerceDatabase {
       if (fs.existsSync(this.filePath)) raw = fs.readFileSync(this.filePath, "utf-8");
     } catch (err) {
       // The file exists but can't be read (locked, permissions): never start writing an empty store over it (FX-20).
-      this.persistenceBlocked = `Data file ${this.filePath} can't be read: ${(err as Error).message}`;
+      this.block("DATA_FILE_UNREADABLE", `Data file ${this.filePath} can't be read: ${(err as Error).message}`);
       logger.error("db.data_file_unreadable", { file: this.filePath, error: (err as Error).message });
     }
     try {
@@ -980,7 +1067,7 @@ class CommerceDatabase {
           logger.error("db.data_file_corrupt", { file: this.filePath, moved_to: backupPath, error: (err as Error).message });
         }
       } catch (moveErr) {
-        this.persistenceBlocked = `Corrupt data file could not be moved aside: ${(moveErr as Error).message}`;
+        this.block("DATA_FILE_CORRUPT", `Corrupt data file could not be moved aside: ${(moveErr as Error).message}`);
       }
     }
     return {
@@ -1216,9 +1303,13 @@ class CommerceDatabase {
 
   /** Called by every mutating method: marks the store dirty and schedules one coalesced flush. */
   private persist(): void {
+    this.writeSignals++;
     if (this.isTestInstance || process.env.NODE_ENV === "test") return;
+    if (this.persistenceBlocked) {
+      // Never acknowledge a change that can't be saved (review L-2). The in-memory change is discarded with the process.
+      throw new AppError("STORE_UNAVAILABLE", "The data store can't save changes right now. Nothing was saved.", 503);
+    }
     this.dirty = true;
-    if (this.persistenceBlocked) return; // unsafe to write; /health/ready reports why
     if (!this.flushTimer) {
       this.flushTimer = setTimeout(() => {
         this.flushTimer = null;
@@ -1230,6 +1321,11 @@ class CommerceDatabase {
   /** For services that mutate `db.data` directly instead of through a store method. */
   public markDirty(): void {
     this.persist();
+  }
+
+  /** How many times a write was requested since start (tests: a GET must not request any). */
+  public getWriteSignalCount(): number {
+    return this.writeSignals;
   }
 
   /** Writes the current snapshot if anything changed. Safe to call concurrently; also used on shutdown. */
@@ -4993,7 +5089,7 @@ class CommerceDatabase {
   public findOrderById(tenantId: string, id: string): (Order & { customer_name: string; customer_phone: string }) | undefined {
     const o = this.data.orders.find((ord) => ord.tenant_id === tenantId && ord.id === id);
     if (!o) return undefined;
-    const cust = this.data.customers.find((c) => c.id === o.customer_id);
+    const cust = this.data.customers.find((c) => c.tenant_id === tenantId && c.id === o.customer_id);
     return {
       ...o,
       items: this.data.order_items.filter((item) => item.order_id === o.id && item.tenant_id === tenantId),
@@ -7095,16 +7191,17 @@ class CommerceDatabase {
 
   /**
    * Stores one recomputed snapshot in a single pass and a single persist (FX-21). Rows are matched by their
-   * deterministic id, so recomputing is idempotent instead of appending duplicates. For rows that already exist,
-   * `created_at` and the `keep` fields (e.g. a user's approve/reject decision) survive the recompute.
-   * `replace` also drops this tenant's rows that the recompute no longer produces (per-entity snapshots).
+   * deterministic id, so recomputing is idempotent instead of appending duplicates. Existing rows merge through
+   * mergeComputedRow: rows under review are left as they are, and a decision (`keep` fields) survives only while it
+   * is unexpired and about the same entities. `replace` also drops this tenant's rows that the recompute no longer
+   * produces (per-entity snapshots).
    */
   public upsertComputedRows<T extends { id: string; tenant_id: string }>(
     collection: IntelligenceSnapshotCollection,
     tenantId: string,
     kind: string,
     rows: T[],
-    opts: { keep?: readonly string[]; replace?: boolean } = {}
+    opts: { keep?: readonly string[]; freeze?: readonly string[]; replace?: boolean } = {}
   ): T[] {
     const table = this.data[collection] as unknown as Array<Record<string, unknown> & { id: string; tenant_id: string }>;
     const incoming = new Map(rows.filter((r) => r.tenant_id === tenantId).map((r) => [r.id, r]));
@@ -7120,9 +7217,7 @@ class CommerceDatabase {
         if (!opts.replace) next.push(existing);
         continue;
       }
-      const merged: Record<string, unknown> = { ...fresh };
-      if (existing.created_at !== undefined) merged.created_at = existing.created_at;
-      for (const key of opts.keep ?? []) if (existing[key] !== undefined) merged[key] = existing[key];
+      const merged = mergeComputedRow(existing, fresh, { keep: opts.keep, freeze: opts.freeze });
       next.push(merged as typeof existing);
       stored.push(merged as unknown as T);
       incoming.delete(existing.id);

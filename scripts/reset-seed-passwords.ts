@@ -58,7 +58,7 @@ if (!apply) {
   process.exit(0);
 }
 
-const dataFile = path.join(process.cwd(), ".data", "commerceos.json");
+const dataFile = path.join(db.getPersistenceHealth().data_dir, "commerceos.json"); // honours COMMERCEOS_DATA_DIR
 const backupDir = path.join(process.cwd(), ".backups");
 fs.mkdirSync(backupDir, { recursive: true });
 const backupFile = path.join(backupDir, `commerceos.json.before-seed-reset.${Date.now()}.bak`);
@@ -66,4 +66,16 @@ fs.copyFileSync(dataFile, backupFile);
 out(`Backup written: ${path.relative(process.cwd(), backupFile)}`);
 
 for (const p of planned) p.run();
-out(`Done: ${planned.length} account(s) updated. Existing sessions for these users stay valid until they expire.`);
+// Writes are flushed asynchronously (FX-20): confirm they reached disk before telling the operator anything.
+void (async () => {
+  await db.flush();
+  const health = db.getPersistenceHealth();
+  if (!health.ok) {
+    process.stderr.write(
+      `Not saved: ${health.blocked_reason ?? health.last_persist_error?.message ?? "the store is not writable"}. No password was changed.\n`
+    );
+    process.exit(1);
+  }
+  out(`Done: ${planned.length} account(s) updated. Existing sessions for these users stay valid until they expire.`);
+  process.exit(0);
+})();

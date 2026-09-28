@@ -16,7 +16,16 @@ export function assertNoOtherStoreWriter(): void {
   } catch {
     return; // no lock: nobody else is writing
   }
-  if (!owner?.pid || owner.pid === process.pid || owner.host !== os.hostname()) return;
+  if (!owner?.pid || owner.pid === process.pid) return;
+  if (owner.host !== os.hostname()) {
+    // Another host shares this data directory; its process can't be checked from here (Phase 2 security review M-2).
+    if (process.env.COMMERCEOS_FORCE_LOCK === "1") return;
+    process.stderr.write(
+      `The data store is in use by another host (${owner.host}, pid ${owner.pid}). Stop the app there first, or set ` +
+        "COMMERCEOS_FORCE_LOCK=1 only if that host is gone.\n"
+    );
+    process.exit(1);
+  }
   let alive = false;
   try {
     process.kill(owner.pid, 0);

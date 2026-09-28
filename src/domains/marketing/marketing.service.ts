@@ -78,10 +78,10 @@ export class MarketingService {
    */
   public getAbandonedCarts(tenantId: string): EnrichedAbandonedCart[] {
     const carts = db.getAbandonedCarts(tenantId);
-    const customers = db.getAllCustomers(tenantId);
+    const customersById = new Map(db.getAllCustomers(tenantId).map((c) => [c.id, c])); // O(carts + customers) (FX-23)
 
     return carts.map((cart) => {
-      const cust = customers.find((c) => c.id === cart.customer_id);
+      const cust = customersById.get(cart.customer_id);
       const hoursAgo = Math.max(1, Math.round((Date.now() - new Date(cart.abandoned_at).getTime()) / 3600000));
       const timeAgo = hoursAgo >= 24 ? `${Math.floor(hoursAgo / 24)}d ago` : `${hoursAgo}h ago`;
 
@@ -325,55 +325,71 @@ export class MarketingService {
    */
 
   /**
+   * Segment-evaluation context for every customer of the tenant, built once with maps:
+   * O(customers + orders + shipments + carts) instead of scanning orders and shipments per customer (FX-23).
+   */
+  private buildSegmentContexts(tenantId: string) {
+    const customers = db.getAllCustomers(tenantId);
+    const orders = db.getAllOrders(tenantId);
+    const returnedOrderIds = new Set(db.getShipments(tenantId).filter((s) => s.status === "RETURNED").map((s) => s.order_id));
+    const customersWithOpenCart = new Set(
+      db.getAbandonedCarts(tenantId).filter((c) => c.recovery_stage !== "RECOVERED").map((c) => c.customer_id)
+    );
+    const ordersByCustomer = new Map<string, typeof orders>();
+    for (const o of orders) {
+      const list = ordersByCustomer.get(o.customer_id);
+      if (list) list.push(o);
+      else ordersByCustomer.set(o.customer_id, [o]);
+    }
+    const now = Date.now();
+
+    return customers.map((cust) => {
+      const custOrders = ordersByCustomer.get(cust.id) ?? [];
+      const totalSpend = custOrders.reduce((sum, o) => sum + (o.grand_total || 0), 0);
+      const orderCount = custOrders.length;
+      const avgOrderVal = orderCount > 0 ? Math.round(totalSpend / orderCount) : 0;
+
+      const timestamps = custOrders
+        .map((o) => new Date(o.created_at).getTime())
+        .filter((t) => !isNaN(t))
+        .sort((a, b) => b - a);
+
+      const lastPurchaseDaysAgo = timestamps.length > 0 ? Math.floor((now - timestamps[0]) / 86400000) : 999;
+      const firstPurchaseDaysAgo = timestamps.length > 0 ? Math.floor((now - timestamps[timestamps.length - 1]) / 86400000) : 999;
+
+      const hasAbandonedCart = customersWithOpenCart.has(cust.id);
+      const hasReturnedOrder = custOrders.some((o) => returnedOrderIds.has(o.id));
+
+      const context = {
+        customer: cust,
+        orderCount,
+        totalSpend,
+        averageOrderValue: avgOrderVal,
+        lastPurchaseDaysAgo,
+        firstPurchaseDaysAgo,
+        lifecycleStage: orderCount > 2 ? "LOYAL" : orderCount >= 1 ? "REPEAT" : "NEW",
+        purchasedProductIds: [],
+        purchasedCategories: [],
+        hasReturnedOrder,
+        hasFailedPayment: false,
+        hasAbandonedCart,
+      };
+      return { cust, totalSpend, orderCount, lastPurchaseDaysAgo, hasAbandonedCart, context };
+    });
+  }
+
+  /**
    * Returns all audience cohorts with current estimated member size
    */
   public getAudienceCohorts(tenantId: string): Audience[] {
     const audiences = db.getAudiences(tenantId);
-    const customers = db.getAllCustomers(tenantId);
-    const orders = db.getAllOrders(tenantId, { hydrate: true });
-    const shipments = db.getShipments(tenantId);
-    const abandonedCarts = db.getAbandonedCarts(tenantId);
-
-    const now = Date.now();
+    const contexts = this.buildSegmentContexts(tenantId); // once for all audiences
 
     return audiences.map((aud) => {
       // Deterministically evaluate size against rule groups
       let matchCount = 0;
-
-      for (const cust of customers) {
-        const custOrders = orders.filter((o) => o.customer_id === cust.id);
-        const totalSpend = custOrders.reduce((sum, o) => sum + (o.grand_total || 0), 0);
-        const orderCount = custOrders.length;
-        const avgOrderVal = orderCount > 0 ? Math.round(totalSpend / orderCount) : 0;
-
-        const timestamps = custOrders
-          .map((o) => new Date(o.created_at).getTime())
-          .filter((t) => !isNaN(t))
-          .sort((a, b) => b - a);
-
-        const lastPurchaseDaysAgo = timestamps.length > 0 ? Math.floor((now - timestamps[0]) / 86400000) : 999;
-        const firstPurchaseDaysAgo = timestamps.length > 0 ? Math.floor((now - timestamps[timestamps.length - 1]) / 86400000) : 999;
-
-        const hasAbandonedCart = abandonedCarts.some((c) => c.customer_id === cust.id && c.recovery_stage !== "RECOVERED");
-        const hasReturnedOrder = shipments.some((s) => custOrders.some((o) => o.id === s.order_id) && s.status === "RETURNED");
-
-        const context = {
-          customer: cust,
-          orderCount,
-          totalSpend,
-          averageOrderValue: avgOrderVal,
-          lastPurchaseDaysAgo,
-          firstPurchaseDaysAgo,
-          lifecycleStage: orderCount > 2 ? "LOYAL" : orderCount >= 1 ? "REPEAT" : "NEW",
-          purchasedProductIds: [],
-          purchasedCategories: [],
-          hasReturnedOrder,
-          hasFailedPayment: false,
-          hasAbandonedCart,
-        };
-
-        const matches = aud.rule_groups.every((rg) => segmentEngineService.evaluateRuleGroup(context, rg));
-        if (matches) matchCount++;
+      for (const { context } of contexts) {
+        if (aud.rule_groups.every((rg) => segmentEngineService.evaluateRuleGroup(context, rg))) matchCount++;
       }
 
       const size = matchCount > 0 ? matchCount : aud.estimated_size;
@@ -394,46 +410,9 @@ export class MarketingService {
       throw new AppError("NOT_FOUND", `Audience not found: ${audienceId}`, 404);
     }
 
-    const customers = db.getAllCustomers(tenantId);
-    const orders = db.getAllOrders(tenantId, { hydrate: true });
-    const shipments = db.getShipments(tenantId);
-    const abandonedCarts = db.getAbandonedCarts(tenantId);
-    const now = Date.now();
-
     const matchedMembers: any[] = [];
 
-    for (const cust of customers) {
-      const custOrders = orders.filter((o) => o.customer_id === cust.id);
-      const totalSpend = custOrders.reduce((sum, o) => sum + (o.grand_total || 0), 0);
-      const orderCount = custOrders.length;
-      const avgOrderVal = orderCount > 0 ? Math.round(totalSpend / orderCount) : 0;
-
-      const timestamps = custOrders
-        .map((o) => new Date(o.created_at).getTime())
-        .filter((t) => !isNaN(t))
-        .sort((a, b) => b - a);
-
-      const lastPurchaseDaysAgo = timestamps.length > 0 ? Math.floor((now - timestamps[0]) / 86400000) : 999;
-      const firstPurchaseDaysAgo = timestamps.length > 0 ? Math.floor((now - timestamps[timestamps.length - 1]) / 86400000) : 999;
-
-      const hasAbandonedCart = abandonedCarts.some((c) => c.customer_id === cust.id && c.recovery_stage !== "RECOVERED");
-      const hasReturnedOrder = shipments.some((s) => custOrders.some((o) => o.id === s.order_id) && s.status === "RETURNED");
-
-      const context = {
-        customer: cust,
-        orderCount,
-        totalSpend,
-        averageOrderValue: avgOrderVal,
-        lastPurchaseDaysAgo,
-        firstPurchaseDaysAgo,
-        lifecycleStage: orderCount > 2 ? "LOYAL" : orderCount >= 1 ? "REPEAT" : "NEW",
-        purchasedProductIds: [],
-        purchasedCategories: [],
-        hasReturnedOrder,
-        hasFailedPayment: false,
-        hasAbandonedCart,
-      };
-
+    for (const { cust, totalSpend, orderCount, lastPurchaseDaysAgo, hasAbandonedCart, context } of this.buildSegmentContexts(tenantId)) {
       const matches = audience.rule_groups.every((rg) => segmentEngineService.evaluateRuleGroup(context, rg));
       if (matches || audience.rule_groups.length === 0) {
         matchedMembers.push({

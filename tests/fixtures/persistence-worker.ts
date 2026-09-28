@@ -62,10 +62,30 @@ async function main() {
 
   if (scenario === "second-writer") {
     const health = db.getPersistenceHealth();
-    db.createAuditLog({ id: "aud_second", tenant_id: "t", actor_user_id: "u", action: "X", resource_type: "x", resource_id: "1", metadata: {}, created_at: new Date().toISOString() } as never);
+    let writeRejected: string | null = null;
+    try {
+      db.createAuditLog({ id: "aud_second", tenant_id: "t", actor_user_id: "u", action: "X", resource_type: "x", resource_id: "1", metadata: {}, created_at: new Date().toISOString() } as never);
+    } catch (err) {
+      writeRejected = (err as { code?: string }).code ?? "unknown";
+    }
     await new Promise((r) => setTimeout(r, 600));
     await db.flush();
-    out({ lock_held: health.lock.held, ok: health.ok, blocked: health.blocked_reason, owner_pid: health.lock.owner?.pid ?? null, flushes: renames });
+    out({
+      lock_held: health.lock.held, ok: health.ok, blocked: health.blocked_reason, blocked_code: health.blocked_code,
+      owner_pid: health.lock.owner?.pid ?? null, flushes: renames, write_rejected: writeRejected,
+    });
+    return;
+  }
+
+  if (scenario === "other-host") {
+    // The test wrote a lock owned by a live-looking process on another host before this process started.
+    const health = db.getPersistenceHealth();
+    const { GET } = await import("@/app/health/ready/route");
+    const res = await GET();
+    out({
+      lock_held: health.lock.held, blocked_code: health.blocked_code, seeded_users: db.data.users.length,
+      ready_status: res.status, ready_body: await res.text(), lock_left: fs.readFileSync(path.join(dataDir, "commerceos.lock"), "utf-8"),
+    });
     return;
   }
 
@@ -83,10 +103,14 @@ async function main() {
     fs.rmSync(path.join(dataDir, "commerceos.json"), { force: true });
     fs.mkdirSync(path.join(dataDir, "commerceos.json"));
     db.createAuditLog({ id: "aud_fail", tenant_id: "t", actor_user_id: "u", action: "X", resource_type: "x", resource_id: "1", metadata: {}, created_at: new Date().toISOString() } as never);
-    await new Promise((r) => setTimeout(r, 600));
+    // Poll rather than sleep a fixed time, so a loaded machine can't make the check flaky.
+    const until = async (done: () => boolean) => {
+      for (let i = 0; i < 100 && !done(); i++) await new Promise((r) => setTimeout(r, 100));
+    };
+    await until(() => db.getPersistenceHealth().last_persist_error !== null);
     const failed = db.getPersistenceHealth();
     fs.rmdirSync(path.join(dataDir, "commerceos.json"));
-    await new Promise((r) => setTimeout(r, 1500)); // automatic retry after 1 s
+    await until(() => db.getPersistenceHealth().ok && !db.getPersistenceHealth().dirty); // automatic retry after 1 s
     const recovered = db.getPersistenceHealth();
     out({ failed_ok: failed.ok, failed_error: failed.last_persist_error?.message ?? null, recovered_ok: recovered.ok, recovered_dirty: recovered.dirty });
     return;

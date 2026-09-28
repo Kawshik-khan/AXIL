@@ -46,12 +46,7 @@ export class GetOrderTool implements IAgentTool<z.infer<typeof GetOrderInputSche
   }
 
   public async execute(context: RequestContext, input: z.infer<typeof GetOrderInputSchema>) {
-    const list = await OrderService.listOrders(context);
-    const order = list.orders.find(
-      (o) =>
-        o.order_number.toLowerCase() === input.order_number.toLowerCase() ||
-        o.id.toLowerCase() === input.order_number.toLowerCase()
-    );
+    const order = await OrderService.findOrderByReference(context, input.order_number); // every order, not the newest 50
 
     if (!order) {
       return {
@@ -130,12 +125,7 @@ export class GetOrderStatusTool implements IAgentTool<z.infer<typeof GetOrderSta
   }
 
   public async execute(context: RequestContext, input: z.infer<typeof GetOrderStatusInputSchema>) {
-    const list = await OrderService.listOrders(context);
-    const order = list.orders.find(
-      (o) =>
-        o.order_number.toLowerCase() === input.order_number.toLowerCase() ||
-        o.id.toLowerCase() === input.order_number.toLowerCase()
-    );
+    const order = await OrderService.findOrderByReference(context, input.order_number); // every order, not the newest 50
 
     if (!order) {
       return {

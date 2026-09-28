@@ -35,7 +35,7 @@ export class SemanticMetricsService {
 
   /** Pure: the standard definitions with deterministic ids `metric_${key}_${orgId}`. */
   private standardMetricDefinitions(orgId: string): MetricDefinition[] {
-    const now = new Date().toISOString();
+    const now = db.findOrganizationById(orgId)?.created_at ?? "1970-01-01T00:00:00.000Z"; // stable across reads
     const standardMetrics: Array<Omit<MetricDefinition, "id" | "created_at" | "updated_at">> = [
       {
         organization_id: orgId,

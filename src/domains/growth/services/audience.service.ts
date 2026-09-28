@@ -148,18 +148,30 @@ export class AudienceService {
     const shipments = db.getShipments(tenantId);
     const lifecycles = db.getCustomerLifecycles(tenantId);
 
-    // Fetch Phase 6 RFM / LTV intelligence if available
-    let intelProfiles: any[] = [];
+    // Phase 6 RFM / LTV intelligence, computed in memory: evaluating an audience must not store a snapshot (FX-21)
+    let intelProfiles: ReturnType<typeof customerIntelligenceService.computeCustomers> = [];
     try {
-      intelProfiles = customerIntelligenceService.analyzeCustomers(tenantId);
+      intelProfiles = customerIntelligenceService.computeCustomers(tenantId);
     } catch {
       intelProfiles = [];
     }
 
+    // Index once: O(customers + orders + shipments + payments) instead of scanning them per customer (FX-23)
+    const ordersByCustomer = new Map<string, typeof orders>();
+    for (const o of orders) {
+      const list = ordersByCustomer.get(o.customer_id);
+      if (list) list.push(o);
+      else ordersByCustomer.set(o.customer_id, [o]);
+    }
+    const returnedOrderIds = new Set(shipments.filter((s) => s.status === "RETURNED" || s.status === "FAILED").map((s) => s.order_id));
+    const failedPaymentOrderIds = new Set(payments.filter((p) => p.status === "FAILED").map((p) => p.order_id));
+    const lifecycleByCustomer = new Map(lifecycles.map((l) => [l.customer_id, l]));
+    const intelByCustomer = new Map(intelProfiles.map((ip) => [ip.customer_id, ip]));
+
     const now = Date.now();
 
     return customers.map((c) => {
-      const custOrders = orders.filter((o) => o.customer_id === c.id);
+      const custOrders = ordersByCustomer.get(c.id) ?? [];
       const totalSpend = custOrders.reduce((sum, o) => sum + (o.grand_total || 0), 0);
       const orderCount = custOrders.length;
       const averageOrderValue = orderCount > 0 ? Math.round(totalSpend / orderCount) : 0;
@@ -181,16 +193,11 @@ export class AudienceService {
         }
       }
 
-      const hasReturnedOrder = shipments.some(
-        (s) => custOrders.some((o) => o.id === s.order_id) && (s.status === "RETURNED" || s.status === "FAILED")
-      );
+      const hasReturnedOrder = custOrders.some((o) => returnedOrderIds.has(o.id));
+      const hasFailedPayment = custOrders.some((o) => failedPaymentOrderIds.has(o.id));
 
-      const hasFailedPayment = payments.some(
-        (p) => custOrders.some((o) => o.id === p.order_id) && p.status === "FAILED"
-      );
-
-      const lifecycle = lifecycles.find((l) => l.customer_id === c.id);
-      const intel = intelProfiles.find((ip) => ip.customer_id === c.id);
+      const lifecycle = lifecycleByCustomer.get(c.id);
+      const intel = intelByCustomer.get(c.id);
 
       return {
         customer: c,
@@ -202,7 +209,7 @@ export class AudienceService {
         lifecycleStage: lifecycle?.stage || (orderCount > 1 ? "REPEAT" : orderCount === 1 ? "FIRST_PURCHASE" : "NEW"),
         rfmSegment: intel?.rfm_segment,
         predictedLtvBdt: intel?.estimated_ltv_bdt || lifecycle?.predicted_ltv_12m_bdt || totalSpend * 1.5,
-        churnRiskLevel: intel?.churn_risk_level || (lastPurchaseDaysAgo > 60 ? "HIGH" : "LOW"),
+        churnRiskLevel: lastPurchaseDaysAgo > 60 ? "HIGH" : "LOW", // intelligence records have no churn_risk_level; this was always the fallback
         purchasedProductIds,
         purchasedCategories,
         hasReturnedOrder,

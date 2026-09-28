@@ -2,6 +2,8 @@ import { PERMISSIONS } from "@/lib/permissions";
 import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { enterpriseHierarchyService } from "@/domains/enterprise/services/enterprise-hierarchy.service";
+import { dataGovernanceService } from "@/domains/enterprise/services/data-governance.service";
+import { semanticMetricsService } from "@/domains/enterprise/services/semantic-metrics.service";
 import { db } from "@/infrastructure/db";
 
 export async function GET(request: Request) {
@@ -33,6 +35,10 @@ export async function POST(request: Request) {
       headquarters_country: body.country || "Bangladesh",
       default_currency: body.base_currency || "BDT",
     });
+    // Default governance assets and KPI definitions are stored here, when the organization is set up, so the
+    // governance and metrics GETs only read (FX-21 step 6).
+    dataGovernanceService.seedDefaultAssets(created.id);
+    semanticMetricsService.seedStandardMetrics(created.id);
 
     return apiSuccess(created, undefined, 201);
   } catch (err) {

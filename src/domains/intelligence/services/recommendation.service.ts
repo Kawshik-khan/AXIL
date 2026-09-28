@@ -7,6 +7,7 @@
 import { db } from "@/infrastructure/db";
 import { Recommendation, RecommendationStatus } from "@/types/intelligence";
 import { ActionRiskLevel } from "@/types/orchestration";
+import { entitySetKey } from "@/lib/computed-rows";
 import { opportunityDetectorService } from "./opportunity-detector.service";
 import { riskDetectorService } from "./risk-detector.service";
 import { intelligenceSnapshots } from "./intelligence-snapshot.service";
@@ -76,7 +77,7 @@ export class RecommendationService {
     const overstockRisk = risks.find((r) => r.type === "OVERSTOCK");
     if (overstockRisk) {
       const rec: Recommendation = {
-        id: `rec_${tenantId}_clearance_dead_stock`,
+        id: `rec_${tenantId}_clearance_${entitySetKey(overstockRisk.affected_entities.map((e) => e.id))}`,
         tenant_id: tenantId,
         type: "DISCOUNT_DEAD_STOCK",
         title: "Liquidate Idle Dead-Stock via Flash Promo",

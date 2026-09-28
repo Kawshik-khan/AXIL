@@ -9,6 +9,7 @@
 
 import { db } from "@/infrastructure/db";
 import type { IntelligenceSnapshotCollection } from "@/types/intelligence";
+import { mergeComputedRow } from "@/lib/computed-rows";
 
 export const SNAPSHOT_MAX_AGE_MS = 15 * 60_000;
 
@@ -27,8 +28,10 @@ export type IntelligenceKind =
 
 interface KindSpec {
   collection: IntelligenceSnapshotCollection;
-  /** Fields a user or workflow changes after detection; a recompute keeps them. */
+  /** Fields a user or workflow changes after detection; a recompute keeps them while unexpired and about the same entities. */
   keep?: readonly string[];
+  /** Statuses during which a stored row is not touched by a recompute (someone is deciding on it). */
+  freeze?: readonly string[];
   /** Per-entity snapshots: rows the recompute no longer produces are dropped. Event-like kinds keep history. */
   replace?: boolean;
 }
@@ -45,6 +48,7 @@ const KINDS: Record<IntelligenceKind, KindSpec> = {
   recommendations: {
     collection: "recommendations",
     keep: ["status", "reviewed_by", "reviewed_at", "dispatched_workflow_id", "rejection_reason", "updated_at"],
+    freeze: ["REVIEWING"],
   },
   growth_insights: { collection: "growth_insights", keep: ["status"] },
   growth_recommendations: { collection: "growth_recommendations", keep: ["status"] },
@@ -75,26 +79,22 @@ export class IntelligenceSnapshotService {
       return { rows, snapshot: { kind, source: "SNAPSHOT", computed_at: run.computed_at, max_age_seconds: maxAge } };
     }
     const live = compute();
-    const keep = spec.keep ?? [];
-    const rows = keep.length === 0 ? live : this.overlay(live, db.getComputedRows<T>(spec.collection, tenantId, live.map((r) => r.id)), keep);
+    const rows = spec.keep || spec.freeze ? this.overlay(live, db.getComputedRows<T>(spec.collection, tenantId, live.map((r) => r.id)), spec) : live;
     return { rows, snapshot: { kind, source: "LIVE", computed_at: new Date().toISOString(), max_age_seconds: maxAge } };
   }
 
   /** Write path: stores one recomputed snapshot of a kind in a single batched write. */
   public persist<T extends Row>(tenantId: string, kind: IntelligenceKind, rows: T[]): T[] {
     const spec = KINDS[kind];
-    return db.upsertComputedRows(spec.collection, tenantId, kind, rows, { keep: spec.keep, replace: spec.replace });
+    return db.upsertComputedRows(spec.collection, tenantId, kind, rows, { keep: spec.keep, freeze: spec.freeze, replace: spec.replace });
   }
 
-  private overlay<T extends Row>(live: T[], stored: T[], keep: readonly string[]): T[] {
+  /** Same merge rule as a stored recompute, applied in memory. */
+  private overlay<T extends Row>(live: T[], stored: T[], spec: KindSpec): T[] {
     const byId = new Map(stored.map((r) => [r.id, r as unknown as Record<string, unknown>]));
     return live.map((row) => {
       const existing = byId.get(row.id);
-      if (!existing) return row;
-      const merged: Record<string, unknown> = { ...row };
-      for (const key of keep) if (existing[key] !== undefined) merged[key] = existing[key];
-      if (existing.created_at !== undefined) merged.created_at = existing.created_at;
-      return merged as unknown as T;
+      return existing ? (mergeComputedRow(existing, row as unknown as Record<string, unknown>, spec) as unknown as T) : row;
     });
   }
 }

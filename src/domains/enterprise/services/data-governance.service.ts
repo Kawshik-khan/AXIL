@@ -79,7 +79,8 @@ export class DataGovernanceService {
   public listAssets(orgId: string): DataAsset[] {
     const stored = db.getDataAssets(orgId);
     if (stored.length > 0) return stored;
-    const now = new Date().toISOString();
+    // Organizations created before FX-21 have nothing stored: show the defaults, stamped with the org's own date.
+    const now = db.findOrganizationById(orgId)?.created_at ?? "1970-01-01T00:00:00.000Z";
     return this.defaultAssetParams().map((a) => ({
       id: `asset_${a.domain.toLowerCase()}_default_${orgId}`,
       organization_id: orgId,

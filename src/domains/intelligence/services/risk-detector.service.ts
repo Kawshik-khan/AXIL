@@ -5,6 +5,7 @@
 
 import { db } from "@/infrastructure/db";
 import { Risk } from "@/types/intelligence";
+import { entitySetKey } from "@/lib/computed-rows";
 import { evidenceService } from "./evidence.service";
 import { inventoryIntelligenceService } from "./inventory-intelligence.service";
 import { paymentIntelligenceService } from "./payment-intelligence.service";
@@ -66,7 +67,7 @@ export class RiskDetectorService {
       });
 
       const risk: Risk = {
-        id: `risk_${tenantId}_overstock_catalog`,
+        id: `risk_${tenantId}_overstock_${entitySetKey(deadStocks.map((d) => d.variant_id))}`,
         tenant_id: tenantId,
         type: "OVERSTOCK",
         title: `Capital Locked in ${deadStocks.length} Dead Stock SKU(s)`,

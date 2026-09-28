@@ -31,17 +31,20 @@ async function runTest(testName: string, testFn: () => Promise<void> | void) {
 const ROOT = path.resolve(__dirname, "..");
 const tempDir = () => fs.mkdtempSync(path.join(os.tmpdir(), "commerceos-persist-"));
 
-function workerEnv(dataDir: string): NodeJS.ProcessEnv {
-  const env = { ...process.env, NODE_ENV: "development", COMMERCEOS_DATA_DIR: dataDir, PERSIST_DEBOUNCE_MS: "250" };
+/** `readOnly`: start even when the store can't be owned, so a scenario can report what it saw (default: refuse). */
+function workerEnv(dataDir: string, opts: { readOnly?: boolean } = {}): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env, NODE_ENV: "development", COMMERCEOS_DATA_DIR: dataDir, PERSIST_DEBOUNCE_MS: "250" };
+  if (opts.readOnly) env.COMMERCEOS_START_READ_ONLY = "1";
+  else delete env.COMMERCEOS_START_READ_ONLY;
   delete env.DATABASE_URL;
   delete env.UPSTASH_REDIS_REST_URL;
   return env;
 }
 
-function runWorker(scenario: string, dataDir: string): Record<string, unknown> {
+function runWorker(scenario: string, dataDir: string, opts: { readOnly?: boolean } = {}): Record<string, unknown> {
   const res = spawnSync(process.execPath, ["tests/ts-runner.cjs", "./tests/fixtures/persistence-worker.ts", scenario], {
     cwd: ROOT,
-    env: workerEnv(dataDir),
+    env: workerEnv(dataDir, opts),
     encoding: "utf-8",
     timeout: 120_000,
   });
@@ -115,11 +118,25 @@ async function main() {
         setTimeout(() => reject(new Error("holder timeout")), 60_000);
       });
       assert.strictEqual(first.lock_held, true);
-      const second = runWorker("second-writer", dir);
+      // Default: a second app process refuses to start.
+      const refused = spawnSync(process.execPath, ["tests/ts-runner.cjs", "./tests/fixtures/persistence-worker.ts", "second-writer"], {
+        cwd: ROOT,
+        env: workerEnv(dir),
+        encoding: "utf-8",
+        timeout: 60_000,
+      });
+      assert.strictEqual(refused.status, 1, "a second writer process exits");
+      assert.ok(/refused to start: the data store is in use by another process/.test(refused.stderr), refused.stderr.slice(0, 300));
+      assert.ok(!/RESULT /.test(refused.stdout), "it never got as far as serving");
+
+      // Opt-in read-only start (diagnostics): it runs, but refuses every write.
+      const second = runWorker("second-writer", dir, { readOnly: true });
       assert.strictEqual(second.lock_held, false);
       assert.strictEqual(second.ok, false, "the second writer reports not ready");
       assert.strictEqual(second.owner_pid, first.pid);
+      assert.strictEqual(second.blocked_code, "LOCK_HELD_BY_OTHER_PROCESS");
       assert.strictEqual(second.flushes, 0, "the second writer never writes the store");
+      assert.strictEqual(second.write_rejected, "STORE_UNAVAILABLE", "a write it can't save is refused, not acknowledged");
 
       const seed = spawnSync(process.execPath, ["tests/ts-runner.cjs", "./scripts/reset-seed-passwords.ts"], {
         cwd: ROOT,
@@ -140,6 +157,65 @@ async function main() {
       assert.strictEqual(next.lock_held, true, "stale lock taken over");
       assert.ok(Number(next.flushes) >= 1);
     } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  await runTest("a lock held on another host is never taken over; nothing is seeded; readiness leaks no paths, pids or hosts", () => {
+    const dir = tempDir();
+    try {
+      fs.writeFileSync(
+        path.join(dir, "commerceos.lock"),
+        JSON.stringify({ pid: 4242, host: "replica-b.internal", started_at: new Date().toISOString() })
+      );
+      const r = runWorker("other-host", dir, { readOnly: true });
+      assert.strictEqual(r.lock_held, false);
+      assert.strictEqual(r.blocked_code, "LOCK_HELD_ON_OTHER_HOST");
+      assert.strictEqual(r.seeded_users, 0, "a blocked store doesn't seed accounts in memory");
+      assert.strictEqual(r.ready_status, 503);
+      const body = String(r.ready_body);
+      assert.ok(/LOCK_HELD_ON_OTHER_HOST/.test(body), body);
+      for (const leak of ["replica-b", "4242", dir.replace(/\\/g, "\\\\"), os.hostname()]) {
+        assert.ok(!body.includes(leak), `readiness body leaks ${leak}: ${body}`);
+      }
+      assert.ok(String(r.lock_left).includes("replica-b.internal"), "the other host's lock is left in place");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  await runTest("two processes taking over the same stale lock at once end with exactly one writer", async () => {
+    const dir = tempDir();
+    fs.writeFileSync(path.join(dir, "commerceos.lock"), JSON.stringify({ pid: 999_998, host: os.hostname(), started_at: "2020-01-01T00:00:00Z" }));
+    const start = () => {
+      const child = spawn(process.execPath, ["tests/ts-runner.cjs", "./tests/fixtures/persistence-worker.ts", "hold-lock"], {
+        cwd: ROOT,
+        env: workerEnv(dir, { readOnly: true }), // the loser reports instead of exiting
+      });
+      const result = new Promise<Record<string, unknown>>((resolve, reject) => {
+        let buf = "";
+        child.stdout.on("data", (d) => {
+          buf += String(d);
+          const line = buf.split("\n").find((l) => l.startsWith("RESULT "));
+          if (line) resolve(JSON.parse(line.slice(7)));
+        });
+        child.on("exit", () => reject(new Error("worker exited early")));
+        setTimeout(() => reject(new Error("worker timeout")), 60_000);
+      });
+      return { child, result };
+    };
+    const a = start();
+    const b = start();
+    try {
+      const [ra, rb] = await Promise.all([a.result, b.result]);
+      const holders = [ra, rb].filter((r) => r.lock_held === true).length;
+      assert.strictEqual(holders, 1, `lock holders: ${JSON.stringify([ra, rb])}`);
+      const owner = JSON.parse(fs.readFileSync(path.join(dir, "commerceos.lock"), "utf-8")) as { pid: number };
+      assert.strictEqual(owner.pid, (ra.lock_held ? ra : rb).pid, "the lock file names the one holder");
+    } finally {
+      a.child.kill();
+      b.child.kill();
+      await new Promise((r) => setTimeout(r, 500));
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });

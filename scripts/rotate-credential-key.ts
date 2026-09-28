@@ -123,7 +123,7 @@ if (!apply) {
   process.exit(0);
 }
 
-const dataFile = path.join(process.cwd(), ".data", "commerceos.json");
+const dataFile = path.join(db.getPersistenceHealth().data_dir, "commerceos.json"); // honours COMMERCEOS_DATA_DIR
 const backupDir = path.join(process.cwd(), ".backups");
 fs.mkdirSync(backupDir, { recursive: true });
 const backupFile = path.join(backupDir, `commerceos.json.before-key-rotation.${Date.now()}.bak`);
@@ -131,6 +131,18 @@ fs.copyFileSync(dataFile, backupFile);
 out(`Backup written: ${path.relative(process.cwd(), backupFile)}`);
 
 for (const write of writes) write();
-out(`Applied ${writes.length} change(s). Remove OLD_JWT_SECRET from .env.local now.`);
-out("The backup holds credentials encrypted under the old, published secret, so treat it as plaintext: delete it once");
-out("the app works, and rotate the provider tokens themselves (Meta, WhatsApp, couriers, payments) at each provider.");
+// Writes are flushed asynchronously (FX-20): confirm they reached disk before telling the operator anything.
+void (async () => {
+  await db.flush();
+  const health = db.getPersistenceHealth();
+  if (!health.ok) {
+    process.stderr.write(
+      `Not saved: ${health.blocked_reason ?? health.last_persist_error?.message ?? "the store is not writable"}. Keep OLD_JWT_SECRET.\n`
+    );
+    process.exit(1);
+  }
+  out(`Applied ${writes.length} change(s). Remove OLD_JWT_SECRET from .env.local now.`);
+  out("The backup holds credentials encrypted under the old, published secret, so treat it as plaintext: delete it once");
+  out("the app works, and rotate the provider tokens themselves (Meta, WhatsApp, couriers, payments) at each provider.");
+  process.exit(0);
+})();

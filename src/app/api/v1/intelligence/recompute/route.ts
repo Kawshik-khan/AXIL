@@ -1,6 +1,7 @@
 import { PERMISSIONS } from "@/lib/permissions";
 import { RbacService } from "@/domains/rbac/service";
 import { AuditService } from "@/domains/audit/service";
+import { enforceRateLimit, MINUTE } from "@/lib/rate-limit";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { intelligenceRecomputeService } from "@/domains/intelligence/services/intelligence-recompute.service";
 
@@ -12,6 +13,8 @@ export async function POST(request: Request) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.ANALYTICS_MANAGE);
+    // Runs every detector and a full-store flush: cap it per workspace so a loop can't stall the server (review L-3)
+    enforceRateLimit(`intel:recompute:${context.tenant.id}`, 2, MINUTE);
     const summary = intelligenceRecomputeService.recomputeAll(context.tenant.id);
     AuditService.log({
       tenantId: context.tenant.id,

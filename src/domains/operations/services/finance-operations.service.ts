@@ -29,11 +29,18 @@ export class FinanceOperationsService {
     let discrepancyCount = 0;
     let totalDiscrepancyAmount = 0;
 
+    const paymentsByOrder = new Map<string, typeof payments>(); // O(orders + payments) (FX-23)
+    for (const p of payments) {
+      const list = paymentsByOrder.get(p.order_id);
+      if (list) list.push(p);
+      else paymentsByOrder.set(p.order_id, [p]);
+    }
+
     for (const order of orders) {
       if (order.status === "CANCELLED") continue;
 
       totalExpected += order.grand_total;
-      const orderPayments = payments.filter((p) => p.order_id === order.id);
+      const orderPayments = paymentsByOrder.get(order.id) ?? [];
       const paidSum = orderPayments
         .filter((p) => p.status === "PAID")
         .reduce((sum, p) => sum + p.amount, 0);

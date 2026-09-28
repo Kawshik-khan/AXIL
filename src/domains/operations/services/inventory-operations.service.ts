@@ -51,7 +51,7 @@ export class InventoryOperationsService {
 
     const variantVelocity: Record<string, number> = {};
     for (const order of recentOrders) {
-      const items = db.getOrderItems(tenantId, order.id);
+      const items = order.items ?? []; // already hydrated: no per-order scan of all order items (FX-23)
       for (const item of items) {
         const vId = item.variant_id || (item as any).product_variant_id;
         variantVelocity[vId] = (variantVelocity[vId] || 0) + item.quantity;

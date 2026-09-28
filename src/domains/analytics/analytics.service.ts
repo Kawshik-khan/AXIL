@@ -144,12 +144,13 @@ export class AnalyticsService {
     const products = db.getAllProducts(tenantId);
 
     // Map variant/product unit costs for authoritative COGS calculation
+    const productsById = new Map(products.map((p) => [p.id, p])); // O(V + P) (FX-23)
     const costMap = new Map<string, number>();
     for (const v of variants) {
       if (v.cost_price && v.cost_price > 0) {
         costMap.set(v.id, v.cost_price);
       } else {
-        const prod = products.find((p) => p.id === v.product_id);
+        const prod = productsById.get(v.product_id);
         if (prod?.cost_price && prod.cost_price > 0) {
           costMap.set(v.id, prod.cost_price);
         } else {

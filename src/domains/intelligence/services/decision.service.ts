@@ -9,6 +9,7 @@ import { DecisionRequest, Recommendation } from "@/types/intelligence";
 import { ActionRiskLevel, ApprovalStatus } from "@/types/orchestration";
 import { autonomyPolicyService } from "@/domains/ai/orchestration/autonomy/autonomy-policy.service";
 import { workflowEngine } from "@/domains/ai/orchestration/engine/workflow-engine";
+import { recommendationService } from "./recommendation.service";
 
 export class DecisionService {
   /**
@@ -19,7 +20,11 @@ export class DecisionService {
     recommendationId: string,
     context: Record<string, unknown> = {}
   ): Promise<DecisionRequest> {
-    const rec = db.getRecommendationById(tenantId, recommendationId);
+    // GETs may show recommendations computed live and not stored yet (FX-21). Proposing is a write, so store the
+    // current set first; an id that isn't in it is genuinely not found.
+    const rec =
+      db.getRecommendationById(tenantId, recommendationId) ??
+      recommendationService.generateRecommendations(tenantId).find((r) => r.id === recommendationId);
     if (!rec) {
       throw new AppError("NOT_FOUND", `Recommendation not found: ${recommendationId}`, 404);
     }

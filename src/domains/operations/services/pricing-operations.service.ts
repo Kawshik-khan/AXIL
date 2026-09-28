@@ -26,8 +26,11 @@ export class PricingOperationsService {
     const minMarginPercent = rules.length > 0 ? Math.max(...rules.map((r) => r.min_margin_percent)) : 20;
     const recommendations: PricingRecommendation[] = [];
 
+    const inventoryByVariant = new Map<string, (typeof inventory)[number]>(); // first row per variant, O(V + I) (FX-23)
+    for (const i of inventory) if (!inventoryByVariant.has(i.product_variant_id)) inventoryByVariant.set(i.product_variant_id, i);
+
     for (const v of variants) {
-      const inv = inventory.find((i) => i.product_variant_id === v.id);
+      const inv = inventoryByVariant.get(v.id);
       const stock = inv ? inv.quantity_available : 0;
       const cost = v.cost_price || Math.round(v.price * 0.65); // Fallback cost estimate
       const currentMargin = ((v.price - cost) / v.price) * 100;

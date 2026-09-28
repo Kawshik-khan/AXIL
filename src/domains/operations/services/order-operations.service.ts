@@ -32,12 +32,19 @@ export class OrderOperationsService {
     const reservations = db.getReservations(tenantId);
     const payments = db.getPayments(tenantId);
     const now = Date.now();
+    const paymentsByOrder = new Map<string, typeof payments>(); // O(orders + payments) (FX-23)
+    for (const p of payments) {
+      const list = paymentsByOrder.get(p.order_id);
+      if (list) list.push(p);
+      else paymentsByOrder.set(p.order_id, [p]);
+    }
+    const activeReservationOrderIds = new Set(reservations.filter((r) => r.status === "ACTIVE").map((r) => r.order_id));
 
     return orders.map((order) => {
       const orderAgeHours = (now - new Date(order.created_at).getTime()) / 3600000;
-      const orderPayments = payments.filter((p) => p.order_id === order.id);
+      const orderPayments = paymentsByOrder.get(order.id) ?? [];
       const isPaid = order.payment_status === "PAID" || (order.payment_method === "COD" && order.status !== "CANCELLED");
-      const isReserved = reservations.some((r) => r.order_id === order.id && r.status === "ACTIVE");
+      const isReserved = activeReservationOrderIds.has(order.id);
 
       const riskSignals: string[] = [];
 

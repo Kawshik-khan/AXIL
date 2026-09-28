@@ -26,6 +26,22 @@ export class OrderService {
     return db.getOrders(context.tenant.id, { ...options, limit: options?.limit ?? 50 }); // one page; analytics use getAllOrders
   }
 
+  /**
+   * Exact, case-insensitive match on order number or id across all of the tenant's orders (not a 50-row page, FX-22).
+   * Returns undefined when there is no such order.
+   */
+  public static async findOrderByReference(
+    context: RequestContext,
+    reference: string
+  ): Promise<(Order & { customer_name: string; customer_phone: string }) | undefined> {
+    RbacService.assertCan(context, PERMISSIONS.ORDERS_READ);
+    const ref = reference.trim().toLowerCase();
+    const match = db
+      .getAllOrders(context.tenant.id)
+      .find((o) => o.order_number.toLowerCase() === ref || o.id.toLowerCase() === ref);
+    return match ? db.findOrderById(context.tenant.id, match.id) : undefined;
+  }
+
   public static async getOrderById(
     context: RequestContext,
     orderId: string
