@@ -1331,3 +1331,44 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
   - FX-23: `getDashboardMetrics` still scans each collection once per call (accepted until Phase 4, as the plan allows).
   - FX-24 "refuse to start": in `next dev`/`next start` the store module loads on the first request that needs it, so a second server exits then, not at boot.
   - Also done in Phase 2: tenant-scoped cohort records (N9), a complete frequency cap (N10), per-tenant lookups in `getInventory`, the payment-exception and lifecycle read fixes, O(n) rewrites of the loops the 50-row cap had hidden (audiences, marketing, stockout, reconciliation, order health, pricing), AI order lookup over every order, and enterprise defaults stored when an organization is created.
+
+## ADR-106: Truthful Data and Honest Integrations (Phase 3)
+- **Date**: 2026-09-28
+- **Status**: Approved. Builds on ADR-105. Covers FX-30, FX-31, FX-39 and audit N11; FX-32…FX-38 are separate work.
+- **Context**: The audit found numbers invented in code and shown as business metrics (H7): synthetic baselines, fixed period changes, revenue split across stores by list position, literal fallbacks such as `?? 4999`, random latencies. It also found external effects reported as successful without contacting anyone (H9): social and marketing sends, courier bookings, connector tests, enterprise syncs and webhooks, and an n8n branch that returned success for any localhost URL. The Command Center showed another dataset and made-up customers (FX-39). Enterprise benchmarks built a synthetic all-access admin (N11).
+- **Decision**:
+  1. **Unknown is not zero and not a guess.**
+     - Values that can't be computed from stored data are `null` in APIs and "—" or "Not measured" in the UI. Aggregates that can't be attributed carry `data_status` / `entity_data_status: "NOT_MEASURED"`.
+     - Period changes compare with the previous window of the same length; without one they are `null`.
+     - RTO tiers need at least 20 shipped orders (`RTO_MIN_SHIPMENTS`), otherwise `INSUFFICIENT_DATA`.
+     - Orders whose channel isn't recorded are `UNATTRIBUTED`, never counted as Website or Facebook (`src/lib/sales-channel.ts`).
+     - COGS uses product and variant cost prices; the 42% fallback (`COGS_FALLBACK_RATIO`) applies only to items without a cost, and the share of estimated cost is reported (`cogs_estimated_share_pct`).
+     - Delivery fees come from tenant settings (`PricingService.getDeliveryFees`); `0` means free delivery.
+     - Campaign results report sends, deliveries, failures and suppressions; attributed revenue stays `null` (`attribution_status: "NOT_MEASURED"`) until coupon/UTM attribution exists. Simulations list their assumptions.
+     - The Command Center reads only `/reports/dashboard`, `/analytics/financials`, `/ai/runs` and `/intelligence/overview`.
+  2. **Integrations say what happened.**
+     - `IntegrationNotConfiguredError` (424, `INTEGRATION_NOT_CONFIGURED`, not retryable): social `send*` methods throw it; the outbound loop records the message FAILED after one attempt with the reason, and the conversation view says it wasn't delivered.
+     - Marketing adapters return `success: false` with `CHANNEL_NOT_CONNECTED`.
+     - Shipments need the courier's tracking number and are recorded `booking_mode: "MANUAL"`. Courier failover refuses instead of cancelling a shipment and inventing a new booking.
+     - Connector tests return `status: "VERIFIED" | "NOT_VERIFIED" | "FAILED"` and `latency_ms: number | null`. OpenAI, DeepSeek, Groq and OpenRouter get a real `GET /models` with the key, 5 s timeout, only against the provider's own built-in https endpoint (a user-supplied URL is never fetched: SSRF). The route needs `settings.update` and allows 10 tests per minute per workspace. Saved connectors start `UNVERIFIED`.
+     - Enterprise integrations are saved `NOT_VERIFIED` with `encryptCredential` (not base64) and are never returned with credentials; their test answers `SIMULATED`; their sync and the AI sync tool answer 424 and record nothing. Webhook dispatch records a signed event as `NOT_SENT`; listings don't return signing secrets.
+     - n8n is called only when the tenant has an active instance or `N8N_HOST` / `COMMERCEOS_N8N_BASE_URL` is set; otherwise the execution is FAILED with `N8N_NOT_CONFIGURED` (424) and nothing is sent. Tenants see a generic failure reason, never fetch errors naming internal hosts.
+  3. **Enterprise reads use the caller's real scope (N11).** `resolveEnterpriseCaller` (`organization-access.ts`):
+     - an ACTIVE membership in `enterprise_users` is used as stored (role and assigned scope);
+     - a SUSPENDED or INVITED membership is refused (403);
+     - with no membership, the workspace OWNER and ADMIN get organization-wide scope, because their workspace owns the organization (FX-13); every other role is refused.
+     - Benchmarks, consolidated analytics, reports, the overview and the enterprise AI tools use it. Workspace-wide money figures (revenue, orders, margin, channel and regional sums) are shown only to organization-wide callers: orders carry no store, so they can't be narrowed to a member's stores, and a store-scoped member gets `null` with `scope: "PARTIAL"`.
+  4. **A grep gate** in `tests/phase3-truthfulness-tests.ts` fails on the known fabrication patterns (synthetic baselines, literal period changes and fallbacks, random latencies, invented couriers, URL-based fake deliveries, per-position values, fixed revenue shares, synthetic all-access callers). It flags every pre-Phase-3 version of the affected files.
+- **Consequences**:
+  - Screens show fewer numbers and more "—" until real data exists; that is intended.
+  - API contracts changed (nullable fields, new statuses, required `tracking_number`, 424 answers); see the CHANGELOG.
+  - Messages to social channels fail visibly until Phase 5 builds sending. Social channels keep receiving (inbound webhooks) and are labelled "Receiving only".
+  - n8n needs `N8N_HOST` (or a configured instance) to run anything.
+  - Enterprise per-store and per-brand figures stay `NOT_MEASURED` until orders are attributed to stores.
+- **Deviations from FIX_IMPLEMENTATION_PLAN Phase 3**:
+  - FX-31 step 7: `validateCredentials` returns `{ valid: true, verified: false }` instead of `valid: false`. Refusing the credentials would block connecting a channel at all and with it the inbound webhooks that do work; `verified: false` keeps the health check from claiming a live connection, and the UI says "Receiving only".
+  - FX-31 step 2: the website chat adapter throws like the others instead of storing replies for the widget, because the widget has no authenticated way to poll for them yet (Phase 5).
+  - FX-31 step 8: instead of `simulated: true` flags and a "Simulated" badge, enterprise results carry explicit statuses (`NOT_VERIFIED`, `SIMULATED` for the test, `NOT_SENT`, 424 for sync).
+  - FX-31 step 9: no `N8N_DRY_RUN` switch. The existing per-request `DRY_RUN` execution mode stays; without a configured instance n8n is not called at all, and tests stub `fetch`.
+  - FX-39: the automation quick stats show recent AI agent runs from `/ai/runs`; `/automation/health` isn't used on the Command Center. The city table keeps a computed returning-buyer share instead of dropping the column.
+  - Beyond the plan: courier failover refuses; the enterprise overview and autonomous unified context were scoped (security review); identity resolution no longer invents phones (N6); continuous learning can't promote a candidate without real evaluation.

@@ -6,7 +6,7 @@
 > **target** design. When a doc and this file disagree, this file wins for "what exists"; the doc wins for
 > "what we are building toward". Never report a target-design capability as working unless this file says LIVE.
 
-**Overall posture: NOT production-ready. Do not expose to any network.** Phase 0 containment (FX-00…FX-08, [ADR-103](DECISIONS.md#adr-103-fail-closed-authentication-secrets-and-webhook-signatures-phase-0-containment)) and Phase 1 access control (FX-10…FX-19, [ADR-104](DECISIONS.md#adr-104-access-control-and-integrity-phase-1)) are merged to `main` and tagged `release/phase-0` / `release/phase-1`. Phase 2 performance and read-path integrity (FX-20…FX-24, [ADR-105](DECISIONS.md#adr-105-coalesced-persistence-write-free-reads-and-complete-analytics-phase-2)) is merged to `main` and tagged `release/phase-2` (2026-09-28). Remaining blockers before any network exposure: the JSON-file store is still one file owned by one process (Postgres cutover, Phase 4), fabricated metrics and simulated integrations (H7–H9, H14, Phase 3), unenforced platform safety controls (H11) and N8.
+**Overall posture: NOT production-ready. Do not expose to any network.** Phase 0 containment (FX-00…FX-08, [ADR-103](DECISIONS.md#adr-103-fail-closed-authentication-secrets-and-webhook-signatures-phase-0-containment)) and Phase 1 access control (FX-10…FX-19, [ADR-104](DECISIONS.md#adr-104-access-control-and-integrity-phase-1)) are merged to `main` and tagged `release/phase-0` / `release/phase-1`. Phase 2 performance and read-path integrity (FX-20…FX-24, [ADR-105](DECISIONS.md#adr-105-coalesced-persistence-write-free-reads-and-complete-analytics-phase-2)) is merged to `main` and tagged `release/phase-2` (2026-09-28). Phase 3 truthful data and wiring (FX-30, FX-31, FX-39, N11, [ADR-106](DECISIONS.md#adr-106-truthful-data-and-honest-integrations-phase-3)) is complete on branch `phase-3-truthful-data`, awaiting merge. Remaining blockers before any network exposure: the JSON-file store is still one file owned by one process (Postgres cutover, Phase 4); integrations are now honestly reported as not sent / not verified but none is built (Phase 5); the AI provider and embeddings are simulated (H14); platform safety controls aren't enforced (H11); N8.
 
 ---
 
@@ -36,14 +36,14 @@
 | Tenant RBAC | `RbacService.assertCan` on every handler of the six previously unguarded domains (140 handlers, RBAC matrix test) plus the service-layer checks elsewhere; approvers come from the session; four-eyes on high-risk campaigns; id lookups are tenant-scoped; enterprise organizations belong to a workspace | Every route guarded | LIVE (API) — the dock and command palette hide modules a role can't use, but pages don't all show a 403 state yet; role review pending (FX-10 step 7) |
 | Platform control plane | Services under `src/domains/platform/services/`; kill switches / flags / entitlements not enforced. Real operator sign-in with TOTP; step-up actions work once the operator sets up an authenticator; newly provisioned tenant owners cannot sign in yet (N8) | Enforced gates | PARTIAL (H11, N8) |
 | Webhooks | Courier/payment: per-endpoint `?wh=` id, HMAC of `<timestamp>.<raw body>`, 300 s window, tenant from the webhook row, duplicates suppressed by a key from signed data, 600/min per endpoint. Social: per-entry channel resolution, Meta signature mandatory | HMAC + replay defense | PARTIAL — secrets are per provider, not per endpoint (Low); provider-native signature formats not built (Phase 5); n8n relays must add HMAC signing (import guide) |
-| External integrations | Social send, courier booking, payment verification, connectors all stubbed but report success | Real adapters | SIMULATED (H9) |
-| Analytics | Analytics, intelligence, growth, enterprise and operations services read every row (`getAllOrders` / `getAllCustomers` / `getAllProducts`); paged reads require an explicit limit. Intelligence GETs serve a snapshot stored by `POST /api/v1/intelligence/recompute` (fresh for 15 min) or compute in memory, in O(n) | Real aggregates | PARTIAL — hard-coded baselines and fabricated projections remain (H7, Phase 3); no scheduled recompute |
+| External integrations | Nothing external reports success it didn't achieve (FX-31): social replies (Facebook, Instagram, WhatsApp, website chat) fail with `INTEGRATION_NOT_CONFIGURED` and are recorded FAILED after one attempt; marketing sends are `CHANNEL_NOT_CONNECTED`; shipments are booked manually with the courier's tracking number (`booking_mode: MANUAL`) and courier failover refuses; connector tests are `NOT_VERIFIED` except OpenAI, DeepSeek, Groq and OpenRouter, which get a real key check against their own public endpoint; enterprise integrations are saved `NOT_VERIFIED` with encrypted credentials, their test says `SIMULATED` and their sync answers 424; enterprise webhook dispatch records `NOT_SENT`; n8n is called only when an instance or `N8N_HOST` is configured (otherwise 424 `N8N_NOT_CONFIGURED`). Social channels still receive messages (inbound webhooks), shown as "Receiving only" | Real adapters | NOT BUILT — honestly labelled (H9 closed); real adapters are Phase 5 |
+| Analytics | Analytics, intelligence, growth, enterprise and operations services read every row (`getAllOrders` / `getAllCustomers` / `getAllProducts`); paged reads require an explicit limit. Intelligence GETs serve a snapshot stored by `POST /api/v1/intelligence/recompute` (fresh for 15 min) or compute in memory, in O(n) | Real aggregates | LIVE on the JSON store — no fabricated figures (FX-30, FX-39, H7 closed): unknown values are `null` / "—" / `NOT_MEASURED`; period changes come from the previous window; RTO tiers need 20+ shipments; unattributed orders are `UNATTRIBUTED`; COGS falls back to 42% of price only where a product has no cost, and the share of estimated cost is reported. The Command Center reads only the workspace's own data. Enterprise per-store/brand figures are `NOT_MEASURED` because orders carry no store. No scheduled recompute. The demo workspace's seed data still contains fixed demo values |
 | Docker / deploy | No Dockerfile; `n8n/docker-compose.yml` only. `/health/ready` reports persistence health, data-dir writability and writer-lock ownership (503 when unsafe) | Multi-stage image, readiness probe | TARGET — deployment constraint: one replica, `Recreate` updates (DEVOPS.md) |
 | Lint | `npm run lint` has no ESLint config | Enforced lint | TARGET |
 | Type-check | `npm run type-check` reports 12 errors, all in the unwired `customer.repository.ts` / `social.repository.ts` (H15); unchanged by Phases 0 and 1 | Zero errors | BROKEN |
-| Tests | `npm test` → 25 custom suites, 769 tests, all pass: `security-regression-tests.ts` (46, Phase 0), `rbac-matrix-tests.ts` (287, Phase 1), `phase1-integrity-tests.ts` (61, Phase 1 + review fixes), `persistence-tests.ts` (8, real store in child processes), `phase2-analytics-tests.ts` (6) and `phase2-readonly-tests.ts` (14; sweeps all 141 tenant and 16 platform GET routes for store changes and write requests) among them; `scripts/smoke-security.mjs` replays the exploits against a running server | Unit + integration + eval + E2E | PARTIAL — no E2E/UI tests, no load test (FX-63) |
+| Tests | `npm test` → 26 custom suites, 788 tests, all pass: `phase3-truthfulness-tests.ts` (17, Phase 3: N11 scoping, honest integrations, a grep gate for known fabrication patterns), `security-regression-tests.ts` (46, Phase 0), `rbac-matrix-tests.ts` (287, Phase 1), `phase1-integrity-tests.ts` (61, Phase 1 + review fixes), `persistence-tests.ts` (8, real store in child processes), `phase2-analytics-tests.ts` (6) and `phase2-readonly-tests.ts` (14; sweeps all 141 tenant and 16 platform GET routes for store changes and write requests) among them; `scripts/smoke-security.mjs` replays the exploits against a running server | Unit + integration + eval + E2E | PARTIAL — no E2E/UI tests, no load test (FX-63) |
 | Agent evals | `src/domains/ai/eval/golden-dataset.ts` + `evaluation.service.ts`; no `test:eval` script | Gated eval suite | PARTIAL |
-| Git | Local git repository: `main` = Phase 2 (tags `release/phase-0`, `release/phase-1`, `release/phase-2`); `.gitignore` keeps out env files, `.data/`, `.backups/` and generated seeds | Versioned, PR-reviewed | PARTIAL — no remote, no CI |
+| Git | Local git repository: `main` = Phase 2 (tags `release/phase-0`, `release/phase-1`, `release/phase-2`); Phase 3 on `phase-3-truthful-data`, not merged yet; `.gitignore` keeps out env files, `.data/`, `.backups/` and generated seeds | Versioned, PR-reviewed | PARTIAL — no remote, no CI |
 
 ---
 
@@ -122,10 +122,27 @@ Basic CRUD (orders, products, inventory, customers, inbox, settings) is genuinel
   - `findOrderById` looked the customer up without a tenant filter;
   - a lock that exists but can't be read was treated as stale.
 
+**Closed by Phase 3 (2026-09-28, ADR-106):**
+- H7 (fabricated metrics), H9 (stubbed integrations reported as successful), N11 (enterprise routes built a synthetic all-access admin), FX-39 (Command Center showed another dataset's numbers and fake customers).
+- Also fixed in Phase 3:
+  - `analytics-query`, sales intelligence and others summed the nonexistent `total_amount`, so revenue read 0;
+  - product return rates used the workspace's total returns for every product; growth recommendations and offers carried fixed projected revenue;
+  - enterprise benchmarks, consolidated analytics and the finance store breakdown split revenue by list position or fixed shares (45/35/12/8% by channel, 65/20/10/5% by region);
+  - the order-status tool named "Steadfast Courier" / "STF-2026-PENDING" for orders without a shipment; the shipping tool named couriers and turned a free-delivery setting of 0 into ৳60;
+  - the Automations page showed fixed CONNECTED badges for n8n, Steadfast, Pathao and bKash; automation health filled untracked providers in as HEALTHY; autonomous health cards showed a literal "99.9%" / "142ms";
+  - identity resolution invented `+8801700…` phones;
+  - continuous learning could promote a candidate on made-up evaluation results.
+- Security review of Phase 3 (2026-09-28), all fixed with tests:
+  - enterprise integration credentials were base64 (not encrypted) and returned by the list endpoint and the AI integration-status tool (Medium);
+  - enterprise webhook listings returned signing secrets;
+  - the enterprise overview showed workspace-wide revenue to store-scoped members, and fell back to a made-up organization;
+  - the autonomous unified context counted every tenant's stores, brands, integrations and incidents;
+  - `POST /shipments` had no body schema (a numeric tracking number was a 500);
+  - `/connectors/test` now makes live key checks, so it needs `settings.update` and is limited to 10 per minute per workspace;
+  - n8n fell back to `http://localhost:5678` and returned fetch errors naming internal hosts to tenants.
+
 **Open from Phases 0 and 1:**
-- **N6 (Medium, contained)** — Phase 0 stopped the public widget from sending visitor phone/email into identity resolution, so a visitor can no longer pose as a known customer. What's still missing:
-  - a verified-contact design;
-  - real placeholders instead of the made-up `+8801700…` phones given to customers who have none (FX-30).
+- **N6 (Medium, contained)** — Phase 0 stopped the public widget from sending visitor phone/email into identity resolution, so a visitor can no longer pose as a known customer. Phase 3 stopped inventing `+8801700…` phones for customers who have none (they're stored with an empty phone). Still missing: a verified-contact design.
 - **N8 (Medium)** — `platform-tenant.service.ts` provisions the tenant owner as `INVITED` with a disabled password, and nothing lets them set one. Provisioned workspaces are unusable until an owner-setup flow exists (FX-37).
 - **N3 (Low)** — `src/types/declarations.d.ts` shadows `@types/node` (hidden by `skipLibCheck`). Fold into FX-38.
 - **Low:**
@@ -134,13 +151,20 @@ Basic CRUD (orders, products, inventory, customers, inbox, settings) is genuinel
   - The website server-to-server HMAC has no timestamp.
   - `tests/connectors-tests.ts` contains a fake `npg_` string, so FX-00's literal grep matches it. No real credential is in the history.
 - **Found during Phase 2, open:**
-  - **N11 (Medium):** `GET /enterprise/benchmarks` builds a synthetic `ENTERPRISE_ADMIN` caller with `all_access` scope and fallback identity values instead of the caller's real enterprise role, so store-level scoping inside an organization isn't applied.
   - **N12 (Low):** `semanticMetricsService.queryMetric` looks metric definitions up in the shared `org_default`, not the caller's organization (it no longer writes there).
-  - Product intelligence applies the tenant's total returns to every product's return rate; growth recommendations carry fixed projected revenue. Both are fabricated-metric work for Phase 3 (FX-30).
-  - `GetOrderStatusTool` reports "Steadfast Courier" / "STF-2026-PENDING" when an order has no shipment (non-negotiable 7, Phase 3 FX-31).
   - `approveDecision` doesn't check the approval's expiry, and proposing a recommendation twice creates two approvals (Low).
   - The AI order tools now find any order by number. Before a customer-facing channel uses them, they must check the order belongs to that customer.
   - Lock identity is pid + host name + start time. Containers sharing a host name and pid namespace ids could still collide; the per-flush lock check limits the damage. A heartbeat or boot id would close it (Low, until FX-45).
+- **Found during Phase 3, open:**
+  - **N13 (Medium):** the enterprise hierarchy, stores, brands and metrics routes apply the workspace permission but not the caller's enterprise scope (N11 covered benchmarks, analytics, reports, overview and the AI tools).
+  - **N14 (Medium):** integration installations saved before Phase 3 still hold base64 credentials. No API returns them any more; they need re-encrypting or clearing in a migration (Phase 4).
+  - **N15 (Low, unverified):** `POST /autonomous/objectives` takes `required_approvals`, `allowed_actions`, `status` and `parent_objective_id` from the body without a schema or tenant check on the parent.
+  - Orders carry no store or brand, so enterprise per-entity figures stay `NOT_MEASURED` until orders are attributed.
+  - The website widget has no way to receive replies (needs a secure polling endpoint, Phase 5).
+  - The demo workspace's seed data holds fixed demo values (for example platform-health scores 92/88/85, seeded campaigns). New workspaces start empty. Label or remove with the demo seed (FX-37).
+  - The ৳120 delivery fee is still a literal in `orders/page.tsx` and `SocialOrderModal.tsx` (non-negotiable 6); the AI draft-order tool assumes "Chittagong" for outside-Dhaka addresses (FX-36).
+  - The unused enterprise ERP/CRM/accounting/marketplace adapters return `success: true` for items handed to them; nothing calls them (FX-38).
+  - n8n dry runs count as `SUCCESS` in automation success rates; report definitions store an `all_access` scope label (execution uses the caller's scope) (Low).
 - **Deferred from Phase 2** (see ADR-105 deviations):
   - No scheduled recompute: snapshots are stored only by `POST /api/v1/intelligence/recompute`, workflows and the intelligence agent. Stale reads compute in memory instead.
   - The sweep calls 7 of the 24 tenant `[id]` GET routes only with ids that don't exist (no matching rows in its seed data), and sweeps query-parameter branches only for `ai/agents?view=` and `enterprise/metrics?metric_key=`.
@@ -158,8 +182,8 @@ Basic CRUD (orders, products, inventory, customers, inbox, settings) is genuinel
   - Step-up tokens aren't tied to one action.
   - The widget's 300-per-minute per-channel cap can be filled by one visitor rotating ids. It's a spam backstop; without a trusted proxy there's no client address to key on.
 
-**Next — Phase 3 (FX-30…):** truthful data and broken wiring: remove fabricated metrics (H7), honest integration stubs (H9), N11.
-**Hardening:** H7–H9, H11, H12, H14, M1–M3, M11; Postgres cutover for C7 (FX-45).
+**Next:** merge Phase 3; the rest of Phase 3's plan (FX-32 AI provider, FX-33 broken endpoints, FX-34 safety controls, FX-35 order-status writer, FX-36 data entry, FX-37 invitations and owner setup (N8), FX-38 dead code) was out of this round's scope.
+**Hardening:** H11, H12, H14, M1–M3, M11, N13, N14; Postgres cutover for C7 (FX-45).
 **Hygiene:** H15, M5, M6, M8, M15–M17, L4–L7, N12.
 
 When you fix a finding: update the row in §2 (if the status changed), and add a line to §5.
@@ -170,6 +194,7 @@ When you fix a finding: update the row in §2 (if the status changed), and add a
 
 | Date | Change | Finding IDs | Verified by |
 |---|---|---|---|
+| 2026-09-28 | Phase 3 truthful data and wiring (FX-30, FX-31, FX-39, N11): fabricated metrics removed across analytics, intelligence, growth, marketing, enterprise, autonomous and super-admin; Command Center built from the workspace's own data; integrations report NOT_SENT / NOT_VERIFIED / SIMULATED; enterprise reads use the caller's real membership and scope; External integrations / Analytics / Tests / Git rows updated | H7, H9, N11 (+ security-review fixes; N13–N15 opened) | all 26 suites (788), `npm run type-check` (12, unchanged); live on a throwaway server: `scripts/smoke-security.mjs` 19/19, 15 Phase 3 API checks (integration install NOT_VERIFIED without credentials, sync 424, benchmarks NOT_MEASURED, shipment without tracking 400, connector NOT_VERIFIED, no known fabricated literals), Command Center, benchmarks, integrations, automations and autonomous health pages rendered from real data; security review and done-check, findings fixed or listed as open |
 | 2026-09-28 | Phase 2 performance and read-path integrity (FX-20…FX-24): coalesced async persistence with surfaced errors, writer lock and real readiness; analytics read every row; write-free GETs with snapshot reads and an explicit recompute; O(n) hot spots; N9/N10 fixed; Persistence / Analytics / Docker / Tests / Git rows updated | C6, C7 (contained), H6, H8, M7, L3, N9, N10 | all 25 suites (769), `npm run type-check` (12, unchanged); live on a throwaway server seeded with 10,000 customers / 5,000 orders: 92 UI GETs left the store file unchanged, intelligence GETs ≤ 0.6 s cold, recompute idempotent and rate-limited (200, 200, 429), a second dev server on the same data refused to start, `scripts/smoke-security.mjs` 19/19; security review + re-review and done-check, all findings addressed or listed as open |
 | 2026-09-28 | Phase 1 access control and integrity (FX-10…FX-19): RBAC on 140 handlers, payment verification rules, strict update schemas, tenant-scoped lookups and enterprise organization ownership, rate limiting, TOTP MFA and revocable sessions, cryptographic IDs, generic 500s and security headers, scoped service tokens, creator-scoped workflows; Auth / Tenant RBAC / Platform / Webhooks / Tests / Git rows updated | H2, H3, H4, H10, H13, M4, M9, M10, M12, M13, L1, L2, L8, N2, N4, N5 | all 22 suites (741), `npm run type-check` (12, unchanged), `scripts/smoke-security.mjs` 19/19 and a live MFA lifecycle check on the final commit, independent security review and done-check (both findings lists addressed) |
 | 2026-09-27 | Phase 0 containment (FX-00…FX-08): backdoors removed, secrets fail closed, per-purpose token audiences, HMAC-signed courier/payment webhooks, strict social ingress, real super-admin sign-in, invitation accept requires the account's password; Auth / Webhooks / Tests / Git rows updated | C1–C5, C8, H1, H5, H10, M14, N1, N6 | `npm test` (all suites pass), `npm run type-check` (12, unchanged), `scripts/smoke-security.mjs` against a throwaway dev server (16/16) |

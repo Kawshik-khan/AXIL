@@ -6,6 +6,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [Unreleased] - Phase 3 truthful data and honest integrations (2026-09-28, branch `phase-3-truthful-data`)
+See [ADR-106](DECISIONS.md#adr-106-truthful-data-and-honest-integrations-phase-3).
+
+### Fixed
+- No fabricated metrics (H7): analytics, intelligence, growth, marketing, enterprise, autonomous and super-admin screens show values computed from the workspace's data, or "—" / "Not measured". Period changes compare with the previous window; RTO tiers need 20+ shipments; unattributed orders are shown as such.
+- The Command Center shows only the workspace's own orders, customers, stock, agent runs and intelligence (FX-39).
+- Revenue in analytics queries and sales intelligence was 0 because it summed a field that doesn't exist.
+- Nothing external reports success it didn't achieve (H9): social replies and marketing sends fail visibly, shipments are manual bookings with the courier's tracking number, connector tests say "not verified" unless the provider was actually checked, enterprise syncs and webhooks aren't reported as done, and n8n isn't called without a configured instance.
+- Enterprise benchmarks, analytics, reports, overview and AI tools use the caller's real membership and scope (N11).
+
+### Security
+- Enterprise integration credentials are encrypted and never returned by the API or the AI tools; webhook listings don't return signing secrets.
+- Connector tests need `settings.update` and are rate limited; only a provider's own public endpoint is ever contacted.
+- n8n errors shown to tenants no longer name internal hosts.
+- The autonomous context no longer counts other workspaces' enterprise records.
+
+### Added
+- `tests/phase3-truthfulness-tests.ts` (17 tests, including a grep gate for known fabrication patterns).
+- `N8N_HOST` placeholder in `.env.example`.
+
+### Changed (action required)
+- API contracts:
+  - many analytics and enterprise fields are now `number | null` (for example `conversion_rate_pct`, `period_change_pct`, benchmark `value`/`rank`/`cohort_average`, enterprise `consolidated_revenue_bdt` for store-scoped members);
+  - new statuses: channel `UNATTRIBUTED`, RTO `INSUFFICIENT_DATA`, connector `health_status: "UNVERIFIED"` and test `status`, integration `NOT_VERIFIED`, webhook delivery `NOT_SENT`, benchmark `data_status`;
+  - `POST /shipments` requires `tracking_number` and a known `courier_provider` (strict body);
+  - enterprise integration sync answers 424 `INTEGRATION_NOT_CONFIGURED`;
+  - `POST /connectors/test` needs `settings.update` (10 per minute per workspace).
+- Set `N8N_HOST` (or configure an n8n instance) for automations to call n8n; without it executions fail with `N8N_NOT_CONFIGURED`.
+- Workspace roles other than OWNER and ADMIN need an ACTIVE enterprise membership to use enterprise benchmarks, analytics, reports and overview.
+
 ## [Unreleased] - Phase 2 performance and read-path integrity (2026-09-28, branch `phase-2-performance`)
 See [ADR-105](DECISIONS.md#adr-105-coalesced-persistence-write-free-reads-and-complete-analytics-phase-2).
 

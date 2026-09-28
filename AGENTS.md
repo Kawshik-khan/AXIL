@@ -17,7 +17,7 @@ Next.js 14 App Router · React 18 · TypeScript (strict) · Zod · jose/bcryptjs
 |---|---|---|
 | Dev server | `npm run dev` | http://localhost:3000. Needs `JWT_SECRET` and `CREDENTIALS_ENCRYPTION_KEY` in `.env.local`: two different random values, 32+ chars each. `DEV_AUTH_BYPASS=1` is an opt-in for token-less local browsing and is logged. |
 | Type-check | `npm run type-check` | Currently has pre-existing errors (H15). Record the count before and after; never increase it. |
-| All tests | `npm test` | 25 custom suites via `tests/ts-runner.cjs`; the security, RBAC-matrix, Phase 1 integrity and Phase 2 persistence / analytics / read-only suites run first. `&&` stops at the first failing suite, so run a suite on its own to see everything |
+| All tests | `npm test` | 26 custom suites via `tests/ts-runner.cjs`; the security, RBAC-matrix, Phase 1 integrity, Phase 2 persistence / analytics / read-only and Phase 3 truthfulness suites run first. `&&` stops at the first failing suite, so run a suite on its own to see everything |
 | One suite | `node tests/ts-runner.cjs ./tests/<name>-tests.ts` | e.g. `security-regression-tests.ts`, `commerce-tests.ts` |
 | Proxy config | `TRUST_PROXY=1`, `TRUST_PROXY_HOPS=<n>` | Only behind your own reverse proxy; enables per-client rate limits |
 | Exploit replay | `BASE_URL=http://localhost:3000 node scripts/smoke-security.mjs` | Against a running server started without `DEV_AUTH_BYPASS`; run after touching auth, webhooks or platform routes |
@@ -37,7 +37,7 @@ src/lib/api-response.ts              extractRequestContext, extractPlatformConte
 src/lib/security.ts                  JWTs (issuer + per-purpose audience), bcrypt, credential encryption (ADR-103)
 src/lib/validation.ts                parseOrThrow / readJson for strict Zod bodies (ADR-104)
 src/lib/rate-limit.ts                enforceRateLimit / checkRateLimit (in-memory, single replica)
-src/domains/enterprise/organization-access.ts  resolveOrganizationId: the caller's own organizations only
+src/domains/enterprise/organization-access.ts  resolveOrganizationId (own organizations only), resolveEnterpriseCaller (real enterprise scope)
 src/lib/errors.ts                    AppError family (NotFoundError, ForbiddenError, ...)
 src/lib/permissions.ts               PERMISSIONS, RoleName, ROLE_PERMISSIONS
 src/domains/rbac/service.ts          RbacService.assertCan (tenant)
