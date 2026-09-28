@@ -39,6 +39,19 @@ import { Badge } from "@/components/ui/Badge/Badge";
 import { Button } from "@/components/ui/Button/Button";
 import { LoadingState } from "@/components/ui/States/States";
 import styles from "./dashboard.module.css";
+import type { db } from "@/infrastructure/db";
+import type { FinancialMetrics } from "@/types/analytics";
+import type { AgentRun } from "@/types/ai";
+import type { Opportunity, Recommendation, Risk } from "@/types/intelligence";
+
+/** Shapes of the endpoints this page reads (type-only; nothing server-side is bundled). */
+type DashboardMetrics = ReturnType<typeof db.getDashboardMetrics>;
+interface IntelligenceOverview {
+  top_risks?: Risk[];
+  top_opportunities?: Opportunity[];
+  top_recommendations?: Recommendation[];
+  snapshots?: Array<{ source: string }>;
+}
 
 type CurrencyCode = "BDT" | "USD" | "EUR" | "GBP";
 
@@ -63,32 +76,34 @@ const CURRENCIES: Record<CurrencyCode, CurrencyConfig> = {
     symbol: "$",
     name: "US Dollar ($)",
     rate: 1 / 110,
-    format: (amt) => `$${Math.round(amt / 110).toLocaleString("en-US")}`,
+    format: (amt) => `≈$${Math.round(amt / 110).toLocaleString("en-US")}`, // fixed display rate, not live FX
   },
   EUR: {
     code: "EUR",
     symbol: "€",
     name: "Euro (€)",
     rate: 0.92 / 110,
-    format: (amt) => `€${Math.round((amt * 0.92) / 110).toLocaleString("de-DE")}`,
+    format: (amt) => `≈€${Math.round((amt * 0.92) / 110).toLocaleString("de-DE")}`,
   },
   GBP: {
     code: "GBP",
     symbol: "£",
     name: "British Pound (£)",
     rate: 0.79 / 110,
-    format: (amt) => `£${Math.round((amt * 0.79) / 110).toLocaleString("en-GB")}`,
+    format: (amt) => `≈£${Math.round((amt * 0.79) / 110).toLocaleString("en-GB")}`,
   },
 };
 
 export default function DashboardPage() {
   const [session, setSession] = useState<any>(null);
-  const [metrics, setMetrics] = useState<any>(null);
+  const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
+  const [financials, setFinancials] = useState<FinancialMetrics | null>(null);
+  const [agentRuns, setAgentRuns] = useState<AgentRun[]>([]);
+  const [intelligence, setIntelligence] = useState<IntelligenceOverview | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   // Currency state (Bangladesh-first default BDT ৳)
   const [selectedCurrency, setSelectedCurrency] = useState<CurrencyCode>("BDT");
-  const [selectedTimeframe, setSelectedTimeframe] = useState<string>("This Month");
 
   // Interactive Donut Chart state
   const [hoveredChannel, setHoveredChannel] = useState<string | null>(null);
@@ -100,359 +115,124 @@ export default function DashboardPage() {
 
   useEffect(() => {
     async function loadData() {
-      try {
-        const [sessionRes, metricsRes] = await Promise.all([
-          fetch("/api/v1/auth/session"),
-          fetch("/api/v1/reports/dashboard"),
-        ]);
-
-        if (sessionRes.ok) {
-          const s = await sessionRes.json();
-          setSession(s.data);
-          if (s.data?.tenant?.currency && CURRENCIES[s.data.tenant.currency as CurrencyCode]) {
-            setSelectedCurrency(s.data.tenant.currency as CurrencyCode);
-          }
+      // Every number on this page comes from these endpoints (FX-39). A failed request leaves its section empty.
+      const read = async (url: string) => {
+        try {
+          const res = await fetch(url);
+          return res.ok ? (await res.json()).data : null;
+        } catch {
+          return null;
         }
-        if (metricsRes.ok) {
-          const m = await metricsRes.json();
-          setMetrics(m.data?.metrics || null);
-        }
-      } catch (err) {
-        console.error("Failed to load dashboard telemetry:", err);
-      } finally {
-        setIsLoading(false);
+      };
+      const [s, m, fin, runs, intel] = await Promise.all([
+        read("/api/v1/auth/session"),
+        read("/api/v1/reports/dashboard"),
+        read("/api/v1/analytics/financials?preset=30D"),
+        read("/api/v1/ai/runs?limit=5"),
+        read("/api/v1/intelligence/overview"),
+      ]);
+      setSession(s);
+      if (s?.tenant?.currency && CURRENCIES[s.tenant.currency as CurrencyCode]) {
+        setSelectedCurrency(s.tenant.currency as CurrencyCode);
       }
+      setMetrics(m?.metrics ?? null);
+      setFinancials(fin?.financials ?? null);
+      setAgentRuns(Array.isArray(runs) ? runs.slice(0, 5) : []);
+      setIntelligence(intel ?? null);
+      setIsLoading(false);
     }
     loadData();
   }, []);
 
   const cur = CURRENCIES[selectedCurrency];
 
-  // Base metrics from live database
-  const baseNetRevenueBDT = metrics?.totalRevenue !== undefined && metrics.totalRevenue > 0 ? metrics.totalRevenue : (metrics?.totalRevenue || 184500);
-  const baseTotalOrders = metrics?.totalOrders !== undefined && metrics.totalOrders > 0 ? metrics.totalOrders : (metrics?.totalOrders || 1420);
-  const baseActiveCustomers = metrics?.activeCustomers !== undefined ? metrics.activeCustomers : 0;
-  const baseAOV = metrics?.averageOrderValue !== undefined && metrics.averageOrderValue > 0 ? metrics.averageOrderValue : 1299;
-  const baseMarginPercent = 24.8;
+  // Real values only: no fallbacks when a value is 0 or missing (FX-39: these used to be ৳184,500 / 1,420 / ৳1,299 / 24.8%)
+  const netRevenueBDT: number = metrics?.totalRevenue ?? 0;
+  const totalOrders: number = metrics?.totalOrders ?? 0;
+  const activeCustomers: number = metrics?.activeCustomers ?? 0;
+  const aovBDT: number = metrics?.averageOrderValue ?? 0;
+  const marginPercent: number | null = typeof financials?.gross_margin_pct === "number" ? financials.gross_margin_pct : null;
+  const comparison = metrics?.periodComparison;
 
-  // Multi-Channel F-Commerce Breakdown (Live from Database)
-  const channelData = (metrics?.channelData && metrics.channelData.length > 0) ? metrics.channelData : [
-    {
-      id: "facebook",
-      shortName: "Facebook",
-      channel: "Facebook Page & Messenger",
-      icon: "💬",
-      color: "#1877f2",
-      orders: 580,
-      sharePercent: 42.5,
-      revenueBDT: 78400,
-      conversion: "4.8%",
-      agentStatus: "Active Listener",
-    },
-    {
-      id: "whatsapp",
-      shortName: "WhatsApp",
-      channel: "WhatsApp Conversational Cart",
-      icon: "🟢",
-      color: "#25d366",
-      orders: 340,
-      sharePercent: 25.0,
-      revenueBDT: 46120,
-      conversion: "9.2%",
-      agentStatus: "Catalog AI Ready",
-    },
-    {
-      id: "instagram",
-      shortName: "Instagram",
-      channel: "Instagram Direct & Shop",
-      icon: "📸",
-      color: "#e1306c",
-      orders: 210,
-      sharePercent: 16.0,
-      revenueBDT: 29520,
-      conversion: "3.4%",
-      agentStatus: "DM Routing",
-    },
-    {
-      id: "website",
-      shortName: "Website",
-      channel: "Website Storefront",
-      icon: "🌐",
-      color: "#3b82f6",
-      orders: 190,
-      sharePercent: 11.0,
-      revenueBDT: 20290,
-      conversion: "2.1%",
-      agentStatus: "Connected",
-    },
-    {
-      id: "manual",
-      shortName: "Manual",
-      channel: "Manual Phone & Offline",
-      icon: "📞",
-      color: "#6b7280",
-      orders: 100,
-      sharePercent: 5.5,
-      revenueBDT: 10170,
-      conversion: "Manual",
-      agentStatus: "Staff Assisted",
-    },
-  ];
+  const channelData = metrics?.channelData ?? [];
+  const activeChannel = channelData.find((c) => c.shortName === (hoveredChannel || selectedChannel));
+  const topChannel = [...channelData].sort((a, b) => b.orders - a.orders)[0];
 
-  const activeChannel = channelData.find(
-    (c: any) => c.shortName === (hoveredChannel || selectedChannel)
-  );
+  const cityAnalysisData = metrics?.cityAnalysisData ?? [];
+  const topCity = cityAnalysisData[0];
 
-  // City Order Volume & Returning Buyer Analytics (Live from Database)
-  const cityAnalysisData = (metrics?.cityAnalysisData && metrics.cityAnalysisData.length > 0) ? metrics.cityAnalysisData : [
-    {
-      id: "dhaka",
-      city: "Dhaka Metro",
-      division: "Dhaka",
-      orders: 880,
-      volumePercent: 62.0,
-      revenueBDT: 1143900,
-      returningBuyerPercent: 76.4,
-      repeatAOV: 1560,
-      reorderFreq: "2.8x",
-      loyalty: "High Loyalty",
-      deliverySLA: "24h SLA",
-      growth: "+18.2%",
-      color: "#84cc16",
-    },
-    {
-      id: "chattogram",
-      city: "Chattogram",
-      division: "Chattogram",
-      orders: 256,
-      volumePercent: 18.0,
-      revenueBDT: 332100,
-      returningBuyerPercent: 68.2,
-      repeatAOV: 1490,
-      reorderFreq: "2.3x",
-      loyalty: "Growing",
-      deliverySLA: "48h SLA",
-      growth: "+14.5%",
-      color: "#3b82f6",
-    },
-    {
-      id: "sylhet",
-      city: "Sylhet",
-      division: "Sylhet",
-      orders: 142,
-      volumePercent: 10.0,
-      revenueBDT: 184500,
-      returningBuyerPercent: 71.8,
-      repeatAOV: 1520,
-      reorderFreq: "2.5x",
-      loyalty: "High Loyalty",
-      deliverySLA: "48h SLA",
-      growth: "+9.8%",
-      color: "#a855f7",
-    },
-    {
-      id: "rajshahi",
-      city: "Rajshahi",
-      division: "Rajshahi",
-      orders: 78,
-      volumePercent: 5.5,
-      revenueBDT: 101475,
-      returningBuyerPercent: 62.5,
-      repeatAOV: 1380,
-      reorderFreq: "2.1x",
-      loyalty: "Steady",
-      deliverySLA: "48h SLA",
-      growth: "+11.2%",
-      color: "#f59e0b",
-    },
-    {
-      id: "khulna",
-      city: "Khulna",
-      division: "Khulna",
-      orders: 64,
-      volumePercent: 4.5,
-      revenueBDT: 83025,
-      returningBuyerPercent: 58.0,
-      repeatAOV: 1340,
-      reorderFreq: "1.9x",
-      loyalty: "Expanding",
-      deliverySLA: "72h SLA",
-      growth: "+7.4%",
-      color: "#ec4899",
-    },
-  ];
-
-  // Needs Attention Items
+  // Needs Attention: built from real counts, linking to the filtered lists (was five invented items)
   const attentionItems = [
     {
       id: "att_orders",
-      count: "42",
+      count: metrics?.pendingOrdersCount ?? 0,
       icon: <Package size={18} color="#ffffff" />,
       color: "#f59e0b",
-      title: "Orders Awaiting Courier Booking",
-      subtitle: "Confirmed orders pending Pathao / Steadfast parcel generation",
-      valueTag: "৳98,400 GMV",
-      tagBg: "rgba(245, 158, 11, 0.12)",
-      tagColor: "#b45309",
-      actionText: "Book Couriers →",
-      href: "/orders",
-      severity: "urgent",
+      title: "Orders to process",
+      subtitle: "Pending, confirmed or processing orders",
+      actionText: "Open orders →",
+      href: "/orders?status=CONFIRMED",
     },
     {
       id: "att_payments",
-      count: "3",
+      count: metrics?.pendingPaymentsCount ?? 0,
       icon: <CreditCard size={18} color="#ffffff" />,
       color: "#e2136e",
-      title: "Unmatched bKash / Nagad TrxIDs",
-      subtitle: "Customer payment SMS received awaiting invoice match",
-      valueTag: "৳7,500 Pending",
-      tagBg: "rgba(226, 19, 110, 0.12)",
-      tagColor: "#e2136e",
-      actionText: "Verify Payments →",
-      href: "/payments",
-      severity: "urgent",
-    },
-    {
-      id: "att_courier",
-      count: "5",
-      icon: <Truck size={18} color="#ffffff" />,
-      color: "#ef4444",
-      title: "In-Transit Delivery Delays",
-      subtitle: "Steadfast reported recipient phone unreachable in Chattogram",
-      valueTag: "৳14,200 at Risk",
-      tagBg: "rgba(239, 68, 68, 0.12)",
-      tagColor: "#dc2626",
-      actionText: "Resolve Delays →",
-      href: "/shipments",
-      severity: "warning",
+      title: "Payments to verify",
+      subtitle: "Orders with an unpaid or pending payment",
+      actionText: "Verify payments →",
+      href: "/orders?payment_status=PENDING",
     },
     {
       id: "att_stock",
-      count: "2",
+      count: metrics?.lowStockCount ?? 0,
       icon: <Boxes size={18} color="#ffffff" />,
       color: "#84cc16",
-      title: "SKUs Below Reorder Threshold",
-      subtitle: "Panjabi Cotton-L (4 remaining) & Silk Dupatta (2 remaining)",
-      valueTag: "Stockout Alert",
-      tagBg: "rgba(132, 204, 22, 0.15)",
-      tagColor: "#4d7c0f",
-      actionText: "Restock Items →",
-      href: "/inventory",
-      severity: "warning",
+      title: "SKUs at or below reorder point",
+      subtitle: "Stock that needs replenishing",
+      actionText: "Open inventory →",
+      href: "/inventory?low_stock_only=true",
     },
-    {
-      id: "att_returns",
-      count: "4",
-      icon: <RotateCcw size={18} color="#ffffff" />,
-      color: "#6366f1",
-      title: "Return & Exchange Inquiries",
-      subtitle: "Size exchange requests from Facebook Messenger",
-      valueTag: "Exchange Queue",
-      tagBg: "rgba(99, 102, 241, 0.12)",
-      tagColor: "#4338ca",
-      actionText: "Inspect Returns →",
-      href: "/orders",
-      severity: "info",
-    },
-  ];
+  ].filter((item) => item.count > 0);
 
-  // Live Agent Runtime Stream
-  const agentStream = [
-    {
-      time: "Just now",
-      agent: "Order Agent",
-      action: "Normalized address for Order #1042 (Dhaka Metro → Mirpur-10)",
-      status: "Success",
-    },
-    {
-      time: "2m ago",
-      agent: "Payment Agent",
-      action: "Matched bKash TrxID 9X8123 (৳2,450) via SMS Webhook",
-      status: "Verified",
-    },
-    {
-      time: "5m ago",
-      agent: "Delivery Agent",
-      action: "Booked parcel with Steadfast (Tracking: ST-89210)",
-      status: "Dispatched",
-    },
-    {
-      time: "8m ago",
-      agent: "Support Agent",
-      action: "Resolved Banglish delivery query on WhatsApp in 12s",
-      status: "Resolved",
-    },
-    {
-      time: "14m ago",
-      agent: "Marketing Agent",
-      action: "Sent WhatsApp cart recovery reminder to 18 abandoned sessions",
-      status: "Sent",
-    },
-  ];
+  // Agent activity from recorded runs (was an invented stream)
+  const since = (iso: string) => {
+    const mins = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60_000));
+    return mins < 1 ? "Just now" : mins < 60 ? `${mins}m ago` : mins < 1440 ? `${Math.round(mins / 60)}h ago` : `${Math.round(mins / 1440)}d ago`;
+  };
+  const agentStream = agentRuns.map((run) => ({
+    time: run.started_at ? since(run.started_at) : "—",
+    agent: String(run.agent_type ?? "Agent").replace(/_/g, " ").toLowerCase().replace(/^\w/, (c) => c.toUpperCase()),
+    action: run.final_response ? String(run.final_response).slice(0, 90) : run.error_message ? String(run.error_message).slice(0, 90) : `Step: ${run.current_step ?? "—"}`,
+    status: run.status ?? "—",
+  }));
 
-  // Recent Orders Feed
-  const recentOrders = [
-    {
-      id: "ORD-1042",
-      customer: "Tanvir Ahmed",
-      phone: "+880 1712-449102",
-      city: "Dhaka Metro",
-      isReturning: true,
-      channel: "Facebook",
-      amountBDT: 2450,
-      payment: "bKash · PAID",
-      status: "CONFIRMED",
-      delivery: "Pathao Express",
-    },
-    {
-      id: "ORD-1041",
-      customer: "Sumaiya Islam",
-      phone: "+880 1819-338210",
-      city: "Chattogram",
-      isReturning: true,
-      channel: "WhatsApp",
-      amountBDT: 3890,
-      payment: "COD · PENDING",
-      status: "PROCESSING",
-      delivery: "Steadfast Courier",
-    },
-    {
-      id: "ORD-1040",
-      customer: "Rahim Uddin",
-      phone: "+880 1611-998877",
-      city: "Sylhet",
-      isReturning: false,
-      channel: "Website",
-      amountBDT: 1200,
-      payment: "Nagad · PAID",
-      status: "SHIPPED",
-      delivery: "RedX Logistics",
-    },
-    {
-      id: "ORD-1039",
-      customer: "Farzana Yasmin",
-      phone: "+880 1914-776655",
-      city: "Dhaka Metro",
-      isReturning: true,
-      channel: "Instagram",
-      amountBDT: 4600,
-      payment: "COD · PENDING",
-      status: "DELIVERED",
-      delivery: "Steadfast Courier",
-    },
-    {
-      id: "ORD-1038",
-      customer: "Kamal Hossain",
-      phone: "+880 1512-112233",
-      city: "Rajshahi",
-      isReturning: false,
-      channel: "Manual",
-      amountBDT: 1850,
-      payment: "bKash · PAID",
-      status: "DELIVERED",
-      delivery: "Pathao Express",
-    },
-  ];
+  // Recent orders from the store (was five fictional customers with names and phone numbers)
+  const recentOrders = (metrics?.recentOrders ?? []).map((o) => ({
+    id: o.order_number,
+    customer: o.customer_name,
+    city: o.shipping_address_snapshot?.district || o.shipping_address_snapshot?.division || "—",
+    isReturning: Boolean(o.is_returning),
+    channel: o.channel ?? "—",
+    amountBDT: o.grand_total ?? 0,
+    payment: `${o.payment_method ?? "—"} · ${o.payment_status ?? "—"}`,
+    status: o.status,
+    delivery: o.courier ?? "—",
+  }));
+
+  // A computed change, or nothing (was literal +18.4% / +12.6% / +8.2% / +5.4% / +3.1%)
+  const trendPill = (value: number | null | undefined, label: string) =>
+    typeof value === "number" ? (
+      <>
+        <span className={value >= 0 ? styles.trendPillGreen : styles.trendPillRed}>
+          {value >= 0 ? "+" : ""}
+          {value}% {value >= 0 ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
+        </span>
+        <span className={styles.trendMutedText}>{label}</span>
+      </>
+    ) : (
+      <span className={styles.trendMutedText}>No prior 30 days to compare</span>
+    );
 
   if (isLoading) {
     return <LoadingState message="Connecting to CommerceOS Command Center..." />;
@@ -569,15 +349,10 @@ export default function DashboardPage() {
             </div>
 
             <div className={styles.kpiMidLabel}>Net Revenue ({cur.symbol})</div>
-            <div className={styles.kpiBigNumber}>{cur.format(baseNetRevenueBDT)}</div>
+            <div className={styles.kpiBigNumber}>{cur.format(netRevenueBDT)}</div>
           </div>
 
-          <div className={styles.kpiBottomRow}>
-            <span className={styles.trendPillGreen}>
-              +18.4% <ArrowUpRight size={12} />
-            </span>
-            <span className={styles.trendMutedText}>vs last month</span>
-          </div>
+          <div className={styles.kpiBottomRow}>{trendPill(comparison?.revenue_change_pct, "last 30 days vs previous")}</div>
         </div>
 
         {/* KPI 2: Total Orders */}
@@ -599,15 +374,10 @@ export default function DashboardPage() {
             </div>
 
             <div className={styles.kpiMidLabel}>Total Orders</div>
-            <div className={styles.kpiBigNumber}>{baseTotalOrders.toLocaleString()} Orders</div>
+            <div className={styles.kpiBigNumber}>{totalOrders.toLocaleString()} Orders</div>
           </div>
 
-          <div className={styles.kpiBottomRow}>
-            <span className={styles.trendPillGreen}>
-              +12.6% <ArrowUpRight size={12} />
-            </span>
-            <span className={styles.trendMutedText}>42 awaiting courier</span>
-          </div>
+          <div className={styles.kpiBottomRow}>{trendPill(comparison?.orders_change_pct, "last 30 days vs previous")}</div>
         </div>
 
         {/* KPI 3: Active Customers */}
@@ -629,14 +399,13 @@ export default function DashboardPage() {
             </div>
 
             <div className={styles.kpiMidLabel}>Active Customers</div>
-            <div className={styles.kpiBigNumber}>{baseActiveCustomers.toLocaleString()}</div>
+            <div className={styles.kpiBigNumber}>{activeCustomers.toLocaleString()}</div>
           </div>
 
           <div className={styles.kpiBottomRow}>
-            <span className={styles.trendPillGreen}>
-              +8.2% <ArrowUpRight size={12} />
+            <span className={styles.trendMutedText}>
+              {typeof metrics?.returningBuyerPercent === "number" ? `${metrics.returningBuyerPercent}% repeat buyers` : "No buyers yet"}
             </span>
-            <span className={styles.trendMutedText}>72% repeat buyers</span>
           </div>
         </div>
 
@@ -659,14 +428,11 @@ export default function DashboardPage() {
             </div>
 
             <div className={styles.kpiMidLabel}>Average Order Value</div>
-            <div className={styles.kpiBigNumber}>{cur.format(baseAOV)}</div>
+            <div className={styles.kpiBigNumber}>{aovBDT > 0 ? cur.format(aovBDT) : "—"}</div>
           </div>
 
           <div className={styles.kpiBottomRow}>
-            <span className={styles.trendPillGreen}>
-              +5.4% <ArrowUpRight size={12} />
-            </span>
-            <span className={styles.trendMutedText}>Strong basket depth</span>
+            <span className={styles.trendMutedText}>Paid orders, all time</span>
           </div>
         </div>
 
@@ -688,15 +454,18 @@ export default function DashboardPage() {
               </Link>
             </div>
 
-            <div className={styles.kpiMidLabel}>Net Operating Margin</div>
-            <div className={styles.kpiBigNumber}>{baseMarginPercent}%</div>
+            <div className={styles.kpiMidLabel}>Gross Margin (30 days)</div>
+            <div className={styles.kpiBigNumber}>{marginPercent === null ? "—" : `${marginPercent}%`}</div>
           </div>
 
           <div className={styles.kpiBottomRow}>
-            <span className={styles.trendPillGreen}>
-              +3.1% <ArrowUpRight size={12} />
+            <span className={styles.trendMutedText}>
+              {financials && financials.cogs_estimated_share_pct > 0
+                ? `${financials.cogs_estimated_share_pct}% of costs estimated`
+                : marginPercent === null
+                ? "No revenue in the last 30 days"
+                : "From recorded cost prices"}
             </span>
-            <span className={styles.trendMutedText}>Healthy LTV / CAC</span>
           </div>
         </div>
       </section>
@@ -706,159 +475,53 @@ export default function DashboardPage() {
       {/* Answers: Where is revenue coming from (Channels & Mix) */}
       {/* ======================================================= */}
       <section className={styles.tierGrid7_5}>
-        {/* Widget 1: Multi-Channel Revenue Dual Spline Chart */}
+        {/* Widget 1: Revenue by day, from /api/v1/analytics/financials (was a static drawing with invented values) */}
         <div className={styles.whitePanel}>
           <div className={styles.panelHeader}>
             <div>
               <div style={{ display: "flex", alignItems: "baseline", gap: "12px" }}>
-                <span className={styles.panelTitle}>Multi-Channel Revenue</span>
+                <span className={styles.panelTitle}>Revenue, last 30 days</span>
                 <span style={{ fontSize: "24px", fontWeight: 700, color: "#111827" }}>
-                  {cur.format(baseNetRevenueBDT)}
-                </span>
-                <span
-                  style={{
-                    padding: "3px 8px",
-                    borderRadius: "12px",
-                    background: "rgba(34, 197, 94, 0.12)",
-                    color: "#16a34a",
-                    fontSize: "11px",
-                    fontWeight: 600,
-                  }}
-                >
-                  +18.4% Net Growth
+                  {cur.format(financials?.gmv_bdt ?? 0)}
                 </span>
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: "16px", marginTop: "10px" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", fontWeight: 600 }}>
-                  <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#84cc16" }} />
-                  <span>Gross Sales ({cur.symbol})</span>
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", fontWeight: 600 }}>
-                  <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#bef264" }} />
-                  <span>COGS &amp; Courier Cost</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Timeframe Dropdown */}
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "6px",
-                padding: "6px 12px",
-                border: "1px solid rgba(0,0,0,0.1)",
-                borderRadius: "12px",
-                fontSize: "12px",
-                color: "#374151",
-                cursor: "pointer",
-              }}
-            >
-              <Calendar size={14} color="#6b7280" />
-              <span>{selectedTimeframe}</span>
-              <ChevronDown size={14} color="#6b7280" />
+              <p className={styles.panelSubtitle}>
+                {typeof financials?.period_change_pct === "number"
+                  ? `${financials.period_change_pct >= 0 ? "+" : ""}${financials.period_change_pct}% vs the previous 30 days`
+                  : "No sales in the previous 30 days to compare"}
+              </p>
             </div>
           </div>
 
-          {/* Spline Chart SVG */}
-          <div style={{ position: "relative", width: "100%", height: "230px", marginTop: "10px" }}>
-            <svg
-              viewBox="0 0 600 220"
-              style={{ width: "100%", height: "100%", overflow: "visible" }}
-            >
-              <defs>
-                <linearGradient id="profitGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#84cc16" stopOpacity="0.25" />
-                  <stop offset="100%" stopColor="#84cc16" stopOpacity="0.0" />
-                </linearGradient>
-              </defs>
-
-              {/* Horizontal Grid lines */}
-              <line x1="40" y1="30" x2="580" y2="30" stroke="#f3f4f6" strokeDasharray="4 4" />
-              <text x="5" y="34" fill="#9ca3af" fontSize="11">200K</text>
-
-              <line x1="40" y1="80" x2="580" y2="80" stroke="#f3f4f6" strokeDasharray="4 4" />
-              <text x="5" y="84" fill="#9ca3af" fontSize="11">150K</text>
-
-              <line x1="40" y1="130" x2="580" y2="130" stroke="#f3f4f6" strokeDasharray="4 4" />
-              <text x="12" y="134" fill="#9ca3af" fontSize="11">80K</text>
-
-              <line x1="40" y1="180" x2="580" y2="180" stroke="#f3f4f6" strokeDasharray="4 4" />
-              <text x="12" y="184" fill="#9ca3af" fontSize="11">20K</text>
-
-              {/* Spline 2: Cost Line (chartreuse) */}
-              <path
-                d="M 50 145 C 100 130, 140 160, 190 145 C 240 130, 280 115, 330 95 C 380 95, 420 120, 470 125 C 520 130, 550 100, 580 110"
-                fill="none"
-                stroke="#bef264"
-                strokeWidth="2.5"
-                strokeLinecap="round"
-              />
-
-              {/* Spline 1: Gross Sales Line (lime/green) */}
-              <path
-                d="M 50 135 C 100 85, 140 110, 190 145 C 240 165, 280 110, 330 65 C 380 75, 420 90, 470 85 C 520 80, 550 45, 580 50"
-                fill="none"
-                stroke="#84cc16"
-                strokeWidth="3"
-                strokeLinecap="round"
-              />
-
-              {/* Highlight Column on 'Jun' */}
-              <line
-                x1="330"
-                y1="30"
-                x2="330"
-                y2="185"
-                stroke="#a3e635"
-                strokeWidth="1.5"
-                strokeDasharray="3 3"
-              />
-
-              {/* Floating Jun Badges */}
-              <g transform="translate(336, 75)">
-                <rect x="0" y="0" width="58" height="20" rx="10" fill="#ffffff" stroke="#e5e7eb" strokeWidth="1" />
-                <text x="29" y="14" textAnchor="middle" fontSize="10" fontWeight="700" fill="#374151">
-                  {cur.format(62000)}
-                </text>
-              </g>
-
-              <g transform="translate(280, 48)">
-                <rect x="0" y="0" width="58" height="20" rx="10" fill="#ffffff" stroke="#84cc16" strokeWidth="1.5" />
-                <text x="29" y="14" textAnchor="middle" fontSize="10" fontWeight="700" fill="#111827">
-                  {cur.format(184500)}
-                </text>
-              </g>
-
-              {/* Month Labels */}
-              {[
-                { m: "Jan", x: 50 },
-                { m: "Feb", x: 110 },
-                { m: "Mar", x: 170 },
-                { m: "Apr", x: 230 },
-                { m: "May", x: 280 },
-                { m: "Jun", x: 330, active: true },
-                { m: "Jul", x: 390 },
-                { m: "Aug", x: 450 },
-                { m: "Sep", x: 520 },
-              ].map((item) => (
-                <g key={item.m} transform={`translate(${item.x}, 205)`}>
-                  {item.active ? (
-                    <>
-                      <rect x="-16" y="-12" width="32" height="22" rx="11" fill="#111827" />
-                      <text x="0" y="3" textAnchor="middle" fill="#ffffff" fontSize="11" fontWeight="700">
-                        {item.m}
-                      </text>
-                    </>
-                  ) : (
-                    <text x="0" y="0" textAnchor="middle" fill="#9ca3af" fontSize="11">
-                      {item.m}
-                    </text>
-                  )}
-                </g>
-              ))}
-            </svg>
-          </div>
+          {(() => {
+            const points: Array<{ date: string; gmv_bdt: number; orders_count: number }> = financials?.time_series ?? [];
+            const max = Math.max(1, ...points.map((p) => p.gmv_bdt));
+            if (points.length === 0 || points.every((p) => p.gmv_bdt === 0)) {
+              return (
+                <div style={{ height: "230px", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--color-text-muted)", fontSize: "13px" }}>
+                  No sales in the last 30 days.
+                </div>
+              );
+            }
+            return (
+              <div style={{ display: "flex", alignItems: "flex-end", gap: "6px", height: "230px", marginTop: "10px" }}>
+                {points.map((p) => (
+                  <div key={p.date} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: "4px" }}>
+                    <div
+                      title={`${p.date}: ${cur.format(p.gmv_bdt)} from ${p.orders_count} orders`}
+                      style={{
+                        width: "100%",
+                        height: `${p.gmv_bdt > 0 ? Math.max(3, Math.round((p.gmv_bdt / max) * 190)) : 0}px`,
+                        background: "var(--color-lime-hover)",
+                        borderRadius: "6px 6px 0 0",
+                      }}
+                    />
+                    <span style={{ fontSize: "9px", color: "var(--color-text-muted)" }}>{p.date.slice(5)}</span>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
         </div>
 
         {/* Widget 2: F-Commerce & Social Channel Donut Chart */}
@@ -912,7 +575,6 @@ export default function DashboardPage() {
                   <span>Orders: <strong style={{ color: "#ffffff" }}>{activeChannel.orders}</strong></span>
                 </div>
                 <div style={{ display: "flex", justifyContent: "space-between", marginTop: "4px", fontSize: "10px", color: "#9ca3af" }}>
-                  <span>Conversion: <strong style={{ color: "#4ade80" }}>{activeChannel.conversion}</strong></span>
                   <span>{activeChannel.agentStatus}</span>
                 </div>
               </div>
@@ -992,8 +654,8 @@ export default function DashboardPage() {
                     <text x="100" y="119" textAnchor="middle" fontSize="10" fontWeight="600" fill="#4b5563">
                       {activeChannel.orders} Orders ({activeChannel.sharePercent}%)
                     </text>
-                    <text x="100" y="133" textAnchor="middle" fontSize="9" fontWeight="600" fill="#16a34a">
-                      {activeChannel.conversion} CVR · {activeChannel.agentStatus}
+                    <text x="100" y="133" textAnchor="middle" fontSize="9" fontWeight="600" fill="var(--color-text-secondary)">
+                      {activeChannel.agentStatus}
                     </text>
                   </g>
                 ) : (
@@ -1002,7 +664,7 @@ export default function DashboardPage() {
                       OMNICHANNEL
                     </text>
                     <text x="100" y="104" textAnchor="middle" fontSize="22" fontWeight="800" fill="#111827">
-                      1,420
+                      {totalOrders.toLocaleString()}
                     </text>
                     <text x="100" y="122" textAnchor="middle" fontSize="11" fontWeight="600" fill="#4b5563">
                       Total Orders
@@ -1025,7 +687,7 @@ export default function DashboardPage() {
                       {activeChannel.shortName} Selected
                     </div>
                     <div style={{ fontSize: "10px", color: "#6b7280" }}>
-                      {activeChannel.orders} orders · {cur.format(activeChannel.revenueBDT)} · {activeChannel.conversion} cvr
+                      {activeChannel.orders} orders · {cur.format(activeChannel.revenueBDT)}
                     </div>
                   </div>
                 </div>
@@ -1070,8 +732,10 @@ export default function DashboardPage() {
           </div>
 
           <div style={{ marginTop: "12px", paddingTop: "10px", borderTop: "1px solid #f3f4f6", display: "flex", justifyContent: "space-between", fontSize: "11px", color: "#6b7280" }}>
-            <span>Top Performing: <strong>9.2% cvr</strong></span>
-            <span style={{ color: "#16a34a", fontWeight: 600 }}>Omnichannel Sync: Live</span>
+            <span>
+              Most orders: <strong>{topChannel && topChannel.orders > 0 ? `${topChannel.shortName} (${topChannel.orders})` : "no orders yet"}</strong>
+            </span>
+            <span>Paid revenue per channel</span>
           </div>
         </div>
       </section>
@@ -1100,10 +764,10 @@ export default function DashboardPage() {
                     letterSpacing: "0.02em",
                   }}
                 >
-                  5 Actionable
+                  {attentionItems.length} to review
                 </span>
               </div>
-              <p className={styles.panelSubtitle}>Immediate merchant decisions requiring authorization</p>
+              <p className={styles.panelSubtitle}>From your orders, payments and stock</p>
             </div>
 
             <Link href="/orders" style={{ fontSize: "12px", color: "var(--color-text-secondary)", fontWeight: 600 }}>
@@ -1113,6 +777,9 @@ export default function DashboardPage() {
 
           {/* Visual Attention List */}
           <div className={styles.attentionList}>
+            {attentionItems.length === 0 && (
+              <div style={{ padding: "18px", color: "var(--color-text-secondary)", fontSize: "13px" }}>Nothing needs attention right now.</div>
+            )}
             {attentionItems.map((item) => (
               <div
                 key={item.id}
@@ -1134,15 +801,6 @@ export default function DashboardPage() {
                   <div>
                     <div className={styles.attentionTitleRow}>
                       <span className={styles.attentionTitle}>{item.title}</span>
-                      <span
-                        className={styles.attentionValueChip}
-                        style={{
-                          background: item.tagBg,
-                          color: item.tagColor,
-                        }}
-                      >
-                        {item.valueTag}
-                      </span>
                     </div>
                     <div className={styles.attentionSubtitle}>{item.subtitle}</div>
                   </div>
@@ -1189,109 +847,49 @@ export default function DashboardPage() {
                   color: "#3f6212",
                 }}
               >
-                <span className={styles.streamPulseDot} style={{ background: "#22c55e" }} /> Live Agent
+                {intelligence?.snapshots?.[0]?.source === "SNAPSHOT" ? "Stored analysis" : "Computed now"}
               </div>
             </div>
 
-            {/* 2x2 Micro-Bento Grid */}
+            {/* Top items from /api/v1/intelligence/overview (were three invented tiles) */}
             <div className={styles.intelligenceGrid}>
-              {/* Tile 1: High Demand Surge */}
-              <div
-                className={styles.intelligencePod}
-                style={{ borderColor: "rgba(234, 88, 12, 0.2)", background: "#fff7ed" }}
-              >
-                <div>
-                  <div className={styles.podTag} style={{ color: "#c2410c" }}>
-                    <Flame size={12} /> Demand Spike
+              {(() => {
+                const tiles = [
+                  ...(intelligence?.top_risks ?? []).slice(0, 1).map((r) => ({ tag: "Risk", icon: <AlertTriangle size={12} />, title: r.title, desc: r.recommended_mitigation ?? r.description, href: "/intelligence/insights" })),
+                  ...(intelligence?.top_opportunities ?? []).slice(0, 1).map((o) => ({ tag: "Opportunity", icon: <Flame size={12} />, title: o.title, desc: o.description, href: "/intelligence/insights" })),
+                  ...(intelligence?.top_recommendations ?? []).slice(0, 1).map((r) => ({ tag: "Recommendation", icon: <Bot size={12} />, title: r.title, desc: r.rationale ?? r.description, href: "/intelligence/recommendations" })),
+                ];
+                if (tiles.length === 0) {
+                  return (
+                    <div className={styles.intelligencePod} style={{ gridColumn: "span 2" }}>
+                      <div className={styles.podDesc}>No risks, opportunities or recommendations detected from your data yet.</div>
+                    </div>
+                  );
+                }
+                return tiles.map((t, i) => (
+                  <div key={i} className={styles.intelligencePod} style={i === 2 ? { gridColumn: "span 2" } : undefined}>
+                    <div>
+                      <div className={styles.podTag}>
+                        {t.icon} {t.tag}
+                      </div>
+                      <div style={{ fontSize: "13px", fontWeight: 700, color: "var(--color-text-primary)", marginTop: "4px" }}>{t.title}</div>
+                      <div className={styles.podDesc}>{t.desc}</div>
+                    </div>
+                    <Link href={t.href} style={{ marginTop: "12px" }}>
+                      <button type="button" className={styles.podBtnOutline}>
+                        Review
+                      </button>
+                    </Link>
                   </div>
-                  <div className={styles.podMetric}>+320%</div>
-                  <div className={styles.podDesc}>
-                    <strong>Panjabi Cotton-L</strong> social inquiries. Projected stockout in 18h.
-                  </div>
-                </div>
-
-                <Link href="/inventory" style={{ marginTop: "12px" }}>
-                  <button type="button" className={styles.podBtnLime}>
-                    Approve +50 Units
-                  </button>
-                </Link>
-              </div>
-
-              {/* Tile 2: RTO Anomaly Alert */}
-              <div
-                className={styles.intelligencePod}
-                style={{ borderColor: "rgba(245, 158, 11, 0.25)", background: "#fffbeb" }}
-              >
-                <div>
-                  <div className={styles.podTag} style={{ color: "#b45309" }}>
-                    <AlertTriangle size={12} /> Courier Alert
-                  </div>
-                  <div className={styles.podMetric}>14.2%</div>
-                  <div className={styles.podDesc}>
-                    Chattogram RTO spiked. Delivery Agent rerouted to Priority Hub.
-                  </div>
-                </div>
-
-                <Link href="/shipments" style={{ marginTop: "12px" }}>
-                  <button type="button" className={styles.podBtnOutline}>
-                    Inspect Logistics
-                  </button>
-                </Link>
-              </div>
-
-              {/* Tile 3: WhatsApp Cart Recovery */}
-              <div
-                className={styles.intelligencePod}
-                style={{
-                  gridColumn: "span 2",
-                  flexDirection: "row",
-                  alignItems: "center",
-                  borderColor: "rgba(168, 85, 247, 0.2)",
-                  background: "#faf5ff",
-                  gap: "14px",
-                }}
-              >
-                <div>
-                  <div className={styles.podTag} style={{ color: "#7e22ce" }}>
-                    <Bot size={12} /> WhatsApp Conversational Recovery
-                  </div>
-                  <div style={{ fontSize: "20px", fontWeight: 800, color: "#111827", marginTop: "3px" }}>
-                    {cur.format(38400)}{" "}
-                    <span style={{ fontSize: "11px", fontWeight: 700, color: "#15803d", background: "#dcfce7", border: "1px solid rgba(34, 197, 94, 0.3)", padding: "2px 8px", borderRadius: "6px" }}>
-                      Recovered Today
-                    </span>
-                  </div>
-                  <div className={styles.podDesc} style={{ marginTop: "3px" }}>
-                    Automated Banglish audio nudge converted 18.4% of abandoned checkouts.
-                  </div>
-                </div>
-
-                <Link href="/growth/journeys" style={{ flexShrink: 0 }}>
-                  <button
-                    type="button"
-                    style={{
-                      padding: "8px 14px",
-                      borderRadius: "8px",
-                      background: "#f3e8ff",
-                      color: "#6b21a8",
-                      fontSize: "11px",
-                      fontWeight: 700,
-                      border: "1px solid rgba(168, 85, 247, 0.3)",
-                      cursor: "pointer",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    View Journey →
-                  </button>
-                </Link>
-              </div>
+                ));
+              })()}
             </div>
           </div>
 
           {/* Policy Guardrail Badge */}
           <div className={styles.intelligenceFooter}>
             <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-              <ShieldCheck size={14} color="#16a34a" /> Deterministic Policy Guardrail Enforced
+              <ShieldCheck size={14} color="var(--color-success)" /> Computed from your orders, stock and payments
             </span>
             <Link href="/agents" style={{ color: "#111827", fontWeight: 600 }}>
               Agent Logs →
@@ -1313,7 +911,7 @@ export default function DashboardPage() {
                 <Zap size={18} color="#C7F900" />
                 <span className={styles.panelTitle}>Automation &amp; Agent Runtime</span>
               </div>
-              <p className={styles.panelSubtitle}>14 specialized agents &amp; n8n workflows executing</p>
+              <p className={styles.panelSubtitle}>Recent AI agent runs</p>
             </div>
 
             <Link href="/automations">
@@ -1323,28 +921,25 @@ export default function DashboardPage() {
             </Link>
           </div>
 
-          {/* Quick Stats Grid */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "10px", marginBottom: "14px" }}>
-            <div style={{ background: "#fafafa", padding: "10px", borderRadius: "12px", border: "1px solid #f3f4f6" }}>
-              <span style={{ fontSize: "11px", color: "#9ca3af" }}>Active Agents</span>
-              <div style={{ fontSize: "16px", fontWeight: 700, color: "#111827", marginTop: "2px" }}>14 Online</div>
-            </div>
-            <div style={{ background: "#fafafa", padding: "10px", borderRadius: "12px", border: "1px solid #f3f4f6" }}>
-              <span style={{ fontSize: "11px", color: "#9ca3af" }}>Events Today</span>
-              <div style={{ fontSize: "16px", fontWeight: 700, color: "#111827", marginTop: "2px" }}>2,840</div>
-            </div>
-            <div style={{ background: "#fafafa", padding: "10px", borderRadius: "12px", border: "1px solid #f3f4f6" }}>
-              <span style={{ fontSize: "11px", color: "#9ca3af" }}>Success Rate</span>
-              <div style={{ fontSize: "16px", fontWeight: 700, color: "#16a34a", marginTop: "2px" }}>99.8%</div>
-            </div>
-            <div style={{ background: "#fafafa", padding: "10px", borderRadius: "12px", border: "1px solid #f3f4f6" }}>
-              <span style={{ fontSize: "11px", color: "#9ca3af" }}>Pending Approval</span>
-              <div style={{ fontSize: "16px", fontWeight: 700, color: "#f59e0b", marginTop: "2px" }}>2 Actions</div>
-            </div>
+          {/* Counts from the recent runs (were literal 14 Online / 2,840 / 99.8% / 2 Actions) */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "10px", marginBottom: "14px" }}>
+            {[
+              { label: "Recent runs", value: String(agentRuns.length) },
+              { label: "Completed", value: String(agentRuns.filter((r) => r.status === "COMPLETED").length) },
+              { label: "Awaiting approval", value: String(agentRuns.filter((r) => r.requires_human_approval).length) },
+            ].map((stat) => (
+              <div key={stat.label} style={{ background: "var(--color-surface-soft)", padding: "10px", borderRadius: "12px", border: "1px solid var(--color-border-subtle)" }}>
+                <span style={{ fontSize: "11px", color: "var(--color-text-muted)" }}>{stat.label}</span>
+                <div style={{ fontSize: "16px", fontWeight: 700, color: "var(--color-text-primary)", marginTop: "2px" }}>{stat.value}</div>
+              </div>
+            ))}
           </div>
 
           {/* Live Agent Stream */}
           <div className={styles.streamList}>
+            {agentStream.length === 0 && (
+              <div style={{ padding: "12px", color: "var(--color-text-muted)", fontSize: "12px" }}>No agent runs recorded yet.</div>
+            )}
             {agentStream.map((item, idx) => (
               <div key={idx} className={styles.streamItem}>
                 <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
@@ -1389,7 +984,7 @@ export default function DashboardPage() {
                   </span>
                 )}
               </div>
-              <p className={styles.panelSubtitle}>Geographic order volume dominance &amp; repeat customer rates</p>
+              <p className={styles.panelSubtitle}>Orders and repeat buyers by division (shipping address)</p>
             </div>
 
             {/* View Tabs Toggle */}
@@ -1411,22 +1006,24 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* Top Quick Metric Strip */}
+          {/* From the store (were literal Dhaka 62% / 72.9% repeat / ৳1,540 / +57%) */}
           <div className={styles.cityKpiStrip}>
             <div className={styles.cityKpiItem}>
-              <span style={{ fontSize: "10px", color: "#6b7280", fontWeight: 600 }}>Top City (Volume)</span>
-              <strong style={{ fontSize: "13px", color: "#111827", marginTop: "2px" }}>Dhaka Metro</strong>
-              <span style={{ fontSize: "10px", color: "#16a34a" }}>62.0% (880 ord)</span>
+              <span style={{ fontSize: "10px", color: "var(--color-text-secondary)", fontWeight: 600 }}>Top division (orders)</span>
+              <strong style={{ fontSize: "13px", color: "var(--color-text-primary)", marginTop: "2px" }}>{topCity ? topCity.city : "—"}</strong>
+              <span style={{ fontSize: "10px", color: "var(--color-text-secondary)" }}>{topCity ? `${topCity.volumePercent}% (${topCity.orders} orders)` : "No orders yet"}</span>
             </div>
             <div className={styles.cityKpiItem}>
-              <span style={{ fontSize: "10px", color: "#6b7280", fontWeight: 600 }}>Returning Buyer Rate</span>
-              <strong style={{ fontSize: "13px", color: "#16a34a", marginTop: "2px" }}>72.9% Repeat</strong>
-              <span style={{ fontSize: "10px", color: "#6b7280" }}>2.4x reorder freq</span>
+              <span style={{ fontSize: "10px", color: "var(--color-text-secondary)", fontWeight: 600 }}>Returning buyers</span>
+              <strong style={{ fontSize: "13px", color: "var(--color-text-primary)", marginTop: "2px" }}>
+                {typeof metrics?.returningBuyerPercent === "number" ? `${metrics.returningBuyerPercent}%` : "—"}
+              </strong>
+              <span style={{ fontSize: "10px", color: "var(--color-text-secondary)" }}>customers with 2+ orders</span>
             </div>
             <div className={styles.cityKpiItem}>
-              <span style={{ fontSize: "10px", color: "#6b7280", fontWeight: 600 }}>Repeat Buyer AOV</span>
-              <strong style={{ fontSize: "13px", color: "#111827", marginTop: "2px" }}>{cur.format(1540)}</strong>
-              <span style={{ fontSize: "10px", color: "#2563eb" }}>+57% vs new</span>
+              <span style={{ fontSize: "10px", color: "var(--color-text-secondary)", fontWeight: 600 }}>Average paid order</span>
+              <strong style={{ fontSize: "13px", color: "var(--color-text-primary)", marginTop: "2px" }}>{aovBDT > 0 ? cur.format(aovBDT) : "—"}</strong>
+              <span style={{ fontSize: "10px", color: "var(--color-text-secondary)" }}>all divisions</span>
             </div>
           </div>
 
@@ -1450,7 +1047,7 @@ export default function DashboardPage() {
                       <span className={styles.cityRankPill}>#{idx + 1}</span>
                       <div>
                         <div style={{ fontWeight: 700, fontSize: "12px", color: "#111827" }}>{item.city}</div>
-                        <div style={{ fontSize: "10px", color: "#9ca3af" }}>{item.deliverySLA}</div>
+
                       </div>
                     </div>
 
@@ -1458,7 +1055,7 @@ export default function DashboardPage() {
                     <div style={{ flex: 1, margin: "0 12px" }}>
                       <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", marginBottom: "3px" }}>
                         <span style={{ color: "#6b7280", fontWeight: 500 }}>{item.volumePercent}% volume</span>
-                        <span style={{ color: "#16a34a", fontWeight: 600 }}>{item.growth}</span>
+
                       </div>
                       <div style={{ width: "100%", height: "6px", background: "#f3f4f6", borderRadius: "999px", overflow: "hidden" }}>
                         <div
@@ -1486,20 +1083,6 @@ export default function DashboardPage() {
           ) : (
             /* TAB 2: Returning Buyers Retention View */
             <div className={styles.cityList}>
-              {/* Overall Retention Ratio Bar */}
-              <div style={{ padding: "8px 10px", background: "#fafafa", borderRadius: "12px", border: "1px solid #f3f4f6", marginBottom: "2px" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", fontWeight: 600 }}>
-                  <span style={{ color: "#16a34a", display: "flex", alignItems: "center", gap: "4px" }}>
-                    <Repeat size={12} /> Returning: 72.9% (1,035 Buyers)
-                  </span>
-                  <span style={{ color: "#3b82f6" }}>First-Time: 27.1% (385)</span>
-                </div>
-                <div className={styles.retentionRatioBar}>
-                  <div className={styles.retentionBarFill} style={{ width: "72.9%", background: "#84cc16" }} />
-                  <div className={styles.retentionBarFill} style={{ width: "27.1%", background: "#93c5fd" }} />
-                </div>
-              </div>
-
               {/* City-by-City Returning Rates */}
               {cityAnalysisData.map((item: any) => (
                 <div
@@ -1518,13 +1101,15 @@ export default function DashboardPage() {
 
                   <div style={{ flex: 1, margin: "0 10px" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", marginBottom: "3px" }}>
-                      <span style={{ fontWeight: 600, color: "#111827" }}>{item.returningBuyerPercent}% Repeat</span>
-                      <span style={{ color: "#6b7280", fontSize: "10px" }}>{item.reorderFreq} freq</span>
+                      <span style={{ fontWeight: 600, color: "var(--color-text-primary)" }}>
+                        {typeof item.returningBuyerPercent === "number" ? `${item.returningBuyerPercent}% repeat` : "—"}
+                      </span>
+                      <span style={{ color: "var(--color-text-secondary)", fontSize: "10px" }}>{item.reorderFreq ? `${item.reorderFreq} orders per buyer` : ""}</span>
                     </div>
                     <div style={{ width: "100%", height: "5px", background: "#f3f4f6", borderRadius: "999px", overflow: "hidden" }}>
                       <div
                         style={{
-                          width: `${item.returningBuyerPercent}%`,
+                          width: `${item.returningBuyerPercent ?? 0}%`,
                           height: "100%",
                           background: "#84cc16",
                           borderRadius: "999px",
@@ -1533,38 +1118,20 @@ export default function DashboardPage() {
                     </div>
                   </div>
 
-                  <div style={{ textAlign: "right", minWidth: "75px" }}>
-                    <span
-                      style={{
-                        padding: "2px 6px",
-                        borderRadius: "6px",
-                        background:
-                          item.returningBuyerPercent > 70
-                            ? "rgba(132, 204, 22, 0.15)"
-                            : "rgba(59, 130, 246, 0.12)",
-                        color: item.returningBuyerPercent > 70 ? "#4d7c0f" : "#1d4ed8",
-                        fontSize: "10px",
-                        fontWeight: 700,
-                      }}
-                    >
-                      {item.loyalty}
-                    </span>
-                  </div>
                 </div>
               ))}
             </div>
           )}
 
-          {/* Bottom Card Footer with Insight & Settlement Rails */}
-          <div style={{ marginTop: "12px", paddingTop: "10px", borderTop: "1px solid #f3f4f6", display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: "11px", flexWrap: "wrap", gap: "6px" }}>
-            <span style={{ color: "#4b5563" }}>
-              💡 <strong>Retention:</strong> Repeat buyers in Dhaka &amp; Sylhet yield <strong>74% repeat revenue</strong>.
-            </span>
-            <div style={{ display: "flex", gap: "6px" }}>
-              <span className={styles.codPill}>COD 58%</span>
-              <span className={styles.bkashPill}>bKash 30%</span>
-              <span className={styles.nagadPill}>Nagad 9%</span>
-            </div>
+          {/* Payment mix from orders (was a literal insight and COD 58% / bKash 30% / Nagad 9%) */}
+          <div style={{ marginTop: "12px", paddingTop: "10px", borderTop: "1px solid var(--color-border-subtle)", display: "flex", alignItems: "center", gap: "6px", fontSize: "11px", flexWrap: "wrap" }}>
+            <span style={{ color: "var(--color-text-secondary)" }}>Payment mix:</span>
+            {(metrics?.paymentMix ?? []).length === 0 && <span style={{ color: "var(--color-text-muted)" }}>no orders yet</span>}
+            {(metrics?.paymentMix ?? []).map((m) => (
+              <span key={m.method} className={m.method === "COD" ? styles.codPill : m.method === "BKASH" ? styles.bkashPill : styles.nagadPill}>
+                {m.method} {m.percent}%
+              </span>
+            ))}
           </div>
         </div>
       </section>
@@ -1586,30 +1153,20 @@ export default function DashboardPage() {
             </Link>
           </div>
 
+          {/* From inventory (were literal 23,340 / 94.8% / 82% / 25 items) */}
           <div className={styles.opsGridCompact}>
-            <div className={styles.opsBox}>
-              <span style={{ fontSize: "11px", color: "#9ca3af" }}>Total Stock</span>
-              <strong style={{ fontSize: "14px", color: "#111827" }}>23,340</strong>
-              <span style={{ fontSize: "10px", color: "#16a34a" }}>2 Hubs Safe</span>
-            </div>
-
-            <div className={styles.opsBox}>
-              <span style={{ fontSize: "11px", color: "#9ca3af" }}>Accuracy</span>
-              <strong style={{ fontSize: "14px", color: "#111827" }}>94.8%</strong>
-              <span style={{ fontSize: "10px", color: "#16a34a" }}>High SLA</span>
-            </div>
-
-            <div className={styles.opsBox}>
-              <span style={{ fontSize: "11px", color: "#9ca3af" }}>Capacity</span>
-              <strong style={{ fontSize: "14px", color: "#111827" }}>82%</strong>
-              <span style={{ fontSize: "10px", color: "#6b7280" }}>Optimal</span>
-            </div>
-
-            <div className={styles.opsBox}>
-              <span style={{ fontSize: "11px", color: "#9ca3af" }}>Dead Stock</span>
-              <strong style={{ fontSize: "14px", color: "#111827" }}>25 Items</strong>
-              <span style={{ fontSize: "10px", color: "#ef4444" }}>-10% ↘</span>
-            </div>
+            {[
+              { label: "Total stock", value: (metrics?.totalStockUnits ?? 0).toLocaleString(), note: "units on hand" },
+              { label: "Low stock", value: String(metrics?.lowStockCount ?? 0), note: "SKUs at reorder point" },
+              { label: "Products", value: String(metrics?.totalProducts ?? 0), note: "not archived" },
+              { label: "Warehouses", value: String(metrics?.warehousesCount ?? 0), note: "configured" },
+            ].map((box) => (
+              <div key={box.label} className={styles.opsBox}>
+                <span style={{ fontSize: "11px", color: "var(--color-text-muted)" }}>{box.label}</span>
+                <strong style={{ fontSize: "14px", color: "var(--color-text-primary)" }}>{box.value}</strong>
+                <span style={{ fontSize: "10px", color: "var(--color-text-secondary)" }}>{box.note}</span>
+              </div>
+            ))}
           </div>
 
           <div style={{ marginTop: "14px" }}>
@@ -1668,7 +1225,7 @@ export default function DashboardPage() {
                   </span>
                 )}
               </div>
-              <p className={styles.panelSubtitle}>Live cross-channel order stream with returning buyer indicators</p>
+              <p className={styles.panelSubtitle}>Your five most recent orders</p>
             </div>
             <Link href="/orders" style={{ fontSize: "12px", color: "var(--color-text-secondary)", fontWeight: 600 }}>
               All Orders →
@@ -1704,7 +1261,7 @@ export default function DashboardPage() {
                     return (
                       <tr>
                         <td colSpan={7} style={{ padding: "24px 10px", textAlign: "center", color: "#9ca3af" }}>
-                          No recent orders found matching selected filters.{" "}
+                          {recentOrders.length === 0 ? "No orders yet." : "No recent orders match the selected filters."}{" "}
                           <button
                             type="button"
                             onClick={() => {
@@ -1769,7 +1326,7 @@ export default function DashboardPage() {
                           )}
                         </div>
                         <div style={{ fontSize: "10px", color: "#9ca3af" }}>
-                          {ord.city} · {ord.phone}
+                          {ord.city}
                         </div>
                       </td>
                       <td style={{ padding: "10px 6px" }}>

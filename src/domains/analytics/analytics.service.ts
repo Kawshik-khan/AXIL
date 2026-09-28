@@ -26,6 +26,7 @@ import {
 } from "@/types/analytics";
 import { Order, OrderStatus } from "@/types/commerce";
 import { PricingService } from "@/domains/pricing/pricing.service";
+import { channelOfOrder, SALES_CHANNEL_NAMES } from "@/lib/sales-channel";
 
 // All 64 districts of Bangladesh by division. Geography only: every count comes from the tenant's orders (FX-30).
 export interface DistrictSpec {
@@ -128,29 +129,8 @@ const pct = (part: number, whole: number): number | null => (whole > 0 ? round1(
 const SHIPPED_STATUSES = new Set<OrderStatus>(["SHIPPED", "DELIVERED", "RETURN_REQUESTED", "RETURNED"]);
 const RTO_STATUSES = new Set<OrderStatus>(["RETURN_REQUESTED", "RETURNED"]);
 
-const CHANNEL_NAMES: Record<SalesChannel, string> = {
-  WHATSAPP: "WhatsApp",
-  FACEBOOK_MESSENGER: "Facebook Messenger",
-  INSTAGRAM: "Instagram",
-  WEBSITE: "Website",
-  MANUAL_POS: "Manual / POS",
-  UNATTRIBUTED: "Unattributed (source or platform not recorded)",
-};
-
-/**
- * The channel an order came from, from what the order records. Social orders name their platform only in notes;
- * anything else, including imports, is UNATTRIBUTED rather than guessed (FX-30).
- */
-export function channelOfOrder(order: Pick<Order, "source" | "notes">): SalesChannel {
-  const source = (order.source as string) || "";
-  const notes = (order.notes || "").toLowerCase();
-  if (source === "WEBSITE") return "WEBSITE";
-  if (source === "MANUAL") return "MANUAL_POS";
-  if (source === "WHATSAPP" || notes.includes("whatsapp")) return "WHATSAPP";
-  if (source === "INSTAGRAM" || notes.includes("instagram")) return "INSTAGRAM";
-  if (source === "FACEBOOK" || notes.includes("facebook") || notes.includes("messenger")) return "FACEBOOK_MESSENGER";
-  return "UNATTRIBUTED";
-}
+const CHANNEL_NAMES = SALES_CHANNEL_NAMES;
+export { channelOfOrder };
 
 export class AnalyticsService {
   /**

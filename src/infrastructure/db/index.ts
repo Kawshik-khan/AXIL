@@ -5,6 +5,8 @@ import os from "os";
 import { logger } from "@/lib/logger";
 import { AppError } from "@/lib/errors";
 import { mergeComputedRow } from "@/lib/computed-rows";
+import { channelOfOrder, SALES_CHANNEL_NAMES } from "@/lib/sales-channel";
+import type { SalesChannel as OrderSalesChannel } from "@/types/analytics";
 import bcrypt from "bcryptjs";
 import { RoleName } from "@/lib/permissions";
 import { DISABLED_PASSWORD_HASH } from "@/lib/security";
@@ -5395,6 +5397,10 @@ class CommerceDatabase {
   }
 
   // ==================== KPI AGGREGATION (REAL DB DATA) ====================
+  /**
+   * Command Center numbers, computed from the tenant's records only (FX-39). Unknown values are null; the page shows
+   * "—" or an empty state instead of the fallbacks it used to render.
+   */
   public getDashboardMetrics(tenantId: string): {
     totalRevenue: number;
     totalOrders: number;
@@ -5404,7 +5410,21 @@ class CommerceDatabase {
     lowStockCount: number;
     pendingOrdersCount: number;
     pendingPaymentsCount: number;
-    recentOrders: (Order & { customer_name: string })[];
+    totalStockUnits: number;
+    warehousesCount: number;
+    /** Share of buying customers with 2+ orders; null without buyers. */
+    returningBuyerPercent: number | null;
+    /** Share of non-cancelled orders by payment method (percent, one decimal). */
+    paymentMix: Array<{ method: string; percent: number }>;
+    recentOrders: (Order & { customer_name: string; channel: string; is_returning: boolean; courier: string | null })[];
+    periodComparison: {
+      revenue_last_30d: number;
+      revenue_prev_30d: number;
+      revenue_change_pct: number | null;
+      orders_last_30d: number;
+      orders_prev_30d: number;
+      orders_change_pct: number | null;
+    };
     channelData: Array<{
       id: string;
       shortName: string;
@@ -5414,7 +5434,7 @@ class CommerceDatabase {
       orders: number;
       sharePercent: number;
       revenueBDT: number;
-      conversion: string;
+      conversion: string | null;
       agentStatus: string;
     }>;
     cityAnalysisData: Array<{
@@ -5424,12 +5444,12 @@ class CommerceDatabase {
       orders: number;
       volumePercent: number;
       revenueBDT: number;
-      returningBuyerPercent: number;
-      repeatAOV: number;
-      reorderFreq: string;
-      loyalty: string;
-      deliverySLA: string;
-      growth: string;
+      returningBuyerPercent: number | null;
+      repeatAOV: number | null;
+      reorderFreq: string | null;
+      loyalty: string | null;
+      deliverySLA: string | null;
+      growth: string | null;
       color: string;
     }>;
   } {
@@ -5440,6 +5460,7 @@ class CommerceDatabase {
     const averageOrderValue = paidOrders.length > 0 ? totalRevenue / paidOrders.length : 0;
 
     const customers = this.data.customers.filter((c) => c.tenant_id === tenantId);
+    const customersById = new Map(customers.map((c) => [c.id, c]));
     const activeCustomers = customers.filter((c) => c.status === "ACTIVE").length;
 
     const products = this.data.products.filter((p) => p.tenant_id === tenantId && p.status !== "ARCHIVED");
@@ -5456,158 +5477,135 @@ class CommerceDatabase {
       (o) => o.payment_status === "PENDING" || o.payment_status === "UNPAID"
     ).length;
 
-    const recent = orders
+    const ordersPerCustomer = new Map<string, number>();
+    for (const o of orders) {
+      if (o.status !== "CANCELLED") ordersPerCustomer.set(o.customer_id, (ordersPerCustomer.get(o.customer_id) ?? 0) + 1);
+    }
+    const buyers = ordersPerCustomer.size;
+    const returningBuyers = [...ordersPerCustomer.values()].filter((n) => n >= 2).length;
+    const returningBuyerPercent = buyers > 0 ? Number(((returningBuyers / buyers) * 100).toFixed(1)) : null;
+
+    const methodCounts = new Map<string, number>();
+    const nonCancelled = orders.filter((o) => o.status !== "CANCELLED");
+    for (const o of nonCancelled) methodCounts.set(o.payment_method, (methodCounts.get(o.payment_method) ?? 0) + 1);
+    const paymentMix = [...methodCounts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([method, count]) => ({ method, percent: Number(((count / nonCancelled.length) * 100).toFixed(1)) }));
+
+    const couriersByOrder = new Map<string, string>();
+    for (const sh of this.data.shipments) if (sh.tenant_id === tenantId) couriersByOrder.set(sh.order_id, sh.courier_provider);
+
+    const recent = [...orders]
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
       .slice(0, 5)
       .map((o) => {
-        const cust = customers.find((c) => c.id === o.customer_id);
+        const cust = customersById.get(o.customer_id);
         return {
           ...o,
-          customer_name: cust ? `${cust.first_name} ${cust.last_name}` : "Direct Buyer",
+          customer_name: cust ? `${cust.first_name} ${cust.last_name}`.trim() : "Walk-in customer",
+          channel: SALES_CHANNEL_NAMES[channelOfOrder(o)].split(" (")[0],
+          is_returning: (ordersPerCustomer.get(o.customer_id) ?? 0) >= 2,
+          courier: couriersByOrder.get(o.id) ?? null,
         };
       });
 
-    // Dynamic Multi-Channel Aggregation
-    let fbOrders = 0, fbRev = 0;
-    let waOrders = 0, waRev = 0;
-    let igOrders = 0, igRev = 0;
-    let webOrders = 0, webRev = 0;
-    let posOrders = 0, posRev = 0;
+    // Last 30 days against the 30 before, for trend pills (FX-39: the page showed literal +18.4% / +12.6% / ...)
+    const now = Date.now();
+    const day = 86_400_000;
+    const inRange = (o: Order, from: number, to: number) => {
+      const t = Date.parse(o.created_at);
+      return t >= from && t < to && o.status !== "CANCELLED";
+    };
+    const last30 = orders.filter((o) => inRange(o, now - 30 * day, now + 1));
+    const prev30 = orders.filter((o) => inRange(o, now - 60 * day, now - 30 * day));
+    const paidSum = (list: Order[]) => list.filter((o) => o.payment_status === "PAID").reduce((sum, o) => sum + o.grand_total, 0);
+    const change = (current: number, previous: number) =>
+      previous > 0 ? Math.round(((current - previous) / previous) * 1000) / 10 : null;
+    const periodComparison = {
+      revenue_last_30d: Math.round(paidSum(last30)),
+      revenue_prev_30d: Math.round(paidSum(prev30)),
+      revenue_change_pct: change(paidSum(last30), paidSum(prev30)),
+      orders_last_30d: last30.length,
+      orders_prev_30d: prev30.length,
+      orders_change_pct: change(last30.length, prev30.length),
+    };
 
+    // Channels from what each order records; unknown ones are Unattributed (was: every unknown order counted as
+    // Facebook). No conversion rates exist (there's no visit data); "agent status" is the channel's real connection.
+    const activeChannelTypes = new Set(
+      this.data.connected_channels.filter((c) => c.tenant_id === tenantId && c.status === "ACTIVE").map((c) => c.type as string)
+    );
+    const channelStyle: Record<OrderSalesChannel, { id: string; channel: string; icon: string; color: string; connectedAs?: string }> = {
+      FACEBOOK_MESSENGER: { id: "facebook", channel: "Facebook Page & Messenger", icon: "💬", color: "#1877f2", connectedAs: "FACEBOOK_MESSENGER" },
+      WHATSAPP: { id: "whatsapp", channel: "WhatsApp", icon: "🟢", color: "#25d366", connectedAs: "WHATSAPP" },
+      INSTAGRAM: { id: "instagram", channel: "Instagram Direct", icon: "📸", color: "#e1306c", connectedAs: "INSTAGRAM" },
+      WEBSITE: { id: "website", channel: "Website Storefront", icon: "🌐", color: "#3b82f6", connectedAs: "WEBSITE_CHAT" },
+      MANUAL_POS: { id: "manual", channel: "Manual Phone & Offline", icon: "📞", color: "#6b7280" },
+      UNATTRIBUTED: { id: "unattributed", channel: "Channel not recorded", icon: "❔", color: "#9ca3af" },
+    };
+    const tallies = new Map<OrderSalesChannel, { orders: number; revenue: number }>();
     for (const o of orders) {
-      const note = (o.notes || "").toLowerCase();
-      const isPaid = o.payment_status === "PAID";
-      const amt = isPaid ? o.grand_total : 0;
-
-      if (note.includes("whatsapp")) {
-        waOrders++;
-        waRev += amt;
-      } else if (note.includes("instagram")) {
-        igOrders++;
-        igRev += amt;
-      } else if (note.includes("website") || o.source === "WEBSITE") {
-        webOrders++;
-        webRev += amt;
-      } else if (note.includes("manual") || o.source === "MANUAL") {
-        posOrders++;
-        posRev += amt;
-      } else {
-        fbOrders++;
-        fbRev += amt;
-      }
+      const key = channelOfOrder(o);
+      const t = tallies.get(key) ?? { orders: 0, revenue: 0 };
+      t.orders += 1;
+      if (o.payment_status === "PAID") t.revenue += o.grand_total;
+      tallies.set(key, t);
     }
+    const channelData = (Object.keys(channelStyle) as OrderSalesChannel[])
+      .filter((key) => key !== "UNATTRIBUTED" || (tallies.get(key)?.orders ?? 0) > 0)
+      .map((key) => {
+        const style = channelStyle[key];
+        const t = tallies.get(key) ?? { orders: 0, revenue: 0 };
+        return {
+          id: style.id,
+          shortName: SALES_CHANNEL_NAMES[key].split(" (")[0],
+          channel: style.channel,
+          icon: style.icon,
+          color: style.color,
+          orders: t.orders,
+          sharePercent: totalOrders > 0 ? Number(((t.orders / totalOrders) * 100).toFixed(1)) : 0,
+          revenueBDT: Math.round(t.revenue),
+          conversion: null,
+          agentStatus: style.connectedAs ? (activeChannelTypes.has(style.connectedAs) ? "Connected" : "Not connected") : "—",
+        };
+      });
 
-    const totalOrdersCount = orders.length || 1;
-    const channelData = [
-      {
-        id: "facebook",
-        shortName: "Facebook",
-        channel: "Facebook Page & Messenger",
-        icon: "💬",
-        color: "#1877f2",
-        orders: fbOrders,
-        sharePercent: Number(((fbOrders / totalOrdersCount) * 100).toFixed(1)),
-        revenueBDT: Math.round(fbRev),
-        conversion: "4.8%",
-        agentStatus: "Active Listener",
-      },
-      {
-        id: "whatsapp",
-        shortName: "WhatsApp",
-        channel: "WhatsApp Conversational Cart",
-        icon: "🟢",
-        color: "#25d366",
-        orders: waOrders,
-        sharePercent: Number(((waOrders / totalOrdersCount) * 100).toFixed(1)),
-        revenueBDT: Math.round(waRev),
-        conversion: "9.2%",
-        agentStatus: "Catalog AI Ready",
-      },
-      {
-        id: "instagram",
-        shortName: "Instagram",
-        channel: "Instagram Direct & Shop",
-        icon: "📸",
-        color: "#e1306c",
-        orders: igOrders,
-        sharePercent: Number(((igOrders / totalOrdersCount) * 100).toFixed(1)),
-        revenueBDT: Math.round(igRev),
-        conversion: "3.4%",
-        agentStatus: "DM Routing",
-      },
-      {
-        id: "website",
-        shortName: "Website",
-        channel: "Website Storefront",
-        icon: "🌐",
-        color: "#3b82f6",
-        orders: webOrders,
-        sharePercent: Number(((webOrders / totalOrdersCount) * 100).toFixed(1)),
-        revenueBDT: Math.round(webRev),
-        conversion: "2.1%",
-        agentStatus: "Connected",
-      },
-      {
-        id: "manual",
-        shortName: "Manual",
-        channel: "Manual Phone & Offline",
-        icon: "📞",
-        color: "#6b7280",
-        orders: posOrders,
-        sharePercent: Number(((posOrders / totalOrdersCount) * 100).toFixed(1)),
-        revenueBDT: Math.round(posRev),
-        conversion: "Manual",
-        agentStatus: "Staff Assisted",
-      },
-    ];
-
-    // Dynamic City / Division Distribution
-    const divisionStats: Record<string, { orders: number; revenue: number }> = {};
+    // By division, from shipping addresses. Returning-buyer share and orders per customer are computed from each
+    // division's customers; loyalty labels, growth and SLA were literals and are not known (null).
+    const divisionColors: Record<string, string> = {
+      Dhaka: "#84cc16", Chattogram: "#3b82f6", Sylhet: "#a855f7", Rajshahi: "#f59e0b",
+      Khulna: "#06b6d4", Barishal: "#ec4899", Rangpur: "#14b8a6", Mymensingh: "#8b5cf6",
+    };
+    const divisionStats = new Map<string, { orders: number; revenue: number; ordersByCustomer: Map<string, number> }>();
     for (const o of orders) {
-      const div = o.shipping_address_snapshot?.division || "Dhaka";
-      if (!divisionStats[div]) {
-        divisionStats[div] = { orders: 0, revenue: 0 };
-      }
-      divisionStats[div].orders++;
-      if (o.payment_status === "PAID") {
-        divisionStats[div].revenue += o.grand_total;
-      }
+      const div = o.shipping_address_snapshot?.division || "Not recorded";
+      const stat = divisionStats.get(div) ?? { orders: 0, revenue: 0, ordersByCustomer: new Map<string, number>() };
+      stat.orders += 1;
+      if (o.payment_status === "PAID") stat.revenue += o.grand_total;
+      stat.ordersByCustomer.set(o.customer_id, (stat.ordersByCustomer.get(o.customer_id) ?? 0) + 1);
+      divisionStats.set(div, stat);
     }
-
-    const cityConfigs = [
-      { id: "dhaka", city: "Dhaka Metro", div: "Dhaka", color: "#84cc16", sla: "24h SLA", freq: "2.8x", loyalty: "High Loyalty", growth: "+18.2%", returning: 76.4 },
-      { id: "chattogram", city: "Chattogram", div: "Chattogram", color: "#3b82f6", sla: "48h SLA", freq: "2.3x", loyalty: "Growing", growth: "+14.5%", returning: 68.2 },
-      { id: "sylhet", city: "Sylhet", div: "Sylhet", color: "#a855f7", sla: "48h SLA", freq: "2.5x", loyalty: "High Loyalty", growth: "+9.8%", returning: 71.8 },
-      { id: "rajshahi", city: "Rajshahi", div: "Rajshahi", color: "#f59e0b", sla: "48h SLA", freq: "2.1x", loyalty: "Expanding", growth: "+12.1%", returning: 62.5 },
-      { id: "khulna", city: "Khulna", div: "Khulna", color: "#06b6d4", sla: "48h SLA", freq: "2.2x", loyalty: "Stable", growth: "+8.4%", returning: 64.0 },
-      { id: "barishal", city: "Barishal", div: "Barishal", color: "#ec4899", sla: "72h SLA", freq: "1.9x", loyalty: "Emerging", growth: "+6.5%", returning: 58.0 },
-      { id: "rangpur", city: "Rangpur", div: "Rangpur", color: "#14b8a6", sla: "72h SLA", freq: "1.8x", loyalty: "Emerging", growth: "+7.2%", returning: 55.0 },
-      { id: "mymensingh", city: "Mymensingh", div: "Mymensingh", color: "#8b5cf6", sla: "48h SLA", freq: "2.0x", loyalty: "Emerging", growth: "+5.9%", returning: 59.5 },
-    ];
-
-    const cityAnalysisData = cityConfigs.map((cfg) => {
-      const stat = divisionStats[cfg.div] || { orders: 0, revenue: 0 };
-      const ordersCount = stat.orders;
-      const revBDT = Math.round(stat.revenue);
-      const volPct = Number(((ordersCount / totalOrdersCount) * 100).toFixed(1));
-      const repAov = ordersCount > 0 ? Math.round(revBDT / ordersCount) : 1299;
-
-      return {
-        id: cfg.id,
-        city: cfg.city,
-        division: cfg.div,
-        orders: ordersCount,
-        volumePercent: volPct,
-        revenueBDT: revBDT,
-        returningBuyerPercent: cfg.returning,
-        repeatAOV: repAov,
-        reorderFreq: cfg.freq,
-        loyalty: cfg.loyalty,
-        deliverySLA: cfg.sla,
-        growth: cfg.growth,
-        color: cfg.color,
-      };
-    });
+    const cityAnalysisData = [...divisionStats.entries()]
+      .sort((a, b) => b[1].orders - a[1].orders)
+      .map(([division, stat]) => {
+        const buyers = stat.ordersByCustomer.size;
+        const returning = [...stat.ordersByCustomer.values()].filter((n) => n >= 2).length;
+        return {
+          id: division.toLowerCase().replace(/\s+/g, "-"),
+          city: division,
+          division,
+          orders: stat.orders,
+          volumePercent: totalOrders > 0 ? Number(((stat.orders / totalOrders) * 100).toFixed(1)) : 0,
+          revenueBDT: Math.round(stat.revenue),
+          returningBuyerPercent: buyers > 0 ? Number(((returning / buyers) * 100).toFixed(1)) : null,
+          repeatAOV: stat.orders > 0 && stat.revenue > 0 ? Math.round(stat.revenue / stat.orders) : null,
+          reorderFreq: buyers > 0 ? `${(stat.orders / buyers).toFixed(1)}x` : null,
+          loyalty: null,
+          deliverySLA: null,
+          growth: null,
+          color: divisionColors[division] ?? "#9ca3af",
+        };
+      });
 
     return {
       totalRevenue: Math.round(totalRevenue * 100) / 100,
@@ -5618,7 +5616,12 @@ class CommerceDatabase {
       lowStockCount,
       pendingOrdersCount,
       pendingPaymentsCount,
+      totalStockUnits: inventory.reduce((sum, i) => sum + i.quantity_on_hand, 0),
+      warehousesCount: this.data.warehouses.filter((w) => w.tenant_id === tenantId).length,
+      returningBuyerPercent,
+      paymentMix,
       recentOrders: recent,
+      periodComparison,
       channelData,
       cityAnalysisData,
     };
