@@ -17,6 +17,10 @@ import {
   DecisionCategory,
 } from "@/types/autonomous";
 import { AutonomyLevel } from "@/types/orchestration";
+import { AutonomousControlPlaneService } from "./autonomous-control-plane.service";
+
+// Stateless (reads the store); a local instance avoids importing the services index
+const controlPlane = new AutonomousControlPlaneService();
 
 export class GlobalDecisionEngineService {
   /**
@@ -186,6 +190,7 @@ export class GlobalDecisionEngineService {
    * Execute an approved decision.
    */
   executeDecision(tenantId: string, decisionId: string): GlobalDecision {
+    controlPlane.assertNotHalted(tenantId); // the emergency halt stops execution (FX-34 step 3)
     db.markDirty(); // persists direct changes to db.data (FX-20)
     const decision = this.findById(tenantId, decisionId);
     if (!decision) throw new AppError("NOT_FOUND", `Decision not found: ${decisionId}`, 404);

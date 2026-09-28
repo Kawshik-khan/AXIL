@@ -143,6 +143,17 @@ export class FeatureNotEntitledError extends AppError {
   }
 }
 
+/** A plan limit on things that exist now (users, products, channels) would be exceeded (FX-34). */
+export class PlanLimitError extends AppError {
+  constructor(resource: string, limit: number, current: number) {
+    super("PLAN_LIMIT_REACHED", `Your plan allows ${limit} ${resource.replace(/^max_/, "")}; you have ${current}. Upgrade or remove some first.`, 403, {
+      resource,
+      limit,
+      current,
+    });
+  }
+}
+
 export class QuotaExceededError extends AppError {
   constructor(resource: string, limit: number, current: number) {
     super(

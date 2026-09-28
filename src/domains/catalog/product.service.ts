@@ -7,6 +7,7 @@ import { ProductPatchSchema } from "./product.schemas";
 import { RbacService } from "@/domains/rbac/service";
 import { PERMISSIONS } from "@/lib/permissions";
 import { BadRequestError, NotFoundError, ConflictError } from "@/lib/errors";
+import { assertWithinLimit } from "@/lib/safety-gate";
 
 export class ProductService {
   /**
@@ -73,6 +74,7 @@ export class ProductService {
     }
   ): Promise<Product> {
     RbacService.assertCan(context, PERMISSIONS.PRODUCTS_CREATE);
+    assertWithinLimit(context.tenant.id, "max_products"); // plan limit (FX-34)
 
     if (!payload.name || payload.name.trim().length === 0) {
       throw new BadRequestError("Product name is required.");

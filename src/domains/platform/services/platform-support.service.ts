@@ -83,14 +83,17 @@ export class PlatformSupportService {
     db.saveImpersonationSession(session);
 
     // Generate signed JWT token carrying dual-actor context
-    const token = await signImpersonationToken({
-      sessionId,
-      operatorUserId: context.platformUser.id,
-      targetTenantId: tenant.id,
-      targetUserId: user.id,
-      mode,
-      expiresAt,
-    });
+    const token = await signImpersonationToken(
+      {
+        sessionId,
+        operatorUserId: context.platformUser.id,
+        targetTenantId: tenant.id,
+        targetUserId: user.id,
+        mode,
+        expiresAt,
+      },
+      `${duration}m`
+    );
 
     PlatformAuditService.record(
       {

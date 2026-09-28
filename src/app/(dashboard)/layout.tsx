@@ -100,6 +100,38 @@ export default function DashboardLayout({
       />
 
       <div className={styles.mainWrapper}>
+        {session.impersonation && (
+          // Always visible while a platform operator is inside this workspace (FX-34 step 5)
+          <div
+            role="status"
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: "12px",
+              padding: "10px 16px",
+              background: "var(--color-warning)",
+              color: "var(--color-text-primary)",
+              fontSize: "13px",
+              fontWeight: 600,
+            }}
+          >
+            <span>
+              Viewing {session.tenant?.name} as support ({session.impersonation.mode === "READ_ONLY" ? "read-only" : "changes allowed"}) until{" "}
+              {new Date(session.impersonation.expires_at).toLocaleTimeString()}
+            </span>
+            <button
+              type="button"
+              onClick={async () => {
+                await fetch("/api/v1/auth/impersonation", { method: "DELETE", credentials: "include" }).catch(() => undefined);
+                window.location.href = "/super-admin";
+              }}
+              style={{ background: "transparent", border: "1px solid currentColor", borderRadius: "6px", padding: "4px 10px", cursor: "pointer", color: "inherit" }}
+            >
+              End session
+            </button>
+          </div>
+        )}
         <TopBar
           tenantName={session.tenant?.name}
           userName={session.user?.name}

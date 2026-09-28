@@ -58,6 +58,28 @@ export class PlatformEntitlementService {
   }
 
   /**
+   * The limit that applies to a tenant: override, then active plan, then default. A number is a cap, a boolean an
+   * on/off feature, null means not gated. Used for limits on things that exist now (users, products, channels).
+   */
+  public static resolveLimit(tenantId: string, entitlementId: string): number | boolean | null {
+    const override = db.findTenantEntitlement(tenantId, entitlementId);
+    if (override && override.is_override && (typeof override.value === "number" || typeof override.value === "boolean")) {
+      return override.value;
+    }
+    const sub = db.findSubscriptionByTenantId(tenantId);
+    if (sub && sub.status === "ACTIVE") {
+      const planVersion = db.findPlanVersionById(sub.plan_version_id);
+      const planVal = planVersion?.features?.[entitlementId];
+      if (typeof planVal === "number" || typeof planVal === "boolean") return planVal;
+    }
+    const defaultEnt = db.findEntitlementById(entitlementId);
+    if (defaultEnt) {
+      return defaultEnt.value_type === "BOOLEAN" ? Boolean(defaultEnt.default_value) : Number(defaultEnt.default_value) || 0;
+    }
+    return null;
+  }
+
+  /**
    * Calculates current period usage for a specific entitlement and tenant.
    */
   public static getCurrentUsage(tenantId: string, entitlementId: string): number {

@@ -36,6 +36,13 @@ import type { Customer, Warehouse } from "@/types/commerce";
 import { OrderService } from "@/domains/orders/order.service";
 import { ShippingService } from "@/domains/shipping/shipping.service";
 import { ReturnService } from "@/domains/returns/return.service";
+import { PlatformSafetyService } from "@/domains/platform/services/platform-safety.service";
+import { PlatformSupportService } from "@/domains/platform/services/platform-support.service";
+import { PLATFORM_ROLE_PERMISSIONS } from "@/lib/permissions";
+import { signPlatformSessionToken } from "@/lib/security";
+import { ModelRouter } from "@/domains/ai/providers/model-router";
+import { globalDecisionEngineService } from "@/domains/autonomous/services";
+import { isFeatureEnabled } from "@/lib/safety-gate";
 
 const ANSI_GREEN = "\x1b[32m";
 const ANSI_RED = "\x1b[31m";
@@ -136,6 +143,8 @@ async function main() {
     workspaceName: `Phase 3 Shop ${Date.now()}`,
   });
   const tenantId = shop.tenant.id;
+  // PLAN_LIMIT_OVERRIDE: this suite adds many members directly; plan limits apply since FX-34
+  db.saveTenantEntitlement({ tenant_id: tenantId, entitlement_id: "max_users", value: 1000, is_override: true, updated_at: new Date().toISOString() });
   const owner = await member(tenantId, "OWNER");
   const admin = await member(tenantId, "ADMIN");
   const scopedAdmin = await member(tenantId, "ADMIN");
@@ -831,6 +840,112 @@ async function main() {
     const after = db.findOrderById(tenantId, o.id);
     assert.strictEqual(after?.status, "PENDING");
     assert.strictEqual(after?.payment_status, "REFUNDED");
+  });
+
+  // ---------------------------------------------------------------------------
+  console.log(`\n${ANSI_BOLD}[FX-34] Enforced safety controls and real impersonation${ANSI_RESET}`);
+  // ---------------------------------------------------------------------------
+
+  const operatorId = uid("usr_p3_op");
+  db.createUser({ id: operatorId, email: `${operatorId}@ops.test`, name: "P3 Operator", password_hash: "!disabled", status: "ACTIVE", created_at: nowIso(), updated_at: nowIso() });
+  db.savePlatformMembership({ id: `pm_${operatorId}`, user_id: operatorId, role: "SUPER_ADMIN", mfa_enabled: false, is_active: true, created_at: nowIso(), updated_at: nowIso() });
+  const operatorCtx = {
+    requestId: "req_p3_op", traceId: "trc_p3_op", scope: "PLATFORM" as const, platformRole: "SUPER_ADMIN" as const,
+    platformUser: { id: operatorId, email: `${operatorId}@ops.test`, name: "P3 Operator", status: "ACTIVE" as const },
+    permissions: PLATFORM_ROLE_PERMISSIONS.SUPER_ADMIN, mfaVerified: true, stepUpVerified: true, timestamp: nowIso(),
+  };
+  const platformCookie = `commerceos_platform_session=${await signPlatformSessionToken({ userId: operatorId, email: `${operatorId}@ops.test`, platformRole: "SUPER_ADMIN", mfaVerified: true, sv: 1 })}`;
+
+  await runTest("FX-34: a tenant kill switch stops changes (503) but not reads; clearing it restores them", async () => {
+    PlatformSafetyService.activateKillSwitch({ scope: "TENANT", targetId: tenantId, reason: "P3 incident containment" }, operatorCtx as never);
+    const blocked = await call("POST", "autonomous/objectives", owner.token, { body: { name: "Blocked", target_value: 1, baseline_value: 0 } });
+    assert.strictEqual(blocked.status, 503);
+    assert.strictEqual(blocked.json.error?.code, "KILL_SWITCH_ACTIVE");
+    assert.strictEqual((await call("GET", "orders", owner.token)).status, 200, "reads still work");
+    PlatformSafetyService.deactivateKillSwitch(`KILL_SWITCH_TENANT_${tenantId}`, "resolved", operatorCtx as never);
+    assert.strictEqual((await call("POST", "autonomous/objectives", owner.token, { body: { name: "OK", target_value: 1, baseline_value: 0 } })).status, 201);
+  });
+
+  await runTest("FX-34: provider and workflow kill switches are enforced by the model router and automations", async () => {
+    const router = new ModelRouter();
+    const providerName = router.getActiveProvider().provider.providerName;
+    PlatformSafetyService.activateKillSwitch({ scope: "PROVIDER", targetId: providerName, reason: "P3 provider outage" }, operatorCtx as never);
+    try {
+      await assert.rejects(router.chatWithRouting("TIER_1_FAST", [{ role: "user", content: "hi" }]), (e: Error & { code?: string }) => e.code === "KILL_SWITCH_ACTIVE");
+    } finally {
+      PlatformSafetyService.deactivateKillSwitch(`KILL_SWITCH_PROVIDER_${providerName}`, "resolved", operatorCtx as never);
+    }
+    const wf = uid("wf_p3_kill");
+    PlatformSafetyService.activateKillSwitch({ scope: "WORKFLOW", targetId: wf, reason: "P3 runaway workflow" }, operatorCtx as never);
+    const result = await N8nProviderService.invokeWorkflow({
+      tenantId, automationId: uid("auto"), workflowId: wf, workflowVersionId: "v1", webhookPath: "x", event: {}, correlationId: uid("c"), idempotencyKey: uid("i"), executionMode: "PRODUCTION",
+    });
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(result.execution.error_code, "KILL_SWITCH_HALTED");
+  });
+
+  await runTest("FX-34: plan limits count what exists (403 PLAN_LIMIT_REACHED)", async () => {
+    const existing = db.getAllProducts(tenantId).filter((x) => x.status !== "ARCHIVED").length;
+    db.saveTenantEntitlement({ tenant_id: tenantId, entitlement_id: "max_products", value: existing, is_override: true, updated_at: nowIso() });
+    await assert.rejects(ProductService.createProduct(ownerCtx, { name: "Over", sku: uid("OVR"), base_price: 1 }), (e: Error & { code?: string }) => e.code === "PLAN_LIMIT_REACHED");
+    db.saveTenantEntitlement({ tenant_id: tenantId, entitlement_id: "max_products", value: existing + 1, is_override: true, updated_at: nowIso() });
+    await ProductService.createProduct(ownerCtx, { name: "Fits", sku: uid("FIT"), base_price: 1 });
+  });
+
+  await runTest("FX-34: feature flags gate modules per workspace (off, allow-list, percentage)", async () => {
+    db.savePlatformFeatureFlag({ id: "flag_enterprise", key: "enterprise", description: "Enterprise module", is_enabled_globally: false, percentage_rollout: 100, scope: "TENANT", tenant_allowlist: [], rules: {}, created_at: nowIso(), updated_at: nowIso() });
+    const off = await call("GET", "enterprise/stores", owner.token);
+    assert.strictEqual(off.status, 403);
+    assert.strictEqual(off.json.error?.code, "FEATURE_NOT_ENTITLED");
+    db.savePlatformFeatureFlag({ id: "flag_enterprise", key: "enterprise", description: "Enterprise module", is_enabled_globally: false, percentage_rollout: 100, scope: "TENANT", tenant_allowlist: [tenantId], rules: {}, created_at: nowIso(), updated_at: nowIso() });
+    assert.strictEqual((await call("GET", "enterprise/stores", owner.token)).status, 200, "allow-listed");
+    db.savePlatformFeatureFlag({ id: "flag_enterprise", key: "enterprise", description: "Enterprise module", is_enabled_globally: true, percentage_rollout: 100, scope: "GLOBAL", tenant_allowlist: [], rules: {}, created_at: nowIso(), updated_at: nowIso() });
+    // Percentage rollout is deterministic per tenant: 0% is nobody, 100% everybody, 50% the same answer every time
+    const rollout = (pct: number) => db.savePlatformFeatureFlag({ id: "flag_p3_rollout", key: "p3_rollout", description: "rollout", is_enabled_globally: true, percentage_rollout: pct, scope: "GLOBAL", tenant_allowlist: [], rules: {}, created_at: nowIso(), updated_at: nowIso() });
+    rollout(0);
+    assert.strictEqual(isFeatureEnabled("p3_rollout", tenantId), false);
+    rollout(100);
+    assert.strictEqual(isFeatureEnabled("p3_rollout", tenantId), true);
+    rollout(50);
+    const first = isFeatureEnabled("p3_rollout", tenantId);
+    assert.ok([1, 2, 3].every(() => isFeatureEnabled("p3_rollout", tenantId) === first));
+    assert.strictEqual(isFeatureEnabled("no_such_flag", tenantId), true, "no flag, not gated");
+  });
+
+  await runTest("FX-34: the autonomous emergency halt stops decision execution", async () => {
+    assert.strictEqual((await call("POST", "autonomous/pause", owner.token, { body: { level: "ALL", reason: "test" } })).status, 200);
+    try {
+      assert.throws(() => globalDecisionEngineService.executeDecision(tenantId, "dec_any"), (e: Error & { code?: string }) => e.code === "KILL_SWITCH_ACTIVE");
+    } finally {
+      await call("POST", "autonomous/resume", owner.token, { body: { level: "ALL" } });
+    }
+  });
+
+  await runTest("FX-34: support impersonation works only with the operator's own session; read-only can't change anything", async () => {
+    const { session, token } = await PlatformSupportService.startImpersonationSession(
+      { targetTenantId: tenantId, targetUserId: owner.id, reason: "P3 customer ticket investigation", mode: "READ_ONLY", durationMinutes: 15 },
+      operatorCtx as never
+    );
+    const impCookie = `commerceos_impersonation=${token}`;
+    const as = async (method: "GET" | "POST", route: string, cookie: string, body?: unknown) => {
+      const mod = (await import(`@/app/api/v1/${route}/route`)) as Partial<Record<"GET" | "POST", (r: Request) => Promise<Response>>>;
+      const res = await (mod[method] as (r: Request) => Promise<Response>)(
+        new Request(`${BASE}/${route}`, { method, headers: { cookie, "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined })
+      );
+      return { status: res.status, json: (await res.json()) as { data?: Record<string, unknown>; error?: { code?: string } } };
+    };
+    const who = await as("GET", "auth/session", `${platformCookie}; ${impCookie}`);
+    assert.strictEqual(who.status, 200);
+    assert.strictEqual((who.json.data?.tenant as { id: string }).id, tenantId);
+    assert.strictEqual((who.json.data?.user as { id: string }).id, operatorId, "the operator, not the owner");
+    assert.strictEqual((who.json.data?.impersonation as { mode: string }).mode, "READ_ONLY");
+    assert.ok((who.json.data?.permissions as string[]).every((perm) => perm.endsWith(".read")));
+
+    assert.strictEqual((await as("POST", "autonomous/objectives", `${platformCookie}; ${impCookie}`, { name: "x", target_value: 1, baseline_value: 0 })).status, 403, "read-only");
+    assert.strictEqual((await as("GET", "auth/session", impCookie)).status, 401, "the cookie alone isn't enough");
+
+    PlatformSupportService.revokeSession(session.id, "done", operatorCtx as never);
+    assert.strictEqual((await as("GET", "auth/session", `${platformCookie}; ${impCookie}`)).status, 401, "revoked");
   });
 
   // Clears the store, so it runs last

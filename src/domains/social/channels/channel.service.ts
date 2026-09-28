@@ -11,6 +11,7 @@ import { FacebookAdapter } from "./adapters/facebook.adapter";
 import { InstagramAdapter } from "./adapters/instagram.adapter";
 import { WhatsAppAdapter } from "./adapters/whatsapp.adapter";
 import { WebsiteChatAdapter } from "./adapters/website-chat.adapter";
+import { assertWithinLimit } from "@/lib/safety-gate";
 
 /** Channel types whose inbound webhooks are routed by `provider_account_id` (Page id / WhatsApp phone number id). */
 export const PROVIDER_ROUTED_TYPES: ReadonlySet<ChannelType> = new Set<ChannelType>(["FACEBOOK_MESSENGER", "INSTAGRAM", "WHATSAPP"]);
@@ -87,6 +88,7 @@ export class ChannelService {
     }
   ): Promise<ConnectedChannel> {
     RbacService.assertCan(context, PERMISSIONS.SOCIAL_CHANNEL_MANAGE);
+    assertWithinLimit(context.tenant.id, "max_channels"); // plan limit (FX-34)
 
     if (!payload.type || !payload.provider_account_id || !payload.name) {
       throw new BadRequestError("Channel type, name, and provider account ID are required.");

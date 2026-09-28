@@ -128,6 +128,8 @@ async function main() {
     workspaceName: `Phase 1 Shop ${Date.now()}`,
   });
   const tenantId = shop.tenant.id;
+  // PLAN_LIMIT_OVERRIDE: this suite adds many members directly; plan limits apply since FX-34
+  db.saveTenantEntitlement({ tenant_id: tenantId, entitlement_id: "max_users", value: 1000, is_override: true, updated_at: new Date().toISOString() });
   const analyst = await member(tenantId, "ANALYST");
   const finance = await member(tenantId, "FINANCE");
 

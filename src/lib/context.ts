@@ -27,6 +27,14 @@ export interface RequestContext {
   role: RoleName;
   permissions: Permission[];
   timestamp: string;
+  /** Set when a platform operator is serving this request through a support session (FX-34); `user` is the operator. */
+  impersonation?: {
+    session_id: string;
+    operator_user_id: string;
+    target_user_id: string;
+    mode: "READ_ONLY" | "MUTATION_APPROVED";
+    expires_at: string;
+  };
 }
 
 export function createAnonymousContext(requestId?: string): { requestId: string; timestamp: string } {

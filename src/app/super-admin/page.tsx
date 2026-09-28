@@ -323,8 +323,8 @@ export default function SuperAdminPage() {
           method: "POST",
           body: JSON.stringify({
             tenant_id: showImpersonateModal,
-            ticket_id: impersonateTicket || "TICK-PLAT-01",
-            reason: impersonateReason || "Customer support investigation",
+            ...(impersonateTicket ? { ticket_id: impersonateTicket } : {}),
+            reason: impersonateReason,
             mode: impersonateMode,
             duration_minutes: 60,
           }),
@@ -332,11 +332,11 @@ export default function SuperAdminPage() {
         stepUpToken
       );
       if (!res.ok) throw new Error(await readPlatformError(res, "Impersonation session failed"));
-      const data = await res.json();
       setShowImpersonateModal(null);
       setImpersonateReason("");
       setImpersonateTicket("");
-      alert(`Governed impersonation session created! Token: ${data.data.token.substring(0, 16)}... Scope: ${data.data.scope}`);
+      // The session is a cookie now (FX-34); open the workspace. A banner there ends it.
+      window.location.href = "/";
       await fetchData();
     } catch (err: any) {
       alert(err.message);

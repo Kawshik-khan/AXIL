@@ -1,12 +1,9 @@
+import { assertNotKilled, isFeatureEnabled } from "@/lib/safety-gate";
+import { resolveImpersonationContext } from "@/lib/impersonation";
 import { randomSuffix } from "@/lib/ids";
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
-import {
-  AppError,
-  PlatformAuthRequiredError,
-  PlatformScopeRequiredError,
-  PlatformPermissionDeniedError,
-} from "@/lib/errors";
+import { AppError, PlatformAuthRequiredError, PlatformScopeRequiredError, PlatformPermissionDeniedError, ForbiddenError, FeatureNotEntitledError } from "@/lib/errors";
 import {
   AUTH_COOKIE_NAME,
   PLATFORM_AUTH_COOKIE_NAME,
@@ -102,6 +99,43 @@ export function apiError(error: unknown, requestId?: string) {
 
 export async function extractRequestContext(request: Request): Promise<RequestContext> {
   const requestId = request.headers.get("x-request-id") || `req_${randomSuffix()}`;
+  const impersonated = await resolveImpersonationContext(request, requestId, extractPlatformContext);
+  const context = impersonated ?? (await resolveCallerContext(request, requestId));
+  const mutating = !["GET", "HEAD", "OPTIONS"].includes(request.method.toUpperCase());
+
+  if (impersonated?.impersonation) {
+    if (mutating && impersonated.impersonation.mode === "READ_ONLY") {
+      throw new ForbiddenError("This support session is read-only.");
+    }
+    // Every impersonated request is logged (reads go to the log, not the store: GETs never write)
+    logger.info("impersonation.request", {
+      request_id: requestId,
+      session_id: impersonated.impersonation.session_id,
+      operator_user_id: impersonated.impersonation.operator_user_id,
+      tenant_id: impersonated.tenant.id,
+      method: request.method,
+      path: new URL(request.url).pathname,
+    });
+  }
+
+  // Enforced platform controls (FX-34): a paused workspace can still read, but changes nothing
+  if (mutating) assertNotKilled(context.tenant.id);
+  const path = new URL(request.url).pathname;
+  for (const [prefix, flag] of GATED_MODULES) {
+    if (path.startsWith(prefix) && !isFeatureEnabled(flag, context.tenant.id)) {
+      throw new FeatureNotEntitledError(flag);
+    }
+  }
+  return context;
+}
+
+/** Experimental modules behind platform feature flags (FX-34 step 4). No flag defined means not gated. */
+const GATED_MODULES: Array<[string, string]> = [
+  ["/api/v1/autonomous/", "autonomous"],
+  ["/api/v1/enterprise/", "enterprise"],
+];
+
+async function resolveCallerContext(request: Request, requestId: string): Promise<RequestContext> {
 
   // Check Authorization Bearer header
   let token: string | null = null;

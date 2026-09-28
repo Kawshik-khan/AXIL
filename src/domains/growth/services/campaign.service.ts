@@ -20,6 +20,7 @@ import { audienceService } from "./audience.service";
 import { consentService, frequencyCappingService } from "./consent.service";
 import { marketingChannelService } from "./marketing-channel.service";
 import { offerService } from "./offer.service";
+import { assertNotKilled } from "@/lib/safety-gate";
 
 export class CampaignService {
   private globalKillSwitchActive = false;
@@ -394,6 +395,7 @@ export class CampaignService {
     if (campaign.action_risk_level === ActionRiskLevel.HIGH && campaign.status !== "APPROVED") {
       throw new Error(`Policy violation: High-risk campaign requires human merchant approval before execution`);
     }
+    assertNotKilled(tenantId, "CHANNEL", String(campaign.channel ?? "")); // FX-34: paused channel or workspace
 
     // Mark RUNNING
     db.updateCampaign(tenantId, campaignId, {

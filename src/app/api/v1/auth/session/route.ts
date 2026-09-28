@@ -15,6 +15,7 @@ export async function GET(request: Request) {
       permissions: context.permissions,
       isPlatformUser: !!(platformMembership && platformMembership.is_active),
       platformRole: platformMembership?.is_active ? platformMembership.role : undefined,
+      impersonation: context.impersonation ?? null,
     });
     res.headers.set("Cache-Control", "no-store, no-cache, must-revalidate");
     return res;

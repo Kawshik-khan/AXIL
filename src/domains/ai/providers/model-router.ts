@@ -5,6 +5,8 @@
 
 import { LLMProvider, LLMResponse, LLMMessage, LLMToolDefinition } from "./llm-provider.interface";
 import { MockLLMProvider } from "./mock-llm.provider";
+import { PlatformSafetyService } from "@/domains/platform/services/platform-safety.service";
+import { KillSwitchActiveError } from "@/lib/errors";
 
 export type ModelTier = "TIER_1_FAST" | "TIER_2_REASONING" | "TIER_3_EMBEDDING";
 
@@ -127,6 +129,9 @@ export class ModelRouter {
   ): Promise<LLMResponse & { costUsd: number; costBdt: number; isFallback: boolean }> {
     const { provider, isFallback } = this.getActiveProvider(tier);
     const modelName = this.resolveModelName(tier);
+    if (PlatformSafetyService.isExecutionBlocked("PROVIDER", provider.providerName)) {
+      throw new KillSwitchActiveError("PROVIDER", `AI provider ${provider.providerName} is paused by the platform.`); // FX-34
+    }
 
     try {
       const response = await provider.chat(messages, tools, { model: modelName });

@@ -4,6 +4,7 @@ import { ASSIGNABLE_ROLES, RoleName } from "@/lib/permissions";
 import { generateSecureToken } from "@/lib/security";
 import { NotFoundError, ValidationError, ConflictError } from "@/lib/errors";
 import { AuditService } from "@/domains/audit/service";
+import { assertWithinLimit } from "@/lib/safety-gate";
 
 export class InvitationService {
   public static createInvitation(
@@ -28,6 +29,8 @@ export class InvitationService {
         throw new ConflictError(`User ${normalizedEmail} is already a member of this workspace.`);
       }
     }
+
+    assertWithinLimit(tenantId, "max_users"); // members plus pending invitations, against the plan (FX-34)
 
     const token = generateSecureToken(48);
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days

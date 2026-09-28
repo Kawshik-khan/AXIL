@@ -7,6 +7,7 @@ import { randomSuffix } from "@/lib/ids";
 
 import { db } from "@/infrastructure/db";
 import { RiskLevel } from "@/types/automation";
+import { PlatformSafetyService } from "@/domains/platform/services/platform-safety.service";
 
 export interface KillSwitchState {
   globalPaused: boolean;
@@ -94,6 +95,15 @@ export class AutomationSafetyService {
         isHalted: true,
         reason: `Kill switch active for workflow '${workflowId}'`,
       };
+    }
+
+    // Platform kill switches (operator console) apply too: they used to be recorded but never checked (FX-34, H11)
+    if (
+      PlatformSafetyService.isExecutionBlocked("TENANT", tenantId) ||
+      (workflowId && PlatformSafetyService.isExecutionBlocked("WORKFLOW", workflowId)) ||
+      (provider && PlatformSafetyService.isExecutionBlocked("PROVIDER", provider))
+    ) {
+      return { isHalted: true, reason: "A platform kill switch is active for this workspace, workflow or provider." };
     }
 
     return { isHalted: false };
