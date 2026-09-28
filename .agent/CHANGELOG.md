@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [Unreleased] - Phase 3 completion: safety controls, order lifecycle, AI provider (2026-09-29, branch `phase-3-truthful-data`)
+See [ADR-107](DECISIONS.md#adr-107-enforced-safety-controls-one-order-writer-and-a-real-ai-provider-phase-3-completion).
+
+### Security
+- Platform kill switches, plan limits and feature flags are enforced (H11); the autonomous emergency halt stops execution.
+- Support impersonation works, read-only, with the operator's own session and a banner; operators can't grant themselves write access.
+- Invitation tokens are no longer listed to other members; provisioned owners set their password with a one-time link (N8).
+- Enterprise stores, brands, business units and metrics respect the caller's enterprise scope (N13); stock can no longer land in another tenant's warehouse.
+
+### Fixed
+- One writer for order status: no skipped states, deliveries can't revive cancelled orders, stock is committed and COD marked paid on delivery, lapsed holds are released, order numbers are unique (H12, M2, M3).
+- A real OpenAI-compatible AI provider, or a labelled offline demo; never a silent mock (H14).
+- Broken buttons and advertised URLs work or are gone (M1); report CSV download exists.
+- Districts instead of guessed "Chittagong"; delivery fees from settings everywhere; audience presets with real rules; text-only knowledge upload (M5, M6, M16).
+- 0 type errors and `next build` passes (H15); dead code removed.
+- The demo seed no longer writes made-up health, SLO, courier, provider or model figures.
+
+### Added
+- `/invite/[token]`, `POST /api/v1/autonomous/cycles`, `GET /api/v1/enterprise/reports/[id]/download`, `GET /api/v1/ai/status`, `DELETE /api/v1/auth/impersonation`.
+- Scripts: `reencrypt-integration-credentials`, `clear-demo-telemetry`, `fix-warehouse-tenancy`, `fix-fabricated-data`.
+
+### Changed (action required)
+- Set `LLM_BASE_URL` (+ `LLM_API_KEY`, model names) for AI, or `AI_DEMO_MODE=1` for the offline demo; otherwise AI answers 424.
+- Run the four data scripts once on existing stores, with the app stopped (dry run first).
+- Illegal order transitions return 409 (was 400); `POST /orders` needs a district and whole positive quantities; `POST /connectors/test` etc. as in the Phase 3 entry below.
+- Workspaces without a subscription are limited by the default entitlements (5 users, 500 products, 3 channels).
+
 ## [Unreleased] - Phase 3 truthful data and honest integrations (2026-09-28, branch `phase-3-truthful-data`)
 See [ADR-106](DECISIONS.md#adr-106-truthful-data-and-honest-integrations-phase-3).
 
