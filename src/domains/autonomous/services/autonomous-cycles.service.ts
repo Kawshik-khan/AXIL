@@ -6,11 +6,15 @@ import { AppError } from "@/lib/errors";
 
 import { db } from "@/infrastructure/db";
 import { AutonomousWorkflowRun } from "@/types/autonomous";
+import { AutonomousControlPlaneService } from "./autonomous-control-plane.service";
+
+// Stateless (reads the store); a local instance avoids importing the services index, which imports this module
+const controlPlane = new AutonomousControlPlaneService();
 
 export class AutonomousCyclesService {
   /** Start a daily autonomous cycle. */
-  startDailyCycle(tenantId: string): AutonomousWorkflowRun {
-    return this.startCycle(tenantId, "DAILY_CYCLE", [
+  startDailyCycle(tenantId: string, trigger: "SCHEDULED" | "MANUAL" = "SCHEDULED"): AutonomousWorkflowRun {
+    return this.startCycle(tenantId, "DAILY_CYCLE", trigger, [
       "MORNING_HEALTH_CHECK",
       "INVENTORY_REVIEW",
       "ORDER_PIPELINE_REVIEW",
@@ -22,8 +26,8 @@ export class AutonomousCyclesService {
   }
 
   /** Start a weekly autonomous cycle. */
-  startWeeklyCycle(tenantId: string): AutonomousWorkflowRun {
-    return this.startCycle(tenantId, "WEEKLY_CYCLE", [
+  startWeeklyCycle(tenantId: string, trigger: "SCHEDULED" | "MANUAL" = "SCHEDULED"): AutonomousWorkflowRun {
+    return this.startCycle(tenantId, "WEEKLY_CYCLE", trigger, [
       "WEEK_PERFORMANCE_ANALYSIS",
       "OBJECTIVE_PROGRESS_REVIEW",
       "STRATEGY_EFFECTIVENESS",
@@ -35,8 +39,8 @@ export class AutonomousCyclesService {
   }
 
   /** Start a monthly autonomous cycle. */
-  startMonthlyCycle(tenantId: string): AutonomousWorkflowRun {
-    return this.startCycle(tenantId, "MONTHLY_CYCLE", [
+  startMonthlyCycle(tenantId: string, trigger: "SCHEDULED" | "MANUAL" = "SCHEDULED"): AutonomousWorkflowRun {
+    return this.startCycle(tenantId, "MONTHLY_CYCLE", trigger, [
       "MONTH_PERFORMANCE_REPORT",
       "OBJECTIVE_ACHIEVEMENT_ASSESSMENT",
       "STRATEGY_OUTCOME_REVIEW",
@@ -48,13 +52,23 @@ export class AutonomousCyclesService {
     ]);
   }
 
-  private startCycle(tenantId: string, cycleType: "DAILY_CYCLE" | "WEEKLY_CYCLE" | "MONTHLY_CYCLE", steps: string[]): AutonomousWorkflowRun {
+  /**
+   * Records a cycle run at its first step. Nothing executes the steps yet: the run stays OBSERVING until an
+   * autonomous worker exists, which callers must say rather than report the cycle as done.
+   */
+  private startCycle(
+    tenantId: string,
+    cycleType: "DAILY_CYCLE" | "WEEKLY_CYCLE" | "MONTHLY_CYCLE",
+    trigger: "SCHEDULED" | "MANUAL",
+    steps: string[]
+  ): AutonomousWorkflowRun {
+    controlPlane.assertNotHalted(tenantId); // the emergency halt applies (FX-34)
     db.markDirty(); // persists direct changes to db.data (FX-20)
     const run: AutonomousWorkflowRun = {
       id: `awf_${cycleType.toLowerCase()}_${Date.now()}`,
       tenant_id: tenantId,
       workflow_type: cycleType,
-      trigger: "SCHEDULED",
+      trigger,
       status: "OBSERVING",
       current_loop_step: steps[0],
       agents_involved: ["AUTONOMOUS_SUPERVISOR", "PLATFORM_HEALTH_AGENT", "COST_GOVERNANCE_AGENT"],

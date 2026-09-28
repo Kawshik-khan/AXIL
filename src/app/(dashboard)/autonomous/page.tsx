@@ -89,10 +89,11 @@ export default function AutonomousControlTowerPage() {
   const handleRunCycle = async () => {
     try {
       setActionLoading(true);
-      const res = await fetch("/api/v1/ai/tools/execute", {
+      // FX-33: this called /api/v1/ai/tools/execute, which doesn't exist
+      const res = await fetch("/api/v1/autonomous/cycles", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tool_name: "execute_autonomous_cycle", parameters: { cycle_type: "DAILY" } }),
+        body: JSON.stringify({ cycle_type: "DAILY" }),
       });
       await fetchOverview();
       // Report what happened; this used to say "executed successfully" even when the call failed (FX-30)
@@ -101,7 +102,7 @@ export default function AutonomousControlTowerPage() {
         alert(`The daily cycle did not run: ${json?.error?.message ?? `HTTP ${res.status}`}`);
         return;
       }
-      alert("Daily autonomous cycle started.");
+      alert("Daily cycle recorded. No autonomous worker runs its steps yet, so nothing else happens.");
     } catch (err) {
       alert("Failed to trigger cycle");
     } finally {

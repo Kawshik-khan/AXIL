@@ -187,7 +187,7 @@ async function main() {
     assert.ok(telegram.fields.some((f) => f.name === "bot_token"), "Must have bot_token field");
     assert.ok(telegram.fields.some((f) => f.name === "bot_username"), "Must have bot_username field");
     assert.ok(telegram.fields.some((f) => f.name === "default_chat_id"), "Must have default_chat_id field");
-    assert.strictEqual(telegram.guidelines?.webhook_info, "/api/v1/social/webhooks/telegram");
+    assert.strictEqual(telegram.guidelines?.webhook_info, undefined, "no Telegram receiver exists, so no URL is advertised (FX-33)");
   });
 
   // -------------------------------------------------------------

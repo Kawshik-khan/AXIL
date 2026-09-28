@@ -65,8 +65,13 @@ export const SocialDashboard: React.FC = () => {
     try {
       const res = await fetch(`/api/v1/social/channels/${id}/test`, { method: "POST" });
       const data = await res.json();
-      if (data.data?.healthy) {
-        alert("Channel connection tested successfully! Status: ACTIVE");
+      if (!res.ok) {
+        alert(`Channel test failed: ${data.error?.message || `HTTP ${res.status}`}`);
+      } else if (data.data?.healthy) {
+        alert("Channel connection verified.");
+      } else if (data.data?.verified === false && data.data?.status !== "ERROR") {
+        // Credentials have the right shape but no live check exists; inbound messages still arrive (FX-31)
+        alert(`Not verified: ${data.data?.error || "live validation isn't implemented"}. The channel keeps receiving messages.`);
       } else {
         alert(`Channel test failed: ${data.data?.error || "Unknown error"}`);
       }

@@ -1,3 +1,4 @@
+import { KillSwitchActiveError } from "@/lib/errors";
 /**
  * CommerceOS Phase 10: Autonomous Control Plane Service
  * Top-level coordinator: routes across domains, manages global policies,
@@ -93,8 +94,18 @@ export class AutonomousControlPlaneService {
    * Get the current system mode for the tenant.
    */
   getSystemMode(tenantId: string): string {
-    const health = this.getOrCreateHealth(tenantId);
-    return health.autonomous_mode;
+    // Read-only: this used to create and store a health record just to answer (FX-21 rule: reads never write)
+    return db.data.platform_health_records.find((h) => h.tenant_id === tenantId)?.autonomous_mode ?? "SEMI_AUTONOMOUS";
+  }
+
+  /**
+   * Refuses autonomous execution while the emergency halt is on (FX-34 step 3). The halt used to be recorded but
+   * nothing checked it before starting cycles, workflows or decisions.
+   */
+  assertNotHalted(tenantId: string): void {
+    if (this.getSystemMode(tenantId) === "EMERGENCY_HALTED") {
+      throw new KillSwitchActiveError("AUTONOMOUS", "Autonomy is paused for this workspace. Resume it first.");
+    }
   }
 
   /**

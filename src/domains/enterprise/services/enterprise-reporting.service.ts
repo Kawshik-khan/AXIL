@@ -46,6 +46,26 @@ export class EnterpriseReportingService {
   }
 
   /**
+   * The report's CSV for the caller's scope. Pure: nothing is stored (used by the download GET).
+   */
+  public buildReportCsv(orgId: string, caller: EnterpriseUserRecord, tenantId: string): { csv: string; rows: number } {
+    const analytics = enterpriseAnalyticsService.getConsolidatedAnalytics(orgId, caller, tenantId);
+    // Quote every cell and neutralise spreadsheet formulas (a store named "=HYPERLINK(...)" would run in Excel)
+    const cell = (v: unknown) => {
+      if (v === null || v === undefined) return "";
+      const text = String(v);
+      const safe = /^[=+\-@\t\r]/.test(text) ? `'${text}` : text;
+      return `"${safe.replace(/"/g, '""')}"`;
+    };
+    const header = ["Store ID", "Store Name", "Revenue (BDT)", "Orders", "AOV (BDT)", "Delivery SLA %"].map(cell).join(",");
+    // Per-store figures aren't measured yet (orders carry no store): empty cells, not invented numbers (FX-30)
+    const rows = analytics.entities.map((e) =>
+      [e.entity_id, e.entity_name, e.revenue_bdt, e.orders_count, e.aov_bdt, e.delivery_sla_pct].map(cell).join(",")
+    );
+    return { csv: [header, ...rows].join("\n"), rows: rows.length };
+  }
+
+  /**
    * Executes an enterprise report and produces exported content
    */
   public executeReport(
@@ -63,16 +83,7 @@ export class EnterpriseReportingService {
       reporting_stores_count: analytics.entities.length,
     };
 
-    // Format as CSV
-    const csvHeader = "Store ID,Store Name,Revenue (BDT),Orders,AOV (BDT),Delivery SLA %\n";
-    const csvRows = analytics.entities
-      .map(
-        (e) =>
-          // Per-store figures aren't measured yet (orders carry no store): empty cells, not invented numbers (FX-30)
-          `"${e.entity_id}","${e.entity_name}",${e.revenue_bdt ?? ""},${e.orders_count ?? ""},${e.aov_bdt ?? ""},${e.delivery_sla_pct != null ? `${e.delivery_sla_pct}%` : ""}`
-      )
-      .join("\n");
-    const exportCsv = csvHeader + csvRows;
+    const exportCsv = this.buildReportCsv(orgId, caller, tenantId).csv;
 
     const execution: ReportExecution = {
       id: `rep_exec_${Date.now()}_${randomSuffix()}`,

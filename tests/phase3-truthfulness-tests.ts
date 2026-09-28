@@ -522,6 +522,65 @@ async function main() {
     assert.strictEqual(findDistrict("Chittagong")?.district, "Chattogram", "old spellings are accepted");
   });
 
+  await runTest("no courier history: no courier is recommended (no Steadfast / ৳60 / 24 h default)", () => {
+    const rec = fulfillmentOperationsService.recommendCourier("ten_without_history", "ord_x");
+    assert.strictEqual(rec.recommended_courier, null);
+    assert.strictEqual(rec.estimated_cost_bdt, null);
+    assert.strictEqual(rec.estimated_transit_hours, null);
+  });
+
+  // ---------------------------------------------------------------------------
+  console.log(`\n${ANSI_BOLD}[FX-33] Broken endpoints${ANSI_RESET}`);
+  // ---------------------------------------------------------------------------
+
+  await runTest("FX-33: the daily cycle endpoint exists, says nothing runs yet, and honours the emergency halt", async () => {
+    const started = await call("POST", "autonomous/cycles", owner.token, { body: { cycle_type: "DAILY" } });
+    assert.strictEqual(started.status, 201);
+    const data = started.json.data as { executed: boolean; run: { trigger: string; status: string } };
+    assert.strictEqual(data.executed, false);
+    assert.strictEqual(data.run.trigger, "MANUAL");
+    assert.strictEqual((await call("POST", "autonomous/pause", owner.token, { body: { level: "ALL", reason: "test" } })).status, 200);
+    const halted = await call("POST", "autonomous/cycles", owner.token, { body: {} });
+    assert.strictEqual(halted.status, 503);
+    assert.strictEqual(halted.json.error?.code, "KILL_SWITCH_ACTIVE");
+    assert.strictEqual((await call("POST", "autonomous/resume", owner.token, { body: { level: "ALL" } })).status, 200);
+    assert.strictEqual((await call("POST", "autonomous/cycles", owner.token, { body: {} })).status, 201);
+    assert.strictEqual((await call("POST", "autonomous/cycles", owner.token, { body: { cycle_type: "HOURLY" } })).status, 400);
+  });
+
+  await runTest("FX-33: report CSV download exists, is scoped, and neutralises spreadsheet formulas", async () => {
+    enterpriseHierarchyService.createStore(orgId, { ...storeFields, id: `${orgId}_evil`, name: "=HYPERLINK(\"http://x\")", code: "EV" });
+    const def = await call("POST", "enterprise/reports", owner.token, { body: { title: "Stores" } });
+    assert.strictEqual(def.status, 201);
+    const id = String((def.json.data as { id: string }).id);
+    const mod = (await import("@/app/api/v1/enterprise/reports/[id]/download/route")) as { GET: (r: Request, c: { params: Promise<{ id: string }> }) => Promise<Response> };
+    const get = (token: string, reportId: string) =>
+      mod.GET(new Request(`${BASE}/enterprise/reports/${reportId}/download`, { headers: { authorization: `Bearer ${token}` } }), { params: Promise.resolve({ id: reportId }) });
+    const res = await get(owner.token, id);
+    assert.strictEqual(res.status, 200);
+    assert.ok((res.headers.get("content-type") ?? "").startsWith("text/csv"));
+    const csv = await res.text();
+    assert.ok(csv.includes(`"'=HYPERLINK`), "formula neutralised");
+    assert.ok(csv.includes(storeB.id));
+    const scoped = await (await get(scopedAdmin.token, id)).text();
+    assert.ok(scoped.includes(storeA.id) && !scoped.includes(storeB.id), "only the member's stores");
+    assert.strictEqual((await get(owner.token, "rep_does_not_exist")).status, 404);
+  });
+
+  await runTest("FX-33: every webhook URL the connector catalogue advertises has a route", () => {
+    const missing: string[] = [];
+    for (const provider of ConnectorService.PROVIDERS) {
+      const url = provider.guidelines?.webhook_info;
+      if (!url) continue;
+      const route = url.split("?")[0].replace(/^\/api\/v1\//, "");
+      const direct = path.join("src/app/api/v1", route, "route.ts");
+      const dynamic = path.join("src/app/api/v1", path.dirname(route), "[provider]", "route.ts");
+      if (!fs.existsSync(direct) && !fs.existsSync(dynamic)) missing.push(`${provider.id}: ${url}`);
+    }
+    assert.deepStrictEqual(missing, []);
+  });
+
+  // Clears the store, so it runs last
   await runTest("demo seed: no made-up telemetry; old stores can be cleaned without touching user records", () => {
     db.clearAllForTesting();
     db.ensureDefaultSeed();
@@ -556,13 +615,6 @@ async function main() {
     assert.deepStrictEqual(old.courier_performances.map((x) => x.courier_provider), ["PATHAO"]);
     assert.strictEqual(old.business_objectives[0].progress_percent, 0);
     assert.strictEqual(old.business_objectives[1].progress_percent, 60, "an objective the user changed is left alone");
-  });
-
-  await runTest("no courier history: no courier is recommended (no Steadfast / ৳60 / 24 h default)", () => {
-    const rec = fulfillmentOperationsService.recommendCourier("ten_without_history", "ord_x");
-    assert.strictEqual(rec.recommended_courier, null);
-    assert.strictEqual(rec.estimated_cost_bdt, null);
-    assert.strictEqual(rec.estimated_transit_hours, null);
   });
 
   await runTest("grep gate: known fabrication patterns are gone from src/", () => {

@@ -317,7 +317,7 @@ export async function runEnterpriseTests() {
     assert.strictEqual(executionResult.execution.status, "COMPLETED");
     assert(executionResult.execution.records_count >= 2);
     assert(typeof executionResult.exportData === "string");
-    assert(executionResult.exportData.includes("Store ID,Store Name"));
+    assert(executionResult.exportData.includes(`"Store ID","Store Name"`)); // every cell quoted (FX-33)
   });
 
   // -------------------------------------------------------------

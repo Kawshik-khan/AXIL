@@ -333,7 +333,7 @@ export class ConnectorService {
           "In Messenger > Webhooks, set the Callback URL to your CommerceOS webhook and enter your Verify Token.",
           "Subscribe to events: messages, messaging_postbacks, message_reads, messaging_optins.",
         ],
-        webhook_info: "/api/v1/social/webhooks/meta",
+        webhook_info: "/api/v1/social/webhooks/facebook", // Instagram: /instagram, WhatsApp: /whatsapp (FX-33)
         tips: [
           "Adhere strictly to the Meta 24-hour standard customer messaging window.",
           "CommerceOS auto-validates cryptographic HMAC-SHA256 headers on all inbound webhooks.",
@@ -448,7 +448,7 @@ export class ConnectorService {
           "Optionally add your bot as an administrator to your store's private group or channel for automated dispatch notifications.",
           "Click 'Test Connection' to verify bot authorization.",
         ],
-        webhook_info: "/api/v1/social/webhooks/telegram",
+        // No Telegram webhook receiver exists, so no URL is advertised (FX-33)
         tips: [
           "Telegram allows zero per-message cost with markdown formatting.",
           "Supports inline keyboard buttons for instant order confirmations and shipment tracking.",
@@ -488,7 +488,7 @@ export class ConnectorService {
           "Paste them into CommerceOS.",
           "Under Steadfast Webhooks, configure the webhook URL provided below to receive real-time parcel delivery updates.",
         ],
-        webhook_info: "/api/v1/shipments/webhooks/steadfast",
+        webhook_info: "/api/v1/automation/webhooks/steadfast?wh=<webhook-id>", // signed endpoint (FX-06, FX-33)
         tips: [
           "Steadfast status transitions (PENDING -> IN_TRANSIT -> DELIVERED) automatically mark COD orders as PAID in CommerceOS.",
         ],
@@ -524,7 +524,7 @@ export class ConnectorService {
           "Find your Store ID under Store Settings.",
           "Enter your Pathao merchant login credentials to enable automated token refreshes.",
         ],
-        webhook_info: "/api/v1/shipments/webhooks/pathao",
+        webhook_info: "/api/v1/automation/webhooks/pathao?wh=<webhook-id>", // signed endpoint (FX-06, FX-33)
       },
     },
     {
@@ -552,7 +552,7 @@ export class ConnectorService {
           "Navigate to Profile > Developer API.",
           "Generate and copy your Access Token.",
         ],
-        webhook_info: "/api/v1/shipments/webhooks/redx",
+        webhook_info: "/api/v1/automation/webhooks/redx?wh=<webhook-id>", // signed endpoint (FX-06, FX-33)
       },
     },
     {
@@ -1198,7 +1198,7 @@ export class ConnectorService {
           "Grant Admin API scopes: read_products, write_products, read_orders, write_orders, read_inventory, write_inventory.",
           "Click 'Install app' and copy the token starting with shpat_.",
         ],
-        webhook_info: "/api/v1/enterprise/webhooks/shopify",
+        // No Shopify webhook receiver exists until an adapter does, so no URL is advertised (FX-33)
       },
     },
     {
