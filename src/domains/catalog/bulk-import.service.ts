@@ -1,3 +1,4 @@
+import { NotFoundError } from "@/lib/errors";
 import { randomSuffix } from "@/lib/ids";
 import { db } from "@/infrastructure/db";
 import { RequestContext } from "@/lib/context";
@@ -42,12 +43,14 @@ export class BulkImportService {
 
     // Resolve tenant primary warehouse
     const tenantWarehouses = db.data.warehouses.filter((w) => w.tenant_id === context.tenant.id);
+    // Only this workspace's warehouses: this used to fall back to another tenant's first warehouse (FX-36 M11)
+    if (options?.warehouse_id && !tenantWarehouses.some((w) => w.id === options.warehouse_id)) {
+      throw new NotFoundError("Warehouse", options.warehouse_id);
+    }
     const defaultWarehouse =
-      (options?.warehouse_id
-        ? tenantWarehouses.find((w) => w.id === options.warehouse_id)
-        : null) ||
+      (options?.warehouse_id ? tenantWarehouses.find((w) => w.id === options.warehouse_id) : null) ||
       tenantWarehouses[0] ||
-      db.data.warehouses[0];
+      db.ensureDefaultWarehouse(context.tenant.id);
 
     // Load existing categories for fast tenant-scoped lookup
     const existingCategories = await CategoryService.listCategories(context);

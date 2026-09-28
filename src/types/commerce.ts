@@ -239,6 +239,8 @@ export interface Order {
   payment_status: PaymentStatus;
   fulfillment_status: FulfillmentStatus;
   shipping_address_snapshot: Partial<CustomerAddress>;
+  /** UNKNOWN: the district wasn't chosen by anyone (old order forms stored "Chittagong" for every outside-Dhaka order). */
+  address_confidence?: "UNKNOWN";
   billing_address_snapshot?: Partial<CustomerAddress>;
   coupon_code?: string;
   notes?: string;

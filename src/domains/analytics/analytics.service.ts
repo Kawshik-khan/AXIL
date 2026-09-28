@@ -144,7 +144,8 @@ export class AnalyticsService {
     const stats = new Map<string, { shipped: number; delivered: number; rto: number; cod: number }>();
     for (const order of orders) {
       const district = order.shipping_address_snapshot?.district;
-      if (!district || !SHIPPED_STATUSES.has(order.status)) continue;
+      // Addresses nobody chose (FX-36 M5) would put every old outside-Dhaka order in Chattogram
+      if (!district || order.address_confidence === "UNKNOWN" || !SHIPPED_STATUSES.has(order.status)) continue;
       const cur = stats.get(district) || { shipped: 0, delivered: 0, rto: 0, cod: 0 };
       cur.shipped += 1;
       if (order.status === "DELIVERED") cur.delivered += 1;

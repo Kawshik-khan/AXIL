@@ -407,7 +407,8 @@ export interface KnowledgeDocument {
   tenant_id: string;
   title: string;
   document_type: KnowledgeDocumentType;
-  file_format: "PDF" | "TXT" | "MARKDOWN" | "HTML" | "MANUAL_TEXT";
+  /** PDF stays for documents stored before FX-36; new uploads are text formats only (no server-side parser yet). */
+  file_format: "PDF" | "TXT" | "MARKDOWN" | "HTML" | "MANUAL_TEXT" | "CSV" | "JSON";
   raw_content?: string;
   status: KnowledgeDocumentStatus;
   version: number;

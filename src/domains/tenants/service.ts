@@ -49,7 +49,9 @@ export class TenantService {
       updated_at: new Date().toISOString(),
     };
 
-    return db.createTenant(newTenant);
+    const created = db.createTenant(newTenant);
+    db.ensureDefaultWarehouse(created.id); // stock always has a warehouse of this workspace (FX-36 M11)
+    return created;
   }
 
   public static getTenantById(id: string): TenantRecord {

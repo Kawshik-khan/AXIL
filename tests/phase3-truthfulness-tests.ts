@@ -30,6 +30,9 @@ import type { IntegrationInstallation } from "@/types/enterprise";
 import { PlatformTenantService } from "@/domains/platform/services/platform-tenant.service";
 import { PLATFORM_PERMISSIONS } from "@/lib/permissions";
 import type { PlatformContext } from "@/lib/context";
+import { applyWarehouseTenancyFix, planWarehouseTenancyFix, type WarehouseTenancyData } from "@/infrastructure/db/warehouse-tenancy-fix";
+import { fixFabricatedData } from "@/infrastructure/db/fabricated-data-fix";
+import type { Customer, Warehouse } from "@/types/commerce";
 
 const ANSI_GREEN = "\x1b[32m";
 const ANSI_RED = "\x1b[31m";
@@ -664,6 +667,78 @@ async function main() {
     assert.strictEqual(user?.status, "ACTIVE");
     const login = await AuthService.login(ownerEmail, "Owner-Pass-5522");
     assert.ok(login, "the owner can sign in");
+  });
+
+  // ---------------------------------------------------------------------------
+  console.log(`\n${ANSI_BOLD}[FX-36] Data entry${ANSI_RESET}`);
+  // ---------------------------------------------------------------------------
+
+  await runTest("M11: a new workspace has its own warehouse; products never land in another tenant's", async () => {
+    const fresh = await AuthService.registerTenantWithOwner({
+      email: `${uid("wh")}@phase3.test`, password: "Phase3-Wh-Pass-7731!", name: "Wh Owner", workspaceName: `Wh ${Date.now()}`,
+    });
+    const warehouses = db.getWarehouses(fresh.tenant.id);
+    assert.strictEqual(warehouses.length, 1, "created with the workspace");
+    // A workspace from before (no warehouse) gets its own on first product, not the store's first warehouse
+    const legacyTenant = uid("ten_legacy");
+    db.createTenant({ id: legacyTenant, name: "Legacy", slug: legacyTenant, currency: "BDT", timezone: "Asia/Dhaka", language: "en", settings: {}, status: "ACTIVE", created_at: nowIso(), updated_at: nowIso() } as never);
+    const legacyOwner = await member(legacyTenant, "OWNER");
+    const ctx = await AuthService.resolveRequestContext(legacyOwner.token);
+    assert.ok(ctx);
+    const product = await ProductService.createProduct(ctx, { name: "Legacy P", sku: uid("LEG"), base_price: 100, initial_stock: 3 });
+    const variantId = (product as { variants?: Array<{ id: string }> }).variants?.[0]?.id;
+    const row = db.data.inventory_items.find((i) => i.product_variant_id === variantId);
+    const wh = db.data.warehouses.find((w) => w.id === row?.warehouse_id);
+    assert.strictEqual(wh?.tenant_id, legacyTenant, "stock is in this workspace's warehouse");
+    // Orders can't name another workspace's warehouse
+    const foreign = db.getWarehouses(tenantId)[0];
+    const res = await call("POST", "orders", legacyOwner.token, {
+      body: { customer: { first_name: "A", phone: "01712345679" }, delivery_address: { district: "Dhaka", address_line_1: "x" }, items: [{ variant_id: variantId, quantity: 1 }], payment_method: "COD", warehouse_id: foreign.id },
+    });
+    assert.strictEqual(res.status, 400);
+  });
+
+  await runTest("M11: the data fix moves stock out of another tenant's warehouse and merges duplicates", () => {
+    const wh = (id: string, tenant: string): Warehouse => ({ id, tenant_id: tenant, name: id, code: id, address: "", city: "", district: "", status: "ACTIVE", created_at: nowIso(), updated_at: nowIso() });
+    const item = (id: string, tenant: string, warehouse: string, variant: string, qty: number) => ({ id, tenant_id: tenant, warehouse_id: warehouse, product_variant_id: variant, quantity_on_hand: qty, quantity_reserved: 0, quantity_available: qty, reorder_point: 1, updated_at: nowIso() });
+    const data: WarehouseTenancyData = {
+      warehouses: [wh("wh_a", "ta"), wh("wh_b", "tb")],
+      inventory_items: [item("i1", "tb", "wh_a", "v1", 5), item("i2", "tb", "wh_b", "v2", 1), item("i3", "tb", "wh_a", "v2", 2), item("i4", "ta", "wh_a", "v9", 7)],
+      stock_movements: [{ id: "m1", tenant_id: "tb", warehouse_id: "wh_a", product_variant_id: "v1", type: "PURCHASE", quantity: 5, reason: "init", actor_user_id: "system", created_at: nowIso() }],
+    };
+    assert.deepStrictEqual(planWarehouseTenancyFix(data).tenants_affected, ["tb"]);
+    const report = applyWarehouseTenancyFix(data, (t) => data.warehouses.find((w) => w.tenant_id === t) as Warehouse);
+    assert.strictEqual(report.inventory_items_moved, 1);
+    assert.strictEqual(report.inventory_items_merged, 1);
+    assert.ok(data.inventory_items.filter((i) => i.tenant_id === "tb").every((i) => i.warehouse_id === "wh_b"));
+    assert.strictEqual(data.inventory_items.find((i) => i.id === "i2")?.quantity_on_hand, 3, "merged into the existing row");
+    assert.strictEqual(data.inventory_items.find((i) => i.id === "i4")?.warehouse_id, "wh_a", "the owner's own stock is untouched");
+    assert.strictEqual(data.stock_movements[0].warehouse_id, "wh_b");
+  });
+
+  await runTest("M15/M5: made-up phones are cleared; old \"Chittagong\" orders are flagged UNKNOWN", () => {
+    const customers = [
+      { id: "c1", phone: "+8801700123456", notes: "Ingressed from FACEBOOK ID 9" },
+      { id: "c2", phone: "+8801700123456", notes: "Walk-in" },
+      { id: "c3", phone: "+8801711111111", notes: "Ingressed from WHATSAPP ID 3" },
+    ] as unknown as Customer[];
+    const orders = [
+      { id: "o1", shipping_address_snapshot: { district: "Chittagong", division: "Chittagong" } },
+      { id: "o2", shipping_address_snapshot: { district: "Chattogram", division: "Chattogram" } },
+    ] as unknown as Order[];
+    assert.deepStrictEqual(fixFabricatedData({ customers, orders }, { apply: false }), { customers_phone_cleared: 1, orders_address_flagged: 1 });
+    fixFabricatedData({ customers, orders }, { apply: true });
+    assert.deepStrictEqual(customers.map((c) => c.phone), ["", "+8801700123456", "+8801711111111"]);
+    assert.strictEqual(orders[0].address_confidence, "UNKNOWN");
+    assert.strictEqual(orders[1].address_confidence, undefined);
+  });
+
+  await runTest("M16: knowledge upload takes text formats only", async () => {
+    const pdf = await call("POST", "ai/knowledge", owner.token, { body: { title: "Policy", raw_content: "%PDF-1.4 ...", file_format: "PDF" } });
+    assert.strictEqual(pdf.status, 400);
+    const md = await call("POST", "ai/knowledge", owner.token, { body: { title: "Returns", raw_content: "# Returns\nWithin 7 days.", file_format: "MD" } });
+    assert.strictEqual(md.status, 201);
+    assert.strictEqual((md.json.data as { file_format: string }).file_format, "MARKDOWN");
   });
 
   // Clears the store, so it runs last

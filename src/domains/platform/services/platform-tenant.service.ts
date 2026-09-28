@@ -164,6 +164,7 @@ export class PlatformTenantService {
       updated_at: now,
     };
     db.createTenant(newTenant);
+    db.ensureDefaultWarehouse(tenantId); // FX-36 M11
 
     // 2. Create or associate Initial Owner User.
     // A new owner gets no usable password (audit C1-b): the account stays INVITED until an owner onboarding

@@ -19,7 +19,9 @@ export class FulfillmentOperationsService {
     if (!order) throw new AppError("NOT_FOUND", `Order not found: ${orderId}`, 404);
 
     const warehouses = db.getWarehouses(tenantId);
-    const defaultWarehouse = warehouses[0] || { id: "wh_default_01", name: "Central Dhaka Warehouse" };
+    // No invented "Central Dhaka Warehouse" when the workspace has none (FX-36 M11)
+    const defaultWarehouse = warehouses[0];
+    if (!defaultWarehouse) throw new AppError("NO_WAREHOUSE", "Add a warehouse before planning fulfillment.", 400);
     const orderItems = db.getOrderItems(tenantId, order.id);
     const inventory = db.getInventory(tenantId);
 

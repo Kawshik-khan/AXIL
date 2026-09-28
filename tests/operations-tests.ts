@@ -103,7 +103,8 @@ export async function runOperationsTests() {
   };
   db.data.product_variants.push(var2);
 
-  // Seed Warehouses
+  // Seed Warehouses. This suite supplies its own, so drop the "Main warehouse" every new workspace now gets (FX-36 M11)
+  db.data.warehouses = db.data.warehouses.filter((w) => w.tenant_id !== tenantId);
   const wh1 = db.createWarehouse({
     id: "wh_ops_dhaka",
     tenant_id: tenantId,

@@ -366,6 +366,11 @@ export default function AIAgentsPage() {
 
   // Handle File Selection & Auto-Extraction
   const handleFileSelect = (file: File) => {
+    // Text formats only: PDF and Word files need a server-side parser that doesn't exist yet (FX-36 M16)
+    if (!/\.(txt|md|csv|json)$/i.test(file.name)) {
+      alert("Only .txt, .md, .csv and .json files can be added for now. Save PDF or Word documents as text first.");
+      return;
+    }
     setSelectedFile(file);
     setPipelineStep("IDLE");
     setPipelineStats(null);
@@ -392,21 +397,7 @@ export default function AIAgentsPage() {
     // Read and parse file content
     const reader = new FileReader();
     reader.onload = (e) => {
-      const content = (e.target?.result as string) || "";
-      if (file.name.toLowerCase().endsWith(".pdf")) {
-        const matches = content.match(/\(([^)]+)\)\s*Tj/g) || content.match(/\[([^\]]+)\]\s*TJ/g);
-        if (matches && matches.length > 0) {
-          const extracted = matches.map((m) => m.replace(/[\(\)\[\]]|Tj|TJ/g, "").trim()).filter(Boolean).join(" ");
-          if (extracted.length > 50) {
-            setFileContent(extracted);
-            return;
-          }
-        }
-        const cleaned = content.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, " ").replace(/\s+/g, " ").trim();
-        setFileContent(cleaned || `Policy Document: ${file.name}`);
-      } else {
-        setFileContent(content);
-      }
+      setFileContent((e.target?.result as string) || "");
     };
     reader.onerror = () => {
       alert("Failed to read file.");
@@ -459,7 +450,7 @@ export default function AIAgentsPage() {
 
       const fileExt = selectedFile.name.split(".").pop()?.toUpperCase() || "TEXT";
       const fileFormat =
-        fileExt === "MD" ? "MARKDOWN" : fileExt === "JSON" ? "JSON" : fileExt === "CSV" ? "CSV" : fileExt === "PDF" ? "PDF" : "TEXT";
+        fileExt === "MD" ? "MARKDOWN" : fileExt === "JSON" ? "JSON" : fileExt === "CSV" ? "CSV" : "TXT";
 
       const res = await fetch("/api/v1/ai/knowledge", {
         method: "POST",
@@ -1062,14 +1053,14 @@ export default function AIAgentsPage() {
                 </h3>
               </div>
               <p style={{ fontSize: "12px", color: "var(--color-text-secondary)", margin: "0 0 16px 0", lineHeight: 1.5 }}>
-                Upload store files (PDF, Markdown, TXT, DOCX, CSV, JSON). The system automatically extracts text, performs semantic chunking, generates 1536-dimensional OpenAI embeddings, and indexes them into your tenant-isolated vector database.
+                Upload store policies as text files (TXT, Markdown, CSV, JSON). They're split into chunks and indexed for your assistants to search. PDF and Word files aren't supported yet: save them as text first.
               </p>
 
               {/* Hidden File Input */}
               <input
                 type="file"
                 ref={fileInputRef}
-                accept=".txt,.md,.pdf,.docx,.csv,.json"
+                accept=".txt,.md,.csv,.json"
                 style={{ display: "none" }}
                 onChange={(e) => {
                   if (e.target.files && e.target.files[0]) {
@@ -1113,7 +1104,7 @@ export default function AIAgentsPage() {
                       Upload return policies, delivery rate charts, product FAQs, or sizing guides in Bangla or English
                     </p>
                     <div className={styles.formatsPill}>
-                      Supported: PDF • TXT • MD • CSV • JSON (Up to 10MB)
+                      Supported: TXT • MD • CSV • JSON (up to 2 MB of text)
                     </div>
                     <button
                       type="button"

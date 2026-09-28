@@ -4446,8 +4446,8 @@ class CommerceDatabase {
       };
       this.data.product_variants.push(defaultVariant);
 
-      // Initialize inventory for default warehouse
-      const defaultWarehouse = this.data.warehouses.find((w) => w.tenant_id === product.tenant_id) || this.data.warehouses[0];
+      // Initialize inventory in this workspace's warehouse (never another tenant's, FX-36 M11)
+      const defaultWarehouse = this.ensureDefaultWarehouse(product.tenant_id);
       if (defaultWarehouse) {
         this.data.inventory_items.push({
           id: `inv_${defaultVariant.id}`,
@@ -4482,7 +4482,7 @@ class CommerceDatabase {
           tenant_id: v.tenant_id || product.tenant_id,
         };
         this.data.product_variants.push(variantWithIds);
-        const defaultWarehouse = this.data.warehouses.find((w) => w.tenant_id === product.tenant_id) || this.data.warehouses[0];
+        const defaultWarehouse = this.ensureDefaultWarehouse(product.tenant_id); // this workspace's (FX-36 M11)
         if (defaultWarehouse) {
           const vStock = typeof (v as any).initial_stock === "number"
             ? (v as any).initial_stock
@@ -4609,6 +4609,29 @@ class CommerceDatabase {
     this.data.warehouses.push(warehouse);
     this.persist();
     return warehouse;
+  }
+
+  /**
+   * The workspace's first warehouse, creating a "Main warehouse" when it has none (FX-36 M11). Product creation and
+   * bulk import used to fall back to `warehouses[0]`, another tenant's warehouse, for workspaces without one. The
+   * address is left blank for the merchant to fill in; it isn't guessed.
+   */
+  public ensureDefaultWarehouse(tenantId: string): Warehouse {
+    const existing = this.data.warehouses.find((w) => w.tenant_id === tenantId);
+    if (existing) return existing;
+    const now = new Date().toISOString();
+    return this.createWarehouse({
+      id: `wh_${randomSuffix()}`,
+      tenant_id: tenantId,
+      name: "Main warehouse",
+      code: "MAIN",
+      address: "",
+      city: "",
+      district: "",
+      status: "ACTIVE",
+      created_at: now,
+      updated_at: now,
+    });
   }
 
   public getInventory(

@@ -59,7 +59,7 @@ export class KnowledgeService {
       title: string;
       document_type: KnowledgeDocumentType;
       raw_content: string;
-      file_format?: "PDF" | "TXT" | "MARKDOWN" | "HTML" | "MANUAL_TEXT";
+      file_format?: KnowledgeDocument["file_format"];
       tags?: string[];
       language?: "bn" | "en" | "mixed";
     }

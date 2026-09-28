@@ -1,6 +1,6 @@
+import { z } from "zod";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { KnowledgeService } from "@/domains/ai/rag/knowledge.service";
-import { AppError } from "@/lib/errors";
 
 export async function GET(request: Request) {
   try {
@@ -12,20 +12,39 @@ export async function GET(request: Request) {
   }
 }
 
+/**
+ * Text formats only (FX-36 M16): there's no server-side PDF/DOCX parser, and the browser's regex "PDF extraction"
+ * turned binary files into garbage chunks.
+ */
+const TEXT_FORMATS = { TXT: "TXT", TEXT: "TXT", MARKDOWN: "MARKDOWN", MD: "MARKDOWN", CSV: "CSV", JSON: "JSON", HTML: "HTML", MANUAL_TEXT: "MANUAL_TEXT" } as const;
+
+const IngestBody = z
+  .object({
+    title: z.string().trim().min(1).max(200),
+    document_type: z.string().trim().min(1).max(64).optional(),
+    raw_content: z.string().min(1).max(2_000_000),
+    file_format: z
+      .string()
+      .toUpperCase()
+      .refine((f): f is keyof typeof TEXT_FORMATS => f in TEXT_FORMATS, {
+        message: "Only text files (TXT, Markdown, CSV, JSON) can be added; PDF and Word need a parser that doesn't exist yet.",
+      })
+      .optional(),
+    tags: z.array(z.string().max(64)).max(20).optional(),
+    language: z.enum(["bn", "en", "mixed"]).optional(),
+  })
+  .strict();
+
 export async function POST(request: Request) {
   try {
     const context = await extractRequestContext(request);
-
-    const body = await request.json();
-    if (!body.title || !body.raw_content) {
-      throw new AppError("VALIDATION_ERROR", "Title and raw_content are required", 400);
-    }
+    const body = IngestBody.parse(await request.json());
 
     const doc = await KnowledgeService.ingestDocument(context, {
       title: body.title,
-      document_type: body.document_type || "RETURN_POLICY",
+      document_type: (body.document_type || "RETURN_POLICY") as never,
       raw_content: body.raw_content,
-      file_format: body.file_format || "MARKDOWN",
+      file_format: body.file_format ? TEXT_FORMATS[body.file_format as keyof typeof TEXT_FORMATS] : "MARKDOWN",
       tags: body.tags,
       language: body.language,
     });

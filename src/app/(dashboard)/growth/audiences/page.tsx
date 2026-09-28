@@ -6,24 +6,37 @@ import { Users, Filter, Plus, RefreshCw, Layers, Sparkles, CheckCircle2 } from "
 import styles from "../growth.module.css";
 import { LoadingSkeleton, EmptyState } from "@/components/ui/States/States";
 
+/**
+ * Each preset carries its own rule, in fields audience.service evaluates (FX-36 M6). They all used to create the same
+ * "spend > 5,000" rule and showed made-up sizes (142 / 384 / 98); the size is computed when the segment is created.
+ */
 const PRESET_AUDIENCES = [
   {
     name: "VIP High Spenders",
-    description: "Customers with lifetime value > ৳5,000 and 3+ repeat orders",
+    description: "Customers with lifetime spend over ৳5,000 and 3 or more orders",
     type: "RULE_BASED",
-    estimated: 142,
+    conditions: [
+      { field: "total_spend", operator: "GREATER_THAN", value: 5000 },
+      { field: "order_count", operator: "GREATER_THAN_OR_EQUAL", value: 3 },
+    ],
   },
   {
     name: "Dormant 60D Customers",
-    description: "Active buyers who have not placed an order in the last 60 days",
-    type: "PREDICTIVE",
-    estimated: 384,
+    description: "Buyers who have not ordered in the last 60 days",
+    type: "RULE_BASED",
+    conditions: [{ field: "last_purchase_days_ago", operator: "GREATER_THAN_OR_EQUAL", value: 60 }],
   },
   {
-    name: "WhatsApp Conversational Carts",
-    description: "Abandoned WhatsApp cart sessions with intent signals",
+    name: "Abandoned Carts",
+    description: "Customers with an abandoned cart",
     type: "RULE_BASED",
-    estimated: 98,
+    conditions: [{ field: "has_abandoned_cart", operator: "EQUALS", value: true }],
+  },
+  {
+    name: "At-risk Customers",
+    description: "Customers whose churn risk is high",
+    type: "RULE_BASED",
+    conditions: [{ field: "churn_risk_level", operator: "EQUALS", value: "HIGH" }],
   },
 ];
 
@@ -72,12 +85,7 @@ export default function AudiencesPage() {
           name: preset.name,
           description: preset.description,
           type: preset.type,
-          rule_groups: [
-            {
-              logical_operator: "AND",
-              conditions: [{ field: "total_spend", operator: "GREATER_THAN", value: 5000 }],
-            },
-          ],
+          rule_groups: [{ logical_operator: "AND", conditions: preset.conditions }],
         }),
       });
       if (res.ok) {
@@ -156,8 +164,8 @@ export default function AudiencesPage() {
                   </p>
 
                   <div style={{ marginTop: "auto", display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: "12px", borderTop: "1px solid var(--color-border-subtle, rgba(0,0,0,0.06))" }}>
-                    <div style={{ fontSize: "12px", color: "var(--color-text-secondary, #70736F)" }}>
-                      Est. Size: <strong style={{ color: "var(--color-text-primary, #202124)" }}>~{preset.estimated}</strong>
+                    <div style={{ fontSize: "12px", color: "var(--color-text-secondary)" }}>
+                      Size is computed from your customers when created
                     </div>
                     <button
                       className={`${styles.btn} ${styles.btnSecondary}`}

@@ -127,10 +127,15 @@ export class OrderService {
     );
 
     // 3. Resolve warehouse for inventory allocation
-    const warehouseId =
-      payload.warehouse_id ||
-      db.getWarehouses(context.tenant.id)[0]?.id ||
-      "wh_dhaka_main";
+    // This workspace's warehouse only; there used to be a hard-coded "wh_dhaka_main" fallback (FX-36 M11)
+    const tenantWarehouses = db.getWarehouses(context.tenant.id);
+    if (payload.warehouse_id && !tenantWarehouses.some((w) => w.id === payload.warehouse_id)) {
+      throw new BadRequestError("That warehouse isn't one of this workspace's.");
+    }
+    const warehouseId = payload.warehouse_id || tenantWarehouses[0]?.id;
+    if (!warehouseId) {
+      throw new BadRequestError("Add a warehouse before taking orders.");
+    }
 
     const orderId = `ord_${Date.now()}_${randomSuffix()}`;
     const orderNumber = db.generateOrderNumber(context.tenant.id);
