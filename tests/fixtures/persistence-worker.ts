@@ -77,6 +77,15 @@ async function main() {
     return;
   }
 
+  if (scenario === "next-helper") {
+    // Runs with JEST_WORKER_ID set, like Next's static-paths and build workers: it only loads route modules.
+    db.createAuditLog({ id: "aud_helper", tenant_id: "t", actor_user_id: "u", action: "X", resource_type: "x", resource_id: "1", metadata: {}, created_at: new Date().toISOString() } as never);
+    await new Promise((r) => setTimeout(r, 600));
+    await db.flush();
+    out({ lock_held: db.getPersistenceHealth().lock.held, flushes: renames, loaded: true });
+    return;
+  }
+
   if (scenario === "other-host") {
     // The test wrote a lock owned by a live-looking process on another host before this process started.
     const health = db.getPersistenceHealth();

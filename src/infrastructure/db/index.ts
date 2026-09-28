@@ -609,6 +609,12 @@ class CommerceDatabase {
   private filePath: string;
   private dataDir: string;
   private isTestInstance = false;
+  /**
+   * Next.js evaluates route modules in helper processes (the dev static-paths worker, `next build` workers). They only
+   * need the module to load: they never own, lock or write the store (Phase 2 live check: taking the lock there broke
+   * dynamic routes while the dev server ran).
+   */
+  private readonly helperProcess = Boolean(process.env.JEST_WORKER_ID) || process.env.NEXT_PHASE === "phase-production-build";
 
   // ---- Coalesced asynchronous persistence (FIX_IMPLEMENTATION_PLAN FX-20, audit C6/C7) ----
   // Mutations mark the store dirty; one flush per debounce window writes a compact snapshot to a temp file, fsyncs it and
@@ -633,7 +639,7 @@ class CommerceDatabase {
     this.dataDir = process.env.COMMERCEOS_DATA_DIR ? path.resolve(process.env.COMMERCEOS_DATA_DIR) : path.join(process.cwd(), ".data");
     this.filePath = path.join(this.dataDir, "commerceos.json");
     this.lockPath = path.join(this.dataDir, "commerceos.lock");
-    const persistent = process.env.NODE_ENV !== "test";
+    const persistent = process.env.NODE_ENV !== "test" && !this.helperProcess;
     if (persistent) {
       try {
         fs.mkdirSync(this.dataDir, { recursive: true });
@@ -1304,7 +1310,7 @@ class CommerceDatabase {
   /** Called by every mutating method: marks the store dirty and schedules one coalesced flush. */
   private persist(): void {
     this.writeSignals++;
-    if (this.isTestInstance || process.env.NODE_ENV === "test") return;
+    if (this.isTestInstance || process.env.NODE_ENV === "test" || this.helperProcess) return;
     if (this.persistenceBlocked) {
       // Never acknowledge a change that can't be saved (review L-2). The in-memory change is discarded with the process.
       throw new AppError("STORE_UNAVAILABLE", "The data store can't save changes right now. Nothing was saved.", 503);

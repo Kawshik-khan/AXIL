@@ -138,6 +138,20 @@ async function main() {
       assert.strictEqual(second.flushes, 0, "the second writer never writes the store");
       assert.strictEqual(second.write_rejected, "STORE_UNAVAILABLE", "a write it can't save is refused, not acknowledged");
 
+      // Next.js helper processes (JEST_WORKER_ID) load route modules while the app runs: no exit, no lock, no write.
+      const lockBefore = fs.readFileSync(path.join(dir, "commerceos.lock"), "utf-8");
+      const helper = spawnSync(process.execPath, ["tests/ts-runner.cjs", "./tests/fixtures/persistence-worker.ts", "next-helper"], {
+        cwd: ROOT,
+        env: { ...workerEnv(dir), JEST_WORKER_ID: "1" },
+        encoding: "utf-8",
+        timeout: 60_000,
+      });
+      assert.strictEqual(helper.status, 0, `a Next helper process loads normally: ${helper.stderr.slice(0, 200)}`);
+      const helperResult = JSON.parse(helper.stdout.split("\n").find((l) => l.startsWith("RESULT "))!.slice(7)) as Record<string, unknown>;
+      assert.strictEqual(helperResult.lock_held, false);
+      assert.strictEqual(helperResult.flushes, 0, "a helper process never writes the store");
+      assert.strictEqual(fs.readFileSync(path.join(dir, "commerceos.lock"), "utf-8"), lockBefore, "the app's lock is untouched");
+
       const seed = spawnSync(process.execPath, ["tests/ts-runner.cjs", "./scripts/reset-seed-passwords.ts"], {
         cwd: ROOT,
         env: { ...workerEnv(dir), SEED_ADMIN_PASSWORD: "Throwaway-Seed-Pass-1234" },
