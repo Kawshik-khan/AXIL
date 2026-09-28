@@ -9,6 +9,7 @@ import {
   NotFoundError,
   ImpersonationNotAllowedError,
   ImpersonationExpiredError,
+  ApprovalRequiredError,
 } from "@/lib/errors";
 import crypto from "crypto";
 
@@ -59,6 +60,14 @@ export class PlatformSupportService {
     const targetIsPlatformAdmin = db.findPlatformMembershipByUserId(user.id);
     if (targetIsPlatformAdmin && targetIsPlatformAdmin.role === "SUPER_ADMIN") {
       throw new ImpersonationNotAllowedError("Security violation: Cannot impersonate another Super Admin.");
+    }
+
+    // Changing a workspace as support needs a second operator's approval, which doesn't exist yet: fail closed.
+    // A self-granted MUTATION_APPROVED session let one operator act as OWNER, e.g. invite themselves (security review).
+    if (input.mode === "MUTATION_APPROVED") {
+      throw new ApprovalRequiredError(
+        "Changing a workspace as support needs a second operator's approval, which isn't available yet. Start a read-only session."
+      );
     }
 
     const duration = Math.min(Math.max(input.durationMinutes || 30, 5), 120); // between 5 and 120 minutes max

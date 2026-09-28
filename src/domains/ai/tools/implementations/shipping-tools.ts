@@ -1,6 +1,6 @@
 /**
  * CommerceOS Phase 4: Shipping & Courier Tools
- * Grounded in Commerce Core Delivery Rules (৳60 / ৳120) & Courier Tracking.
+ * Grounded in the workspace delivery fees (settings) & courier tracking.
  */
 
 import { z } from "zod";

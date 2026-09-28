@@ -10,6 +10,8 @@ import { toolRegistry } from "@/domains/ai/tools/tool-registry";
 import { PromptRegistry } from "@/domains/ai/prompts/prompt-registry";
 import { ContextBuilder } from "@/domains/ai/context/context-builder";
 import { LLMMessage } from "@/domains/ai/providers/llm-provider.interface";
+import { PlatformEntitlementService } from "@/domains/platform/services/platform-entitlement.service";
+import { FeatureNotEntitledError } from "@/lib/errors";
 
 export interface AgentExecutionResult {
   finalResponse: string;
@@ -39,6 +41,10 @@ export abstract class BaseAgent {
     inputQuery: string,
     runId: string
   ): Promise<AgentExecutionResult> {
+    // Monthly AI runs against the plan (FX-34 step 2); not gated unless the plan or an override sets ai_monthly_runs
+    if (!(await PlatformEntitlementService.can(context.tenant.id, "ai_monthly_runs"))) {
+      throw new FeatureNotEntitledError("ai_monthly_runs");
+    }
     const startTime = Date.now();
     const systemPrompt =
       PromptRegistry.renderSystemPrompt(this.agentType) +
@@ -150,6 +156,7 @@ export abstract class BaseAgent {
       finalResponse = "আপনার বার্তাটির উত্তর প্রস্তুত করা যায়নি। অনুগ্রহ করে কিছুক্ষণ পর আবার চেষ্টা করুন।";
     }
 
+    PlatformEntitlementService.recordUsage(context.tenant.id, "ai_monthly_runs"); // counts towards the monthly limit
     return {
       finalResponse,
       toolCallsCount: totalToolCalls,

@@ -15,11 +15,23 @@ import { db } from "@/infrastructure/db";
 import { verifyImpersonationToken, AUTH_COOKIE_NAME } from "@/lib/security";
 import { ImpersonationExpiredError } from "@/lib/errors";
 import { RbacService } from "@/domains/rbac/service";
+import { PlatformAuthorizationService } from "@/domains/platform/services/platform-authorization.service";
+import { PERMISSIONS } from "@/lib/permissions";
 import { randomSuffix } from "@/lib/ids";
 import type { RequestContext } from "@/lib/context";
 import type { PlatformContext } from "@/lib/context";
 
 export const IMPERSONATION_COOKIE_NAME = "commerceos_impersonation";
+
+/** Permissions a support session never gets: members, roles, machine credentials, settings. */
+const IDENTITY_PERMISSIONS = new Set<string>([
+  PERMISSIONS.USER_INVITE,
+  PERMISSIONS.USER_UPDATE,
+  PERMISSIONS.ROLE_MANAGE,
+  PERMISSIONS.SERVICE_TOKENS_MANAGE,
+  PERMISSIONS.SETTINGS_UPDATE,
+  PERMISSIONS.AUTOMATION_MANAGE_CREDENTIALS,
+]);
 
 export function readCookie(request: Request, name: string): string | null {
   const header = request.headers.get("cookie");
@@ -54,6 +66,10 @@ export async function resolveImpersonationContext(
     throw new ImpersonationExpiredError("The support session needs the operator's platform sign-in.");
   }
   if (platform.platformUser.id !== claims.operatorUserId) throw new ImpersonationExpiredError();
+  // The operator must still be allowed to impersonate (a demoted operator loses the session immediately)
+  if (!PlatformAuthorizationService.can(platform, "support.impersonate")) {
+    throw new ImpersonationExpiredError("The operator is no longer allowed to use support sessions.");
+  }
 
   const session = db.findImpersonationSessionById(claims.sessionId);
   if (
@@ -67,11 +83,17 @@ export async function resolveImpersonationContext(
     throw new ImpersonationExpiredError();
   }
 
+  // The same state checks as a normal sign-in: an inactive workspace, member or account isn't served
   const tenant = db.findTenantById(session.target_tenant_id);
   const membership = db.findMembership(session.target_tenant_id, session.target_user_id);
-  if (!tenant || !membership) throw new ImpersonationExpiredError("The support session's workspace or member no longer exists.");
+  const targetUser = db.findUserById(session.target_user_id);
+  if (!tenant || !membership || !targetUser) throw new ImpersonationExpiredError("The support session's workspace or member no longer exists.");
+  if (tenant.status !== "ACTIVE" || membership.status === "SUSPENDED" || targetUser.status !== "ACTIVE") {
+    throw new ImpersonationExpiredError("The support session's workspace or member isn't active.");
+  }
 
-  const rolePermissions = RbacService.getPermissionsForRole(membership.role);
+  // Identity and access changes are never available as support, whatever the mode (security review)
+  const rolePermissions = RbacService.getPermissionsForRole(membership.role).filter((p) => !IDENTITY_PERMISSIONS.has(p));
   const permissions = session.mode === "READ_ONLY" ? rolePermissions.filter((p) => p.endsWith(".read")) : rolePermissions;
 
   return {

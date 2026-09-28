@@ -213,7 +213,7 @@ export class ModelRouter {
       if (this.getMode() === "NOT_CONFIGURED") throw err; // nothing to fall back to, and not a provider failure
       this.recordFailure();
       // A second real provider, if configured; never the mock (FX-32)
-      if (!isFallback && this.fallbackProvider) {
+      if (!isFallback && this.fallbackProvider && !PlatformSafetyService.isExecutionBlocked("PROVIDER", this.fallbackProvider.providerName)) {
         try {
           const fallbackResponse = await this.fallbackProvider.chat(messages, tools, { model: modelName });
           const { costUsd, costBdt } = this.calculateCost(
@@ -239,6 +239,9 @@ export class ModelRouter {
 
   public async generateEmbedding(text: string): Promise<number[]> {
     const { provider } = this.getActiveProvider("TIER_3_EMBEDDING");
+    if (PlatformSafetyService.isExecutionBlocked("PROVIDER", provider.providerName)) {
+      throw new KillSwitchActiveError("PROVIDER", `AI provider ${provider.providerName} is paused by the platform.`);
+    }
     try {
       const embedding = await provider.embed(text);
       this.recordSuccess();

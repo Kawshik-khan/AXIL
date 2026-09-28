@@ -184,6 +184,8 @@ export class ShippingService {
     if (orderTarget) {
       const order = db.findOrderById(context.tenant.id, shipment.order_id);
       if (order && order.status !== orderTarget && !(orderTarget === "SHIPPED" && order.status === "DELIVERED")) {
+        // Moving the order (and marking COD paid) is an order change, not only a shipment one (security review)
+        RbacService.assertCan(context, PERMISSIONS.ORDERS_UPDATE);
         OrderLifecycleService.advance(context.tenant.id, order.id, orderTarget, { type: "SYSTEM", id: context.user.id }, `Shipment ${shipment.tracking_number} is ${targetStatus}`);
       }
     }

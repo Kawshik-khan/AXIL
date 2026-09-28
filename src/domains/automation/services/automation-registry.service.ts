@@ -273,11 +273,13 @@ export class AutomationRegistryService {
 
     const activeCount = automations.filter((a) => a.enabled && a.status === "ACTIVE").length;
     const totalExec = executions.length;
-    const successExec = executions.filter((e) => e.status === "SUCCESS").length;
-    const failedExec = executions.filter((e) => e.status === "FAILED" || e.status === "DEAD_LETTERED").length;
+    // Dry runs don't call n8n, so they don't count towards success; no real runs means no rate (was a made-up 100%)
+    const realRuns = executions.filter((e) => e.execution_mode !== "DRY_RUN");
+    const successExec = realRuns.filter((e) => e.status === "SUCCESS").length;
+    const failedExec = realRuns.filter((e) => e.status === "FAILED" || e.status === "DEAD_LETTERED").length;
 
-    const successRate = totalExec > 0 ? Math.round((successExec / totalExec) * 100) / 100 : 1.0;
-    const failureRate = totalExec > 0 ? Math.round((failedExec / totalExec) * 100) / 100 : 0.0;
+    const successRate = realRuns.length > 0 ? Math.round((successExec / realRuns.length) * 100) / 100 : null;
+    const failureRate = realRuns.length > 0 ? Math.round((failedExec / realRuns.length) * 100) / 100 : 0.0;
 
     const durations = executions.filter((e) => e.duration_ms).map((e) => e.duration_ms!);
     const avgDuration = durations.length > 0 ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length) : 120;

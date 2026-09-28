@@ -401,7 +401,7 @@ export default function AutomationsHubPage() {
               </div>
               <div className={styles.kpiValue}>{health?.executions_today || 0}</div>
               <div className={`${styles.kpiTrend} ${styles.kpiGreen}`}>
-                {Math.round((health?.success_rate || 1) * 100)}% Success rate
+                {typeof health?.success_rate === "number" ? `${Math.round(health.success_rate * 100)}% Success rate` : "No runs yet"}
               </div>
             </div>
             <div className={`${styles.kpiCard} ${styles.col3}`}>

@@ -6,10 +6,6 @@ try {
 if (!process.env.NODE_ENV && (!process.argv[2] || process.argv[2].includes("test"))) {
   process.env.NODE_ENV = "test";
 }
-// Test suites run the offline keyword demo AI unless a real provider is configured explicitly (FX-32)
-if (process.env.NODE_ENV === "test" && !process.env.LLM_BASE_URL && !process.env.AI_DEMO_MODE) {
-  process.env.AI_DEMO_MODE = "1";
-}
 const fs = require("fs");
 const path = require("path");
 const ts = require("typescript");
@@ -34,6 +30,14 @@ for (const envFile of [".env.local", ".env"]) {
       }
     }
   }
+}
+
+// Test suites use the offline demo AI and never a live model, even when .env.local configures one (FX-32).
+// Set TEST_LLM_LIVE=1 to run them against the configured provider on purpose.
+if (process.env.NODE_ENV === "test" && process.env.TEST_LLM_LIVE !== "1") {
+  delete process.env.LLM_BASE_URL;
+  delete process.env.LLM_FALLBACK_BASE_URL;
+  process.env.AI_DEMO_MODE = "1";
 }
 
 // Handle module resolution for @/*

@@ -302,7 +302,8 @@ export interface AutomationHealth {
   overall_status: "HEALTHY" | "DEGRADED" | "FAILING" | "PAUSED" | "UNKNOWN";
   active_automations_count: number;
   executions_today: number;
-  success_rate: number;
+  /** null until a real (non-dry-run) execution has finished. */
+  success_rate: number | null;
   failure_rate: number;
   retry_count: number;
   dead_letter_count: number;

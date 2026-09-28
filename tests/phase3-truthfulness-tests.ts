@@ -43,6 +43,11 @@ import { signPlatformSessionToken } from "@/lib/security";
 import { ModelRouter } from "@/domains/ai/providers/model-router";
 import { globalDecisionEngineService } from "@/domains/autonomous/services";
 import { isFeatureEnabled } from "@/lib/safety-gate";
+import { ResolveSemanticMetricTool } from "@/domains/ai/tools/implementations/enterprise-tools";
+import { CalculateCheckoutTool } from "@/domains/ai/tools/implementations/checkout-tools";
+import { toolRegistry } from "@/domains/ai/tools/tool-registry";
+import { ContextBuilder } from "@/domains/ai/context/context-builder";
+import { PricingService } from "@/domains/pricing/pricing.service";
 
 const ANSI_GREEN = "\x1b[32m";
 const ANSI_RED = "\x1b[31m";
@@ -1022,6 +1027,86 @@ async function main() {
       globalThis.fetch = realFetch;
       router.configure({ AI_DEMO_MODE: "1" } as NodeJS.ProcessEnv);
     }
+  });
+
+  // ---------------------------------------------------------------------------
+  console.log(`\n${ANSI_BOLD}[Review follow-ups] Impersonation, limits, AI grounding${ANSI_RESET}`);
+  // ---------------------------------------------------------------------------
+
+  await runTest("support sessions: no self-granted MUTATION_APPROVED; demoted operators and suspended members are refused", async () => {
+    await assert.rejects(
+      PlatformSupportService.startImpersonationSession(
+        { targetTenantId: tenantId, targetUserId: owner.id, reason: "P3 attempt to change the workspace", mode: "MUTATION_APPROVED", durationMinutes: 15 },
+        operatorCtx as never
+      ),
+      (e: Error & { code?: string }) => e.code === "APPROVAL_REQUIRED"
+    );
+    const { token } = await PlatformSupportService.startImpersonationSession(
+      { targetTenantId: tenantId, targetUserId: owner.id, reason: "P3 customer ticket investigation", mode: "READ_ONLY", durationMinutes: 15 },
+      operatorCtx as never
+    );
+    const session = async () => {
+      const mod = (await import("@/app/api/v1/auth/session/route")) as { GET: (r: Request) => Promise<Response> };
+      return (await mod.GET(new Request(`${BASE}/auth/session`, { headers: { cookie: `${platformCookie}; commerceos_impersonation=${token}` } }))).status;
+    };
+    assert.strictEqual(await session(), 200);
+    // The operator is demoted to a role without support.impersonate
+    db.savePlatformMembership({ id: `pm_${operatorId}`, user_id: operatorId, role: "PLATFORM_ANALYST", mfa_enabled: false, is_active: true, created_at: nowIso(), updated_at: nowIso() });
+    assert.strictEqual(await session(), 401, "the session ends with the operator's authority");
+    db.savePlatformMembership({ id: `pm_${operatorId}`, user_id: operatorId, role: "SUPER_ADMIN", mfa_enabled: false, is_active: true, created_at: nowIso(), updated_at: nowIso() });
+    // The target member is suspended
+    const m = db.findMembership(tenantId, owner.id);
+    assert.ok(m);
+    db.data.memberships = db.data.memberships.map((x) => (x.id === m.id ? { ...x, status: "SUSPENDED" as const } : x));
+    assert.strictEqual(await session(), 401, "no session into a suspended member");
+    db.data.memberships = db.data.memberships.map((x) => (x.id === m.id ? { ...x, status: undefined } : x));
+  });
+
+  await runTest("bulk import respects the product plan limit", async () => {
+    const existing = db.getAllProducts(tenantId).filter((x) => x.status !== "ARCHIVED").length;
+    db.saveTenantEntitlement({ tenant_id: tenantId, entitlement_id: "max_products", value: existing + 1, is_override: true, updated_at: nowIso() });
+    const result = await ProductService.bulkImportProducts(ownerCtx, [
+      { title: "Import One", sku: uid("IMP1"), base_price: 100, stock: 1 },
+      { title: "Import Two", sku: uid("IMP2"), base_price: 100, stock: 1 },
+    ], { mode: "upsert", auto_create_categories: true });
+    assert.strictEqual(result.imported_count, 1);
+    assert.strictEqual(result.failed_count, 1);
+    assert.ok(result.errors[0].reason.includes("plan allows"));
+    db.saveTenantEntitlement({ tenant_id: tenantId, entitlement_id: "max_products", value: 100000, is_override: true, updated_at: nowIso() });
+  });
+
+  await runTest("a module's AI tools are off with its feature flag", async () => {
+    db.savePlatformFeatureFlag({ id: "flag_enterprise", key: "enterprise", description: "Enterprise module", is_enabled_globally: false, percentage_rollout: 100, scope: "TENANT", tenant_allowlist: [], rules: {}, created_at: nowIso(), updated_at: nowIso() });
+    try {
+      await assert.rejects(
+        toolRegistry.executeTool(ownerCtx, { toolName: new ResolveSemanticMetricTool().name, arguments: { metric_key: "gross_revenue" }, agentRunId: "run_p3", conversationId: "conv_p3" }),
+        (e: Error & { code?: string }) => e.code === "FEATURE_NOT_ENTITLED"
+      );
+    } finally {
+      db.savePlatformFeatureFlag({ id: "flag_enterprise", key: "enterprise", description: "Enterprise module", is_enabled_globally: true, percentage_rollout: 100, scope: "GLOBAL", tenant_allowlist: [], rules: {}, created_at: nowIso(), updated_at: nowIso() });
+    }
+  });
+
+  await runTest("moving an order through a shipment update needs orders.update", async () => {
+    const o = await newOrder();
+    await OrderService.transitionOrderStatus(ownerCtx, o.id, "CONFIRMED");
+    const shipment = await ShippingService.createShipment(ownerCtx, { order_id: o.id, courier_provider: "PATHAO", tracking_number: uid("PTH") });
+    const shippingOnly = { ...ownerCtx, permissions: ownerCtx.permissions.filter((x) => x !== "orders.update") };
+    await assert.rejects(ShippingService.updateDeliveryStatus(shippingOnly, shipment.id, "DELIVERED"), (e: Error & { code?: string }) => e.code === "FORBIDDEN");
+    assert.strictEqual(db.findOrderById(tenantId, o.id)?.status, "READY_TO_SHIP");
+  });
+
+  await runTest("AI answers are grounded in the workspace's fees and real prices", async () => {
+    const fees = PricingService.getDeliveryFees(tenantId);
+    const prompt = ContextBuilder.formatPromptContext({ tenant_id: tenantId, conversation_id: "c", channel_type: "WHATSAPP", recent_messages: [], retrieved_knowledge: [] } as never);
+    assert.ok(prompt.includes(`Outside Dhaka ৳${fees.outside_dhaka_bdt}`));
+    const tool = new CalculateCheckoutTool();
+    await assert.rejects(tool.execute(ownerCtx, tool.schema.parse({ items: [{ variant_id: "var_missing", quantity: 1 }], district: "Dhaka" })));
+    await assert.rejects(tool.execute(ownerCtx, tool.schema.parse({ items: [{ variant_id: lcVariant, quantity: 1 }] })), "no district, no guessed zone");
+    const quote = await tool.execute(ownerCtx, tool.schema.parse({ items: [{ variant_id: lcVariant, quantity: 2 }], district: "Khulna" }));
+    assert.strictEqual(quote.delivery_zone, "OUTSIDE_DHAKA");
+    assert.strictEqual(quote.delivery_charge, fees.outside_dhaka_bdt);
+    assert.strictEqual(quote.subtotal, 1000, "the variant's real price, never a DEMO-SKU");
   });
 
   // Clears the store, so it runs last

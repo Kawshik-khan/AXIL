@@ -22,6 +22,8 @@ import { CalculateCheckoutTool, CreateOrderDraftTool } from "./implementations/c
 import { GetCustomerTool, GetCustomerOrdersTool } from "./implementations/customer-tools";
 import { RequestHumanHandoffTool } from "./implementations/human-tools";
 import { SearchKnowledgeTool } from "./implementations/knowledge-tools";
+import { isFeatureEnabled } from "@/lib/safety-gate";
+import { FeatureNotEntitledError } from "@/lib/errors";
 import {
   GetAudienceTool,
   CreateAudienceTool,
@@ -282,6 +284,12 @@ export class ToolRegistry {
         created_at: new Date().toISOString(),
       });
       throw new NotFoundError(`AI Tool '${params.toolName}' does not exist.`);
+    }
+
+    // 0. Modules behind platform feature flags: their tools are off with them (FX-34; the URL gate misses /ai/*)
+    const moduleFlag = tool.category === "ENTERPRISE" ? "enterprise" : tool.category === "AUTONOMOUS" ? "autonomous" : null;
+    if (moduleFlag && !isFeatureEnabled(moduleFlag, context.tenant.id)) {
+      throw new FeatureNotEntitledError(moduleFlag);
     }
 
     // 1. Check Tenant Policy

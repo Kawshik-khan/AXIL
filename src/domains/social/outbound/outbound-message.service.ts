@@ -11,7 +11,8 @@ import { ChannelPolicyService } from "../channels/policy.service";
 import { ChannelRateLimiter } from "./rate-limiter";
 import { SocialEventService } from "../events/social-event.service";
 import { BadRequestError, NotFoundError } from "@/lib/errors";
-import { assertNotKilled } from "@/lib/safety-gate";
+import { assertNotKilled, isFeatureEnabled } from "@/lib/safety-gate";
+import { FeatureNotEntitledError } from "@/lib/errors";
 
 export interface SendOutboundPayload {
   text: string;
@@ -53,6 +54,9 @@ export class OutboundMessageService {
       throw new BadRequestError(`Connected channel '${conversation.channel_id}' not found or disconnected.`);
     }
     assertNotKilled(context.tenant.id, "CHANNEL", channel.id, channel.type); // FX-34
+    if (!isFeatureEnabled("real_messaging", context.tenant.id)) {
+      throw new FeatureNotEntitledError("real_messaging"); // outbound messaging behind its platform flag (FX-34 step 4)
+    }
 
     // 1. Idempotency Check
     const key = payload.idempotency_key || payload.client_message_id;

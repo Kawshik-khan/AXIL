@@ -37,8 +37,9 @@ export class JevClient {
     this.apiUrl = process.env.TYPESAFE_API_URL || "https://api.typesafe.ai/v1";
     this.apiKey = process.env.TYPESAFE_API_KEY || "";
     this.mockProvider = new MockJevProvider();
-    // Default to mock if no live API key is set
-    this.useMockFallback = !this.apiKey;
+    // The offline rules stand in only in demo mode; otherwise, without a key, this stage is skipped by its caller
+    // (FX-32: it used to answer from the mock whenever the key was missing or the service failed)
+    this.useMockFallback = !this.apiKey && process.env.AI_DEMO_MODE === "1";
   }
 
   public static getInstance(): JevClient {
@@ -114,8 +115,12 @@ export class JevClient {
       // Redis offline or missing env; proceed without cache
     }
 
-    // 2. If configured for mock or no live key, execute offline mock provider
-    if (this.useMockFallback || !this.apiKey) {
+    if (!this.useMockFallback && !this.apiKey) {
+      throw new JevClientError("Jev System One is not configured (TYPESAFE_API_KEY)", {});
+    }
+
+    // 2. Demo mode: the offline rules provider
+    if (this.useMockFallback) {
       try {
         const mockResult = await this.mockProvider.evaluate(validatedRequest);
         this.failureCount = Math.max(0, this.failureCount - 1);
@@ -174,12 +179,8 @@ export class JevClient {
       clearTimeout(timer);
       this.recordFailure();
 
-      // Graceful fallback to Mock provider on network/service failure if live key fails
-      try {
-        return await this.mockProvider.evaluate(validatedRequest);
-      } catch {
-        throw new JevClientError("Failed to evaluate with Jev System One", { error: String(err) });
-      }
+      // No silent mock on a live failure: the caller falls back to its other routing stages
+      throw new JevClientError("Failed to evaluate with Jev System One", { error: String(err) });
     }
   }
 

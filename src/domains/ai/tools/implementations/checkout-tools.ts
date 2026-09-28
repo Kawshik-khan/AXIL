@@ -10,6 +10,9 @@ import { RequestContext } from "@/lib/context";
 import { OrderService } from "@/domains/orders/order.service";
 import { PERMISSIONS } from "@/lib/permissions";
 import { db } from "@/infrastructure/db";
+import { PricingService } from "@/domains/pricing/pricing.service";
+import { findDistrict } from "@/lib/bd-geography";
+import { BadRequestError } from "@/lib/errors";
 
 const CalculateCheckoutInputSchema = z.object({
   items: z
@@ -20,13 +23,15 @@ const CalculateCheckoutInputSchema = z.object({
       })
     )
     .min(1),
-  delivery_zone: z.enum(["INSIDE_DHAKA", "OUTSIDE_DHAKA"]).default("INSIDE_DHAKA"),
+  // The customer's district decides the zone; a zone can be given only when the district isn't known yet (no default)
+  district: z.string().optional().describe("Delivery district, one of Bangladesh's 64"),
+  delivery_zone: z.enum(["INSIDE_DHAKA", "OUTSIDE_DHAKA"]).optional(),
   coupon_code: z.string().optional(),
 });
 
 export class CalculateCheckoutTool implements IAgentTool<z.infer<typeof CalculateCheckoutInputSchema>> {
   public readonly name = "calculate_checkout";
-  public readonly description = "Calculate order subtotal, delivery fee (৳60/৳120), and coupon discounts without creating an order.";
+  public readonly description = "Calculate order subtotal, the store's delivery fee and coupon discounts without creating an order.";
   public readonly category = "CHECKOUT";
   public readonly riskLevel: ToolRiskLevel = "INFORMATIONAL";
   public readonly requiredPermission = PERMISSIONS.PRODUCTS_READ;
@@ -46,6 +51,7 @@ export class CalculateCheckoutTool implements IAgentTool<z.infer<typeof Calculat
         type: "object",
         properties: {
           items: { type: "array", description: "Array of variant IDs and quantities" },
+          district: { type: "string", description: "Delivery district (preferred)" },
           delivery_zone: { type: "string", enum: ["INSIDE_DHAKA", "OUTSIDE_DHAKA"] },
           coupon_code: { type: "string" },
         },
@@ -56,72 +62,29 @@ export class CalculateCheckoutTool implements IAgentTool<z.infer<typeof Calculat
     };
   }
 
+  /**
+   * The same authoritative pricing as order creation (PricingService). This used to price items itself, invent a
+   * ৳1200 "DEMO-SKU" line when no variant matched, and turn a free-delivery setting of 0 into ৳60/৳120 (FX-30).
+   */
   public async execute(context: RequestContext, input: z.infer<typeof CalculateCheckoutInputSchema>) {
-    let subtotal = 0;
-    const computedItems: any[] = [];
-
-    for (const item of input.items) {
-      const variant = db.findVariantById(context.tenant.id, item.variant_id);
-      if (!variant) {
-        continue;
-      }
-      const product = db.findProductById(context.tenant.id, variant.product_id);
-      const unitPrice = variant.price || product?.base_price || 0;
-      const lineTotal = unitPrice * item.quantity;
-      subtotal += lineTotal;
-      computedItems.push({
-        variant_id: variant.id,
-        sku: variant.sku,
-        title: variant.title,
-        unit_price: unitPrice,
-        quantity: item.quantity,
-        line_total: lineTotal,
-      });
+    const place = input.district ? findDistrict(input.district) : undefined;
+    if (input.district && !place) {
+      throw new BadRequestError(`"${input.district}" isn't one of Bangladesh's 64 districts.`);
     }
-
-    if (computedItems.length === 0) {
-      subtotal = 1200;
-      computedItems.push({
-        variant_id: input.items[0]?.variant_id || "var_demo",
-        sku: "DEMO-SKU",
-        title: "Selected Product",
-        unit_price: 1200,
-        quantity: 1,
-        line_total: 1200,
-      });
+    const zone = place?.zone ?? input.delivery_zone;
+    if (!zone) {
+      throw new BadRequestError("Ask for the delivery district before quoting a delivery charge.");
     }
-
-    const settings = context.tenant.settings || {};
-    const deliveryFee =
-      input.delivery_zone === "INSIDE_DHAKA"
-        ? Number(settings.delivery_charge_inside_dhaka || 60)
-        : Number(settings.delivery_charge_outside_dhaka || 120);
-
-    let discountAmount = 0;
-    if (input.coupon_code) {
-      const coupon = db.findCouponByCode(context.tenant.id, input.coupon_code);
-      if (coupon && coupon.status === "ACTIVE") {
-        if (coupon.type === "PERCENTAGE") {
-          discountAmount = Math.round((subtotal * coupon.value) / 100);
-          if (coupon.maximum_discount && discountAmount > coupon.maximum_discount) {
-            discountAmount = coupon.maximum_discount;
-          }
-        } else {
-          discountAmount = coupon.value;
-        }
-      }
-    }
-
-    const grandTotal = Math.max(0, subtotal - discountAmount + deliveryFee);
-
+    const pricing = await PricingService.calculateOrderPricing(context.tenant.id, input.items, zone, input.coupon_code);
     return {
-      subtotal,
-      delivery_charge: deliveryFee,
-      delivery_zone: input.delivery_zone,
-      discount_amount: discountAmount,
-      grand_total: grandTotal,
+      subtotal: pricing.subtotal,
+      delivery_charge: pricing.shipping_total,
+      delivery_zone: zone,
+      district: place?.district,
+      discount_amount: pricing.discount_total,
+      grand_total: pricing.grand_total,
       currency: "BDT",
-      items: computedItems,
+      items: pricing.items,
     };
   }
 }

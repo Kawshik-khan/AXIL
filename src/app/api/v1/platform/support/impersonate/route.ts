@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { apiSuccess, apiError, extractPlatformContext } from "@/lib/api-response";
 import { impersonationCookie } from "@/lib/impersonation";
-import { NotFoundError } from "@/lib/errors";
+import { NotFoundError, ValidationError } from "@/lib/errors";
+import { PlatformAuthorizationService } from "@/domains/platform/services/platform-authorization.service";
 import { db } from "@/infrastructure/db";
 import { PlatformSupportService } from "@/domains/platform";
 
@@ -34,6 +35,7 @@ const StartBody = z
 export async function POST(request: Request) {
   try {
     const context = await extractPlatformContext(request);
+    PlatformAuthorizationService.assertCan(context, "support.impersonate"); // before any lookup (no existence probing)
     const body = StartBody.parse(await request.json());
     const targetUserId =
       body.user_id ?? db.findMembershipsByTenantId(body.tenant_id).find((m) => m.role === "OWNER" && m.status !== "SUSPENDED")?.user_id;
@@ -66,7 +68,7 @@ export async function DELETE(request: Request) {
     const reason = searchParams.get("reason") || "Revoked by operator";
 
     if (!sessionId) {
-      return apiError(new Error("sessionId parameter is required"), context.requestId);
+      throw new ValidationError("sessionId parameter is required");
     }
 
     const session = PlatformSupportService.revokeSession(sessionId, reason, context);

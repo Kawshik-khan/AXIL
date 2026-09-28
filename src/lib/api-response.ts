@@ -107,6 +107,19 @@ export async function extractRequestContext(request: Request): Promise<RequestCo
     if (mutating && impersonated.impersonation.mode === "READ_ONLY") {
       throw new ForbiddenError("This support session is read-only.");
     }
+    if (mutating) {
+      // The workspace sees every change made during a support session in its own audit log
+      db.createAuditLog({
+        id: `aud_imp_${randomSuffix()}`,
+        tenant_id: impersonated.tenant.id,
+        actor_user_id: impersonated.impersonation.operator_user_id,
+        action: "SUPPORT_SESSION_REQUEST",
+        resource_type: "impersonation_session",
+        resource_id: impersonated.impersonation.session_id,
+        metadata: { method: request.method, path: new URL(request.url).pathname, operator_user_id: impersonated.impersonation.operator_user_id },
+        created_at: new Date().toISOString(),
+      });
+    }
     // Every impersonated request is logged (reads go to the log, not the store: GETs never write)
     logger.info("impersonation.request", {
       request_id: requestId,

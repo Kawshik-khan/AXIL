@@ -15,6 +15,7 @@ import {
 import { ProductService } from "./product.service";
 import { CategoryService } from "./category.service";
 import { CsvParser } from "@/lib/csv-parser";
+import { assertWithinLimit } from "@/lib/safety-gate";
 
 export class BulkImportService {
   /**
@@ -233,6 +234,7 @@ export class BulkImportService {
               candidateSlug = `${baseSlug}-${counter}`;
             }
 
+            assertWithinLimit(context.tenant.id, "max_products"); // imports count against the plan too (FX-34)
             const productId = `prod_${Date.now()}_${randomSuffix()}`;
             const now = new Date().toISOString();
 

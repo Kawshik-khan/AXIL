@@ -1,6 +1,6 @@
 /**
  * CommerceOS Phase 4: Customer Support Agent
- * Specializes in store FAQs, shipping charges (৳60/৳120), return guidelines, and empathetic responses.
+ * Specializes in store FAQs, shipping charges (from the workspace settings), return guidelines, and empathetic responses.
  */
 
 import { BaseAgent } from "./base-agent";

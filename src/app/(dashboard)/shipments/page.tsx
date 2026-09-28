@@ -80,7 +80,8 @@ export default function ShipmentsPage() {
           order_id: selectedOrderId,
           courier_provider: courierProvider,
           tracking_number: trackingNumber.trim() || undefined,
-          shipping_cost: parseFloat(shippingCost) || 60,
+          // Empty means the order's own delivery charge (server side); no literal fee here
+          ...(Number.isFinite(parseFloat(shippingCost)) ? { shipping_cost: parseFloat(shippingCost) } : {}),
         }),
       });
 

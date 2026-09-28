@@ -77,15 +77,20 @@ export class OrderLifecycleService {
       // Holds that lapsed while the order waited are taken again, or the confirmation fails (no silent overselling)
       const active = reservations.filter((r) => r.status === "ACTIVE");
       if (active.length === 0) {
+        const taken: string[] = [];
         for (const lapsed of reservations.filter((r) => r.status === "EXPIRED")) {
           try {
-            db.reserveStock(tenantId, {
-              order_id: order.id,
-              warehouse_id: lapsed.warehouse_id,
-              product_variant_id: lapsed.product_variant_id,
-              quantity: lapsed.quantity,
-            });
+            taken.push(
+              db.reserveStock(tenantId, {
+                order_id: order.id,
+                warehouse_id: lapsed.warehouse_id,
+                product_variant_id: lapsed.product_variant_id,
+                quantity: lapsed.quantity,
+              }).id
+            );
           } catch {
+            // All or nothing: release what this attempt took before refusing
+            for (const id of taken) db.releaseReservation(tenantId, id);
             throw new ConflictError("Stock for this order is no longer available; its reservation lapsed before confirmation.", {
               variant_id: lapsed.product_variant_id,
             });
