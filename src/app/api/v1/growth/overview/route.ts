@@ -6,6 +6,7 @@ import { audienceService } from "@/domains/growth/services/audience.service";
 import { customerLifecycleService } from "@/domains/growth/services/customer-lifecycle.service";
 import { attributionService } from "@/domains/growth/services/attribution.service";
 import { growthIntelligenceService } from "@/domains/growth/services/growth-intelligence.service";
+import { intelligenceSnapshots } from "@/domains/intelligence/services/intelligence-snapshot.service";
 
 export async function GET(request: Request) {
   try {
@@ -18,8 +19,13 @@ export async function GET(request: Request) {
     const journeys = db.getJourneys(tenantId);
     const lifecycleDist = customerLifecycleService.getLifecycleDistribution(tenantId);
     const attribution = attributionService.getAttributionSummary(tenantId);
-    const insights = growthIntelligenceService.detectGrowthInsights(tenantId);
-    const recommendations = growthIntelligenceService.generateGrowthRecommendations(tenantId);
+    // Read-only (FX-21): stored snapshots while fresh, otherwise computed for this request
+    const insights = intelligenceSnapshots.read(tenantId, "growth_insights", () =>
+      growthIntelligenceService.computeGrowthInsights(tenantId)
+    ).rows;
+    const recommendations = intelligenceSnapshots.read(tenantId, "growth_recommendations", () =>
+      growthIntelligenceService.computeGrowthRecommendations(tenantId)
+    ).rows;
 
     const activeCampaigns = campaigns.filter((c) => c.status === "RUNNING" || c.status === "SCHEDULED");
     const activeJourneys = journeys.filter((j) => j.status === "ACTIVE");

@@ -5,6 +5,7 @@ import { randomSuffix } from "@/lib/ids";
  */
 
 import { db } from "@/infrastructure/db";
+import { NotFoundError } from "@/lib/errors";
 import {
   LifecycleStage,
   CustomerLifecycleRecord,
@@ -69,7 +70,26 @@ export class CustomerLifecycleService {
     customerId: string,
     triggerEvent: string = "manual.eval"
   ): CustomerLifecycleRecord {
-    const orders = db.getAllOrders(tenantId, { hydrate: true }).filter((o) => o.customer_id === customerId);
+    const { record, transition } = this.computeCustomerLifecycle(tenantId, customerId, triggerEvent);
+    if (transition) db.insertLifecycleTransition(transition);
+    db.upsertCustomerLifecycle(record);
+    return record;
+  }
+
+  /**
+   * Read-only view for GET requests (FX-21): the customer's lifecycle as it would be evaluated now, nothing stored.
+   */
+  public previewCustomerLifecycle(tenantId: string, customerId: string): CustomerLifecycleRecord {
+    if (!db.findCustomerById(tenantId, customerId)) throw new NotFoundError("Customer", customerId);
+    return this.computeCustomerLifecycle(tenantId, customerId, "preview").record;
+  }
+
+  private computeCustomerLifecycle(
+    tenantId: string,
+    customerId: string,
+    triggerEvent: string
+  ): { record: CustomerLifecycleRecord; transition?: CustomerLifecycleTransition } {
+    const orders = db.getAllOrders(tenantId).filter((o) => o.customer_id === customerId);
     const existing = db.getCustomerLifecycleByCustomerId(tenantId, customerId);
 
     const totalSpend = orders.reduce((sum, o) => sum + (o.grand_total || 0), 0);
@@ -94,8 +114,9 @@ export class CustomerLifecycleService {
 
     const isTransition = !existing || existing.stage !== newStage;
 
+    let transition: CustomerLifecycleTransition | undefined;
     if (isTransition) {
-      const transition: CustomerLifecycleTransition = {
+      transition = {
         id: `clt_${Date.now()}_${randomSuffix()}`,
         tenant_id: tenantId,
         customer_id: customerId,
@@ -107,7 +128,6 @@ export class CustomerLifecycleService {
           : `Initial lifecycle stage assignment to ${newStage} triggered by ${triggerEvent}.`,
         transitioned_at: new Date().toISOString(),
       };
-      db.insertLifecycleTransition(transition);
     }
 
     const churnRisk = daysSinceLastOrder > 90 ? 0.85 : daysSinceLastOrder > 45 ? 0.55 : 0.15;
@@ -131,8 +151,7 @@ export class CustomerLifecycleService {
       updated_at: new Date().toISOString(),
     };
 
-    db.upsertCustomerLifecycle(record);
-    return record;
+    return { record, transition };
   }
 
   /**
@@ -142,8 +161,25 @@ export class CustomerLifecycleService {
     totalEvaluated: number;
     distribution: Record<LifecycleStage, number>;
   } {
+    const { recordsToSave, transitionsToSave, distribution, totalEvaluated } = this.computeAllCustomers(tenantId);
+    if (recordsToSave.length > 0) {
+      db.batchUpsertCustomerLifecycles(recordsToSave);
+    }
+    if (transitionsToSave.length > 0) {
+      db.batchInsertLifecycleTransitions(transitionsToSave.slice(0, 500)); // persist recent transition events
+    }
+    return { totalEvaluated, distribution };
+  }
+
+  /** Pure (FX-21): every customer's lifecycle as evaluated now, plus the transitions that evaluation implies. */
+  private computeAllCustomers(tenantId: string): {
+    recordsToSave: CustomerLifecycleRecord[];
+    transitionsToSave: CustomerLifecycleTransition[];
+    distribution: Record<LifecycleStage, number>;
+    totalEvaluated: number;
+  } {
     const customers = db.getAllCustomers(tenantId);
-    const allOrders = db.getAllOrders(tenantId, { hydrate: true });
+    const allOrders = db.getAllOrders(tenantId);
     const existingLifecycles = db.getCustomerLifecycles(tenantId);
 
     // Build O(1) order lookup map by customer_id
@@ -245,31 +281,17 @@ export class CustomerLifecycleService {
       });
     }
 
-    if (recordsToSave.length > 0) {
-      db.batchUpsertCustomerLifecycles(recordsToSave);
-    }
-    if (transitionsToSave.length > 0) {
-      db.batchInsertLifecycleTransitions(transitionsToSave.slice(0, 500)); // persist recent transition events
-    }
-
-    return {
-      totalEvaluated: customers.length,
-      distribution,
-    };
+    return { recordsToSave, transitionsToSave, distribution, totalEvaluated: customers.length };
   }
 
   /**
    * Retrieves lifecycle stage distribution for tenant dashboard
    */
   public getLifecycleDistribution(tenantId: string): Record<LifecycleStage, number> {
-    let records = db.getCustomerLifecycles(tenantId);
+    const records = db.getCustomerLifecycles(tenantId);
     if (records.length === 0) {
-      try {
-        const evalRes = this.evaluateAllCustomers(tenantId);
-        return evalRes.distribution;
-      } catch (err) {
-        console.error("Failed to auto-evaluate lifecycles:", err);
-      }
+      // Nothing evaluated yet: compute in memory; a GET must not write (FX-21)
+      return this.computeAllCustomers(tenantId).distribution;
     }
 
     const dist: Record<LifecycleStage, number> = {

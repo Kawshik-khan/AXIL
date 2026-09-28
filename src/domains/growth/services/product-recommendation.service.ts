@@ -63,7 +63,7 @@ export class ProductRecommendationService {
     );
 
     const candidates: RecommendationCandidate[] = [];
-    const products = db.getProducts(tenantId).products;
+    const products = db.getAllProducts(tenantId);
 
     for (const rel of related) {
       const targetId = rel.primary_product_id === productId ? rel.secondary_product_id : rel.primary_product_id;
@@ -115,7 +115,7 @@ export class ProductRecommendationService {
    * Generates upsell recommendations (higher-value item with upgraded attributes)
    */
   public getUpsellRecommendations(tenantId: string, productId: string): RecommendationCandidate[] {
-    const products = db.getProducts(tenantId).products;
+    const products = db.getAllProducts(tenantId);
     const current = products.find((p) => p.id === productId);
     if (!current) return [];
 

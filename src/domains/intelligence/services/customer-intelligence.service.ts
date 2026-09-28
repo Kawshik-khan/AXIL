@@ -4,23 +4,38 @@
  */
 
 import { db } from "@/infrastructure/db";
+import type { Order } from "@/types/commerce";
 import { CustomerIntelligenceRecord, RFMSegment } from "@/types/intelligence";
+import { intelligenceSnapshots } from "./intelligence-snapshot.service";
 
 export class CustomerIntelligenceService {
   /**
-   * Evaluates and updates RFM scores and lifetime value for all customers of a tenant
+   * Evaluates RFM scores and lifetime value for all customers of a tenant and stores the snapshot (one write).
    */
   public analyzeCustomers(tenantId: string): CustomerIntelligenceRecord[] {
+    return intelligenceSnapshots.persist(tenantId, "customers", this.computeCustomers(tenantId));
+  }
+
+  /**
+   * Pure (FX-21): RFM scores and lifetime value for every customer, in O(customers + orders) (FX-22).
+   */
+  public computeCustomers(tenantId: string): CustomerIntelligenceRecord[] {
     const customers = db.getAllCustomers(tenantId);
-    const orders = db.getAllOrders(tenantId, { hydrate: true });
+    const ordersByCustomer = new Map<string, Order[]>();
+    for (const o of db.getAllOrders(tenantId)) {
+      if (o.status === "CANCELLED") continue;
+      const list = ordersByCustomer.get(o.customer_id);
+      if (list) list.push(o);
+      else ordersByCustomer.set(o.customer_id, [o]);
+    }
 
     const now = Date.now();
     const records: CustomerIntelligenceRecord[] = [];
 
     for (const cust of customers) {
-      const custOrders = orders
-        .filter((o) => o.customer_id === cust.id && o.status !== "CANCELLED")
-        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      const custOrders = (ordersByCustomer.get(cust.id) ?? []).sort(
+        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      );
 
       const orderCount = custOrders.length;
       const totalSpent = custOrders.reduce((sum, o) => sum + (o.grand_total || (o as any).total_amount || 0), 0);
@@ -113,7 +128,6 @@ export class CustomerIntelligenceService {
         updated_at: new Date().toISOString(),
       };
 
-      db.upsertCustomerIntelligence(record);
       records.push(record);
     }
 

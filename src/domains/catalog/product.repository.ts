@@ -78,7 +78,7 @@ export class ProductRepository extends BaseRepository<Product> {
     }
   ): Promise<{ products: Product[]; total: number }> {
     if (!this.isNeonConfigured()) {
-      return db.getProducts(tenantId, options);
+      return db.getProducts(tenantId, { ...options, limit: options?.limit ?? 50 });
     }
 
     let whereSQL = `tenant_id = $1`;

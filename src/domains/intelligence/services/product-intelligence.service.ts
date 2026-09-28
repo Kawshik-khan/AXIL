@@ -5,14 +5,21 @@
 
 import { db } from "@/infrastructure/db";
 import { ProductPerformanceSnapshot } from "@/types/intelligence";
+import { intelligenceSnapshots } from "./intelligence-snapshot.service";
 
 export class ProductIntelligenceService {
   /**
-   * Computes product performance snapshots for all products in a tenant
+   * Computes product performance snapshots for all products in a tenant and stores them (one write).
    */
   public analyzeProductPerformance(tenantId: string): ProductPerformanceSnapshot[] {
-    const products = db.getProducts(tenantId).products;
-    const variants = db.getAllProductVariants(tenantId);
+    const snapshots = this.computeProductPerformance(tenantId);
+    intelligenceSnapshots.persist(tenantId, "products", snapshots);
+    return snapshots;
+  }
+
+  /** Pure (FX-21): product performance snapshots, best first. */
+  public computeProductPerformance(tenantId: string): ProductPerformanceSnapshot[] {
+    const products = db.getAllProducts(tenantId); // variants attached through a map (FX-23)
     const orders = db.getAllOrders(tenantId, { hydrate: true });
     const returns = db.getReturns(tenantId);
 
@@ -46,7 +53,7 @@ export class ProductIntelligenceService {
 
     for (const prod of products) {
       const stats = productStats[prod.id] || { units: 0, revenue: 0, ordersCount: 0 };
-      const prodVariants = variants.filter((v) => v.product_id === prod.id);
+      const prodVariants = prod.variants ?? [];
       const sku = prodVariants[0]?.sku || prod.slug || "SKU-UNKNOWN";
 
       // Calculate transparent 100-point performance score
@@ -92,7 +99,6 @@ export class ProductIntelligenceService {
         computed_at: new Date().toISOString(),
       };
 
-      db.upsertProductPerformance(snapshot);
       snapshots.push(snapshot);
     }
 

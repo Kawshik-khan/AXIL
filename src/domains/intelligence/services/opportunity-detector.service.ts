@@ -8,15 +8,21 @@ import { Opportunity } from "@/types/intelligence";
 import { evidenceService } from "./evidence.service";
 import { inventoryIntelligenceService } from "./inventory-intelligence.service";
 import { productIntelligenceService } from "./product-intelligence.service";
+import { intelligenceSnapshots } from "./intelligence-snapshot.service";
 
 export class OpportunityDetectorService {
   /**
-   * Scans tenant commerce state to discover actionable business opportunities
+   * Scans tenant commerce state for actionable business opportunities and stores them (one write, idempotent).
    */
   public detectOpportunities(tenantId: string): Opportunity[] {
+    return intelligenceSnapshots.persist(tenantId, "opportunities", this.computeOpportunities(tenantId));
+  }
+
+  /** Pure (FX-21): opportunities with deterministic ids `opp_${tenant}_${kind}_${entity}`. */
+  public computeOpportunities(tenantId: string): Opportunity[] {
     const opportunities: Opportunity[] = [];
-    const products = productIntelligenceService.analyzeProductPerformance(tenantId);
-    const inventory = inventoryIntelligenceService.analyzeInventoryHealth(tenantId);
+    const products = productIntelligenceService.computeProductPerformance(tenantId);
+    const inventory = inventoryIntelligenceService.computeInventoryHealth(tenantId);
 
     // 1. Rising Product Opportunity
     const topSeller = products.find((p) => p.status_tag === "BEST_SELLER" || p.status_tag === "EMERGING");
@@ -30,7 +36,7 @@ export class OpportunityDetectorService {
       });
 
       const opp: Opportunity = {
-        id: `opp_rising_${topSeller.product_id}_${tenantId}`,
+        id: `opp_${tenantId}_rising_${topSeller.product_id}`,
         tenant_id: tenantId,
         type: "RISING_PRODUCT",
         title: `Scale Ad Campaign for '${topSeller.product_name}'`,
@@ -49,7 +55,6 @@ export class OpportunityDetectorService {
         created_at: new Date().toISOString(),
       };
 
-      db.insertOpportunity(opp);
       opportunities.push(opp);
     }
 
@@ -67,7 +72,7 @@ export class OpportunityDetectorService {
       });
 
       const opp: Opportunity = {
-        id: `opp_restock_${lowStockHighDemand.variant_id}_${tenantId}`,
+        id: `opp_${tenantId}_restock_${lowStockHighDemand.variant_id}`,
         tenant_id: tenantId,
         type: "RESTOCK_DEMAND",
         title: `Reorder ${lowStockHighDemand.recommended_reorder_qty} Units of '${lowStockHighDemand.product_name}'`,
@@ -86,7 +91,6 @@ export class OpportunityDetectorService {
         created_at: new Date().toISOString(),
       };
 
-      db.insertOpportunity(opp);
       opportunities.push(opp);
     }
 
@@ -94,7 +98,7 @@ export class OpportunityDetectorService {
     const customers = db.getAllCustomers(tenantId);
     if (customers.length >= 2) {
       const opp: Opportunity = {
-        id: `opp_repeat_${Date.now()}_${tenantId}`,
+        id: `opp_${tenantId}_repeat_buyers`,
         tenant_id: tenantId,
         type: "REPEAT_BUYER_CAMPAIGN",
         title: "Launch WhatsApp Re-Engagement for Returning Shoppers",
@@ -121,7 +125,6 @@ export class OpportunityDetectorService {
         created_at: new Date().toISOString(),
       };
 
-      db.insertOpportunity(opp);
       opportunities.push(opp);
     }
 

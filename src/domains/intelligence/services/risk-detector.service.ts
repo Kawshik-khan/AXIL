@@ -8,14 +8,20 @@ import { Risk } from "@/types/intelligence";
 import { evidenceService } from "./evidence.service";
 import { inventoryIntelligenceService } from "./inventory-intelligence.service";
 import { paymentIntelligenceService } from "./payment-intelligence.service";
+import { intelligenceSnapshots } from "./intelligence-snapshot.service";
 
 export class RiskDetectorService {
   /**
-   * Scans operations to discover and evaluate operational risks
+   * Scans operations for operational risks and stores them (one write, idempotent).
    */
   public detectRisks(tenantId: string): Risk[] {
+    return intelligenceSnapshots.persist(tenantId, "risks", this.computeRisks(tenantId));
+  }
+
+  /** Pure (FX-21): risks with deterministic ids `risk_${tenant}_${kind}_${entity}`. */
+  public computeRisks(tenantId: string): Risk[] {
     const risks: Risk[] = [];
-    const inventory = inventoryIntelligenceService.analyzeInventoryHealth(tenantId);
+    const inventory = inventoryIntelligenceService.computeInventoryHealth(tenantId);
     const payments = paymentIntelligenceService.analyzePayments(tenantId);
 
     // 1. Stockout Hazard
@@ -30,7 +36,7 @@ export class RiskDetectorService {
       });
 
       const risk: Risk = {
-        id: `risk_stockout_${item.variant_id}_${tenantId}`,
+        id: `risk_${tenantId}_stockout_${item.variant_id}`,
         tenant_id: tenantId,
         type: "STOCKOUT",
         title: `Imminent Stockout for '${item.product_name}'`,
@@ -44,7 +50,6 @@ export class RiskDetectorService {
         created_at: new Date().toISOString(),
       };
 
-      db.insertRisk(risk);
       risks.push(risk);
     }
 
@@ -61,7 +66,7 @@ export class RiskDetectorService {
       });
 
       const risk: Risk = {
-        id: `risk_overstock_${Date.now()}_${tenantId}`,
+        id: `risk_${tenantId}_overstock_catalog`,
         tenant_id: tenantId,
         type: "OVERSTOCK",
         title: `Capital Locked in ${deadStocks.length} Dead Stock SKU(s)`,
@@ -75,7 +80,6 @@ export class RiskDetectorService {
         created_at: new Date().toISOString(),
       };
 
-      db.insertRisk(risk);
       risks.push(risk);
     }
 
@@ -90,7 +94,7 @@ export class RiskDetectorService {
       });
 
       const risk: Risk = {
-        id: `risk_payment_${Date.now()}_${tenantId}`,
+        id: `risk_${tenantId}_payment_gateway`,
         tenant_id: tenantId,
         type: "PAYMENT_GATEWAY_DOWN",
         title: "MFS Gateway Payment Rejection Elevated",
@@ -104,7 +108,6 @@ export class RiskDetectorService {
         created_at: new Date().toISOString(),
       };
 
-      db.insertRisk(risk);
       risks.push(risk);
     }
 

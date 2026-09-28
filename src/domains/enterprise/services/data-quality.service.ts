@@ -8,9 +8,26 @@ import { DataQualityIssue } from "@/types/enterprise";
 
 export class DataQualityService {
   /**
-   * Scans an organization's records and identifies data quality defects
+   * Scans an organization's records, records new data quality defects and returns all of them
    */
   public runQualityAudit(orgId: string, tenantId: string): DataQualityIssue[] {
+    const known = new Set(db.getDataQualityIssues(orgId).map((i) => i.id));
+    for (const issue of this.detectIssues(orgId, tenantId)) {
+      if (!known.has(issue.id)) db.createDataQualityIssue(issue);
+    }
+    return db.getDataQualityIssues(orgId);
+  }
+
+  /**
+   * Read-only view for GET requests (FX-21): recorded issues plus defects detected now, nothing stored.
+   */
+  public previewQualityAudit(orgId: string, tenantId: string): DataQualityIssue[] {
+    const stored = db.getDataQualityIssues(orgId);
+    const known = new Set(stored.map((i) => i.id));
+    return [...stored, ...this.detectIssues(orgId, tenantId).filter((i) => !known.has(i.id))];
+  }
+
+  private detectIssues(orgId: string, tenantId: string): DataQualityIssue[] {
     const issues: DataQualityIssue[] = [];
 
     // 1. Check for orders without valid customer phone or empty shipping address
@@ -52,14 +69,7 @@ export class DataQualityService {
       }
     }
 
-    for (const issue of issues) {
-      const existing = db.getDataQualityIssues(orgId).find((i) => i.id === issue.id);
-      if (!existing) {
-        db.createDataQualityIssue(issue);
-      }
-    }
-
-    return db.getDataQualityIssues(orgId);
+    return issues;
   }
 
   /**

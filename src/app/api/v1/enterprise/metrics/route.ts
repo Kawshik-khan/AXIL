@@ -25,10 +25,7 @@ export async function GET(request: Request) {
       return apiSuccess(result);
     }
 
-    let defs = db.getSemanticMetrics(orgId);
-    if (defs.length === 0) {
-      defs = semanticMetricsService.seedStandardMetrics(orgId);
-    }
+    const defs = semanticMetricsService.listMetrics(orgId); // read-only (FX-21)
 
     return apiSuccess({
       total: defs.length,

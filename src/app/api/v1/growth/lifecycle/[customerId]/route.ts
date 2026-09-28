@@ -11,7 +11,7 @@ export async function GET(
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.MARKETING_READ);
     const { customerId } = await params;
-    const lifecycle = customerLifecycleService.evaluateCustomerLifecycle(context.tenant.id, customerId);
+    const lifecycle = customerLifecycleService.previewCustomerLifecycle(context.tenant.id, customerId); // read-only (FX-21)
     return apiSuccess({ lifecycle });
   } catch (err) {
     return apiError(err);

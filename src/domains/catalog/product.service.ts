@@ -31,7 +31,7 @@ export class ProductService {
     }
   ): Promise<{ products: Product[]; total: number }> {
     RbacService.assertCan(context, PERMISSIONS.PRODUCTS_READ);
-    return db.getProducts(context.tenant.id, options);
+    return db.getProducts(context.tenant.id, { ...options, limit: options?.limit ?? 50 }); // one page; analytics use getAllProducts
   }
 
   public static async getProductById(

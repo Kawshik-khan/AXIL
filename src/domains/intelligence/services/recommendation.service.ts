@@ -9,22 +9,28 @@ import { Recommendation, RecommendationStatus } from "@/types/intelligence";
 import { ActionRiskLevel } from "@/types/orchestration";
 import { opportunityDetectorService } from "./opportunity-detector.service";
 import { riskDetectorService } from "./risk-detector.service";
+import { intelligenceSnapshots } from "./intelligence-snapshot.service";
 
 export class RecommendationService {
   /**
-   * Generates evidence-backed recommendations for a tenant
+   * Generates evidence-backed recommendations and stores them (one write). Recomputing keeps a user's decision.
    */
   public generateRecommendations(tenantId: string): Recommendation[] {
+    return intelligenceSnapshots.persist(tenantId, "recommendations", this.computeRecommendations(tenantId));
+  }
+
+  /** Pure (FX-21): recommendations with deterministic ids `rec_${tenant}_${type}_${entity}`. */
+  public computeRecommendations(tenantId: string): Recommendation[] {
     const recommendations: Recommendation[] = [];
-    const opportunities = opportunityDetectorService.detectOpportunities(tenantId);
-    const risks = riskDetectorService.detectRisks(tenantId);
+    const opportunities = opportunityDetectorService.computeOpportunities(tenantId);
+    const risks = riskDetectorService.computeRisks(tenantId);
 
     // 1. Generate Restock Recommendations from Critical Risks/Opportunities
     const restockOpp = opportunities.find((o) => o.type === "RESTOCK_DEMAND");
     if (restockOpp) {
       const entity = restockOpp.affected_entities[0];
       const rec: Recommendation = {
-        id: `rec_restock_${Date.now()}_${tenantId}`,
+        id: `rec_${tenantId}_restock_${entity?.id ?? "inventory"}`,
         tenant_id: tenantId,
         type: "REORDER_STOCK",
         title: `Authorize Restock PO for '${entity?.name || "Inventory Item"}'`,
@@ -63,7 +69,6 @@ export class RecommendationService {
         updated_at: new Date().toISOString(),
       };
 
-      db.insertRecommendation(rec);
       recommendations.push(rec);
     }
 
@@ -71,7 +76,7 @@ export class RecommendationService {
     const overstockRisk = risks.find((r) => r.type === "OVERSTOCK");
     if (overstockRisk) {
       const rec: Recommendation = {
-        id: `rec_clearance_${Date.now()}_${tenantId}`,
+        id: `rec_${tenantId}_clearance_dead_stock`,
         tenant_id: tenantId,
         type: "DISCOUNT_DEAD_STOCK",
         title: "Liquidate Idle Dead-Stock via Flash Promo",
@@ -100,7 +105,6 @@ export class RecommendationService {
         updated_at: new Date().toISOString(),
       };
 
-      db.insertRecommendation(rec);
       recommendations.push(rec);
     }
 

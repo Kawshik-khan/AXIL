@@ -5,14 +5,20 @@
 
 import { db } from "@/infrastructure/db";
 import { InventoryIntelligenceSnapshot } from "@/types/intelligence";
+import { intelligenceSnapshots } from "./intelligence-snapshot.service";
 
 export class InventoryIntelligenceService {
   /**
-   * Evaluates inventory intelligence across all tenant product variants
+   * Evaluates inventory intelligence across all tenant product variants and stores the snapshot (one write).
    */
   public analyzeInventoryHealth(tenantId: string): InventoryIntelligenceSnapshot[] {
+    return intelligenceSnapshots.persist(tenantId, "inventory", this.computeInventoryHealth(tenantId));
+  }
+
+  /** Pure (FX-21): stock coverage, stockout risk and reorder quantity per variant. */
+  public computeInventoryHealth(tenantId: string): InventoryIntelligenceSnapshot[] {
     const variants = db.getAllProductVariants(tenantId);
-    const products = db.getProducts(tenantId).products;
+    const products = db.getAllProducts(tenantId);
     const inventory = db.getInventory(tenantId);
     const orders = db.getAllOrders(tenantId, { hydrate: true });
 
@@ -33,11 +39,20 @@ export class InventoryIntelligenceService {
       }
     }
 
+    // Index once so the variant loop is O(V + P + I), not O(V * (P + I)) (FX-23)
+    const productsById = new Map(products.map((p) => [p.id, p]));
+    const inventoryByVariant = new Map<string, typeof inventory>();
+    for (const i of inventory) {
+      const list = inventoryByVariant.get(i.product_variant_id);
+      if (list) list.push(i);
+      else inventoryByVariant.set(i.product_variant_id, [i]);
+    }
+
     const snapshots: InventoryIntelligenceSnapshot[] = [];
 
     for (const v of variants) {
-      const prod = products.find((p) => p.id === v.product_id);
-      const invItems = inventory.filter((i) => i.product_variant_id === v.id);
+      const prod = productsById.get(v.product_id);
+      const invItems = inventoryByVariant.get(v.id) ?? [];
 
       const currentStock = invItems.reduce((acc, i) => acc + i.quantity_on_hand, 0);
       const reservedStock = invItems.reduce((acc, i) => acc + i.quantity_reserved, 0);
@@ -89,7 +104,6 @@ export class InventoryIntelligenceService {
         computed_at: new Date().toISOString(),
       };
 
-      db.upsertInventoryIntelligence(snapshot);
       snapshots.push(snapshot);
     }
 

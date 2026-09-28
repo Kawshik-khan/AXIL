@@ -69,7 +69,7 @@ export class ErpAdapterService {
         }
 
         // Add new product variant if not exists
-        const products = db.getProducts(params.tenantId).products;
+        const products = db.getAllProducts(params.tenantId);
         if (products.length > 0) {
           db.createProductVariant(params.tenantId, {
             product_id: products[0].id,

@@ -7,13 +7,20 @@
 import { db } from "@/infrastructure/db";
 import { Anomaly, InsightSeverity } from "@/types/intelligence";
 import { evidenceService } from "./evidence.service";
+import { intelligenceSnapshots } from "./intelligence-snapshot.service";
 
 export class AnomalyDetectorService {
   /**
-   * Evaluates operational metrics and registers detected anomalies
+   * Evaluates operational metrics and stores detected anomalies (one write, idempotent per metric per day).
    */
   public detectAnomalies(tenantId: string): Anomaly[] {
+    return intelligenceSnapshots.persist(tenantId, "anomalies", this.computeAnomalies(tenantId));
+  }
+
+  /** Pure (FX-21): anomalies detected now. Ids are `anom_${tenant}_${metric}_${day}`, so re-detection is an update. */
+  public computeAnomalies(tenantId: string): Anomaly[] {
     const detected: Anomaly[] = [];
+    const day = new Date().toISOString().slice(0, 10);
     const orders = db.getAllOrders(tenantId, { hydrate: true }).filter((o) => o.status !== "CANCELLED");
     const payments = db.getPayments(tenantId);
     const shipments = db.getShipments(tenantId);
@@ -47,7 +54,7 @@ export class AnomalyDetectorService {
         });
 
         const anomaly: Anomaly = {
-          id: `anom_surge_${Date.now()}_${tenantId}`,
+          id: `anom_${tenantId}_orders_count_${day}`,
           tenant_id: tenantId,
           metric: "orders_count",
           detected_at: new Date().toISOString(),
@@ -64,7 +71,6 @@ export class AnomalyDetectorService {
           created_at: new Date().toISOString(),
         };
 
-        db.insertAnomaly(anomaly);
         detected.push(anomaly);
       }
     }
@@ -83,7 +89,7 @@ export class AnomalyDetectorService {
       });
 
       const anomaly: Anomaly = {
-        id: `anom_pay_${Date.now()}_${tenantId}`,
+        id: `anom_${tenantId}_payment_failure_rate_${day}`,
         tenant_id: tenantId,
         metric: "payment_failure_rate",
         detected_at: new Date().toISOString(),
@@ -100,7 +106,6 @@ export class AnomalyDetectorService {
         created_at: new Date().toISOString(),
       };
 
-      db.insertAnomaly(anomaly);
       detected.push(anomaly);
     }
 
@@ -118,7 +123,7 @@ export class AnomalyDetectorService {
         });
 
         const anomaly: Anomaly = {
-          id: `anom_rto_${Date.now()}_${tenantId}`,
+          id: `anom_${tenantId}_rto_rate_${day}`,
           tenant_id: tenantId,
           metric: "rto_rate",
           detected_at: new Date().toISOString(),
@@ -135,7 +140,6 @@ export class AnomalyDetectorService {
           created_at: new Date().toISOString(),
         };
 
-        db.insertAnomaly(anomaly);
         detected.push(anomaly);
       }
     }

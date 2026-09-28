@@ -5,12 +5,18 @@
 
 import { db } from "@/infrastructure/db";
 import { CohortRecord, CohortPeriodData } from "@/types/intelligence";
+import { intelligenceSnapshots } from "./intelligence-snapshot.service";
 
 export class CohortAnalysisService {
   /**
-   * Evaluates customer cohorts based on first purchase month
+   * Evaluates customer cohorts based on first purchase month and stores them (one write).
    */
   public analyzeCohorts(tenantId: string): CohortRecord[] {
+    return intelligenceSnapshots.persist(tenantId, "cohorts", this.computeCohorts(tenantId));
+  }
+
+  /** Pure (FX-21): monthly acquisition cohorts, scoped to the tenant. */
+  public computeCohorts(tenantId: string): CohortRecord[] {
     const orders = db.getAllOrders(tenantId, { hydrate: true }).filter((o) => o.status !== "CANCELLED");
 
     // 1. Determine each customer's first purchase month
@@ -76,12 +82,13 @@ export class CohortAnalysisService {
       }
 
       const cohortRecord: CohortRecord = {
+        id: `coh_${tenantId}_${cohortMonth}`,
+        tenant_id: tenantId,
         cohort_month: cohortMonth,
         initial_size: initialSize,
         periods,
       };
 
-      db.upsertCohortRecord(cohortRecord);
       records.push(cohortRecord);
     }
 

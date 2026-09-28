@@ -13,9 +13,29 @@ import {
 
 export class SemanticMetricsService {
   /**
+   * The organization's metric definitions: stored ones, or the standard set built in memory when none are stored yet.
+   * Read-only (FX-21).
+   */
+  public listMetrics(orgId: string): MetricDefinition[] {
+    const stored = db.getSemanticMetrics(orgId);
+    return stored.length > 0 ? stored : this.standardMetricDefinitions(orgId);
+  }
+
+  /**
    * Seeds standard enterprise metric definitions for an organization
    */
   public seedStandardMetrics(orgId: string): MetricDefinition[] {
+    const results: MetricDefinition[] = [];
+    for (const m of this.standardMetricDefinitions(orgId)) {
+      const existing = db.findSemanticMetricByKey(orgId, m.key);
+      results.push(existing ?? db.createSemanticMetric(m));
+    }
+    return results;
+  }
+
+  /** Pure: the standard definitions with deterministic ids `metric_${key}_${orgId}`. */
+  private standardMetricDefinitions(orgId: string): MetricDefinition[] {
+    const now = new Date().toISOString();
     const standardMetrics: Array<Omit<MetricDefinition, "id" | "created_at" | "updated_at">> = [
       {
         organization_id: orgId,
@@ -116,23 +136,7 @@ export class SemanticMetricsService {
         version: "1.0.0",
       },
     ];
-
-    const results: MetricDefinition[] = [];
-    for (const m of standardMetrics) {
-      const existing = db.findSemanticMetricByKey(orgId, m.key);
-      if (existing) {
-        results.push(existing);
-      } else {
-        const created = db.createSemanticMetric({
-          ...m,
-          id: `metric_${m.key}_${orgId}`,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        });
-        results.push(created);
-      }
-    }
-    return results;
+    return standardMetrics.map((m) => ({ ...m, id: `metric_${m.key}_${orgId}`, created_at: now, updated_at: now }));
   }
 
   /**
@@ -148,12 +152,10 @@ export class SemanticMetricsService {
    */
   public queryMetric(query: SemanticMetricQuery, tenantId: string): SemanticMetricResult {
     const orgId = "org_default"; // fallback or resolved
-    let metric = db.findSemanticMetricByKey(orgId, query.metric_key);
-    if (!metric) {
-      // Seed default metrics on demand
-      const seeded = this.seedStandardMetrics(orgId);
-      metric = seeded.find((s) => s.key === query.metric_key);
-    }
+    // Stored definition, else the standard one built in memory: querying never writes (FX-21)
+    const metric =
+      db.findSemanticMetricByKey(orgId, query.metric_key) ??
+      this.standardMetricDefinitions(orgId).find((s) => s.key === query.metric_key);
 
     if (!metric) {
       throw new Error(`Semantic metric not registered: ${query.metric_key}`);

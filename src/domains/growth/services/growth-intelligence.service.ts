@@ -12,17 +12,21 @@ import {
 } from "@/types/growth";
 import { ActionRiskLevel } from "@/types/orchestration";
 import { customerLifecycleService } from "./customer-lifecycle.service";
+import { intelligenceSnapshots } from "@/domains/intelligence/services/intelligence-snapshot.service";
 
 export class GrowthIntelligenceService {
   /**
    * Detects growth insights and commercial patterns across customer transactions
    */
   public detectGrowthInsights(tenantId: string): GrowthInsight[] {
-    const existing = db.getGrowthInsights(tenantId);
-    if (existing.length > 0) {
-      return existing;
-    }
+    return intelligenceSnapshots.persist(tenantId, "growth_insights", this.computeGrowthInsights(tenantId));
+  }
 
+  /**
+   * Pure (FX-21): growth insights as of now, with deterministic ids `ins_${tenant}_${type}`. Replaces the old
+   * behaviour of returning the first stored result forever.
+   */
+  public computeGrowthInsights(tenantId: string): GrowthInsight[] {
     const insights: GrowthInsight[] = [];
     const orders = db.getAllOrders(tenantId, { hydrate: true });
     const lifecycles = db.getCustomerLifecycles(tenantId);
@@ -35,7 +39,7 @@ export class GrowthIntelligenceService {
 
     if (highValueDormant.length > 0) {
       insights.push({
-        id: `ins_dormancy_${Date.now()}_${randomSuffix()}`,
+        id: `ins_${tenantId}_high_value_dormancy`,
         tenant_id: tenantId,
         type: "HIGH_VALUE_DORMANCY",
         title: `${highValueDormant.length} High-Value Customers Entering Dormancy`,
@@ -63,7 +67,7 @@ export class GrowthIntelligenceService {
 
     if (totalPurchasers.length >= 5 && repeatRate < 25) {
       insights.push({
-        id: `ins_repeat_drop_${Date.now()}_${randomSuffix()}`,
+        id: `ins_${tenantId}_repeat_purchase_drop`,
         tenant_id: tenantId,
         type: "REPEAT_PURCHASE_DROP",
         title: "Sub-Optimal Repeat Purchase Rate Detected",
@@ -86,11 +90,6 @@ export class GrowthIntelligenceService {
       });
     }
 
-    // Persist insights
-    for (const ins of insights) {
-      db.insertGrowthInsight(ins);
-    }
-
     return insights;
   }
 
@@ -98,12 +97,12 @@ export class GrowthIntelligenceService {
    * Synthesizes 7-factor explainable growth recommendations
    */
   public generateGrowthRecommendations(tenantId: string): GrowthRecommendation[] {
-    const existing = db.getGrowthRecommendations(tenantId);
-    if (existing.length > 0) {
-      return existing;
-    }
+    return intelligenceSnapshots.persist(tenantId, "growth_recommendations", this.computeGrowthRecommendations(tenantId));
+  }
 
-    const insights = this.detectGrowthInsights(tenantId);
+  /** Pure (FX-21): growth recommendations with deterministic ids `grec_${tenant}_${type}`. */
+  public computeGrowthRecommendations(tenantId: string): GrowthRecommendation[] {
+    const insights = this.computeGrowthInsights(tenantId);
     const recommendations: GrowthRecommendation[] = [];
     const now = new Date();
     const expiry = new Date(Date.now() + 7 * 86400000).toISOString();
@@ -111,7 +110,7 @@ export class GrowthIntelligenceService {
     const dormancyInsight = insights.find((i) => i.type === "HIGH_VALUE_DORMANCY");
     if (dormancyInsight) {
       recommendations.push({
-        id: `grec_dormancy_${Date.now()}_${randomSuffix()}`,
+        id: `grec_${tenantId}_vip_dormancy_winback`,
         tenant_id: tenantId,
         title: "Execute VIP Dormancy Win-Back Campaign on WhatsApp",
         strategy: "Target high-value dormant purchasers with an exclusive 15% comeback voucher and personalized top catalog picks.",
@@ -138,7 +137,7 @@ export class GrowthIntelligenceService {
 
     // General Cross-Sell recommendation
     recommendations.push({
-      id: `grec_cross_sell_${Date.now()}_${randomSuffix()}`,
+      id: `grec_${tenantId}_post_delivery_cross_sell`,
       tenant_id: tenantId,
       title: "Activate Automated Post-Delivery Accessory Cross-Sell Journey",
       strategy: "Trigger an automated message 3 days after courier delivery recommending top matching accessories with free delivery subsidy.",
@@ -170,10 +169,6 @@ export class GrowthIntelligenceService {
       status: "PROPOSED",
       created_at: now.toISOString(),
     });
-
-    for (const r of recommendations) {
-      db.insertGrowthRecommendation(r);
-    }
 
     return recommendations;
   }

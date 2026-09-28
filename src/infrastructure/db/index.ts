@@ -205,6 +205,8 @@ import {
   CohortRecord,
   ModelRegistryEntry,
   DataQualityReport,
+  IntelligenceRun,
+  IntelligenceSnapshotCollection,
 } from "@/types/intelligence";
 import {
   Audience,
@@ -421,6 +423,7 @@ export interface DatabaseSchema {
   product_performance: ProductPerformanceSnapshot[];
   inventory_intelligence: InventoryIntelligenceSnapshot[];
   cohort_records: CohortRecord[];
+  intelligence_runs: IntelligenceRun[];
   model_registry: ModelRegistryEntry[];
   data_quality_reports: DataQualityReport[];
   // Phase 7: Autonomous Growth, Marketing & Customer Lifecycle Collections
@@ -814,6 +817,7 @@ class CommerceDatabase {
           product_performance: parsed.product_performance || [],
           inventory_intelligence: parsed.inventory_intelligence || [],
           cohort_records: parsed.cohort_records || [],
+          intelligence_runs: parsed.intelligence_runs || [],
           model_registry: parsed.model_registry || [],
           data_quality_reports: parsed.data_quality_reports || [],
           // Phase 7 Collections
@@ -1061,6 +1065,7 @@ class CommerceDatabase {
       product_performance: [],
       inventory_intelligence: [],
       cohort_records: [],
+      intelligence_runs: [],
       model_registry: [],
       data_quality_reports: [],
       // Phase 7 Collections
@@ -4309,25 +4314,29 @@ class CommerceDatabase {
   }
 
   // ==================== PRODUCTS & VARIANTS ====================
+  /**
+   * One page of products. `limit` is required (FX-22): analytics that need every product must use getAllProducts,
+   * not a silently truncated page.
+   */
   public getProducts(
     tenantId: string,
-    options?: {
+    options: {
       category_id?: string;
       status?: string;
       search?: string;
-      limit?: number;
+      limit: number;
       offset?: number;
     }
   ): { products: Product[]; total: number } {
     let list = this.data.products.filter((p) => p.tenant_id === tenantId);
 
-    if (options?.category_id) {
+    if (options.category_id) {
       list = list.filter((p) => p.category_id === options.category_id);
     }
-    if (options?.status && options.status !== "ALL") {
+    if (options.status && options.status !== "ALL") {
       list = list.filter((p) => p.status === options.status);
     }
-    if (options?.search) {
+    if (options.search) {
       const q = options.search.toLowerCase().trim();
       list = list.filter(
         (p) =>
@@ -4340,17 +4349,31 @@ class CommerceDatabase {
     list.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
     const total = list.length;
-    const offset = options?.offset || 0;
-    const limit = options?.limit || 50;
-    const paginated = list.slice(offset, offset + limit);
+    const offset = options.offset || 0;
+    const paginated = list.slice(offset, offset + options.limit);
 
-    // Attach variants to product objects
-    const populated = paginated.map((p) => ({
-      ...p,
-      variants: this.data.product_variants.filter((v) => v.product_id === p.id && v.tenant_id === tenantId),
-    }));
+    const variantsByProduct = this.variantsByProduct(tenantId, new Set(paginated.map((p) => p.id)));
+    const populated = paginated.map((p) => ({ ...p, variants: variantsByProduct.get(p.id) ?? [] }));
 
     return { products: populated, total };
+  }
+
+  /** Every product of a tenant with its variants, in O(products + variants) (FX-22). For analytics, not UI pages. */
+  public getAllProducts(tenantId: string): Product[] {
+    const products = this.data.products.filter((p) => p.tenant_id === tenantId);
+    const variantsByProduct = this.variantsByProduct(tenantId);
+    return products.map((p) => ({ ...p, variants: variantsByProduct.get(p.id) ?? [] }));
+  }
+
+  private variantsByProduct(tenantId: string, only?: Set<string>): Map<string, ProductVariant[]> {
+    const map = new Map<string, ProductVariant[]>();
+    for (const v of this.data.product_variants) {
+      if (v.tenant_id !== tenantId || (only && !only.has(v.product_id))) continue;
+      const list = map.get(v.product_id);
+      if (list) list.push(v);
+      else map.set(v.product_id, [v]);
+    }
+    return map;
   }
 
   public findProductById(tenantId: string, id: string): Product | undefined {
@@ -4577,9 +4600,15 @@ class CommerceDatabase {
       items = items.filter((i) => i.quantity_available <= i.reorder_point);
     }
 
+    // Per-tenant indexes: O(I + V + P) instead of a scan of every tenant's catalog per row (FX-23)
+    const variantsById = new Map<string, ProductVariant>();
+    for (const v of this.data.product_variants) if (v.tenant_id === tenantId) variantsById.set(v.id, v);
+    const productsById = new Map<string, Product>();
+    for (const p of this.data.products) if (p.tenant_id === tenantId) productsById.set(p.id, p);
+
     return items.map((item) => {
-      const variant = this.data.product_variants.find((v) => v.id === item.product_variant_id);
-      const product = variant ? this.data.products.find((p) => p.id === variant.product_id) : undefined;
+      const variant = variantsById.get(item.product_variant_id);
+      const product = variant ? productsById.get(variant.product_id) : undefined;
       return {
         ...item,
         product_name: product?.name || "Unknown Product",
@@ -5635,6 +5664,15 @@ class CommerceDatabase {
   }
 
   // ==================== SOCIAL COMMERCE: MESSAGES ====================
+  /** Every message in every conversation of one customer (FX-22): frequency caps must count all of them. */
+  public getCustomerMessages(tenantId: string, customerId: string): Message[] {
+    const conversationIds = new Set(
+      this.data.conversations.filter((c) => c.tenant_id === tenantId && c.customer_id === customerId).map((c) => c.id)
+    );
+    if (conversationIds.size === 0) return [];
+    return this.data.messages.filter((m) => m.tenant_id === tenantId && conversationIds.has(m.conversation_id));
+  }
+
   public getMessages(
     tenantId: string,
     conversationId: string,
@@ -6034,8 +6072,7 @@ class CommerceDatabase {
         ],
         updated_at: new Date().toISOString(),
       };
-      this.data.agent_policies.push(policy);
-      this.persist();
+      // Default returned, not stored: reads never write (FX-21). setAIPolicy stores it on the first explicit update.
     }
     return policy;
   }
@@ -7030,19 +7067,86 @@ class CommerceDatabase {
   }
 
   // --- Cohorts ---
+  /** Tenant-scoped (FX-21): cohorts were stored by month only, so tenants overwrote each other's rows. */
   public getCohortRecords(tenantId: string): CohortRecord[] {
-    return [...this.data.cohort_records];
+    return this.data.cohort_records
+      .filter((c) => c.tenant_id === tenantId)
+      .sort((a, b) => a.cohort_month.localeCompare(b.cohort_month));
   }
 
-  public upsertCohortRecord(record: CohortRecord): CohortRecord {
-    const idx = this.data.cohort_records.findIndex((c) => c.cohort_month === record.cohort_month);
-    if (idx !== -1) {
-      this.data.cohort_records[idx] = record;
-    } else {
-      this.data.cohort_records.push(record);
+  // --- Intelligence snapshots (FX-21) ---
+  public getIntelligenceRun(tenantId: string, kind: string): IntelligenceRun | undefined {
+    return this.data.intelligence_runs.find((r) => r.tenant_id === tenantId && r.kind === kind);
+  }
+
+  /** This tenant's stored rows of a snapshot collection with the given ids, in the order of `ids`. */
+  public getComputedRows<T extends { id: string; tenant_id: string }>(
+    collection: IntelligenceSnapshotCollection,
+    tenantId: string,
+    ids: readonly string[]
+  ): T[] {
+    const wanted = new Set(ids);
+    const byId = new Map<string, T>();
+    for (const row of this.data[collection] as unknown as T[]) {
+      if (row.tenant_id === tenantId && wanted.has(row.id)) byId.set(row.id, row);
     }
+    return ids.map((id) => byId.get(id)).filter((r): r is T => r !== undefined);
+  }
+
+  /**
+   * Stores one recomputed snapshot in a single pass and a single persist (FX-21). Rows are matched by their
+   * deterministic id, so recomputing is idempotent instead of appending duplicates. For rows that already exist,
+   * `created_at` and the `keep` fields (e.g. a user's approve/reject decision) survive the recompute.
+   * `replace` also drops this tenant's rows that the recompute no longer produces (per-entity snapshots).
+   */
+  public upsertComputedRows<T extends { id: string; tenant_id: string }>(
+    collection: IntelligenceSnapshotCollection,
+    tenantId: string,
+    kind: string,
+    rows: T[],
+    opts: { keep?: readonly string[]; replace?: boolean } = {}
+  ): T[] {
+    const table = this.data[collection] as unknown as Array<Record<string, unknown> & { id: string; tenant_id: string }>;
+    const incoming = new Map(rows.filter((r) => r.tenant_id === tenantId).map((r) => [r.id, r]));
+    const stored: T[] = [];
+    const next: typeof table = [];
+    for (const existing of table) {
+      if (existing.tenant_id !== tenantId) {
+        next.push(existing);
+        continue;
+      }
+      const fresh = incoming.get(existing.id) as (Record<string, unknown> & T) | undefined;
+      if (!fresh) {
+        if (!opts.replace) next.push(existing);
+        continue;
+      }
+      const merged: Record<string, unknown> = { ...fresh };
+      if (existing.created_at !== undefined) merged.created_at = existing.created_at;
+      for (const key of opts.keep ?? []) if (existing[key] !== undefined) merged[key] = existing[key];
+      next.push(merged as typeof existing);
+      stored.push(merged as unknown as T);
+      incoming.delete(existing.id);
+    }
+    for (const row of incoming.values()) {
+      next.push(row as unknown as (typeof table)[number]);
+      stored.push(row);
+    }
+    (this.data as unknown as Record<string, unknown>)[collection] = next;
+
+    const run: IntelligenceRun = {
+      id: `irun_${tenantId}_${kind}`,
+      tenant_id: tenantId,
+      kind,
+      computed_at: new Date().toISOString(),
+      row_count: rows.length,
+      row_ids: rows.map((r) => r.id),
+    };
+    const runIdx = this.data.intelligence_runs.findIndex((r) => r.id === run.id);
+    if (runIdx === -1) this.data.intelligence_runs.push(run);
+    else this.data.intelligence_runs[runIdx] = run;
+
     this.persist();
-    return record;
+    return stored;
   }
 
   // --- Model Registry ---
@@ -8030,6 +8134,7 @@ class CommerceDatabase {
       product_performance: [],
       inventory_intelligence: [],
       cohort_records: [],
+      intelligence_runs: [],
       model_registry: [],
       data_quality_reports: [],
       // Phase 7 Collections

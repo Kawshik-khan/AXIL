@@ -82,7 +82,7 @@ export class QuickReplyService {
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
-      db.setBusinessHours(hours);
+      // Default returned, not stored: reads never write (FX-21). updateBusinessHours stores it.
     }
     return hours;
   }

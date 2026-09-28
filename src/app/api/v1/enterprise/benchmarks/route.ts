@@ -27,10 +27,11 @@ export async function GET(request: Request) {
       updated_at: new Date().toISOString(),
     };
 
+    // Computed for this request, not stored (FX-21)
     const benchmark =
       benchmarkType === "BRAND"
-        ? enterpriseBenchmarkingService.generateBrandBenchmark(orgId, metricKey, caller)
-        : enterpriseBenchmarkingService.generateStoreBenchmark(orgId, metricKey, caller, context.tenant.id);
+        ? enterpriseBenchmarkingService.generateBrandBenchmark(orgId, metricKey, caller, { persist: false })
+        : enterpriseBenchmarkingService.generateStoreBenchmark(orgId, metricKey, caller, context.tenant.id, { persist: false });
 
     return apiSuccess(benchmark);
   } catch (err) {

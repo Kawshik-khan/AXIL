@@ -33,15 +33,11 @@ export class AutonomyPolicyService {
   }
 
   /**
-   * Retrieves or initializes tenant autonomy policy for an agent
+   * The tenant's autonomy policy for an agent. Read-only (FX-21): a missing policy is returned as the default and
+   * stored only by the explicit update and kill-switch paths, which upsert it.
    */
   public getPolicy(tenantId: string, agentType: AgentType): AutonomyPolicy {
-    let policy = db.getAutonomyPolicy(tenantId, agentType);
-    if (!policy) {
-      policy = this.getDefaultPolicy(tenantId, agentType);
-      db.upsertAutonomyPolicy(tenantId, policy);
-    }
-    return policy;
+    return db.getAutonomyPolicy(tenantId, agentType) ?? this.getDefaultPolicy(tenantId, agentType);
   }
 
   /**

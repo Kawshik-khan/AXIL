@@ -420,7 +420,8 @@ export class CampaignService {
     };
     db.insertCampaignExecution(execRecord);
 
-    const allCustomers = db.getAllCustomers(tenantId);
+    // Every customer of the tenant, indexed once: O(R + C) and no recipient silently dropped (FX-22/FX-23)
+    const customersById = new Map(db.getAllCustomers(tenantId).map((c) => [c.id, c]));
 
     for (const custId of customerIds) {
       if (this.isKillSwitchActive(tenantId)) {
@@ -429,7 +430,7 @@ export class CampaignService {
         break;
       }
 
-      const cust = allCustomers.find((c) => c.id === custId);
+      const cust = customersById.get(custId);
       const recipientContact = campaign.channel === "EMAIL" ? cust?.email : cust?.phone;
 
       if (!recipientContact) {

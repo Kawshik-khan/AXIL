@@ -141,7 +141,7 @@ export class AnalyticsService {
     const refunds = db.getRefunds(tenantId);
     const returns = db.getReturns(tenantId);
     const variants = db.getAllProductVariants(tenantId);
-    const { products } = db.getProducts(tenantId);
+    const products = db.getAllProducts(tenantId);
 
     // Map variant/product unit costs for authoritative COGS calculation
     const costMap = new Map<string, number>();

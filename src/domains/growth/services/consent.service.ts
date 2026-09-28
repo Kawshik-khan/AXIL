@@ -132,8 +132,8 @@ export class FrequencyCappingService {
     const oneWeekAgo = now - 7 * 24 * 3600 * 1000;
 
     // Check messages in conversation database
-    const convs = db.getConversations(tenantId).conversations.filter((c) => c.customer_id === customerId);
-    const allMessages = convs.flatMap((c) => db.getMessages(tenantId, c.id).messages);
+    // Every message of the customer, not the first page of conversations/messages (FX-22)
+    const allMessages = db.getCustomerMessages(tenantId, customerId);
 
     const marketingMessages = allMessages.filter(
       (m) => m.sender_type === "AGENT" || m.sender_type === "BOT" || (m.metadata as any)?.is_marketing === true

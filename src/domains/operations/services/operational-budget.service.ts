@@ -9,14 +9,15 @@ import { AutonomyBudget } from "@/types/operations";
 
 export class OperationalBudgetService {
   /**
-   * Retrieves or initializes the tenant's operational budget
+   * The tenant's operational budget as of today. Read-only (FX-21): a missing budget is returned as the default and a
+   * new day's reset is applied to a copy. Callers that change the budget store it with upsertAutonomyBudget.
    */
   public getBudget(tenantId: string): AutonomyBudget {
-    let budget = db.getAutonomyBudget(tenantId);
+    const stored = db.getAutonomyBudget(tenantId);
     const today = new Date().toISOString().split("T")[0];
 
-    if (!budget) {
-      budget = {
+    if (!stored) {
+      return {
         id: `bud_${tenantId}`,
         tenant_id: tenantId,
         daily_max_actions: 250,
@@ -31,19 +32,20 @@ export class OperationalBudgetService {
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
-      db.upsertAutonomyBudget(budget);
-    } else if (budget.last_reset_date !== today) {
-      // Automatic daily quota reset
-      budget.actions_used_today = 0;
-      budget.spend_used_today_bdt = 0;
-      budget.llm_cost_used_today_usd = 0;
-      budget.is_budget_exhausted = false;
-      budget.last_reset_date = today;
-      budget.updated_at = new Date().toISOString();
-      db.upsertAutonomyBudget(budget);
     }
-
-    return budget;
+    if (stored.last_reset_date !== today) {
+      // Automatic daily quota reset
+      return {
+        ...stored,
+        actions_used_today: 0,
+        spend_used_today_bdt: 0,
+        llm_cost_used_today_usd: 0,
+        is_budget_exhausted: false,
+        last_reset_date: today,
+        updated_at: new Date().toISOString(),
+      };
+    }
+    return { ...stored };
   }
 
   public updateBudget(tenantId: string, updates: Partial<AutonomyBudget>): AutonomyBudget {

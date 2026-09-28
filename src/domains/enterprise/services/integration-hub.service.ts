@@ -13,11 +13,33 @@ import {
 
 export class IntegrationHubService {
   /**
-   * Initializes standard supported integration catalog
+   * The integration catalog: stored providers plus the built-in defaults not stored yet. Read-only (FX-21).
+   */
+  public listProviders(): IntegrationProvider[] {
+    const stored = db.getIntegrationProviders();
+    const storedIds = new Set(stored.map((p) => p.id));
+    return [...stored, ...this.defaultProviders().filter((p) => !storedIds.has(p.id))];
+  }
+
+  /**
+   * Stores the built-in integration catalog (called by the install path, not by reads).
    */
   public seedDefaultProviders(): IntegrationProvider[] {
-    db.markDirty(); // persists direct changes to db.data (FX-20)
-    const defaultProviders: IntegrationProvider[] = [
+    const defaultProviders = this.defaultProviders();
+    let added = false;
+    for (const p of defaultProviders) {
+      const existing = db.getIntegrationProviders().find((item) => item.id === p.id);
+      if (!existing) {
+        db.data.integration_providers.push(p);
+        added = true;
+      }
+    }
+    if (added) db.markDirty(); // persists direct changes to db.data (FX-20)
+    return db.getIntegrationProviders();
+  }
+
+  private defaultProviders(): IntegrationProvider[] {
+    return [
       {
         id: "prov_sap_s4hana",
         name: "SAP S/4HANA",
@@ -67,14 +89,6 @@ export class IntegrationHubService {
         description: "Multi-store web storefront catalog and order webhook pipeline.",
       },
     ];
-
-    for (const p of defaultProviders) {
-      const existing = db.getIntegrationProviders().find((item) => item.id === p.id);
-      if (!existing) {
-        db.data.integration_providers.push(p);
-      }
-    }
-    return db.getIntegrationProviders();
   }
 
   /**

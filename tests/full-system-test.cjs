@@ -8,6 +8,7 @@ const testSuites = [
   { name: 'Phase 1 (remediation): Integrity', file: 'tests/phase1-integrity-tests.ts' },
   { name: 'Phase 2: Persistence', file: 'tests/persistence-tests.ts' },
   { name: 'Phase 2: Analytics see every row', file: 'tests/phase2-analytics-tests.ts' },
+  { name: 'Phase 2: GET requests are write-free', file: 'tests/phase2-readonly-tests.ts' },
   { name: 'Phase 1: Auth & IAM Security', file: 'tests/run-tests.ts' },
   { name: 'Phase 2: Commerce Core & Catalog', file: 'tests/commerce-tests.ts' },
   { name: 'Phase 3: Social Commerce & Meta Ingress', file: 'tests/social-tests.ts' },

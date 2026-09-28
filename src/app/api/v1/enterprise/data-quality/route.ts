@@ -12,7 +12,7 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const orgId = resolveOrganizationId(context, searchParams.get("organization_id"));
 
-    const issues = dataQualityService.runQualityAudit(orgId, context.tenant.id);
+    const issues = dataQualityService.previewQualityAudit(orgId, context.tenant.id); // read-only (FX-21)
     const rules = db.getDataQualityRules(orgId);
 
     return apiSuccess({

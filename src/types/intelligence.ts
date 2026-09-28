@@ -503,9 +503,37 @@ export interface CohortPeriodData {
 }
 
 export interface CohortRecord {
+  /** `coh_${tenant_id}_${cohort_month}`; rows written before FX-21 had no id or tenant and are ignored. */
+  id: string;
+  tenant_id: string;
   cohort_month: string; // e.g. "2026-01"
   initial_size: number;
   periods: CohortPeriodData[];
+}
+
+/** Collections holding computed intelligence snapshots, written only by an explicit recompute (FX-21). */
+export type IntelligenceSnapshotCollection =
+  | "customer_intelligence"
+  | "product_performance"
+  | "inventory_intelligence"
+  | "anomalies"
+  | "opportunities"
+  | "risks"
+  | "recommendations"
+  | "cohort_records"
+  | "data_quality_reports"
+  | "growth_insights"
+  | "growth_recommendations";
+
+/** When a tenant's snapshot of one intelligence kind was last recomputed and stored (FX-21). */
+export interface IntelligenceRun {
+  id: string; // `irun_${tenant_id}_${kind}`
+  tenant_id: string;
+  kind: string;
+  computed_at: string;
+  row_count: number;
+  /** Ids the recompute produced, in order: a snapshot read returns exactly these rows. */
+  row_ids: string[];
 }
 
 // ============================================================

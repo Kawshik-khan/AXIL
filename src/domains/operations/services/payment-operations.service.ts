@@ -11,9 +11,23 @@ import { Payment } from "@/types/commerce";
 
 export class PaymentOperationsService {
   /**
-   * Evaluates pending online payments and flags timed-out or stuck transactions
+   * Evaluates pending online payments and flags timed-out or stuck transactions (records the new exceptions).
    */
   public monitorPendingPayments(tenantId: string): PaymentException[] {
+    const exceptions = this.detectNewTimeouts(tenantId);
+    for (const exc of exceptions) db.createPaymentException(exc);
+    return exceptions;
+  }
+
+  /**
+   * Read-only view for GET requests (FX-21): unresolved recorded exceptions plus timeouts detected now, nothing stored.
+   */
+  public previewPaymentExceptions(tenantId: string): PaymentException[] {
+    const open = db.getPaymentExceptions(tenantId).filter((e) => e.status !== "RESOLVED");
+    return [...open, ...this.detectNewTimeouts(tenantId)];
+  }
+
+  private detectNewTimeouts(tenantId: string): PaymentException[] {
     const payments = db.getPayments(tenantId);
     const existingExceptions = db.getPaymentExceptions(tenantId);
     const exceptions: PaymentException[] = [];
@@ -41,8 +55,6 @@ export class PaymentOperationsService {
           status: "OPEN",
           created_at: new Date().toISOString(),
         };
-
-        db.createPaymentException(exc);
         exceptions.push(exc);
       }
     }

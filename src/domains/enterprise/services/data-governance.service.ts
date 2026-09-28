@@ -72,7 +72,33 @@ export class DataGovernanceService {
   /**
    * Seeds default governed data assets for an organization if none exist
    */
+  /**
+   * The organization's data assets: stored ones, or the default catalogue built in memory when none are stored yet.
+   * Read-only (FX-21).
+   */
+  public listAssets(orgId: string): DataAsset[] {
+    const stored = db.getDataAssets(orgId);
+    if (stored.length > 0) return stored;
+    const now = new Date().toISOString();
+    return this.defaultAssetParams().map((a) => ({
+      id: `asset_${a.domain.toLowerCase()}_default_${orgId}`,
+      organization_id: orgId,
+      name: a.name,
+      domain: a.domain,
+      classification: a.classification,
+      pii_contained: a.piiContained,
+      pii_fields: a.piiFields || [],
+      retention_days: a.retentionDays || 365,
+      owner_team: a.ownerTeam,
+      created_at: now,
+    }));
+  }
+
   public seedDefaultAssets(orgId: string): DataAsset[] {
+    return this.defaultAssetParams().map((asset) => this.registerAsset(orgId, asset));
+  }
+
+  private defaultAssetParams(): Array<Parameters<DataGovernanceService["registerAsset"]>[1]> {
     const defaultAssets: Array<Parameters<DataGovernanceService["registerAsset"]>[1]> = [
       {
         name: "Enterprise Customer Directory",
@@ -109,8 +135,7 @@ export class DataGovernanceService {
         ownerTeam: "Enterprise Treasury",
       },
     ];
-
-    return defaultAssets.map((asset) => this.registerAsset(orgId, asset));
+    return defaultAssets;
   }
 }
 

@@ -5,15 +5,23 @@
 
 import { db } from "@/infrastructure/db";
 import { DataQualityReport, DataQualityCheck } from "@/types/intelligence";
+import { intelligenceSnapshots } from "./intelligence-snapshot.service";
 
 export class DataQualityService {
   /**
-   * Runs comprehensive data quality and consistency checks for a tenant
+   * Runs the data quality checks and stores today's report (one write, idempotent per day).
    */
   public runDataQualityAudit(tenantId: string): DataQualityReport {
+    const report = this.computeDataQualityReport(tenantId);
+    intelligenceSnapshots.persist(tenantId, "data_quality", [report]);
+    return report;
+  }
+
+  /** Pure (FX-21): the data quality report as of now. */
+  public computeDataQualityReport(tenantId: string): DataQualityReport {
     const orders = db.getAllOrders(tenantId, { hydrate: true });
     const customers = db.getAllCustomers(tenantId);
-    const products = db.getProducts(tenantId).products;
+    const products = db.getAllProducts(tenantId);
     const events = db.getAnalyticsEvents(tenantId);
 
     const checks: DataQualityCheck[] = [];
@@ -67,7 +75,7 @@ export class DataQualityService {
     const overallScore = Math.round((passedChecks / checks.length) * 100);
 
     const report: DataQualityReport = {
-      id: `dqr_${Date.now()}_${tenantId}`,
+      id: `dqr_${tenantId}_${new Date().toISOString().slice(0, 10)}`,
       tenant_id: tenantId,
       overall_score_pct: overallScore,
       checks,
@@ -77,7 +85,6 @@ export class DataQualityService {
       generated_at: new Date().toISOString(),
     };
 
-    db.insertDataQualityReport(report);
     return report;
   }
 }

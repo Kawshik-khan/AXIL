@@ -20,7 +20,8 @@ export class EnterpriseBenchmarkingService {
     orgId: string,
     metricKey: string,
     caller: EnterpriseUserRecord,
-    tenantId: string
+    tenantId: string,
+    opts: { persist?: boolean } = {}
   ): EnterpriseBenchmark {
     const stores = enterpriseDataAccessService.getAuthorizedStores(caller);
     const orders = db.getAllOrders(tenantId, { hydrate: true });
@@ -86,7 +87,7 @@ export class EnterpriseBenchmarkingService {
       generated_at: new Date().toISOString(),
     };
 
-    return db.createEnterpriseBenchmark(benchmark);
+    return opts.persist === false ? benchmark : db.createEnterpriseBenchmark(benchmark); // GETs don't store (FX-21)
   }
 
   /**
@@ -95,7 +96,8 @@ export class EnterpriseBenchmarkingService {
   public generateBrandBenchmark(
     orgId: string,
     metricKey: string,
-    caller: EnterpriseUserRecord
+    caller: EnterpriseUserRecord,
+    opts: { persist?: boolean } = {}
   ): EnterpriseBenchmark {
     const brands = enterpriseDataAccessService.getAuthorizedBrands(caller);
 
@@ -137,7 +139,7 @@ export class EnterpriseBenchmarkingService {
       generated_at: new Date().toISOString(),
     };
 
-    return db.createEnterpriseBenchmark(benchmark);
+    return opts.persist === false ? benchmark : db.createEnterpriseBenchmark(benchmark); // GETs don't store (FX-21)
   }
 }
 

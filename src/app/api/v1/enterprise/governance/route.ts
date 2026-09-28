@@ -12,10 +12,7 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const orgId = resolveOrganizationId(context, searchParams.get("organization_id"));
 
-    let assets = db.getDataAssets(orgId);
-    if (assets.length === 0) {
-      assets = dataGovernanceService.seedDefaultAssets(orgId);
-    }
+    const assets = dataGovernanceService.listAssets(orgId); // read-only (FX-21)
 
     return apiSuccess({
       total_assets: assets.length,

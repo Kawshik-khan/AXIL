@@ -12,7 +12,7 @@ export async function GET(request: Request) {
     const tenantId = context.tenant.id;
 
     const payments = db.getPayments(tenantId);
-    const exceptions = paymentOperationsService.monitorPendingPayments(tenantId);
+    const exceptions = paymentOperationsService.previewPaymentExceptions(tenantId); // read-only (FX-21)
 
     return apiSuccess({
       total_payments: payments.length,
