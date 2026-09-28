@@ -300,11 +300,16 @@ export interface GrowthCampaign {
 export interface CampaignSimulationSnapshot {
   simulated_at: string;
   estimated_reach: number;
+  /** An assumption, listed in `assumptions`, not a measurement. */
   expected_conversion_rate: number;
   expected_orders: number;
-  expected_revenue_bdt: number;
+  /** null when the tenant has no orders to take an average order value from. */
+  expected_revenue_bdt: number | null;
   expected_cost_bdt: number;
-  expected_margin_delta_pct: number;
+  /** Not estimated (no margin model); kept for compatibility. */
+  expected_margin_delta_pct: number | null;
+  /** Every input that isn't the tenant's own data (FX-30). */
+  assumptions: string[];
   simulated_label: "SIMULATED";
 }
 
@@ -315,12 +320,17 @@ export interface CampaignResult {
   messages_delivered: number;
   messages_failed: number;
   messages_suppressed: number;
-  engagements: number;
-  conversions: number;
-  attributed_revenue_bdt: number;
-  incremental_revenue_bdt: number;
+  /** null until engagement is measured (no delivery/read receipts yet). */
+  engagements: number | null;
+  /** Orders attributed to this campaign so far; null until attribution has run. */
+  conversions: number | null;
+  attributed_revenue_bdt: number | null;
+  /** Needs a control group; not measured (FX-30). */
+  incremental_revenue_bdt: number | null;
   total_cost_bdt: number;
-  roas: number;
+  roas: number | null;
+  /** NOT_MEASURED at send time; outcomes come from recorded attributions, never from assumed rates. */
+  attribution_status: "NOT_MEASURED" | "MEASURED";
   evaluated_at: string;
 }
 
@@ -613,7 +623,8 @@ export interface CampaignAttribution {
   attribution_model: AttributionModel;
   touchpoints: AttributionTouch[];
   campaign_credits: Record<string, { attributed_revenue_bdt: number; share_pct: number }>;
-  incremental_revenue_estimated_bdt: number;
+  /** Needs a control group to measure; null (FX-30). Older rows may hold an assumed 70% figure. */
+  incremental_revenue_estimated_bdt: number | null;
   created_at: string;
 }
 

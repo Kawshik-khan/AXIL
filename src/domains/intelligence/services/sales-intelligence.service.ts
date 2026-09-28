@@ -44,7 +44,7 @@ export class SalesIntelligenceService {
       return t >= cutoff && o.status !== "CANCELLED";
     });
 
-    const totalRevenue = periodOrders.reduce((sum: number, o: any) => sum + (o.total_amount || 0), 0);
+    const totalRevenue = periodOrders.reduce((sum: number, o: any) => sum + (o.grand_total || 0), 0);
     const totalOrders = periodOrders.length;
     const velocity = Number((totalRevenue / Math.max(days, 1)).toFixed(2));
 

@@ -19,7 +19,7 @@ import { DataAsset, DataQualityIssue, EnterpriseAIBudget } from "@/types/enterpr
 export default function EnterpriseGovernancePage() {
   const [assets, setAssets] = useState<DataAsset[]>([]);
   const [issues, setIssues] = useState<DataQualityIssue[]>([]);
-  const [qualityScore, setQualityScore] = useState<number>(100);
+  const [qualityScore, setQualityScore] = useState<number | null>(null);
   const [budget, setBudget] = useState<EnterpriseAIBudget | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -40,7 +40,7 @@ export default function EnterpriseGovernancePage() {
 
       setAssets(govData.data?.assets || []);
       setIssues(qData.data?.issues || []);
-      setQualityScore(qData.data?.health_score_pct || 100);
+      setQualityScore(typeof qData.data?.health_score_pct === "number" ? qData.data.health_score_pct : null);
       setBudget(aiData.data?.budget || null);
     } catch (err) {
       console.error(err);
@@ -80,8 +80,8 @@ export default function EnterpriseGovernancePage() {
       <div className={styles.bentoGrid}>
         <div className={`${styles.col4} ${styles.statCard}`}>
           <div className={styles.statLabel}>Data Quality Score</div>
-          <div className={styles.statValue} style={{ color: qualityScore >= 90 ? "#c7f900" : "#f59e0b" }}>
-            {qualityScore}%
+          <div className={styles.statValue} style={{ color: qualityScore !== null && qualityScore >= 90 ? "#c7f900" : "#f59e0b" }}>
+            {qualityScore === null ? "—" : `${qualityScore}%`}
           </div>
           <div className={styles.statMeta}>
             {issues.length} open referential / missing field defects

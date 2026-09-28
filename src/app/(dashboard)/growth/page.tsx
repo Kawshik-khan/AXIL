@@ -151,7 +151,7 @@ export default function GrowthCommandCenterPage() {
             ৳{(attribution?.total_attributed_revenue_bdt || 0).toLocaleString()}
           </div>
           <div className={styles.metricSubtext}>
-            <span className={styles.badgePositive}>+৳{(attribution?.total_incremental_revenue_bdt || 0).toLocaleString()} incremental</span>
+            <span className={styles.metricSubtext}>Incremental lift not measured (needs a control group)</span>
           </div>
         </div>
 
@@ -187,10 +187,10 @@ export default function GrowthCommandCenterPage() {
             <TrendingUp size={16} color="var(--color-lime-primary, #C7F900)" />
           </div>
           <div className={styles.metricValue}>
-            {attribution?.blended_roas || "5.4"}x
+            {typeof attribution?.blended_roas === "number" ? `${attribution.blended_roas}x` : "—"}
           </div>
           <div className={styles.metricSubtext}>
-            <span className={styles.badgePositive}>Verified margin safe</span>
+            <span className={styles.metricSubtext}>Attributed revenue ÷ campaign spend</span>
           </div>
         </div>
       </div>
@@ -587,7 +587,9 @@ export default function GrowthCommandCenterPage() {
                       </span>
                     </td>
                     <td style={{ fontWeight: 600 }}>
-                      ৳{(cmp.result_metrics?.attributed_revenue_bdt || 0).toLocaleString()}
+                      {typeof cmp.result_metrics?.attributed_revenue_bdt === "number"
+                        ? `৳${cmp.result_metrics.attributed_revenue_bdt.toLocaleString()}`
+                        : "Not measured"}
                     </td>
                     <td>
                       {cmp.status === "APPROVED" || cmp.status === "SCHEDULED" ? (

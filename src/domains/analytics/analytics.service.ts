@@ -25,110 +25,143 @@ import {
   SalesChannel,
 } from "@/types/analytics";
 import { Order, OrderStatus } from "@/types/commerce";
+import { PricingService } from "@/domains/pricing/pricing.service";
 
-// Canonical Registry of all 64 Districts in Bangladesh mapped to 8 Administrative Divisions
-export interface DistrictSeedSpec {
+// All 64 districts of Bangladesh by division. Geography only: every count comes from the tenant's orders (FX-30).
+export interface DistrictSpec {
   district: string;
   division: string;
   zone: DeliveryZone;
-  baseOrders: number;
-  baseDelivered: number;
-  baseRto: number;
-  baseCodShare: number;
 }
 
-export const BD_64_DISTRICTS: DistrictSeedSpec[] = [
+export const BD_64_DISTRICTS: DistrictSpec[] = [
   // Dhaka Division (13 Districts)
-  { district: "Dhaka", division: "Dhaka", zone: "INSIDE_DHAKA", baseOrders: 420, baseDelivered: 402, baseRto: 18, baseCodShare: 68 },
-  { district: "Gazipur", division: "Dhaka", zone: "OUTSIDE_DHAKA", baseOrders: 115, baseDelivered: 106, baseRto: 9, baseCodShare: 78 },
-  { district: "Narayanganj", division: "Dhaka", zone: "OUTSIDE_DHAKA", baseOrders: 98, baseDelivered: 91, baseRto: 7, baseCodShare: 75 },
-  { district: "Narsingdi", division: "Dhaka", zone: "OUTSIDE_DHAKA", baseOrders: 54, baseDelivered: 49, baseRto: 5, baseCodShare: 80 },
-  { district: "Tangail", division: "Dhaka", zone: "OUTSIDE_DHAKA", baseOrders: 62, baseDelivered: 57, baseRto: 5, baseCodShare: 82 },
-  { district: "Kishoreganj", division: "Dhaka", zone: "OUTSIDE_DHAKA", baseOrders: 48, baseDelivered: 43, baseRto: 5, baseCodShare: 85 },
-  { district: "Manikganj", division: "Dhaka", zone: "OUTSIDE_DHAKA", baseOrders: 41, baseDelivered: 38, baseRto: 3, baseCodShare: 79 },
-  { district: "Munshiganj", division: "Dhaka", zone: "OUTSIDE_DHAKA", baseOrders: 39, baseDelivered: 36, baseRto: 3, baseCodShare: 81 },
-  { district: "Faridpur", division: "Dhaka", zone: "OUTSIDE_DHAKA", baseOrders: 45, baseDelivered: 41, baseRto: 4, baseCodShare: 84 },
-  { district: "Gopalganj", division: "Dhaka", zone: "OUTSIDE_DHAKA", baseOrders: 34, baseDelivered: 31, baseRto: 3, baseCodShare: 86 },
-  { district: "Madaripur", division: "Dhaka", zone: "OUTSIDE_DHAKA", baseOrders: 29, baseDelivered: 26, baseRto: 3, baseCodShare: 88 },
-  { district: "Rajbari", division: "Dhaka", zone: "OUTSIDE_DHAKA", baseOrders: 27, baseDelivered: 24, baseRto: 3, baseCodShare: 85 },
-  { district: "Shariatpur", division: "Dhaka", zone: "OUTSIDE_DHAKA", baseOrders: 26, baseDelivered: 23, baseRto: 3, baseCodShare: 87 },
+  { district: "Dhaka", division: "Dhaka", zone: "INSIDE_DHAKA" },
+  { district: "Gazipur", division: "Dhaka", zone: "OUTSIDE_DHAKA" },
+  { district: "Narayanganj", division: "Dhaka", zone: "OUTSIDE_DHAKA" },
+  { district: "Narsingdi", division: "Dhaka", zone: "OUTSIDE_DHAKA" },
+  { district: "Tangail", division: "Dhaka", zone: "OUTSIDE_DHAKA" },
+  { district: "Kishoreganj", division: "Dhaka", zone: "OUTSIDE_DHAKA" },
+  { district: "Manikganj", division: "Dhaka", zone: "OUTSIDE_DHAKA" },
+  { district: "Munshiganj", division: "Dhaka", zone: "OUTSIDE_DHAKA" },
+  { district: "Faridpur", division: "Dhaka", zone: "OUTSIDE_DHAKA" },
+  { district: "Gopalganj", division: "Dhaka", zone: "OUTSIDE_DHAKA" },
+  { district: "Madaripur", division: "Dhaka", zone: "OUTSIDE_DHAKA" },
+  { district: "Rajbari", division: "Dhaka", zone: "OUTSIDE_DHAKA" },
+  { district: "Shariatpur", division: "Dhaka", zone: "OUTSIDE_DHAKA" },
 
   // Chattogram Division (11 Districts)
-  { district: "Chattogram", division: "Chattogram", zone: "OUTSIDE_DHAKA", baseOrders: 260, baseDelivered: 244, baseRto: 16, baseCodShare: 72 },
-  { district: "Cox's Bazar", division: "Chattogram", zone: "OUTSIDE_DHAKA", baseOrders: 66, baseDelivered: 54, baseRto: 12, baseCodShare: 91 }, // High RTO (18.2%)
-  { district: "Cumilla", division: "Chattogram", zone: "OUTSIDE_DHAKA", baseOrders: 110, baseDelivered: 102, baseRto: 8, baseCodShare: 79 },
-  { district: "Feni", division: "Chattogram", zone: "OUTSIDE_DHAKA", baseOrders: 58, baseDelivered: 54, baseRto: 4, baseCodShare: 76 },
-  { district: "Brahmanbaria", division: "Chattogram", zone: "OUTSIDE_DHAKA", baseOrders: 64, baseDelivered: 59, baseRto: 5, baseCodShare: 83 },
-  { district: "Noakhali", division: "Chattogram", zone: "OUTSIDE_DHAKA", baseOrders: 52, baseDelivered: 47, baseRto: 5, baseCodShare: 84 },
-  { district: "Lakshmipur", division: "Chattogram", zone: "OUTSIDE_DHAKA", baseOrders: 38, baseDelivered: 34, baseRto: 4, baseCodShare: 86 },
-  { district: "Chandpur", division: "Chattogram", zone: "OUTSIDE_DHAKA", baseOrders: 44, baseDelivered: 40, baseRto: 4, baseCodShare: 82 },
-  { district: "Khagrachhari", division: "Chattogram", zone: "OUTSIDE_DHAKA", baseOrders: 22, baseDelivered: 19, baseRto: 3, baseCodShare: 93 },
-  { district: "Rangamati", division: "Chattogram", zone: "OUTSIDE_DHAKA", baseOrders: 20, baseDelivered: 17, baseRto: 3, baseCodShare: 92 },
-  { district: "Bandarban", division: "Chattogram", zone: "OUTSIDE_DHAKA", baseOrders: 18, baseDelivered: 15, baseRto: 3, baseCodShare: 94 },
+  { district: "Chattogram", division: "Chattogram", zone: "OUTSIDE_DHAKA" },
+  { district: "Cox's Bazar", division: "Chattogram", zone: "OUTSIDE_DHAKA" },
+  { district: "Cumilla", division: "Chattogram", zone: "OUTSIDE_DHAKA" },
+  { district: "Feni", division: "Chattogram", zone: "OUTSIDE_DHAKA" },
+  { district: "Brahmanbaria", division: "Chattogram", zone: "OUTSIDE_DHAKA" },
+  { district: "Noakhali", division: "Chattogram", zone: "OUTSIDE_DHAKA" },
+  { district: "Lakshmipur", division: "Chattogram", zone: "OUTSIDE_DHAKA" },
+  { district: "Chandpur", division: "Chattogram", zone: "OUTSIDE_DHAKA" },
+  { district: "Khagrachhari", division: "Chattogram", zone: "OUTSIDE_DHAKA" },
+  { district: "Rangamati", division: "Chattogram", zone: "OUTSIDE_DHAKA" },
+  { district: "Bandarban", division: "Chattogram", zone: "OUTSIDE_DHAKA" },
 
   // Rajshahi Division (8 Districts)
-  { district: "Rajshahi", division: "Rajshahi", zone: "OUTSIDE_DHAKA", baseOrders: 140, baseDelivered: 131, baseRto: 9, baseCodShare: 74 },
-  { district: "Bogura", division: "Rajshahi", zone: "OUTSIDE_DHAKA", baseOrders: 95, baseDelivered: 89, baseRto: 6, baseCodShare: 77 },
-  { district: "Pabna", division: "Rajshahi", zone: "OUTSIDE_DHAKA", baseOrders: 56, baseDelivered: 51, baseRto: 5, baseCodShare: 81 },
-  { district: "Sirajganj", division: "Rajshahi", zone: "OUTSIDE_DHAKA", baseOrders: 49, baseDelivered: 45, baseRto: 4, baseCodShare: 83 },
-  { district: "Naogaon", division: "Rajshahi", zone: "OUTSIDE_DHAKA", baseOrders: 42, baseDelivered: 38, baseRto: 4, baseCodShare: 85 },
-  { district: "Natore", division: "Rajshahi", zone: "OUTSIDE_DHAKA", baseOrders: 36, baseDelivered: 33, baseRto: 3, baseCodShare: 82 },
-  { district: "Chapainawabganj", division: "Rajshahi", zone: "OUTSIDE_DHAKA", baseOrders: 31, baseDelivered: 28, baseRto: 3, baseCodShare: 87 },
-  { district: "Joypurhat", division: "Rajshahi", zone: "OUTSIDE_DHAKA", baseOrders: 25, baseDelivered: 23, baseRto: 2, baseCodShare: 84 },
+  { district: "Rajshahi", division: "Rajshahi", zone: "OUTSIDE_DHAKA" },
+  { district: "Bogura", division: "Rajshahi", zone: "OUTSIDE_DHAKA" },
+  { district: "Pabna", division: "Rajshahi", zone: "OUTSIDE_DHAKA" },
+  { district: "Sirajganj", division: "Rajshahi", zone: "OUTSIDE_DHAKA" },
+  { district: "Naogaon", division: "Rajshahi", zone: "OUTSIDE_DHAKA" },
+  { district: "Natore", division: "Rajshahi", zone: "OUTSIDE_DHAKA" },
+  { district: "Chapainawabganj", division: "Rajshahi", zone: "OUTSIDE_DHAKA" },
+  { district: "Joypurhat", division: "Rajshahi", zone: "OUTSIDE_DHAKA" },
 
   // Khulna Division (10 Districts)
-  { district: "Khulna", division: "Khulna", zone: "OUTSIDE_DHAKA", baseOrders: 135, baseDelivered: 126, baseRto: 9, baseCodShare: 73 },
-  { district: "Jashore", division: "Khulna", zone: "OUTSIDE_DHAKA", baseOrders: 88, baseDelivered: 82, baseRto: 6, baseCodShare: 78 },
-  { district: "Kushtia", division: "Khulna", zone: "OUTSIDE_DHAKA", baseOrders: 54, baseDelivered: 50, baseRto: 4, baseCodShare: 80 },
-  { district: "Jhenaidah", division: "Khulna", zone: "OUTSIDE_DHAKA", baseOrders: 39, baseDelivered: 36, baseRto: 3, baseCodShare: 83 },
-  { district: "Chuadanga", division: "Khulna", zone: "OUTSIDE_DHAKA", baseOrders: 30, baseDelivered: 27, baseRto: 3, baseCodShare: 86 },
-  { district: "Meherpur", division: "Khulna", zone: "OUTSIDE_DHAKA", baseOrders: 24, baseDelivered: 22, baseRto: 2, baseCodShare: 88 },
-  { district: "Magura", division: "Khulna", zone: "OUTSIDE_DHAKA", baseOrders: 28, baseDelivered: 26, baseRto: 2, baseCodShare: 84 },
-  { district: "Narail", division: "Khulna", zone: "OUTSIDE_DHAKA", baseOrders: 22, baseDelivered: 20, baseRto: 2, baseCodShare: 85 },
-  { district: "Satkhira", division: "Khulna", zone: "OUTSIDE_DHAKA", baseOrders: 40, baseDelivered: 36, baseRto: 4, baseCodShare: 89 },
-  { district: "Bagerhat", division: "Khulna", zone: "OUTSIDE_DHAKA", baseOrders: 32, baseDelivered: 29, baseRto: 3, baseCodShare: 87 },
+  { district: "Khulna", division: "Khulna", zone: "OUTSIDE_DHAKA" },
+  { district: "Jashore", division: "Khulna", zone: "OUTSIDE_DHAKA" },
+  { district: "Kushtia", division: "Khulna", zone: "OUTSIDE_DHAKA" },
+  { district: "Jhenaidah", division: "Khulna", zone: "OUTSIDE_DHAKA" },
+  { district: "Chuadanga", division: "Khulna", zone: "OUTSIDE_DHAKA" },
+  { district: "Meherpur", division: "Khulna", zone: "OUTSIDE_DHAKA" },
+  { district: "Magura", division: "Khulna", zone: "OUTSIDE_DHAKA" },
+  { district: "Narail", division: "Khulna", zone: "OUTSIDE_DHAKA" },
+  { district: "Satkhira", division: "Khulna", zone: "OUTSIDE_DHAKA" },
+  { district: "Bagerhat", division: "Khulna", zone: "OUTSIDE_DHAKA" },
 
   // Barishal Division (6 Districts)
-  { district: "Barishal", division: "Barishal", zone: "OUTSIDE_DHAKA", baseOrders: 92, baseDelivered: 84, baseRto: 8, baseCodShare: 81 },
-  { district: "Patuakhali", division: "Barishal", zone: "OUTSIDE_DHAKA", baseOrders: 42, baseDelivered: 37, baseRto: 5, baseCodShare: 87 },
-  { district: "Bhola", division: "Barishal", zone: "OUTSIDE_DHAKA", baseOrders: 38, baseDelivered: 33, baseRto: 5, baseCodShare: 90 },
-  { district: "Pirojpur", division: "Barishal", zone: "OUTSIDE_DHAKA", baseOrders: 28, baseDelivered: 25, baseRto: 3, baseCodShare: 86 },
-  { district: "Barguna", division: "Barishal", zone: "OUTSIDE_DHAKA", baseOrders: 26, baseDelivered: 22, baseRto: 4, baseCodShare: 92 },
-  { district: "Jhalokati", division: "Barishal", zone: "OUTSIDE_DHAKA", baseOrders: 21, baseDelivered: 19, baseRto: 2, baseCodShare: 88 },
+  { district: "Barishal", division: "Barishal", zone: "OUTSIDE_DHAKA" },
+  { district: "Patuakhali", division: "Barishal", zone: "OUTSIDE_DHAKA" },
+  { district: "Bhola", division: "Barishal", zone: "OUTSIDE_DHAKA" },
+  { district: "Pirojpur", division: "Barishal", zone: "OUTSIDE_DHAKA" },
+  { district: "Barguna", division: "Barishal", zone: "OUTSIDE_DHAKA" },
+  { district: "Jhalokati", division: "Barishal", zone: "OUTSIDE_DHAKA" },
 
   // Sylhet Division (4 Districts)
-  { district: "Sylhet", division: "Sylhet", zone: "OUTSIDE_DHAKA", baseOrders: 165, baseDelivered: 154, baseRto: 11, baseCodShare: 70 },
-  { district: "Moulvibazar", division: "Sylhet", zone: "OUTSIDE_DHAKA", baseOrders: 58, baseDelivered: 53, baseRto: 5, baseCodShare: 79 },
-  { district: "Habiganj", division: "Sylhet", zone: "OUTSIDE_DHAKA", baseOrders: 48, baseDelivered: 43, baseRto: 5, baseCodShare: 84 },
-  { district: "Sunamganj", division: "Sylhet", zone: "OUTSIDE_DHAKA", baseOrders: 42, baseDelivered: 35, baseRto: 7, baseCodShare: 92 }, // High RTO (16.7% - Haor logistics delay)
+  { district: "Sylhet", division: "Sylhet", zone: "OUTSIDE_DHAKA" },
+  { district: "Moulvibazar", division: "Sylhet", zone: "OUTSIDE_DHAKA" },
+  { district: "Habiganj", division: "Sylhet", zone: "OUTSIDE_DHAKA" },
+  { district: "Sunamganj", division: "Sylhet", zone: "OUTSIDE_DHAKA" },
 
   // Rangpur Division (8 Districts)
-  { district: "Rangpur", division: "Rangpur", zone: "OUTSIDE_DHAKA", baseOrders: 112, baseDelivered: 104, baseRto: 8, baseCodShare: 78 },
-  { district: "Dinajpur", division: "Rangpur", zone: "OUTSIDE_DHAKA", baseOrders: 65, baseDelivered: 60, baseRto: 5, baseCodShare: 82 },
-  { district: "Gaibandha", division: "Rangpur", zone: "OUTSIDE_DHAKA", baseOrders: 44, baseDelivered: 40, baseRto: 4, baseCodShare: 87 },
-  { district: "Kurigram", division: "Rangpur", zone: "OUTSIDE_DHAKA", baseOrders: 36, baseDelivered: 32, baseRto: 4, baseCodShare: 91 },
-  { district: "Lalmonirhat", division: "Rangpur", zone: "OUTSIDE_DHAKA", baseOrders: 29, baseDelivered: 26, baseRto: 3, baseCodShare: 89 },
-  { district: "Nilphamari", division: "Rangpur", zone: "OUTSIDE_DHAKA", baseOrders: 33, baseDelivered: 30, baseRto: 3, baseCodShare: 85 },
-  { district: "Panchagarh", division: "Rangpur", zone: "OUTSIDE_DHAKA", baseOrders: 24, baseDelivered: 22, baseRto: 2, baseCodShare: 88 },
-  { district: "Thakurgaon", division: "Rangpur", zone: "OUTSIDE_DHAKA", baseOrders: 26, baseDelivered: 24, baseRto: 2, baseCodShare: 87 },
+  { district: "Rangpur", division: "Rangpur", zone: "OUTSIDE_DHAKA" },
+  { district: "Dinajpur", division: "Rangpur", zone: "OUTSIDE_DHAKA" },
+  { district: "Gaibandha", division: "Rangpur", zone: "OUTSIDE_DHAKA" },
+  { district: "Kurigram", division: "Rangpur", zone: "OUTSIDE_DHAKA" },
+  { district: "Lalmonirhat", division: "Rangpur", zone: "OUTSIDE_DHAKA" },
+  { district: "Nilphamari", division: "Rangpur", zone: "OUTSIDE_DHAKA" },
+  { district: "Panchagarh", division: "Rangpur", zone: "OUTSIDE_DHAKA" },
+  { district: "Thakurgaon", division: "Rangpur", zone: "OUTSIDE_DHAKA" },
 
   // Mymensingh Division (4 Districts)
-  { district: "Mymensingh", division: "Mymensingh", zone: "OUTSIDE_DHAKA", baseOrders: 105, baseDelivered: 97, baseRto: 8, baseCodShare: 77 },
-  { district: "Jamalpur", division: "Mymensingh", zone: "OUTSIDE_DHAKA", baseOrders: 46, baseDelivered: 41, baseRto: 5, baseCodShare: 84 },
-  { district: "Netrokona", division: "Mymensingh", zone: "OUTSIDE_DHAKA", baseOrders: 35, baseDelivered: 31, baseRto: 4, baseCodShare: 88 },
-  { district: "Sherpur", division: "Mymensingh", zone: "OUTSIDE_DHAKA", baseOrders: 28, baseDelivered: 25, baseRto: 3, baseCodShare: 89 },
+  { district: "Mymensingh", division: "Mymensingh", zone: "OUTSIDE_DHAKA" },
+  { district: "Jamalpur", division: "Mymensingh", zone: "OUTSIDE_DHAKA" },
+  { district: "Netrokona", division: "Mymensingh", zone: "OUTSIDE_DHAKA" },
+  { district: "Sherpur", division: "Mymensingh", zone: "OUTSIDE_DHAKA" },
 ];
+
+/** Below this many shipments a district's RTO rate isn't meaningful and is reported as insufficient data. */
+export const RTO_MIN_SHIPMENTS = 20;
+/** Unit cost assumed when neither the variant nor the product has a cost price. Reported via cogs_estimated_share_pct. */
+export const COGS_FALLBACK_RATIO = 0.42;
+
+const round1 = (n: number) => Math.round(n * 10) / 10;
+const pct = (part: number, whole: number): number | null => (whole > 0 ? round1((part / whole) * 100) : null);
+
+/** Orders that actually left the warehouse: the population for delivery and RTO rates. */
+const SHIPPED_STATUSES = new Set<OrderStatus>(["SHIPPED", "DELIVERED", "RETURN_REQUESTED", "RETURNED"]);
+const RTO_STATUSES = new Set<OrderStatus>(["RETURN_REQUESTED", "RETURNED"]);
+
+const CHANNEL_NAMES: Record<SalesChannel, string> = {
+  WHATSAPP: "WhatsApp",
+  FACEBOOK_MESSENGER: "Facebook Messenger",
+  INSTAGRAM: "Instagram",
+  WEBSITE: "Website",
+  MANUAL_POS: "Manual / POS",
+  UNATTRIBUTED: "Unattributed (source or platform not recorded)",
+};
+
+/**
+ * The channel an order came from, from what the order records. Social orders name their platform only in notes;
+ * anything else, including imports, is UNATTRIBUTED rather than guessed (FX-30).
+ */
+export function channelOfOrder(order: Pick<Order, "source" | "notes">): SalesChannel {
+  const source = (order.source as string) || "";
+  const notes = (order.notes || "").toLowerCase();
+  if (source === "WEBSITE") return "WEBSITE";
+  if (source === "MANUAL") return "MANUAL_POS";
+  if (source === "WHATSAPP" || notes.includes("whatsapp")) return "WHATSAPP";
+  if (source === "INSTAGRAM" || notes.includes("instagram")) return "INSTAGRAM";
+  if (source === "FACEBOOK" || notes.includes("facebook") || notes.includes("messenger")) return "FACEBOOK_MESSENGER";
+  return "UNATTRIBUTED";
+}
 
 export class AnalyticsService {
   /**
-   * Deterministic Financial Metrics Calculation
-   * Formula:
-   * GMV = SUM(order.grand_total)
-   * NMV = GMV - discounts - refunds - returns
+   * Financial metrics from the tenant's orders and refunds (FX-30).
+   * GMV = SUM(order.grand_total), which is already net of discounts
+   * NMV = GMV - refunds
    * AOV = GMV / orders_count
-   * COGS = SUM(quantity * unit_cost)
-   * Gross Profit = GMV - COGS
-   * Gross Margin % = (Gross Profit / GMV) * 100
+   * COGS = SUM(quantity * unit_cost); unit_cost falls back to COGS_FALLBACK_RATIO of the price when unknown, and the
+   *        share of COGS that is estimated this way is reported
+   * Gross Margin % = (GMV - COGS) / GMV * 100, null without revenue
+   * Period change % = against the previous window of the same length, null when that window had no revenue
    */
   public static async getFinancialMetrics(
     context: RequestContext,
@@ -139,101 +172,69 @@ export class AnalyticsService {
     const tenantId = context.tenant.id;
     const orders = db.getAllOrders(tenantId, { hydrate: true });
     const refunds = db.getRefunds(tenantId);
-    const returns = db.getReturns(tenantId);
-    const variants = db.getAllProductVariants(tenantId);
-    const products = db.getAllProducts(tenantId);
-
-    // Map variant/product unit costs for authoritative COGS calculation
-    const productsById = new Map(products.map((p) => [p.id, p])); // O(V + P) (FX-23)
-    const costMap = new Map<string, number>();
-    for (const v of variants) {
-      if (v.cost_price && v.cost_price > 0) {
-        costMap.set(v.id, v.cost_price);
-      } else {
-        const prod = productsById.get(v.product_id);
-        if (prod?.cost_price && prod.cost_price > 0) {
-          costMap.set(v.id, prod.cost_price);
-        } else {
-          costMap.set(v.id, v.price * 0.42); // standard 42% COGS baseline if missing
-        }
-      }
-    }
+    const costs = this.unitCosts(tenantId);
 
     const { startMs, endMs, intervalDays } = this.resolveDateRange(preset);
+    const inWindow = (iso: string, from: number, to: number) => {
+      const t = new Date(iso).getTime();
+      return t >= from && t <= to;
+    };
 
-    // Filter orders by preset timestamp
-    const filteredOrders = orders.filter((o) => {
-      const t = new Date(o.created_at).getTime();
-      return t >= startMs && t <= endMs && o.status !== "CANCELLED";
-    });
+    const filteredOrders = orders.filter((o) => o.status !== "CANCELLED" && inWindow(o.created_at, startMs, endMs));
 
     let gmv_bdt = 0;
     let total_discounts_bdt = 0;
-    let cogs_bdt = 0;
     let completed_orders_count = 0;
+    let cogs_bdt = 0;
+    let estimated_cogs_bdt = 0;
 
     for (const order of filteredOrders) {
       gmv_bdt += order.grand_total;
       total_discounts_bdt += order.discount_total || 0;
-
       if (order.status === "DELIVERED" || order.status === "CONFIRMED" || order.status === "SHIPPED") {
         completed_orders_count += 1;
       }
-
-      // Calculate authoritative COGS per line item
-      if (order.items && order.items.length > 0) {
-        for (const item of order.items) {
-          const unitCost = costMap.get(item.variant_id) || item.unit_price * 0.42;
-          cogs_bdt += item.quantity * unitCost;
-        }
-      } else {
-        // Fallback estimate if items snapshot omitted
-        cogs_bdt += order.subtotal * 0.42;
-      }
+      const cogs = this.orderCogs(order, costs);
+      cogs_bdt += cogs.total;
+      estimated_cogs_bdt += cogs.estimated;
     }
 
-    // Calculate authoritative refunds within range
     const total_refunds_bdt = refunds
-      .filter((r) => {
-        const t = new Date(r.created_at).getTime();
-        return t >= startMs && t <= endMs;
-      })
+      .filter((r) => inWindow(r.created_at, startMs, endMs))
       .reduce((sum, r) => sum + r.amount, 0);
 
-    // Estimated return value deduction
-    const returnsValue = returns
-      .filter((ret) => {
-        const t = new Date(ret.created_at).getTime();
-        return t >= startMs && t <= endMs;
+    // Previous window of the same length, for the period-over-period change.
+    const spanMs = endMs - startMs;
+    const previousGmv = orders
+      .filter((o) => o.status !== "CANCELLED")
+      .filter((o) => {
+        const t = new Date(o.created_at).getTime();
+        return t >= startMs - spanMs && t < startMs;
       })
-      .length * (filteredOrders.length > 0 ? gmv_bdt / filteredOrders.length : 1500) * 0.6;
+      .reduce((sum, o) => sum + o.grand_total, 0);
 
-    const nmv_bdt = Math.max(0, Math.round(gmv_bdt - total_discounts_bdt - total_refunds_bdt - returnsValue));
-    const gross_profit_bdt = Math.max(0, Math.round(gmv_bdt - cogs_bdt));
-    const gross_margin_pct = gmv_bdt > 0 ? Number(((gross_profit_bdt / gmv_bdt) * 100).toFixed(1)) : 0;
-    const aov_bdt = filteredOrders.length > 0 ? Math.round(gmv_bdt / filteredOrders.length) : 0;
-
-    // Time-series breakdown
-    const time_series = this.generateTimeSeriesPoints(filteredOrders, startMs, endMs, intervalDays, costMap);
+    const gross_profit_bdt = Math.round(gmv_bdt - cogs_bdt);
 
     return {
       gmv_bdt: Math.round(gmv_bdt),
-      nmv_bdt,
-      aov_bdt,
+      nmv_bdt: Math.max(0, Math.round(gmv_bdt - total_refunds_bdt)),
+      aov_bdt: filteredOrders.length > 0 ? Math.round(gmv_bdt / filteredOrders.length) : 0,
       cogs_bdt: Math.round(cogs_bdt),
+      cogs_estimated_share_pct: pct(estimated_cogs_bdt, cogs_bdt) ?? 0,
       gross_profit_bdt,
-      gross_margin_pct,
+      gross_margin_pct: pct(gross_profit_bdt, gmv_bdt),
       completed_orders_count,
       total_orders_count: filteredOrders.length,
       total_discounts_bdt: Math.round(total_discounts_bdt),
       total_refunds_bdt: Math.round(total_refunds_bdt),
-      period_change_pct: 12.8, // Compared to previous period baseline
-      time_series,
+      period_change_pct: previousGmv > 0 ? round1(((gmv_bdt - previousGmv) / previousGmv) * 100) : null,
+      time_series: this.generateTimeSeriesPoints(filteredOrders, startMs, endMs, intervalDays, costs),
     };
   }
 
   /**
-   * Return-to-Origin (RTO) Geographical Breakdown Across All 64 Districts
+   * Return-to-Origin by district, from the tenant's shipped orders only (FX-30). A district with fewer than
+   * RTO_MIN_SHIPMENTS shipments is INSUFFICIENT_DATA with a null rate.
    */
   public static async getRtoGeographyReport(
     context: RequestContext,
@@ -242,68 +243,58 @@ export class AnalyticsService {
     RbacService.assertCan(context, PERMISSIONS.ANALYTICS_READ);
 
     const tenantId = context.tenant.id;
-    const orders = db.getAllOrders(tenantId, { hydrate: true });
+    const orders = db.getAllOrders(tenantId);
 
-    // Tally actual order activity by district
-    const realStats = new Map<string, { total: number; delivered: number; rto: number; cod: number }>();
+    const stats = new Map<string, { shipped: number; delivered: number; rto: number; cod: number }>();
     for (const order of orders) {
       const district = order.shipping_address_snapshot?.district;
-      if (!district) continue;
-      const cur = realStats.get(district) || { total: 0, delivered: 0, rto: 0, cod: 0 };
-      cur.total += 1;
+      if (!district || !SHIPPED_STATUSES.has(order.status)) continue;
+      const cur = stats.get(district) || { shipped: 0, delivered: 0, rto: 0, cod: 0 };
+      cur.shipped += 1;
       if (order.status === "DELIVERED") cur.delivered += 1;
-      if (order.status === "RETURNED" || order.status === "RETURN_REQUESTED") cur.rto += 1;
+      if (RTO_STATUSES.has(order.status)) cur.rto += 1;
       if (order.payment_method === "COD") cur.cod += 1;
-      realStats.set(district, cur);
+      stats.set(district, cur);
     }
 
-    // Blend actual transactions with canonical 64-district operational model
     const evaluatedDistricts: DistrictRtoMetric[] = BD_64_DISTRICTS.map((spec) => {
-      const live = realStats.get(spec.district);
-      const total_shipments = spec.baseOrders + (live?.total || 0);
-      const delivered_count = spec.baseDelivered + (live?.delivered || 0);
-      const rto_count = spec.baseRto + (live?.rto || 0);
-      const in_transit_count = Math.max(0, total_shipments - delivered_count - rto_count);
+      const s = stats.get(spec.district) || { shipped: 0, delivered: 0, rto: 0, cod: 0 };
+      const enough = s.shipped >= RTO_MIN_SHIPMENTS;
+      const rto_rate_pct = enough ? pct(s.rto, s.shipped) : null;
 
-      const rto_rate_pct = Number(((rto_count / total_shipments) * 100).toFixed(1));
-      const cod_share_pct = live?.total
-        ? Number((((spec.baseOrders * (spec.baseCodShare / 100) + live.cod) / total_shipments) * 100).toFixed(1))
-        : spec.baseCodShare;
-
-      let risk_tier: RtoRiskTier = "LOW";
-      let recommendation = "Fast-track fulfillment. Low refusal risk; standard COD approved.";
-
-      if (rto_rate_pct > 15) {
-        risk_tier = "HIGH_RISK";
-        recommendation =
-          "Mandatory ৳150 delivery advance via bKash/Nagad required before dispatch. High doorstep refusal probability.";
-      } else if (rto_rate_pct >= 8) {
-        risk_tier = "MODERATE";
-        recommendation =
-          "Require automated phone/WhatsApp confirmation and dispatch courier tracking link before shipping.";
+      let risk_tier: RtoRiskTier = "INSUFFICIENT_DATA";
+      let recommendation = `Not enough shipments to assess (${s.shipped} of the ${RTO_MIN_SHIPMENTS} needed).`;
+      if (rto_rate_pct !== null) {
+        if (rto_rate_pct > 15) {
+          risk_tier = "HIGH_RISK";
+          recommendation = "High refusal rate: consider asking for a delivery-charge advance via bKash/Nagad before dispatch.";
+        } else if (rto_rate_pct >= 8) {
+          risk_tier = "MODERATE";
+          recommendation = "Confirm by phone or WhatsApp and send the tracking link before shipping.";
+        } else {
+          risk_tier = "LOW";
+          recommendation = "Low refusal rate: standard COD.";
+        }
       }
 
       return {
         district: spec.district,
         division: spec.division,
         zone: spec.zone,
-        total_shipments,
-        delivered_count,
-        rto_count,
-        in_transit_count,
+        total_shipments: s.shipped,
+        delivered_count: s.delivered,
+        rto_count: s.rto,
+        in_transit_count: Math.max(0, s.shipped - s.delivered - s.rto),
         rto_rate_pct,
-        cod_share_pct,
+        cod_share_pct: pct(s.cod, s.shipped),
         risk_tier,
         recommendation,
       };
     });
 
-    // Apply filtering if requested
     let filteredDistricts = evaluatedDistricts;
     if (options?.division && options.division !== "ALL") {
-      filteredDistricts = filteredDistricts.filter(
-        (d) => d.division.toLowerCase() === options.division!.toLowerCase()
-      );
+      filteredDistricts = filteredDistricts.filter((d) => d.division.toLowerCase() === options.division!.toLowerCase());
     }
     if (options?.search && options.search.trim()) {
       const q = options.search.toLowerCase().trim();
@@ -312,7 +303,9 @@ export class AnalyticsService {
       );
     }
 
-    // Build Division summaries
+    const sum = (list: DistrictRtoMetric[], key: "total_shipments" | "rto_count" | "delivered_count") =>
+      list.reduce((acc, d) => acc + d[key], 0);
+
     const divisionGroups = new Map<string, DistrictRtoMetric[]>();
     for (const d of evaluatedDistricts) {
       const list = divisionGroups.get(d.division) || [];
@@ -320,61 +313,42 @@ export class AnalyticsService {
       divisionGroups.set(d.division, list);
     }
 
-    const divisions_summary: DivisionRtoSummary[] = Array.from(divisionGroups.entries()).map(
-      ([division, dists]) => {
-        const total_shipments = dists.reduce((sum, d) => sum + d.total_shipments, 0);
-        const delivered_count = dists.reduce((sum, d) => sum + d.delivered_count, 0);
-        const rto_count = dists.reduce((sum, d) => sum + d.rto_count, 0);
-        const rto_rate_pct = Number(((rto_count / total_shipments) * 100).toFixed(1));
+    const divisions_summary: DivisionRtoSummary[] = Array.from(divisionGroups.entries()).map(([division, dists]) => {
+      const total_shipments = sum(dists, "total_shipments");
+      const rto_count = sum(dists, "rto_count");
+      const assessed = dists.filter((d) => d.rto_rate_pct !== null).sort((a, b) => (b.rto_rate_pct ?? 0) - (a.rto_rate_pct ?? 0));
+      return {
+        division,
+        districts_count: dists.length,
+        total_shipments,
+        delivered_count: sum(dists, "delivered_count"),
+        rto_count,
+        rto_rate_pct: total_shipments >= RTO_MIN_SHIPMENTS ? pct(rto_count, total_shipments) : null,
+        highest_risk_district: assessed[0] ? `${assessed[0].district} (${assessed[0].rto_rate_pct}%)` : null,
+      };
+    });
 
-        // Highest risk district in division
-        const sorted = [...dists].sort((a, b) => b.rto_rate_pct - a.rto_rate_pct);
-        const highest_risk_district = `${sorted[0]?.district} (${sorted[0]?.rto_rate_pct}%)`;
-
-        return {
-          division,
-          districts_count: dists.length,
-          total_shipments,
-          delivered_count,
-          rto_count,
-          rto_rate_pct,
-          highest_risk_district,
-        };
-      }
-    );
-
-    // Calculate aggregated Inside vs Outside Dhaka rates
-    const insideDhakaDists = evaluatedDistricts.filter((d) => d.zone === "INSIDE_DHAKA");
-    const outsideDhakaDists = evaluatedDistricts.filter((d) => d.zone === "OUTSIDE_DHAKA");
-
-    const totalInsideShipments = insideDhakaDists.reduce((s, d) => s + d.total_shipments, 0);
-    const totalInsideRto = insideDhakaDists.reduce((s, d) => s + d.rto_count, 0);
-    const inside_dhaka_rto_pct = Number(((totalInsideRto / totalInsideShipments) * 100).toFixed(1));
-
-    const totalOutsideShipments = outsideDhakaDists.reduce((s, d) => s + d.total_shipments, 0);
-    const totalOutsideRto = outsideDhakaDists.reduce((s, d) => s + d.rto_count, 0);
-    const outside_dhaka_rto_pct = Number(((totalOutsideRto / totalOutsideShipments) * 100).toFixed(1));
-
-    const totalAllShipments = evaluatedDistricts.reduce((s, d) => s + d.total_shipments, 0);
-    const totalAllRto = evaluatedDistricts.reduce((s, d) => s + d.rto_count, 0);
-    const overall_rto_rate_pct = Number(((totalAllRto / totalAllShipments) * 100).toFixed(1));
-
-    const high_risk_districts_count = evaluatedDistricts.filter((d) => d.risk_tier === "HIGH_RISK").length;
+    const zoneRate = (list: DistrictRtoMetric[]) => {
+      const shipped = sum(list, "total_shipments");
+      return shipped >= RTO_MIN_SHIPMENTS ? pct(sum(list, "rto_count"), shipped) : null;
+    };
 
     return {
-      overall_rto_rate_pct,
-      inside_dhaka_rto_pct,
-      outside_dhaka_rto_pct,
-      total_shipments_evaluated: totalAllShipments,
+      overall_rto_rate_pct: zoneRate(evaluatedDistricts),
+      inside_dhaka_rto_pct: zoneRate(evaluatedDistricts.filter((d) => d.zone === "INSIDE_DHAKA")),
+      outside_dhaka_rto_pct: zoneRate(evaluatedDistricts.filter((d) => d.zone === "OUTSIDE_DHAKA")),
+      total_shipments_evaluated: sum(evaluatedDistricts, "total_shipments"),
+      minimum_shipments_for_rate: RTO_MIN_SHIPMENTS,
+      delivery_fees: PricingService.getDeliveryFees(tenantId),
       divisions_summary,
       districts: filteredDistricts,
-      high_risk_districts_count,
+      high_risk_districts_count: evaluatedDistricts.filter((d) => d.risk_tier === "HIGH_RISK").length,
     };
   }
 
   /**
-   * Channel Attribution & Performance Matrix
-   * Facebook Messenger vs WhatsApp vs Website vs Instagram vs POS
+   * Orders and GMV by channel, from the tenant's orders only (FX-30). There is no visit or session data, so
+   * conversion is null; orders whose channel isn't recorded are UNATTRIBUTED.
    */
   public static async getChannelAttributionReport(
     context: RequestContext,
@@ -383,162 +357,50 @@ export class AnalyticsService {
     RbacService.assertCan(context, PERMISSIONS.ANALYTICS_READ);
 
     const tenantId = context.tenant.id;
-    const orders = db.getAllOrders(tenantId, { hydrate: true });
     const { startMs, endMs } = this.resolveDateRange(preset);
-
-    const filteredOrders = orders.filter((o) => {
+    const filteredOrders = db.getAllOrders(tenantId).filter((o) => {
       const t = new Date(o.created_at).getTime();
       return t >= startMs && t <= endMs && o.status !== "CANCELLED";
     });
 
-    const channelMap: Record<
-      SalesChannel,
-      {
-        channel_name: string;
-        orders_count: number;
-        gmv_bdt: number;
-        conversion_rate_pct: number;
-        rto_count: number;
-        cod_count: number;
-      }
-    > = {
-      WHATSAPP: {
-        channel_name: "WhatsApp Conversational Commerce",
-        orders_count: 0,
-        gmv_bdt: 0,
-        conversion_rate_pct: 18.4,
-        rto_count: 0,
-        cod_count: 0,
-      },
-      FACEBOOK_MESSENGER: {
-        channel_name: "Facebook Messenger & F-Commerce",
-        orders_count: 0,
-        gmv_bdt: 0,
-        conversion_rate_pct: 9.8,
-        rto_count: 0,
-        cod_count: 0,
-      },
-      WEBSITE: {
-        channel_name: "CommerceOS Online Storefront",
-        orders_count: 0,
-        gmv_bdt: 0,
-        conversion_rate_pct: 3.4,
-        rto_count: 0,
-        cod_count: 0,
-      },
-      INSTAGRAM: {
-        channel_name: "Instagram Direct & DM Commerce",
-        orders_count: 0,
-        gmv_bdt: 0,
-        conversion_rate_pct: 7.2,
-        rto_count: 0,
-        cod_count: 0,
-      },
-      MANUAL_POS: {
-        channel_name: "Outlet POS & Direct Sales",
-        orders_count: 0,
-        gmv_bdt: 0,
-        conversion_rate_pct: 42.0,
-        rto_count: 0,
-        cod_count: 0,
-      },
-    };
-
-    // Baseline distribution weights for commercial realism
-    const baselineGMV: Record<SalesChannel, number> = {
-      WHATSAPP: 184500,
-      FACEBOOK_MESSENGER: 112000,
-      WEBSITE: 68400,
-      INSTAGRAM: 36200,
-      MANUAL_POS: 24500,
-    };
-    const baselineOrders: Record<SalesChannel, number> = {
-      WHATSAPP: 86,
-      FACEBOOK_MESSENGER: 54,
-      WEBSITE: 29,
-      INSTAGRAM: 18,
-      MANUAL_POS: 11,
-    };
-
-    // Tally real orders
+    const tallies = new Map<SalesChannel, { orders: number; gmv: number; shipped: number; rto: number; cod: number }>();
+    for (const key of Object.keys(CHANNEL_NAMES) as SalesChannel[]) {
+      tallies.set(key, { orders: 0, gmv: 0, shipped: 0, rto: 0, cod: 0 });
+    }
     for (const order of filteredOrders) {
-      const src = (order.source as string) || "";
-      let ch: SalesChannel = "WEBSITE";
-      if (src === "WHATSAPP" || (order.notes && order.notes.toLowerCase().includes("whatsapp"))) ch = "WHATSAPP";
-      else if (src === "FACEBOOK" || src === "SOCIAL" || (order.notes && order.notes.toLowerCase().includes("facebook"))) ch = "FACEBOOK_MESSENGER";
-      else if (src === "INSTAGRAM" || (order.notes && order.notes.toLowerCase().includes("instagram"))) ch = "INSTAGRAM";
-      else if (src === "MANUAL") ch = "MANUAL_POS";
-
-      channelMap[ch].orders_count += 1;
-      channelMap[ch].gmv_bdt += order.grand_total;
-      if (order.payment_method === "COD") channelMap[ch].cod_count += 1;
-      if (order.status === "RETURNED" || order.status === "RETURN_REQUESTED") {
-        channelMap[ch].rto_count += 1;
-      }
+      const t = tallies.get(channelOfOrder(order))!;
+      t.orders += 1;
+      t.gmv += order.grand_total;
+      if (order.payment_method === "COD") t.cod += 1;
+      if (SHIPPED_STATUSES.has(order.status)) t.shipped += 1;
+      if (RTO_STATUSES.has(order.status)) t.rto += 1;
     }
 
-    // Merge real tallies with baseline
-    const channels: ChannelAttributionMetric[] = (Object.keys(channelMap) as SalesChannel[]).map((key) => {
-      const data = channelMap[key];
-      const orders_count = data.orders_count + baselineOrders[key];
-      const gmv_bdt = data.gmv_bdt + baselineGMV[key];
-      const aov_bdt = orders_count > 0 ? Math.round(gmv_bdt / orders_count) : 0;
-      const rto_rate_pct =
-        key === "WHATSAPP"
-          ? 4.8
-          : key === "FACEBOOK_MESSENGER"
-          ? 7.2
-          : key === "WEBSITE"
-          ? 3.6
-          : key === "INSTAGRAM"
-          ? 6.4
-          : 0.8;
-      const cod_share_pct =
-        key === "WHATSAPP"
-          ? 62
-          : key === "FACEBOOK_MESSENGER"
-          ? 79
-          : key === "WEBSITE"
-          ? 48
-          : key === "INSTAGRAM"
-          ? 75
-          : 15;
+    const total_gmv_bdt = Math.round(filteredOrders.reduce((acc, o) => acc + o.grand_total, 0));
+    const total_orders_count = filteredOrders.length;
 
-      return {
+    const channels: ChannelAttributionMetric[] = Array.from(tallies.entries())
+      .filter(([key, t]) => t.orders > 0 || key !== "UNATTRIBUTED")
+      .map(([key, t]) => ({
         channel: key,
-        channel_name: data.channel_name,
-        orders_count,
-        orders_share_pct: 0, // Calculated below
-        gmv_bdt,
-        gmv_share_pct: 0, // Calculated below
-        aov_bdt,
-        conversion_rate_pct: data.conversion_rate_pct,
-        rto_rate_pct,
-        cod_share_pct,
-      };
-    });
-
-    const total_gmv_bdt = channels.reduce((sum, c) => sum + c.gmv_bdt, 0);
-    const total_orders_count = channels.reduce((sum, c) => sum + c.orders_count, 0);
-
-    for (const c of channels) {
-      c.gmv_share_pct = total_gmv_bdt > 0 ? Number(((c.gmv_bdt / total_gmv_bdt) * 100).toFixed(1)) : 0;
-      c.orders_share_pct =
-        total_orders_count > 0 ? Number(((c.orders_count / total_orders_count) * 100).toFixed(1)) : 0;
-    }
-
-    // Sort channels by GMV descending
-    channels.sort((a, b) => b.gmv_bdt - a.gmv_bdt);
-
-    const top_channel_by_gmv = channels[0]?.channel_name || "WhatsApp Conversational Commerce";
-    const top_channel_by_conversion = "WhatsApp Conversational Commerce (18.4% CVR)";
+        channel_name: CHANNEL_NAMES[key],
+        orders_count: t.orders,
+        orders_share_pct: pct(t.orders, total_orders_count) ?? 0,
+        gmv_bdt: Math.round(t.gmv),
+        gmv_share_pct: pct(t.gmv, total_gmv_bdt) ?? 0,
+        aov_bdt: t.orders > 0 ? Math.round(t.gmv / t.orders) : 0,
+        conversion_rate_pct: null, // no visit/session data exists
+        rto_rate_pct: pct(t.rto, t.shipped),
+        cod_share_pct: pct(t.cod, t.orders),
+      }))
+      .sort((a, b) => b.gmv_bdt - a.gmv_bdt);
 
     return {
       total_gmv_bdt,
       total_orders_count,
       channels,
-      top_channel_by_gmv,
-      top_channel_by_conversion,
+      top_channel_by_gmv: total_orders_count > 0 ? channels[0]?.channel_name ?? null : null,
+      top_channel_by_conversion: null,
     };
   }
 
@@ -559,7 +421,8 @@ export class AnalyticsService {
   }
 
   /**
-   * Generates a new Executive Business Digest deterministically from real business telemetry
+   * Generates an Executive Business Digest from the reports above. Every sentence is built from a computed number;
+   * where a number is unknown the digest says so instead of guessing (FX-30).
    */
   public static async generateExecutiveDigest(
     context: RequestContext,
@@ -583,25 +446,33 @@ export class AnalyticsService {
     const highRiskDistricts = rtoReport.districts
       .filter((d) => d.risk_tier === "HIGH_RISK")
       .slice(0, 3)
-      .map((d) => ({
-        district: d.district,
-        division: d.division,
-        rto_pct: d.rto_rate_pct,
-        risk_tier: d.risk_tier,
+      .map((d) => ({ district: d.district, division: d.division, rto_pct: d.rto_rate_pct, risk_tier: d.risk_tier }));
+
+    const topChannels = channelsReport.channels
+      .filter((c) => c.orders_count > 0)
+      .slice(0, 3)
+      .map((c) => ({
+        channel: c.channel,
+        gmv_bdt: c.gmv_bdt,
+        share_pct: c.gmv_share_pct,
+        highlight: `${c.channel_name}: ৳${c.gmv_bdt.toLocaleString()} from ${c.orders_count} orders (${c.gmv_share_pct}% of GMV).`,
       }));
 
-    const topChannels = channelsReport.channels.slice(0, 3).map((c) => ({
-      channel: c.channel,
-      gmv_bdt: c.gmv_bdt,
-      share_pct: c.gmv_share_pct,
-      highlight: `${c.channel_name} contributed ৳${c.gmv_bdt.toLocaleString()} (${c.gmv_share_pct}%) at ${c.conversion_rate_pct}% CVR.`,
-    }));
-
-    const strategic_recommendations = [
-      `Maintain WhatsApp cart recovery nudges to protect ৳${Math.round(channelsReport.channels[0]?.gmv_bdt || 0).toLocaleString()} top-of-funnel velocity.`,
-      `Enforce partial ৳150 advance delivery charge on ${highRiskDistricts.map((d) => d.district).join(" & ") || "high-risk zones"} to reduce doorstep COD returns.`,
-      `Current Gross Margin is running strong at ${financials.gross_margin_pct}%. Monitor raw supplier unit costs on trending seasonal apparel.`,
-    ];
+    const fmt = (v: number | null, suffix = "%") => (v === null ? "not enough data" : `${v}${suffix}`);
+    const strategic_recommendations: string[] = [];
+    if (topChannels[0]) {
+      strategic_recommendations.push(`${channelsReport.top_channel_by_gmv} brought the most revenue this period (৳${topChannels[0].gmv_bdt.toLocaleString()}).`);
+    }
+    if (highRiskDistricts.length > 0) {
+      strategic_recommendations.push(
+        `Consider a delivery-charge advance for ${highRiskDistricts.map((d) => d.district).join(", ")}, where more than 15% of shipments came back.`
+      );
+    }
+    if (financials.cogs_estimated_share_pct > 0) {
+      strategic_recommendations.push(
+        `${financials.cogs_estimated_share_pct}% of cost of goods is estimated because products have no cost price; add cost prices for an accurate margin.`
+      );
+    }
 
     const digest: ExecutiveDigest = {
       id: `ed_${Date.now()}_${randomSuffix()}`,
@@ -609,8 +480,11 @@ export class AnalyticsService {
       period_type: periodType,
       period_start: periodStart,
       period_end: periodEnd,
-      title: `Executive ${periodType.charAt(0) + periodType.slice(1).toLowerCase()} Commercial Intelligence Briefing`,
-      executive_summary: `During this ${periodType.toLowerCase()} operational cycle, total GMV settled at ৳${financials.gmv_bdt.toLocaleString()} across ${financials.total_orders_count} verified orders with an Average Order Value (AOV) of ৳${financials.aov_bdt.toLocaleString()} and a healthy Gross Margin of ${financials.gross_margin_pct}%. National Return-to-Origin (RTO) rate hovered at ${rtoReport.overall_rto_rate_pct}%.`,
+      title: `${periodType.charAt(0) + periodType.slice(1).toLowerCase()} business summary`,
+      executive_summary:
+        financials.total_orders_count === 0
+          ? `No orders in this ${periodType.toLowerCase()} period.`
+          : `GMV was ৳${financials.gmv_bdt.toLocaleString()} from ${financials.total_orders_count} orders (AOV ৳${financials.aov_bdt.toLocaleString()}). Gross margin: ${fmt(financials.gross_margin_pct)}. Change from the previous period: ${fmt(financials.period_change_pct)}. Return-to-origin rate: ${fmt(rtoReport.overall_rto_rate_pct)}.`,
       financial_summary: {
         gmv_bdt: financials.gmv_bdt,
         aov_bdt: financials.aov_bdt,
@@ -666,59 +540,62 @@ export class AnalyticsService {
     return { startMs, endMs, intervalDays };
   }
 
-  // Helper: Time-series datapoints generation
+  /** Unit cost per variant where one is recorded (variant cost price, else product cost price). */
+  private static unitCosts(tenantId: string): Map<string, number> {
+    const productsById = new Map(db.getAllProducts(tenantId).map((p) => [p.id, p])); // O(V + P) (FX-23)
+    const costs = new Map<string, number>();
+    for (const v of db.getAllProductVariants(tenantId)) {
+      const productCost = productsById.get(v.product_id)?.cost_price;
+      if (v.cost_price && v.cost_price > 0) costs.set(v.id, v.cost_price);
+      else if (productCost && productCost > 0) costs.set(v.id, productCost);
+    }
+    return costs;
+  }
+
+  /** COGS of one order, and how much of it is estimated with COGS_FALLBACK_RATIO. */
+  private static orderCogs(order: Order, costs: Map<string, number>): { total: number; estimated: number } {
+    if (!order.items || order.items.length === 0) {
+      const estimate = order.subtotal * COGS_FALLBACK_RATIO;
+      return { total: estimate, estimated: estimate };
+    }
+    let total = 0;
+    let estimated = 0;
+    for (const item of order.items) {
+      const known = costs.get(item.variant_id);
+      const line = item.quantity * (known ?? item.unit_price * COGS_FALLBACK_RATIO);
+      total += line;
+      if (known === undefined) estimated += line;
+    }
+    return { total, estimated };
+  }
+
+  /** Real buckets only: an empty bucket has 0 GMV and 0 orders, and null AOV and margin (FX-30). */
   private static generateTimeSeriesPoints(
     orders: Order[],
     startMs: number,
     endMs: number,
     intervalDays: number,
-    costMap: Map<string, number>
+    costs: Map<string, number>
   ): TimeSeriesPoint[] {
-    const pointsCount = Math.min(intervalDays, 14); // Keep chart crisp with 7-14 points
+    const pointsCount = Math.max(1, Math.min(intervalDays, 14)); // keep the chart readable with 7-14 points
     const stepMs = (endMs - startMs) / pointsCount;
-    const points: TimeSeriesPoint[] = [];
+    const buckets = Array.from({ length: pointsCount }, () => ({ gmv: 0, cogs: 0, orders: 0 }));
 
-    for (let i = 0; i < pointsCount; i++) {
-      const bucketStart = startMs + i * stepMs;
-      const bucketEnd = bucketStart + stepMs;
-      const bucketDate = new Date(bucketStart).toISOString().split("T")[0];
-
-      const bucketOrders = orders.filter((o) => {
-        const t = new Date(o.created_at).getTime();
-        return t >= bucketStart && t < bucketEnd;
-      });
-
-      let bucketGmv = 0;
-      let bucketCogs = 0;
-
-      for (const o of bucketOrders) {
-        bucketGmv += o.grand_total;
-        if (o.items && o.items.length > 0) {
-          for (const item of o.items) {
-            bucketCogs += item.quantity * (costMap.get(item.variant_id) || item.unit_price * 0.42);
-          }
-        } else {
-          bucketCogs += o.subtotal * 0.42;
-        }
-      }
-
-      // Add baseline diurnal variation for aesthetic chart visual continuity
-      const syntheticBaseGmv = Math.round(12000 + Math.sin(i * 0.8) * 3500 + (i % 3) * 1200);
-      const effectiveGmv = bucketGmv > 0 ? bucketGmv : syntheticBaseGmv;
-      const effectiveOrders = bucketOrders.length > 0 ? bucketOrders.length : Math.round(effectiveGmv / 2150);
-      const effectiveAov = effectiveOrders > 0 ? Math.round(effectiveGmv / effectiveOrders) : 2150;
-      const effectiveMargin = Number((58.5 + Math.sin(i) * 4.2).toFixed(1));
-
-      points.push({
-        date: bucketDate,
-        gmv_bdt: effectiveGmv,
-        aov_bdt: effectiveAov,
-        gross_margin_pct: effectiveMargin,
-        orders_count: effectiveOrders,
-      });
+    for (const o of orders) {
+      const idx = Math.min(pointsCount - 1, Math.floor((new Date(o.created_at).getTime() - startMs) / stepMs));
+      if (idx < 0) continue;
+      buckets[idx].gmv += o.grand_total;
+      buckets[idx].cogs += this.orderCogs(o, costs).total;
+      buckets[idx].orders += 1;
     }
 
-    return points;
+    return buckets.map((b, i) => ({
+      date: new Date(startMs + i * stepMs).toISOString().split("T")[0],
+      gmv_bdt: Math.round(b.gmv),
+      orders_count: b.orders,
+      aov_bdt: b.orders > 0 ? Math.round(b.gmv / b.orders) : null,
+      gross_margin_pct: pct(b.gmv - b.cogs, b.gmv),
+    }));
   }
 }
 

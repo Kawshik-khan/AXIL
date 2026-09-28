@@ -200,7 +200,7 @@ export default function WorkflowsPage() {
               {metrics?.total_workflows ?? 0}
             </div>
             <div style={{ color: "#10b981", fontSize: "0.8rem", marginTop: "0.25rem" }}>
-              Success rate: {metrics?.success_rate ?? 100}%
+              Success rate: {typeof metrics?.success_rate === "number" ? `${metrics.success_rate}%` : "—"}
             </div>
           </BentoCard>
 

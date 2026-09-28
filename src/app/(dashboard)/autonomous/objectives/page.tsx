@@ -52,7 +52,12 @@ export default function BusinessObjectivesPage() {
       });
       const json = await res.json();
       if (res.ok) {
-        alert(`Simulation completed!\nExpected case: ৳${json.data?.simulation?.expected_case?.revenue_impact_bdt?.toLocaleString() || "120,000"}\nConfidence: ${Math.round((json.data?.simulation?.confidence || 0.75) * 100)}%`);
+        const impact = json.data?.simulation?.expected_case?.revenue_impact_bdt;
+        const confidence = json.data?.simulation?.confidence;
+        alert(
+          `Simulation completed (simulated, not a forecast).\nExpected case: ${typeof impact === "number" ? `৳${impact.toLocaleString()}` : "not estimated"}` +
+            `\nConfidence: ${typeof confidence === "number" ? `${Math.round(confidence * 100)}%` : "—"}`
+        );
       } else {
         alert("Simulation failed: " + (json.error?.message || "Unknown error"));
       }

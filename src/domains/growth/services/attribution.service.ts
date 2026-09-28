@@ -77,8 +77,6 @@ export class AttributionService {
       });
     }
 
-    // Incremental revenue estimate: conservative baseline assumption (70% incremental)
-    const incrementalEstimated = Math.round(orderTotalBdt * 0.7);
 
     const attribution: CampaignAttribution = {
       id: `att_${Date.now()}_${orderId}`,
@@ -89,7 +87,7 @@ export class AttributionService {
       attribution_model: model,
       touchpoints: sortedTouches,
       campaign_credits: campaignCredits,
-      incremental_revenue_estimated_bdt: incrementalEstimated,
+      incremental_revenue_estimated_bdt: null, // needs a control group; was an assumed 70% (FX-30)
       created_at: new Date().toISOString(),
     };
 
@@ -102,20 +100,18 @@ export class AttributionService {
    */
   public getAttributionSummary(tenantId: string): {
     totalAttributedRevenue: number;
-    totalIncrementalRevenue: number;
+    totalIncrementalRevenue: number | null;
     total_attributed_revenue_bdt: number;
-    total_incremental_revenue_bdt: number;
-    blended_roas: number;
+    total_incremental_revenue_bdt: number | null;
+    blended_roas: number | null;
     byCampaign: Record<string, { revenue: number; orderCount: number }>;
   } {
     const records = db.getCampaignAttributions(tenantId);
     let totalAttributed = 0;
-    let totalIncremental = 0;
     const byCampaign: Record<string, { revenue: number; orderCount: number }> = {};
 
     for (const r of records) {
       totalAttributed += r.order_total_bdt;
-      totalIncremental += r.incremental_revenue_estimated_bdt;
 
       for (const [cid, credit] of Object.entries(r.campaign_credits || {})) {
         if (!byCampaign[cid]) {
@@ -131,13 +127,13 @@ export class AttributionService {
       (sum, c) => sum + (c.result_metrics?.total_cost_bdt || c.budget_bdt || 0),
       0
     );
-    const blendedRoas = totalCost > 0 ? Number((totalAttributed / totalCost).toFixed(2)) : 6.4;
+    const blendedRoas = totalCost > 0 ? Number((totalAttributed / totalCost).toFixed(2)) : null; // was 6.4 without cost
 
     return {
       totalAttributedRevenue: totalAttributed,
-      totalIncrementalRevenue: totalIncremental,
+      totalIncrementalRevenue: null, // not measured: needs a control group
       total_attributed_revenue_bdt: totalAttributed,
-      total_incremental_revenue_bdt: totalIncremental,
+      total_incremental_revenue_bdt: null,
       blended_roas: blendedRoas,
       byCampaign,
     };

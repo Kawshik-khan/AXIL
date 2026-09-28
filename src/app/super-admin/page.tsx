@@ -52,6 +52,11 @@ type OperationalTab =
   | "AUDIT"
   | "SETTINGS";
 
+// Platform numbers or a dash: never a made-up fallback (FX-30).
+const numOrDash = (v: unknown) => (typeof v === "number" ? v.toLocaleString() : "—");
+const bdtOrDash = (v: unknown) => (typeof v === "number" ? `৳${v.toLocaleString("en-BD")}` : "—");
+const pctOrDash = (v: unknown) => (typeof v === "number" ? `${v}%` : "—");
+
 export default function SuperAdminPage() {
   const [activeTab, setActiveTab] = useState<OperationalTab>("OVERVIEW");
   const [loading, setLoading] = useState(true);
@@ -791,22 +796,22 @@ export default function SuperAdminPage() {
               </div>
 
               <div className={styles.cardHeroValue}>
-                <span>৳{(overview?.financials?.mrr_bdt ?? 4999).toLocaleString("en-BD")}</span>
+                <span>{bdtOrDash(overview?.financials?.mrr_bdt)}</span>
                 <span className={styles.cardHeroValueUnit}>/ mo</span>
               </div>
 
               <div style={{ display: "flex", flexDirection: "column", gap: "2px", marginTop: "auto" }}>
                 <div className={styles.statRow}>
                   <span>Annualized ARR</span>
-                  <span className={styles.statValue}>৳{((overview?.financials?.arr_bdt ?? ((overview?.financials?.mrr_bdt ?? 4999) * 12))).toLocaleString("en-BD")}</span>
+                  <span className={styles.statValue}>{bdtOrDash(overview?.financials?.arr_bdt)}</span>
                 </div>
                 <div className={styles.statRow}>
                   <span>Active Subscriptions</span>
-                  <span className={styles.statValue}>{subscriptions.filter((s) => s.status === "ACTIVE").length || 1} paid</span>
+                  <span className={styles.statValue}>{subscriptions.filter((s) => s.status === "ACTIVE").length} paid</span>
                 </div>
                 <div className={styles.statRow}>
                   <span>Average ARPU</span>
-                  <span className={styles.statValue}>৳{(overview?.financials?.arpu_bdt ?? (overview?.financials?.mrr_bdt ?? 4999)).toLocaleString("en-BD")}</span>
+                  <span className={styles.statValue}>{bdtOrDash(overview?.financials?.arpu_bdt)}</span>
                 </div>
               </div>
             </div>
@@ -824,23 +829,23 @@ export default function SuperAdminPage() {
               </div>
 
               <div className={styles.cardHeroValue}>
-                <span>৳{(overview?.commerce_velocity?.total_gmv_bdt ?? 2450000).toLocaleString("en-BD")}</span>
+                <span>{bdtOrDash(overview?.commerce_velocity?.total_gmv_bdt)}</span>
                 <span className={styles.cardHeroValueUnit}>total</span>
               </div>
 
               <div style={{ display: "flex", flexDirection: "column", gap: "2px", marginTop: "auto" }}>
                 <div className={styles.statRow}>
                   <span>Orders Processed</span>
-                  <span className={styles.statValue}>{(overview?.commerce_velocity?.total_orders_count ?? 1420).toLocaleString()} orders</span>
+                  <span className={styles.statValue}>{numOrDash(overview?.commerce_velocity?.total_orders_count)} orders</span>
                 </div>
                 <div className={styles.statRow}>
                   <span>Average Order Value</span>
-                  <span className={styles.statValue}>৳{(overview?.commerce_velocity?.avg_order_value_bdt ?? 1725).toLocaleString("en-BD")}</span>
+                  <span className={styles.statValue}>{bdtOrDash(overview?.commerce_velocity?.avg_order_value_bdt)}</span>
                 </div>
                 <div className={styles.statRow}>
                   <span>Payment Mix</span>
                   <span className={styles.statValue}>
-                    {overview?.commerce_velocity?.cod_percentage ?? 68}% COD • {overview?.commerce_velocity?.digital_payment_percentage ?? 32}% MFS
+                    {pctOrDash(overview?.commerce_velocity?.cod_percentage)} COD • {pctOrDash(overview?.commerce_velocity?.digital_payment_percentage)} MFS
                   </span>
                 </div>
               </div>
@@ -856,30 +861,30 @@ export default function SuperAdminPage() {
                   </h3>
                 </div>
                 <span className={`${styles.statusPill} ${styles.statusPillActive}`}>
-                  {overview?.ai_fleet?.autonomous_resolution_rate ?? 94.2}% AUTO
+                  {pctOrDash(overview?.ai_fleet?.autonomous_resolution_rate)} AUTO
                 </span>
               </div>
 
               <div className={styles.cardHeroValue}>
-                <span>{(overview?.ai_fleet?.total_conversations ?? 18420).toLocaleString()}</span>
+                <span>{numOrDash(overview?.ai_fleet?.total_conversations)}</span>
                 <span className={styles.cardHeroValueUnit}>handled</span>
               </div>
 
               <div style={{ display: "flex", flexDirection: "column", gap: "2px", marginTop: "auto" }}>
                 <div className={styles.statRow}>
                   <span>Autonomous Resolution</span>
-                  <span className={styles.statValue}>{overview?.ai_fleet?.autonomous_resolution_rate ?? 94.2}% resolved</span>
+                  <span className={styles.statValue}>{pctOrDash(overview?.ai_fleet?.autonomous_resolution_rate)} completed</span>
                 </div>
                 <div className={styles.statRow}>
                   <span>Token Consumption</span>
                   <span className={styles.statValue}>
-                    {overview?.ai_fleet?.total_tokens ? (overview.ai_fleet.total_tokens / 1000).toFixed(1) + "k" : "142.5k"} tokens
+                    {typeof overview?.ai_fleet?.total_tokens === "number" ? (overview.ai_fleet.total_tokens / 1000).toFixed(1) + "k" : "—"} tokens
                   </span>
                 </div>
                 <div className={styles.statRow}>
                   <span>Est. AI Cloud Cost</span>
                   <span className={styles.statValue}>
-                    ৳{(overview?.ai_fleet?.estimated_cost_bdt ?? 2210).toLocaleString("en-BD")}
+                    {bdtOrDash(overview?.ai_fleet?.estimated_cost_bdt)}
                   </span>
                 </div>
               </div>
@@ -904,19 +909,19 @@ export default function SuperAdminPage() {
               </div>
 
               <div className={styles.cardHeroValue}>
-                <span>{overview?.automation_health?.success_rate_percent ?? 99.8}%</span>
+                <span>{pctOrDash(overview?.automation_health?.success_rate_percent)}</span>
                 <span className={styles.cardHeroValueUnit}>healthy</span>
               </div>
 
               <div style={{ display: "flex", flexDirection: "column", gap: "2px", marginTop: "auto" }}>
                 <div className={styles.statRow}>
                   <span>Workflow Executions</span>
-                  <span className={styles.statValue}>{(overview?.automation_health?.total_executions ?? 4850).toLocaleString()} completed</span>
+                  <span className={styles.statValue}>{numOrDash(overview?.automation_health?.total_executions)} executions</span>
                 </div>
                 <div className={styles.statRow}>
                   <span>Active Worker Nodes</span>
                   <span className={styles.statValue}>
-                    {n8nCluster?.nodes?.filter((n: any) => n.status === "HEALTHY").length || 1} / {n8nCluster?.nodes?.length || 1} online
+                    {n8nCluster?.nodes?.filter((n: any) => n.status === "HEALTHY").length ?? 0} / {n8nCluster?.nodes?.length ?? 0} online
                   </span>
                 </div>
                 <div className={styles.statRow}>
@@ -972,65 +977,27 @@ export default function SuperAdminPage() {
               )}
 
               <div className={styles.railsGrid}>
-                {/* Rail 1: Steadfast Courier */}
-                <div className={styles.railCard}>
-                  <div className={styles.railHeader}>
-                    <span className={styles.railTitle}>
-                      <span className={`${styles.statusDot} ${styles.statusDotHealthy}`} />
-                      Steadfast Courier
-                    </span>
-                    <span className={`${styles.statusPill} ${styles.statusPillActive}`}>99.9% Uptime</span>
+                {[
+                  { name: "Steadfast Courier", detail: "Dispatch & tracking API", status: overview?.provider_health?.steadfast_status },
+                  { name: "Pathao Logistics", detail: "Webhook delivery & rider sync", status: overview?.provider_health?.pathao_status },
+                  { name: "bKash & Nagad MFS", detail: "Payment notifications", status: overview?.provider_health?.bkash_status },
+                  { name: "Meta Graph API", detail: "WhatsApp Cloud & Messenger", status: overview?.provider_health?.meta_status },
+                ].map((rail) => (
+                  <div key={rail.name} className={styles.railCard}>
+                    <div className={styles.railHeader}>
+                      <span className={styles.railTitle}>
+                        <span className={`${styles.statusDot} ${rail.status === "HEALTHY" ? styles.statusDotHealthy : ""}`} />
+                        {rail.name}
+                      </span>
+                      <span className={`${styles.statusPill} ${rail.status === "HEALTHY" ? styles.statusPillActive : ""}`}>
+                        {rail.status === "SIMULATED" ? "Simulated — not connected" : rail.status ?? "—"}
+                      </span>
+                    </div>
+                    <div className={styles.railMeta}>
+                      <span>{rail.detail}</span>
+                    </div>
                   </div>
-                  <div className={styles.railMeta}>
-                    <span>Merchant Dispatch & Tracking API</span>
-                    <span>~112ms</span>
-                  </div>
-                </div>
-
-                {/* Rail 2: Pathao Logistics */}
-                <div className={styles.railCard}>
-                  <div className={styles.railHeader}>
-                    <span className={styles.railTitle}>
-                      <span className={`${styles.statusDot} ${styles.statusDotHealthy}`} />
-                      Pathao Logistics
-                    </span>
-                    <span className={`${styles.statusPill} ${styles.statusPillActive}`}>100% Operational</span>
-                  </div>
-                  <div className={styles.railMeta}>
-                    <span>Webhook Delivery & Rider Sync</span>
-                    <span>~94ms</span>
-                  </div>
-                </div>
-
-                {/* Rail 3: bKash & Nagad MFS */}
-                <div className={styles.railCard}>
-                  <div className={styles.railHeader}>
-                    <span className={styles.railTitle}>
-                      <span className={`${styles.statusDot} ${styles.statusDotHealthy}`} />
-                      bKash & Nagad MFS
-                    </span>
-                    <span className={`${styles.statusPill} ${styles.statusPillActive}`}>100% Operational</span>
-                  </div>
-                  <div className={styles.railMeta}>
-                    <span>Instant Payment Notification (IPN)</span>
-                    <span>0 drops</span>
-                  </div>
-                </div>
-
-                {/* Rail 4: Meta Graph API */}
-                <div className={styles.railCard}>
-                  <div className={styles.railHeader}>
-                    <span className={styles.railTitle}>
-                      <span className={`${styles.statusDot} ${styles.statusDotHealthy}`} />
-                      Meta Graph API
-                    </span>
-                    <span className={`${styles.statusPill} ${styles.statusPillActive}`}>Normal Limits</span>
-                  </div>
-                  <div className={styles.railMeta}>
-                    <span>WhatsApp Cloud & Messenger Webhooks</span>
-                    <span>200 OK</span>
-                  </div>
-                </div>
+                ))}
               </div>
             </div>
 
@@ -1066,7 +1033,7 @@ export default function SuperAdminPage() {
                   <span className={styles.statLabel}>
                     <UserCheck size={14} /> Platform Operators
                   </span>
-                  <span className={styles.statValue}>{operators.length} active · MFA not available yet</span>
+                  <span className={styles.statValue}>{operators.length} active · {pctOrDash(overview?.security?.mfa_enforced_percent)} with MFA</span>
                 </div>
                 <div className={styles.statRow}>
                   <span className={styles.statLabel}>
@@ -1439,11 +1406,15 @@ export default function SuperAdminPage() {
                   <span className={styles.cardMetaLabel}>Worker Fleet</span>
                   <h3 className={styles.cardTitle}>n8n Cluster Nodes</h3>
                 </div>
-                <span className={`${styles.statusPill} ${styles.statusPillActive}`}>100% HEALTHY</span>
+                <span className={`${styles.statusPill} ${styles.statusPillActive}`}>
+                  {n8nCluster?.nodes?.length
+                    ? `${n8nCluster.nodes.filter((n: any) => n.status === "HEALTHY").length} / ${n8nCluster.nodes.length} healthy`
+                    : "No nodes registered"}
+                </span>
               </div>
 
               <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-                {(n8nCluster?.nodes || [{ id: "n8n_master_01", name: "n8n-worker-dhaka-01", status: "HEALTHY", cpu_usage: 12, memory_usage: 44, active_executions: 0 }]).map((node: any) => (
+                {(n8nCluster?.nodes ?? []).map((node: any) => (
                   <div
                     key={node.id}
                     className={styles.subCard}
@@ -1453,8 +1424,8 @@ export default function SuperAdminPage() {
                       <span className={`${styles.statusPill} ${styles.statusPillActive}`}>{node.status}</span>
                     </div>
                     <div style={{ display: "flex", gap: "16px" }} className={styles.textMuted}>
-                      <span>CPU: {node.cpu_usage || 12}%</span>
-                      <span>RAM: {node.memory_usage || 44}%</span>
+                      <span>CPU: {pctOrDash(node.cpu_usage)}</span>
+                      <span>RAM: {pctOrDash(node.memory_usage)}</span>
                       <span>Executions: {node.active_executions || 0}</span>
                     </div>
                   </div>
@@ -1764,7 +1735,7 @@ export default function SuperAdminPage() {
                         <td style={{ fontFamily: "monospace", fontSize: "11px" }}>{log.actor_id}</td>
                         <td style={{ fontSize: "12px" }}>{log.target_resource_id || "GLOBAL"}</td>
                         <td className={styles.textMuted} style={{ fontSize: "11px" }}>
-                          {log.ip_address || "127.0.0.1"} • {JSON.stringify(log.details || {})}
+                          {log.ip_address || "IP not recorded"} • {JSON.stringify(log.details || {})}
                         </td>
                       </tr>
                     ))
@@ -1878,7 +1849,7 @@ export default function SuperAdminPage() {
                     </div>
                     <div className={styles.statRow}>
                       <span>Amount</span>
-                      <span className={styles.statValue}>৳{tenantDetail.subscription?.amount_bdt || 4999} / mo</span>
+                      <span className={styles.statValue}>{bdtOrDash(tenantDetail.subscription?.amount_bdt)} / mo</span>
                     </div>
                   </div>
                 </div>

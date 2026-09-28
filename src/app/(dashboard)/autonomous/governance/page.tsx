@@ -20,17 +20,22 @@ export default function GovernanceAndSafetyPage() {
   const [actionLoading, setActionLoading] = useState(false);
   const [selectedDomain, setSelectedDomain] = useState("PRICING");
 
+  // Report what the server did: these alerts used to announce success whatever happened (FX-30/FX-31).
+  const postOrThrow = async (url: string, body: unknown) => {
+    const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (!res.ok) {
+      const json = await res.json().catch(() => null);
+      throw new Error(json?.error?.message ?? `HTTP ${res.status}`);
+    }
+  };
+
   const handlePauseDomain = async (domain: string) => {
     try {
       setActionLoading(true);
-      await fetch("/api/v1/autonomous/pause", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ domain, reason: `Manual pause of ${domain} domain autonomy` }),
-      });
+      await postOrThrow("/api/v1/autonomous/pause", { domain, reason: `Manual pause of ${domain} domain autonomy` });
       alert(`Autonomy paused for ${domain} domain.`);
     } catch (err) {
-      alert("Failed to pause domain autonomy");
+      alert(`Failed to pause domain autonomy: ${(err as Error).message}`);
     } finally {
       setActionLoading(false);
     }
@@ -39,14 +44,10 @@ export default function GovernanceAndSafetyPage() {
   const handleResumeDomain = async (domain: string) => {
     try {
       setActionLoading(true);
-      await fetch("/api/v1/autonomous/resume", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ domain }),
-      });
+      await postOrThrow("/api/v1/autonomous/resume", { domain });
       alert(`Autonomy resumed for ${domain} domain.`);
     } catch (err) {
-      alert("Failed to resume domain autonomy");
+      alert(`Failed to resume domain autonomy: ${(err as Error).message}`);
     } finally {
       setActionLoading(false);
     }
@@ -57,14 +58,11 @@ export default function GovernanceAndSafetyPage() {
     if (!confirmation) return;
     try {
       setActionLoading(true);
-      await fetch("/api/v1/ai/tools/execute", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tool_name: "pause_domain_autonomy", parameters: { domain: "ALL", reason: "EMERGENCY_KILL_SWITCH_ACTIVATED" } }),
-      });
-      alert("EMERGENCY KILL SWITCH ACTIVATED. All autonomous executions halted.");
+      // Was a call to a route that doesn't exist, followed by "ACTIVATED" regardless (FX-30).
+      await postOrThrow("/api/v1/autonomous/pause", { level: "ALL", reason: "EMERGENCY_KILL_SWITCH_ACTIVATED" });
+      alert("Kill switch recorded: autonomy is paused for all domains.");
     } catch (err) {
-      alert("Failed to activate kill switch");
+      alert(`The kill switch was NOT activated: ${(err as Error).message}`);
     } finally {
       setActionLoading(false);
     }

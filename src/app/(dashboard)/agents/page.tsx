@@ -137,7 +137,7 @@ const DOCUMENT_CATEGORIES: DocCategoryOption[] = [
     id: "SHIPPING_POLICY",
     name: "Shipping Rates & Delivery Times",
     shortLabel: "Shipping & Delivery",
-    description: "Inside Dhaka (৳60), outside Dhaka (৳120), courier partners (Steadfast, Pathao), ETA",
+    description: "Inside and outside Dhaka delivery charges from your settings, courier partners (Steadfast, Pathao), ETA",
     badge: "Essential",
     icon: Truck,
   },
@@ -738,7 +738,7 @@ export default function AIAgentsPage() {
                 <span className={styles.metricBadge}>Instant</span>
               </div>
               <div className={styles.metricValue}>
-                {metrics?.avg_latency_ms || 420}
+                {metrics?.avg_latency_ms ?? "—"}
                 <span className={styles.metricValueUnit}>ms</span>
               </div>
               <div className={`${styles.metricSubtext} ${styles.metricSubtextPositive}`}>

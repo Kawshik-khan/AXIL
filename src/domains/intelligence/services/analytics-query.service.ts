@@ -126,7 +126,7 @@ export class AnalyticsQueryService {
       case "net_revenue": {
         const val = orders
           .filter((o) => ["CONFIRMED", "PROCESSING", "SHIPPED", "DELIVERED", "COMPLETED"].includes(o.status))
-          .reduce((sum, o) => sum + (o.total_amount || 0), 0);
+          .reduce((sum, o) => sum + (o.grand_total || 0), 0);
         return Number(val.toFixed(2));
       }
 
@@ -137,7 +137,7 @@ export class AnalyticsQueryService {
       case "average_order_value": {
         const valid = orders.filter((o) => o.status !== "CANCELLED");
         if (valid.length === 0) return 0;
-        const total = valid.reduce((sum, o) => sum + (o.total_amount || 0), 0);
+        const total = valid.reduce((sum, o) => sum + (o.grand_total || 0), 0);
         return Number((total / valid.length).toFixed(2));
       }
 
@@ -248,7 +248,7 @@ export class AnalyticsQueryService {
       if (o.status !== "CANCELLED") {
         const d = o.created_at ? o.created_at.slice(0, 10) : "";
         if (points[d]) {
-          points[d].gross_revenue += o.total_amount || 0;
+          points[d].gross_revenue += o.grand_total || 0;
           points[d].orders_count += 1;
         }
       }

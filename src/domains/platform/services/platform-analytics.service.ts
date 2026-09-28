@@ -2,6 +2,9 @@ import { db } from "@/infrastructure/db";
 import { PlatformContext } from "@/lib/context";
 import { PlatformAuthorizationService } from "./platform-authorization.service";
 
+/** SIMULATED: the integration isn't built, so nothing is sent to the provider (FX-31). */
+export type ProviderRailStatus = "HEALTHY" | "DEGRADED" | "DOWN" | "SIMULATED";
+
 export interface PlatformOverviewMetrics {
   tenants: {
     total: number;
@@ -21,22 +24,25 @@ export interface PlatformOverviewMetrics {
     total_gmv_bdt: number;
     total_orders_count: number;
     avg_order_value_bdt: number;
-    cod_percentage: number;
-    digital_payment_percentage: number;
+    /** null without orders */
+    cod_percentage: number | null;
+    digital_payment_percentage: number | null;
   };
   ai_fleet: {
     total_conversations: number;
     total_tokens: number;
     estimated_cost_usd: number;
     estimated_cost_bdt: number;
-    autonomous_resolution_rate: number;
+    /** null without agent runs */
+    autonomous_resolution_rate: number | null;
   };
   automation_health: {
     total_automations: number;
     active_automations: number;
     total_executions: number;
     failed_executions: number;
-    success_rate_percent: number;
+    /** null without executions */
+    success_rate_percent: number | null;
     failure_rate_percent: number;
     dlq_items_count: number;
   };
@@ -47,16 +53,17 @@ export interface PlatformOverviewMetrics {
     kill_switch_active: boolean;
   };
   provider_health: {
-    steadfast_status: "HEALTHY" | "DEGRADED" | "DOWN";
-    pathao_status: "HEALTHY" | "DEGRADED" | "DOWN";
-    bkash_status: "HEALTHY" | "DEGRADED" | "DOWN";
-    meta_status: "HEALTHY" | "DEGRADED" | "DOWN";
+    steadfast_status: ProviderRailStatus;
+    pathao_status: ProviderRailStatus;
+    bkash_status: ProviderRailStatus;
+    meta_status: ProviderRailStatus;
   };
   security: {
     platform_operators_count: number;
     active_impersonation_sessions: number;
     recent_security_events: number;
-    mfa_enforced_percent: number;
+    /** Share of active operators with MFA enabled; null without operators. */
+    mfa_enforced_percent: number | null;
   };
 }
 
@@ -100,8 +107,9 @@ export class PlatformAnalyticsService {
     const totalOrdersCount = validOrders.length;
     const avgOrderValue = totalOrdersCount > 0 ? Math.round(totalGmvBdt / totalOrdersCount) : 0;
     const codCount = validOrders.filter((o) => o.payment_method === "COD").length;
-    const codPercentage = totalOrdersCount > 0 ? Math.round((codCount / totalOrdersCount) * 100) : 70;
-    const digitalPaymentPercentage = 100 - codPercentage;
+    // null without orders: these fell back to invented values (70% COD, 94.2% resolution, 100% success) (FX-30)
+    const codPercentage = totalOrdersCount > 0 ? Math.round((codCount / totalOrdersCount) * 100) : null;
+    const digitalPaymentPercentage = codPercentage === null ? null : 100 - codPercentage;
 
     // AI & Agentic Fleet Telemetry
     const conversations = db.data.conversations || [];
@@ -115,7 +123,7 @@ export class PlatformAnalyticsService {
     );
     const completedRuns = agentRuns.filter((r) => r.status === "COMPLETED").length;
     const autoResolutionRate =
-      agentRuns.length > 0 ? Math.round((completedRuns / agentRuns.length) * 1000) / 10 : 94.2;
+      agentRuns.length > 0 ? Math.round((completedRuns / agentRuns.length) * 1000) / 10 : null;
 
     // Automations telemetry
     const automations = db.data.automations || [];
@@ -126,7 +134,7 @@ export class PlatformAnalyticsService {
     ).length;
     const dlqItems = db.data.automation_dead_letters || [];
     const failureRate = executions.length > 0 ? (failedExecutions / executions.length) * 100 : 0;
-    const successRate = executions.length > 0 ? Math.round((100 - failureRate) * 10) / 10 : 100.0;
+    const successRate = executions.length > 0 ? Math.round((100 - failureRate) * 10) / 10 : null;
 
     // Infrastructure & incidents
     const n8nInstances = db.data.n8n_instances || [];
@@ -136,30 +144,12 @@ export class PlatformAnalyticsService {
     const killSwitches = db.getPlatformKillSwitches();
     const isKillSwitchActive = killSwitches.some((k) => k.is_active);
 
-    // Bangladeshi Commerce Provider Rails Status
+    // No adapter talks to these providers yet (FX-31): report SIMULATED, never an invented HEALTHY/uptime.
     const providerHealth = {
-      steadfast_status: incidents.some(
-        (i) => i.title.toLowerCase().includes("steadfast") && i.status !== "RESOLVED"
-      )
-        ? ("DEGRADED" as const)
-        : ("HEALTHY" as const),
-      pathao_status: incidents.some(
-        (i) => i.title.toLowerCase().includes("pathao") && i.status !== "RESOLVED"
-      )
-        ? ("DEGRADED" as const)
-        : ("HEALTHY" as const),
-      bkash_status: incidents.some(
-        (i) => i.title.toLowerCase().includes("bkash") && i.status !== "RESOLVED"
-      )
-        ? ("DEGRADED" as const)
-        : ("HEALTHY" as const),
-      meta_status: incidents.some(
-        (i) =>
-          (i.title.toLowerCase().includes("meta") || i.title.toLowerCase().includes("facebook")) &&
-          i.status !== "RESOLVED"
-      )
-        ? ("DEGRADED" as const)
-        : ("HEALTHY" as const),
+      steadfast_status: "SIMULATED" as const,
+      pathao_status: "SIMULATED" as const,
+      bkash_status: "SIMULATED" as const,
+      meta_status: "SIMULATED" as const,
     };
 
     // Security
@@ -218,7 +208,10 @@ export class PlatformAnalyticsService {
         platform_operators_count: platformMemberships.length,
         active_impersonation_sessions: activeImpersonations,
         recent_security_events: securityEvents.length,
-        mfa_enforced_percent: 100,
+        mfa_enforced_percent: (() => {
+          const active = platformMemberships.filter((m) => m.is_active);
+          return active.length > 0 ? Math.round((active.filter((m) => m.mfa_enabled).length / active.length) * 100) : null;
+        })(), // was a literal 100
       },
     };
   }

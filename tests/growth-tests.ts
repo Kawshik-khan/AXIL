@@ -369,7 +369,9 @@ export async function runGrowthTests() {
     // Execution now succeeds
     const execResult = await campaignService.executeCampaign(tenantId, campaign.id);
     assert.ok(execResult.messages_sent >= 1, "Messages should be sent");
-    assert.ok(execResult.attributed_revenue_bdt > 0, "Attributed revenue computed");
+    // Outcomes are measured from attributions later, never assumed at send time (FX-30)
+    assert.strictEqual(execResult.attributed_revenue_bdt, null);
+    assert.strictEqual(execResult.attribution_status, "NOT_MEASURED");
   });
 
   // ============================================================

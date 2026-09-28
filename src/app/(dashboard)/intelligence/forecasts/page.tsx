@@ -119,15 +119,15 @@ export default function ForecastsPage() {
                 {targetType === "SALES_REVENUE" ? `৳${Math.round(totalProjected).toLocaleString()}` : Math.round(totalProjected).toLocaleString()}
               </div>
               <div className={`${styles.metricDelta} ${styles.deltaPositive}`}>
-                Model: {forecast?.model_used || "EXPONENTIAL_SMOOTHING"} (v{forecast?.model_version || "1.0"})
+                Model: {forecast?.model_used ?? "—"}{forecast?.model_version ? ` (v${forecast.model_version})` : ""}
               </div>
             </div>
 
             <div className={`${styles.bentoCard} ${styles.col4}`}>
               <div className={styles.metricLabel}>Mean Absolute Error (MAE)</div>
-              <div className={styles.metricValue}>{forecast?.accuracy_metrics?.mae ?? 142.5}</div>
+              <div className={styles.metricValue}>{forecast?.accuracy_metrics?.mae ?? "—"}</div>
               <div className={`${styles.metricDelta} ${styles.deltaNeutral}`}>
-                RMSE: {forecast?.accuracy_metrics?.rmse ?? 180.2}
+                RMSE: {forecast?.accuracy_metrics?.rmse ?? "—"}
               </div>
             </div>
 

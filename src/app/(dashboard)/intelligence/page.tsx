@@ -86,6 +86,16 @@ export default function IntelligenceExecutivePage() {
   }
 
   const sales = data?.sales || {};
+  // A computed change, or an honest "no comparison" (FX-30; these were literal +12.4% / +8.1%)
+  const changeLabel = (value: number | null | undefined, suffix: string) =>
+    value === null || value === undefined ? (
+      <span className={styles.deltaNeutral}>No sales in the previous period to compare</span>
+    ) : (
+      <span className={value >= 0 ? styles.deltaPositive : styles.deltaNegative}>
+        {value >= 0 ? <ArrowUpRight size={14} /> : null} {value >= 0 ? "+" : ""}
+        {value}% {suffix}
+      </span>
+    );
   const aov = sales.total_orders > 0 ? Math.round(sales.total_revenue_bdt / sales.total_orders) : 0;
   const anomalies = data?.top_anomalies || [];
   const opportunities = data?.top_opportunities || [];
@@ -144,8 +154,8 @@ export default function IntelligenceExecutivePage() {
             <TrendingUp size={16} color="#C7F900" />
           </div>
           <div className={styles.metricValue}>৳{sales.total_revenue_bdt?.toLocaleString() || 0}</div>
-          <div className={`${styles.metricDelta} ${styles.deltaPositive}`}>
-            <ArrowUpRight size={14} /> +12.4% vs prev 30d
+          <div className={styles.metricDelta}>
+            {changeLabel(data?.comparison?.revenue_change_pct, "vs previous 30 days")}
           </div>
         </div>
 
@@ -155,8 +165,8 @@ export default function IntelligenceExecutivePage() {
             <span className={styles.badgeLime}>Active</span>
           </div>
           <div className={styles.metricValue}>{sales.total_orders || 0}</div>
-          <div className={`${styles.metricDelta} ${styles.deltaPositive}`}>
-            <ArrowUpRight size={14} /> +8.1% growth velocity
+          <div className={styles.metricDelta}>
+            {changeLabel(data?.comparison?.orders_change_pct, "vs previous 30 days")}
           </div>
         </div>
 
@@ -166,19 +176,25 @@ export default function IntelligenceExecutivePage() {
             <span className={styles.badgeNeutral}>BDT</span>
           </div>
           <div className={styles.metricValue}>৳{aov.toLocaleString()}</div>
-          <div className={`${styles.metricDelta} ${styles.deltaPositive}`}>
-            <ArrowUpRight size={14} /> +৳140 vs baseline
+          <div className={`${styles.metricDelta} ${styles.deltaNeutral}`}>
+            Last 30 days
           </div>
         </div>
 
         <div className={`${styles.bentoCard} ${styles.col3}`}>
           <div className={styles.metricLabel}>
-            <span>Delivery SLA Success</span>
-            <span className={styles.badgeLime}>SLA</span>
+            <span>Delivery success</span>
+            <span className={styles.badgeLime}>Shipments</span>
           </div>
-          <div className={styles.metricValue}>94.2%</div>
+          <div className={styles.metricValue}>
+            {data?.delivery?.success_rate_pct === null || data?.delivery?.success_rate_pct === undefined
+              ? "—"
+              : `${data.delivery.success_rate_pct}%`}
+          </div>
           <div className={`${styles.metricDelta} ${styles.deltaNeutral}`}>
-            Steadfast & Pathao Normalized
+            {data?.delivery
+              ? `${data.delivery.delivered} delivered, ${data.delivery.unsuccessful} returned or failed`
+              : "No shipments yet"}
           </div>
         </div>
       </div>
@@ -209,9 +225,16 @@ export default function IntelligenceExecutivePage() {
 
                 {/* 7-Factor Explainability Badges */}
                 <div className={styles.badgeRow}>
-                  <span className={styles.badgeLime}>Impact: +৳{rec.expected_impact?.estimated_revenue_gain_bdt?.toLocaleString() || 0}</span>
-                  <span className={styles.badgeNeutral}>Confidence: {Math.round((rec.expected_impact?.confidence_score || 0.9) * 100)}%</span>
-                  <span className={styles.badgeNeutral}>Level {rec.governance?.minimum_autonomy_level} Autonomy</span>
+                  <span className={styles.badgeLime}>
+                    Impact:{" "}
+                    {typeof rec.expected_benefit?.revenue_impact_bdt === "number"
+                      ? `+৳${rec.expected_benefit.revenue_impact_bdt.toLocaleString()}`
+                      : "not estimated"}
+                  </span>
+                  <span className={styles.badgeNeutral}>
+                    Confidence: {typeof rec.confidence === "number" ? `${Math.round(rec.confidence * 100)}%` : "—"}
+                  </span>
+                  <span className={styles.badgeNeutral}>Level {rec.required_autonomy_level} Autonomy</span>
                   {rec.evidence?.[0] && (
                     <span className={styles.badgeNeutral}>Evidence: {rec.evidence[0].source_type}</span>
                   )}

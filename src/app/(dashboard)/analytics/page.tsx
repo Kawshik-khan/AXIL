@@ -139,8 +139,13 @@ export default function AnalyticsPage() {
   };
 
   // Helper formatting functions
-  const fmtCurrency = (val: number) => `৳${Math.round(val).toLocaleString()}`;
-  const fmtPct = (val: number) => `${Number(val || 0).toFixed(1)}%`;
+  // null means "not known" (no data, or not measured): show a dash, never a made-up number (FX-30)
+  const fmtCurrency = (val: number | null | undefined) => (val === null || val === undefined ? "—" : `৳${Math.round(val).toLocaleString()}`);
+  const fmtPct = (val: number | null | undefined) => (val === null || val === undefined ? "—" : `${Number(val).toFixed(1)}%`);
+  const rtoTone = (rate: number | null, high: number, moderate: number, colors: [string, string, string, string]) =>
+    rate === null ? colors[3] : rate > high ? colors[0] : rate >= moderate ? colors[1] : colors[2];
+  const tierLabel = (tier: string) => (tier === "INSUFFICIENT_DATA" ? "Not enough data" : tier);
+  const fees = rtoReport?.delivery_fees;
 
   return (
     <div className={styles.container}>
@@ -152,7 +157,7 @@ export default function AnalyticsPage() {
             <span className={styles.badgeLime}>✦ Deterministic Engine</span>
           </div>
           <div className={styles.headerSubtitle}>
-            Authoritative financial telemetry, 64-district RTO logistics breakdown, and omnichannel attribution.
+            Revenue, returns by district and sales by channel, calculated from your orders.
           </div>
         </div>
 
@@ -194,8 +199,17 @@ export default function AnalyticsPage() {
             {loading ? "..." : fmtCurrency(financials?.gmv_bdt || 0)}
           </div>
           <div className={styles.kpiFooter}>
-            <span className={styles.kpiTrendPositive}>↑ +12.8%</span>
-            <span className={styles.kpiSubtext}>vs prior period</span>
+            {financials?.period_change_pct === null || financials?.period_change_pct === undefined ? (
+              <span className={styles.kpiSubtext}>No sales in the prior period to compare</span>
+            ) : (
+              <>
+                <span className={financials.period_change_pct >= 0 ? styles.kpiTrendPositive : styles.kpiTrendNegative}>
+                  {financials.period_change_pct >= 0 ? "↑ +" : "↓ "}
+                  {financials.period_change_pct}%
+                </span>
+                <span className={styles.kpiSubtext}>vs prior period</span>
+              </>
+            )}
           </div>
         </div>
 
@@ -224,11 +238,14 @@ export default function AnalyticsPage() {
             <span className={styles.kpiIcon}>📈</span>
           </div>
           <div className={styles.kpiValue}>
-            {loading ? "..." : fmtPct(financials?.gross_margin_pct || 0)}
+            {loading ? "..." : fmtPct(financials?.gross_margin_pct)}
           </div>
           <div className={styles.kpiFooter}>
-            <span className={styles.kpiTrendPositive}>Authoritative</span>
-            <span className={styles.kpiSubtext}>COGS deducted</span>
+            <span className={styles.kpiSubtext}>
+              {financials && financials.cogs_estimated_share_pct > 0
+                ? `${financials.cogs_estimated_share_pct}% of COGS estimated (no cost price)`
+                : "From recorded cost prices"}
+            </span>
           </div>
         </div>
 
@@ -240,7 +257,7 @@ export default function AnalyticsPage() {
             <span className={styles.kpiIcon}>🚚</span>
           </div>
           <div className={styles.kpiValue}>
-            {loading ? "..." : fmtPct(rtoReport?.overall_rto_rate_pct || 0)}
+            {loading ? "..." : fmtPct(rtoReport?.overall_rto_rate_pct)}
           </div>
           <div className={styles.kpiFooter}>
             <span className={styles.kpiSubtext}>
@@ -334,7 +351,7 @@ export default function AnalyticsPage() {
                     <div className={styles.chartBars}>
                       {financials.time_series.map((pt, idx) => {
                         const maxVal = Math.max(...financials.time_series.map((p) => p.gmv_bdt), 1);
-                        const heightPct = Math.max(15, Math.round((pt.gmv_bdt / maxVal) * 100));
+                        const heightPct = pt.gmv_bdt > 0 ? Math.max(4, Math.round((pt.gmv_bdt / maxVal) * 100)) : 0;
 
                         return (
                           <div key={idx} className={styles.chartBarWrapper}>
@@ -347,7 +364,7 @@ export default function AnalyticsPage() {
                               <br />
                               AOV: {fmtCurrency(pt.aov_bdt)}
                               <br />
-                              Margin: {pt.gross_margin_pct}%
+                              Margin: {fmtPct(pt.gross_margin_pct)}
                             </div>
                             <div
                               className={styles.chartBarFill}
@@ -367,8 +384,8 @@ export default function AnalyticsPage() {
                 <div className={styles.bentoCard}>
                   <div className={styles.bentoCardHeader}>
                     <div>
-                      <div className={styles.bentoCardTitle}>Authoritative Waterfall</div>
-                      <div className={styles.bentoCardDesc}>Zero-hallucination audit reconciliation</div>
+                      <div className={styles.bentoCardTitle}>Revenue waterfall</div>
+                      <div className={styles.bentoCardDesc}>From orders and refunds in this period</div>
                     </div>
                   </div>
 
@@ -414,7 +431,11 @@ export default function AnalyticsPage() {
                     <div className={styles.metricRow}>
                       <div>
                         <div className={styles.metricRowLabel}>Cost of Goods Sold (COGS)</div>
-                        <div className={styles.metricRowSub}>Authoritative variant unit costs</div>
+                        <div className={styles.metricRowSub}>
+                          {financials.cogs_estimated_share_pct > 0
+                            ? `${financials.cogs_estimated_share_pct}% estimated at 42% of price (no cost price recorded)`
+                            : "From recorded cost prices"}
+                        </div>
                       </div>
                       <div className={styles.metricRowValue}>
                         {fmtCurrency(financials.cogs_bdt)}
@@ -427,7 +448,7 @@ export default function AnalyticsPage() {
                           Gross Profit
                         </div>
                         <div className={styles.metricRowSub} style={{ color: "#A8D900" }}>
-                          Gross Margin: {financials.gross_margin_pct}%
+                          Gross Margin: {fmtPct(financials.gross_margin_pct)}
                         </div>
                       </div>
                       <div className={styles.metricRowValue} style={{ color: "#C7F900" }}>
@@ -475,31 +496,22 @@ export default function AnalyticsPage() {
                 </div>
 
                 <div className={styles.bentoCard}>
-                  <div className={styles.bentoCardTitle}>🚚 Logistical Zone Delivery Margin</div>
-                  <div className={styles.bentoCardDesc}>Inside Dhaka (৳60) vs Outside Dhaka (৳120) courier split</div>
+                  <div className={styles.bentoCardTitle}>🚚 Delivery charges</div>
+                  <div className={styles.bentoCardDesc}>What customers pay per order, from your settings</div>
                   <div className={styles.metricList} style={{ marginTop: 16 }}>
                     <div className={styles.metricRow}>
                       <div>
-                        <div className={styles.metricRowLabel}>Inside Dhaka Courier Fee</div>
-                        <div className={styles.metricRowSub}>Pathao / Steadfast intra-city standard</div>
+                        <div className={styles.metricRowLabel}>Inside Dhaka</div>
+                        <div className={styles.metricRowSub}>Delivery charge per order</div>
                       </div>
-                      <div className={styles.metricRowValue}>৳60 BDT</div>
+                      <div className={styles.metricRowValue}>{fmtCurrency(fees?.inside_dhaka_bdt)}</div>
                     </div>
                     <div className={styles.metricRow}>
                       <div>
-                        <div className={styles.metricRowLabel}>Outside Dhaka Courier Fee</div>
-                        <div className={styles.metricRowSub}>Inter-district national logistics</div>
+                        <div className={styles.metricRowLabel}>Outside Dhaka</div>
+                        <div className={styles.metricRowSub}>Delivery charge per order</div>
                       </div>
-                      <div className={styles.metricRowValue}>৳120 BDT</div>
-                    </div>
-                    <div className={styles.metricRow}>
-                      <div>
-                        <div className={styles.metricRowLabel}>RTO Return Transit Cost</div>
-                        <div className={styles.metricRowSub}>Courier return surcharge on failed COD</div>
-                      </div>
-                      <div className={styles.metricRowValue} style={{ color: "#C5221F" }}>
-                        ৳50 - ৳70 BDT
-                      </div>
+                      <div className={styles.metricRowValue}>{fmtCurrency(fees?.outside_dhaka_bdt)}</div>
                     </div>
                   </div>
                 </div>
@@ -515,12 +527,12 @@ export default function AnalyticsPage() {
                 <div className={styles.bentoCard}>
                   <div className={styles.bentoCardTitle}>
                     <span>Zone Delivery Disparity</span>
-                    <span className={styles.badgeLime}>Logistics Benchmark</span>
+                    <span className={styles.badgeLime}>Your shipments</span>
                   </div>
                   <div className={styles.metricList} style={{ marginTop: 14 }}>
                     <div className={styles.metricRow}>
                       <div>
-                        <div className={styles.metricRowLabel}>Inside Dhaka (৳60 Zone)</div>
+                        <div className={styles.metricRowLabel}>Inside Dhaka ({fmtCurrency(fees?.inside_dhaka_bdt)} delivery)</div>
                         <div className={styles.metricRowSub}>Rapid same-day / next-day hub delivery</div>
                       </div>
                       <div className={styles.metricRowValue} style={{ color: "#137333" }}>
@@ -529,7 +541,7 @@ export default function AnalyticsPage() {
                     </div>
                     <div className={styles.metricRow}>
                       <div>
-                        <div className={styles.metricRowLabel}>Outside Dhaka (৳120 Zone)</div>
+                        <div className={styles.metricRowLabel}>Outside Dhaka ({fmtCurrency(fees?.outside_dhaka_bdt)} delivery)</div>
                         <div className={styles.metricRowSub}>Upazila & regional hub deliveries</div>
                       </div>
                       <div className={styles.metricRowValue} style={{ color: "#B06000" }}>
@@ -543,10 +555,20 @@ export default function AnalyticsPage() {
                   <div className={styles.bentoCardTitle}>🛡️ COD Doorstep Refusal Risk Advisory</div>
                   <div className={styles.bentoCardDesc}>Algorithmic courier fraud mitigation</div>
                   <div style={{ marginTop: 14, fontSize: 13, lineHeight: 1.6, color: "#3C4043" }}>
-                    Districts with RTO exceeding <strong>15.0%</strong> (e.g. Cox&apos;s Bazar, Sunamganj) are
-                    automatically flagged for <strong>Mandatory ৳150 Advance Delivery Charge</strong> via bKash/Nagad
-                    before courier assignment. This pre-verifies customer commitment and recovers merchant courier
-                    liabilities.
+                    {(() => {
+                      const high = rtoReport.districts.filter((d) => d.risk_tier === "HIGH_RISK");
+                      return high.length > 0 ? (
+                        <>
+                          More than 15% of shipments came back in <strong>{high.map((d) => d.district).join(", ")}</strong>.
+                          Consider asking for the delivery charge in advance (bKash/Nagad) before dispatching there.
+                        </>
+                      ) : (
+                        <>
+                          No district has more than 15% of shipments coming back. Rates need at least{" "}
+                          {rtoReport.minimum_shipments_for_rate} shipments per district.
+                        </>
+                      );
+                    })()}
                   </div>
                 </div>
               </div>
@@ -574,18 +596,13 @@ export default function AnalyticsPage() {
                       <div
                         className={styles.divisionCardRto}
                         style={{
-                          color:
-                            div.rto_rate_pct > 10
-                              ? "#C5221F"
-                              : div.rto_rate_pct > 6
-                              ? "#B06000"
-                              : "#137333",
+                          color: rtoTone(div.rto_rate_pct, 10, 6.01, ["var(--color-danger)", "var(--color-warning)", "var(--color-success)", "var(--color-text-muted)"]),
                         }}
                       >
                         {fmtPct(div.rto_rate_pct)} RTO
                       </div>
                       <div className={styles.divisionCardSub}>
-                        Peak: {div.highest_risk_district}
+                        Peak: {div.highest_risk_district ?? "not enough data"}
                       </div>
                     </div>
                   );
@@ -650,7 +667,7 @@ export default function AnalyticsPage() {
                           <td>{d.division}</td>
                           <td>
                             <span className={`${styles.badge} ${styles.badgeZone}`}>
-                              {d.zone === "INSIDE_DHAKA" ? "Inside Dhaka (৳60)" : "Outside Dhaka (৳120)"}
+                              {d.zone === "INSIDE_DHAKA" ? "Inside Dhaka" : "Outside Dhaka"}
                             </span>
                           </td>
                           <td>{d.total_shipments}</td>
@@ -659,22 +676,21 @@ export default function AnalyticsPage() {
                           <td>
                             <div
                               className={styles.progressBar}
-                              title={`${d.rto_rate_pct}%`}
+                              title={fmtPct(d.rto_rate_pct)}
                             >
                               <div
-                                className={
-                                  d.rto_rate_pct > 15
-                                    ? styles.progressFillHigh
-                                    : d.rto_rate_pct >= 8
-                                    ? styles.progressFillModerate
-                                    : styles.progressFillLow
-                                }
-                                style={{ width: `${Math.min(100, d.rto_rate_pct * 4)}%` }}
+                                className={rtoTone(d.rto_rate_pct, 15, 8, [
+                                  styles.progressFillHigh,
+                                  styles.progressFillModerate,
+                                  styles.progressFillLow,
+                                  styles.progressFillLow,
+                                ])}
+                                style={{ width: `${Math.min(100, (d.rto_rate_pct ?? 0) * 4)}%` }}
                               />
                             </div>
-                            <span style={{ fontWeight: 600 }}>{d.rto_rate_pct}%</span>
+                            <span style={{ fontWeight: 600 }}>{fmtPct(d.rto_rate_pct)}</span>
                           </td>
-                          <td>{d.cod_share_pct}%</td>
+                          <td>{fmtPct(d.cod_share_pct)}</td>
                           <td>
                             <span
                               className={`${styles.badge} ${
@@ -682,10 +698,12 @@ export default function AnalyticsPage() {
                                   ? styles.badgeHighRisk
                                   : d.risk_tier === "MODERATE"
                                   ? styles.badgeModerate
+                                  : d.risk_tier === "INSUFFICIENT_DATA"
+                                  ? ""
                                   : styles.badgeLow
                               }`}
                             >
-                              {d.risk_tier}
+                              {tierLabel(d.risk_tier)}
                             </span>
                           </td>
                           <td>
@@ -755,20 +773,20 @@ export default function AnalyticsPage() {
                           </div>
                           <div>
                             <div style={{ color: "#70736F", fontSize: 11 }}>Conversion</div>
-                            <div style={{ fontWeight: 700, color: "#137333" }}>
-                              {ch.conversion_rate_pct}%
+                            <div style={{ fontWeight: 700 }} title="Not measured: there is no visit or session data">
+                              {fmtPct(ch.conversion_rate_pct)}
                             </div>
                           </div>
                           <div>
                             <div style={{ color: "#70736F", fontSize: 11 }}>RTO Rate</div>
-                            <div style={{ fontWeight: 700, color: ch.rto_rate_pct > 6 ? "#B06000" : "#137333" }}>
-                              {ch.rto_rate_pct}%
+                            <div style={{ fontWeight: 700, color: rtoTone(ch.rto_rate_pct, 6, 6.01, ["var(--color-warning)", "var(--color-warning)", "var(--color-success)", "var(--color-text-muted)"]) }}>
+                              {fmtPct(ch.rto_rate_pct)}
                             </div>
                           </div>
                         </div>
 
                         <div style={{ fontSize: 11, color: "#70736F" }}>
-                          COD Preference: <strong>{ch.cod_share_pct}%</strong>
+                          COD share: <strong>{fmtPct(ch.cod_share_pct)}</strong>
                         </div>
                       </div>
                     ))}
@@ -786,29 +804,28 @@ export default function AnalyticsPage() {
                         <div className={styles.metricRowSub}>Highest absolute revenue producer</div>
                       </div>
                       <div className={styles.metricRowValue} style={{ fontSize: 13, textAlign: "right" }}>
-                        {channelsReport.top_channel_by_gmv}
+                        {channelsReport.top_channel_by_gmv ?? "No orders in this period"}
                       </div>
                     </div>
 
                     <div className={styles.metricRow}>
                       <div>
                         <div className={styles.metricRowLabel}>Top Conversion Funnel</div>
-                        <div className={styles.metricRowSub}>Highest leads-to-order ratio</div>
+                        <div className={styles.metricRowSub}>Needs visit or lead data per channel</div>
                       </div>
                       <div className={styles.metricRowValue} style={{ fontSize: 13, textAlign: "right" }}>
-                        {channelsReport.top_channel_by_conversion}
+                        {channelsReport.top_channel_by_conversion ?? "Not measured"}
                       </div>
                     </div>
 
                     <div style={{ fontSize: 12, lineHeight: 1.6, color: "#3C4043", padding: "8px 0" }}>
-                      💡 <strong>Executive Takeaway:</strong> WhatsApp and Facebook Messenger generate{" "}
+                      💡 WhatsApp and Facebook Messenger brought{" "}
                       <strong>
                         {((channelsReport.channels.find((c) => c.channel === "WHATSAPP")?.gmv_share_pct || 0) +
                           (channelsReport.channels.find((c) => c.channel === "FACEBOOK_MESSENGER")?.gmv_share_pct || 0)).toFixed(1)}
                         %
                       </strong>{" "}
-                      of total revenue. Direct conversational checkout out-converts traditional web cart funnels by
-                      3.2x in the local retail market.
+                      of revenue in this period.
                     </div>
                   </div>
                 </div>
@@ -874,10 +891,10 @@ export default function AnalyticsPage() {
                           AOV: {fmtCurrency(d.financial_summary?.aov_bdt || 0)}
                         </span>
                         <span className={styles.digestPill}>
-                          Margin: {d.financial_summary?.gross_margin_pct}%
+                          Margin: {fmtPct(d.financial_summary?.gross_margin_pct)}
                         </span>
                         <span className={styles.digestPill}>
-                          RTO: {d.financial_summary?.rto_rate_pct}%
+                          RTO: {fmtPct(d.financial_summary?.rto_rate_pct)}
                         </span>
                         <span className={styles.digestPill} style={{ background: "#C7F900", color: "#121316" }}>
                           ✦ Click to View Action Items
@@ -1019,13 +1036,13 @@ export default function AnalyticsPage() {
                   <div>
                     <div style={{ color: "#70736F", fontSize: 11 }}>Gross Margin</div>
                     <div style={{ fontWeight: 700, fontSize: 15, color: "#137333" }}>
-                      {selectedDigest.financial_summary?.gross_margin_pct}%
+                      {fmtPct(selectedDigest.financial_summary?.gross_margin_pct)}
                     </div>
                   </div>
                   <div>
                     <div style={{ color: "#70736F", fontSize: 11 }}>RTO Rate</div>
                     <div style={{ fontWeight: 700, fontSize: 15 }}>
-                      {selectedDigest.financial_summary?.rto_rate_pct}%
+                      {fmtPct(selectedDigest.financial_summary?.rto_rate_pct)}
                     </div>
                   </div>
                 </div>
@@ -1138,14 +1155,19 @@ export default function AnalyticsPage() {
                         ? styles.badgeHighRisk
                         : selectedDistrict.risk_tier === "MODERATE"
                         ? styles.badgeModerate
+                        : selectedDistrict.risk_tier === "INSUFFICIENT_DATA"
+                        ? ""
                         : styles.badgeLow
                     }`}
                   >
-                    {selectedDistrict.risk_tier}
+                    {tierLabel(selectedDistrict.risk_tier)}
                   </span>
                 </div>
                 <div style={{ fontSize: 12, color: "#70736F", marginTop: 4 }}>
-                  {selectedDistrict.division} Division • {selectedDistrict.zone === "INSIDE_DHAKA" ? "Inside Dhaka (৳60 Fee)" : "Outside Dhaka (৳120 Fee)"}
+                  {selectedDistrict.division} Division •{" "}
+                  {selectedDistrict.zone === "INSIDE_DHAKA"
+                    ? `Inside Dhaka (${fmtCurrency(fees?.inside_dhaka_bdt)} delivery)`
+                    : `Outside Dhaka (${fmtCurrency(fees?.outside_dhaka_bdt)} delivery)`}
                 </div>
               </div>
               <button
@@ -1179,7 +1201,7 @@ export default function AnalyticsPage() {
                 <div>
                   <div style={{ color: "#70736F", fontSize: 11 }}>COD Reliance</div>
                   <div style={{ fontWeight: 700, fontSize: 15 }}>
-                    {selectedDistrict.cod_share_pct}%
+                    {fmtPct(selectedDistrict.cod_share_pct)}
                   </div>
                 </div>
               </div>

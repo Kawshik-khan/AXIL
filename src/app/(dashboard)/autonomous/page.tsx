@@ -95,7 +95,13 @@ export default function AutonomousControlTowerPage() {
         body: JSON.stringify({ tool_name: "execute_autonomous_cycle", parameters: { cycle_type: "DAILY" } }),
       });
       await fetchOverview();
-      alert("Daily Autonomous Cycle executed successfully");
+      // Report what happened; this used to say "executed successfully" even when the call failed (FX-30)
+      if (!res.ok) {
+        const json = await res.json().catch(() => null);
+        alert(`The daily cycle did not run: ${json?.error?.message ?? `HTTP ${res.status}`}`);
+        return;
+      }
+      alert("Daily autonomous cycle started.");
     } catch (err) {
       alert("Failed to trigger cycle");
     } finally {
@@ -212,8 +218,7 @@ export default function AutonomousControlTowerPage() {
           </div>
           <div className={styles.metricGroup}>
             <div className={styles.metricValue}>
-              {overview?.active_objectives ?? 3}
-              <span className={`${styles.metricTrend} ${styles.trendPositive}`}>+100% on target</span>
+              {overview?.active_objectives ?? "—"}
             </div>
             <p className={styles.metricSubtext}>Across Enterprise & Store tiers</p>
           </div>
@@ -230,8 +235,7 @@ export default function AutonomousControlTowerPage() {
           </div>
           <div className={styles.metricGroup}>
             <div className={styles.metricValue}>
-              {overview?.active_strategies ?? 2}
-              <span className={`${styles.metricTrend} ${styles.trendPositive}`}>36% projected ROI</span>
+              {overview?.active_strategies ?? "—"}
             </div>
             <p className={styles.metricSubtext}>Multi-agent DAG executions</p>
           </div>
@@ -248,7 +252,7 @@ export default function AutonomousControlTowerPage() {
           </div>
           <div className={styles.metricGroup}>
             <div className={styles.metricValue}>
-              {overview?.pending_decisions ?? 0}
+              {overview?.pending_decisions ?? "—"}
               <span className={styles.metricSubtext} style={{ marginLeft: 8 }}>Human gates</span>
             </div>
             <p className={styles.metricSubtext}>High-risk decisions awaiting review</p>
@@ -266,10 +270,9 @@ export default function AutonomousControlTowerPage() {
           </div>
           <div className={styles.metricGroup}>
             <div className={styles.metricValue}>
-              {overview?.health || "HEALTHY"}
-              <span className={`${styles.statusPill} ${styles.statusHealthy}`}>11/11 Dims</span>
+              {overview?.health ?? "UNKNOWN"}
             </div>
-            <p className={styles.metricSubtext}>SLO Error Budget: 99.4% available</p>
+            <p className={styles.metricSubtext}>Mode: {overview?.system_mode ?? "—"}</p>
           </div>
           <Link href="/autonomous/health" className={`${styles.btn} ${styles.btnSecondary}`} style={{ marginTop: "auto" }}>
             Health Diagnostics <ArrowUpRight size={14} />
@@ -286,10 +289,11 @@ export default function AutonomousControlTowerPage() {
               <Bot size={16} color="#c7f900" />
               Canonical Cross-Domain Autonomous Workflows
             </h3>
-            <span className={`${styles.originBadge} ${styles.originAutonomous}`}>ACTIVE LOOP</span>
+            <span className={`${styles.originBadge} ${styles.originSimulated}`}>PREVIEW</span>
           </div>
           <p style={{ fontSize: 13, color: "#9ca3af", marginBottom: 16 }}>
-            Coordinated autonomous loops executing Observe → Understand → Plan → Simulate → Decide → Authorize → Execute → Verify → Learn.
+            Designed loops (Observe → Plan → Simulate → Decide → Authorize → Execute → Verify → Learn). They don&apos;t run yet: nothing
+            here acts on your store.
           </p>
 
           <div className={styles.itemRow}>
@@ -298,7 +302,7 @@ export default function AutonomousControlTowerPage() {
               <div className={styles.itemSubtitle}>Dynamic pricing, inventory rebalance, and courier scaling</div>
             </div>
             <div className={styles.itemMeta}>
-              <span className={`${styles.statusPill} ${styles.statusHealthy}`}>READY</span>
+              <span className={styles.statusPill}>Not running</span>
             </div>
           </div>
 
@@ -308,7 +312,7 @@ export default function AutonomousControlTowerPage() {
               <div className={styles.itemSubtitle}>Stockout detection, automated PO creation, campaign pausing</div>
             </div>
             <div className={styles.itemMeta}>
-              <span className={`${styles.statusPill} ${styles.statusHealthy}`}>READY</span>
+              <span className={styles.statusPill}>Not running</span>
             </div>
           </div>
 
@@ -318,7 +322,7 @@ export default function AutonomousControlTowerPage() {
               <div className={styles.itemSubtitle}>Unit economics balance, dynamic markdown, and courier fee audit</div>
             </div>
             <div className={styles.itemMeta}>
-              <span className={`${styles.statusPill} ${styles.statusHealthy}`}>READY</span>
+              <span className={styles.statusPill}>Not running</span>
             </div>
           </div>
 
@@ -328,7 +332,7 @@ export default function AutonomousControlTowerPage() {
               <div className={styles.itemSubtitle}>Churn scoring, personalized offers, omni-channel reactivation</div>
             </div>
             <div className={styles.itemMeta}>
-              <span className={`${styles.statusPill} ${styles.statusHealthy}`}>READY</span>
+              <span className={styles.statusPill}>Not running</span>
             </div>
           </div>
 
@@ -338,7 +342,7 @@ export default function AutonomousControlTowerPage() {
               <div className={styles.itemSubtitle}>Cross-domain blast radius containment, automatic rollback, postmortem</div>
             </div>
             <div className={styles.itemMeta}>
-              <span className={`${styles.statusPill} ${styles.statusHealthy}`}>READY</span>
+              <span className={styles.statusPill}>Not running</span>
             </div>
           </div>
 
@@ -348,7 +352,7 @@ export default function AutonomousControlTowerPage() {
               <div className={styles.itemSubtitle}>Multi-store catalog replication, localized pricing, cross-entity balancing</div>
             </div>
             <div className={styles.itemMeta}>
-              <span className={`${styles.statusPill} ${styles.statusHealthy}`}>READY</span>
+              <span className={styles.statusPill}>Not running</span>
             </div>
           </div>
         </div>
@@ -360,39 +364,43 @@ export default function AutonomousControlTowerPage() {
               <ShieldCheck size={16} color="#c7f900" />
               Quality Scorecard
             </h3>
-            <span className={`${styles.originBadge} ${styles.originReal}`}>AUDITED</span>
+            <span className={`${styles.originBadge} ${styles.originSimulated}`}>NOT MEASURED</span>
           </div>
+
+          <p className={styles.metricSubtext} style={{ marginBottom: 12 }}>
+            No verified autonomous actions are recorded yet, so these rates can&apos;t be measured.
+          </p>
 
           <div style={{ marginBottom: 16 }}>
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
               <span>Decision Accuracy</span>
-              <strong style={{ color: "#c7f900" }}>98.2%</strong>
+              <strong style={{ color: "var(--color-text-muted)" }}>—</strong>
             </div>
-            <div className={styles.progressTrack}><div className={styles.progressBar} style={{ width: "98.2%" }} /></div>
+            <div className={styles.progressTrack}><div className={styles.progressBar} style={{ width: "0%" }} /></div>
           </div>
 
           <div style={{ marginBottom: 16 }}>
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
               <span>Verification Success Rate</span>
-              <strong style={{ color: "#c7f900" }}>96.5%</strong>
+              <strong style={{ color: "var(--color-text-muted)" }}>—</strong>
             </div>
-            <div className={styles.progressTrack}><div className={styles.progressBar} style={{ width: "96.5%" }} /></div>
+            <div className={styles.progressTrack}><div className={styles.progressBar} style={{ width: "0%" }} /></div>
           </div>
 
           <div style={{ marginBottom: 16 }}>
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
               <span>Policy Compliance Rate</span>
-              <strong style={{ color: "#c7f900" }}>99.8%</strong>
+              <strong style={{ color: "var(--color-text-muted)" }}>—</strong>
             </div>
-            <div className={styles.progressTrack}><div className={styles.progressBar} style={{ width: "99.8%" }} /></div>
+            <div className={styles.progressTrack}><div className={styles.progressBar} style={{ width: "0%" }} /></div>
           </div>
 
           <div style={{ marginBottom: 16 }}>
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
               <span>Autonomous Action Failure Rate</span>
-              <strong style={{ color: "#22c55e" }}>0.4%</strong>
+              <strong style={{ color: "var(--color-text-muted)" }}>—</strong>
             </div>
-            <div className={styles.progressTrack}><div className={styles.progressBar} style={{ width: "0.4%", background: "#22c55e" }} /></div>
+            <div className={styles.progressTrack}><div className={styles.progressBar} style={{ width: "0%" }} /></div>
           </div>
 
           <div style={{ marginTop: "auto" }}>

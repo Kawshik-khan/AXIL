@@ -5,6 +5,7 @@ declare const process: { exit(code?: number): void };
 import { db } from "@/infrastructure/db";
 import { analyticsService } from "@/domains/analytics/analytics.service";
 import { RequestContext } from "@/lib/context";
+import type { Order } from "@/types/commerce";
 import { ROLE_PERMISSIONS } from "@/lib/permissions";
 
 const ANSI_GREEN = "\x1b[32m";
@@ -179,8 +180,17 @@ export async function runAnalyticsTests() {
     const samplePt = fin.time_series[0];
     assert.ok(samplePt.date.includes("-"));
     assert.ok(typeof samplePt.gmv_bdt === "number");
-    assert.ok(typeof samplePt.aov_bdt === "number");
-    assert.ok(typeof samplePt.gross_margin_pct === "number");
+    // Buckets are real: GMV adds up to the total, empty buckets are 0 with null AOV/margin (FX-30: no sine-wave filler)
+    assert.strictEqual(fin.time_series.reduce((sum, p) => sum + p.gmv_bdt, 0), fin.gmv_bdt);
+    for (const pt of fin.time_series) {
+      if (pt.orders_count === 0) {
+        assert.strictEqual(pt.gmv_bdt, 0);
+        assert.strictEqual(pt.aov_bdt, null);
+        assert.strictEqual(pt.gross_margin_pct, null);
+      } else {
+        assert.ok(typeof pt.aov_bdt === "number");
+      }
+    }
   });
 
   // ==========================================
@@ -219,24 +229,40 @@ export async function runAnalyticsTests() {
     assert.ok(ctg);
     assert.strictEqual(ctg.zone, "OUTSIDE_DHAKA");
 
-    assert.ok(typeof report.inside_dhaka_rto_pct === "number");
-    assert.ok(typeof report.outside_dhaka_rto_pct === "number");
-    assert.ok(report.inside_dhaka_rto_pct < report.outside_dhaka_rto_pct, "Inside Dhaka RTO is typically lower than Outside Dhaka");
+    // Two shipments aren't enough for a rate: reported as insufficient data, not invented (FX-30)
+    assert.strictEqual(report.inside_dhaka_rto_pct, null);
+    assert.strictEqual(report.outside_dhaka_rto_pct, null);
+    assert.strictEqual(ctg.risk_tier, "INSUFFICIENT_DATA");
+    assert.strictEqual(report.districts.find((d) => d.district === "Cox's Bazar")?.total_shipments, 1);
+    assert.strictEqual(report.minimum_shipments_for_rate, 20);
   });
 
-  await runTest("Flags high-risk districts (>15% RTO) with mandatory partial advance bKash requirement", async () => {
+  await runTest("Flags a district as high-risk only from its own shipments (>15% RTO over 20+ shipments)", async () => {
+    // 20 shipments to Sunamganj, 5 returned (25%); 20 to Gazipur, none returned.
+    const seedShipment = (i: number, district: string, status: "DELIVERED" | "RETURNED") =>
+      db.createOrder(
+        {
+          id: `ord_rto_${district}_${i}`, tenant_id: tenantId, order_number: `RTO-${district}-${i}`, customer_id: "cust_test_01",
+          status, currency: "BDT", subtotal: 1000, discount_total: 0, shipping_total: 120, tax_total: 0, grand_total: 1120,
+          payment_method: "COD", payment_status: status === "DELIVERED" ? "PAID" : "REFUNDED", fulfillment_status: "FULFILLED",
+          source: "WEBSITE", shipping_address_snapshot: { district, division: "Sylhet", address_line_1: "x" },
+          created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+        } as Order,
+        []
+      );
+    for (let i = 0; i < 20; i++) seedShipment(i, "Sunamganj", i < 5 ? "RETURNED" : "DELIVERED");
+    for (let i = 0; i < 20; i++) seedShipment(i, "Gazipur", "DELIVERED");
+
     const report = await analyticsService.getRtoGeographyReport(testContext);
-
-    const highRisk = report.districts.filter((d) => d.risk_tier === "HIGH_RISK");
-    assert.ok(highRisk.length > 0, "Expected at least one high-risk district flagged");
-
-    const coxBazar = report.districts.find((d) => d.district === "Cox's Bazar");
-    assert.ok(coxBazar);
-    assert.strictEqual(coxBazar.risk_tier, "HIGH_RISK");
-    assert.ok(
-      coxBazar.recommendation.includes("৳150 delivery advance"),
-      "High-risk district must recommend ৳150 delivery advance via bKash/Nagad"
-    );
+    const sunamganj = report.districts.find((d) => d.district === "Sunamganj");
+    const gazipur = report.districts.find((d) => d.district === "Gazipur");
+    assert.strictEqual(sunamganj?.rto_rate_pct, 25);
+    assert.strictEqual(sunamganj?.risk_tier, "HIGH_RISK");
+    assert.ok(/advance/i.test(sunamganj!.recommendation));
+    assert.strictEqual(gazipur?.rto_rate_pct, 0);
+    assert.strictEqual(gazipur?.risk_tier, "LOW");
+    assert.strictEqual(sunamganj?.cod_share_pct, 100);
+    assert.deepStrictEqual(report.delivery_fees, { inside_dhaka_bdt: 60, outside_dhaka_bdt: 120 }, "fees come from settings/defaults");
   });
 
   await runTest("Filters 64-district report by division and district search query", async () => {
@@ -277,8 +303,47 @@ export async function runAnalyticsTests() {
       `Sum of GMV shares must be ~100%, got ${sumGmvShares}%`
     );
 
-    // Verify WhatsApp conversational checkout has highest conversion
-    assert.ok(whatsapp.conversion_rate_pct > web.conversion_rate_pct, "Conversational checkout out-converts web cart");
+    // No visit/session data exists, so conversion is never invented (FX-30: was 18.4% / 9.8% / 3.4% literals)
+    assert.ok(report.channels.every((c) => c.conversion_rate_pct === null));
+    assert.strictEqual(report.top_channel_by_conversion, null);
+    assert.ok(whatsapp.orders_count >= 1 && fb.orders_count >= 1, "real orders are counted in their channels");
+  });
+
+  await runTest("A workspace with no orders gets zero totals and no invented change or chart (H7)", async () => {
+    const empty = { ...testContext, tenant: { ...testContext.tenant, id: "ten_analytics_empty" } } as RequestContext;
+    const channels = await analyticsService.getChannelAttributionReport(empty, "TODAY");
+    assert.strictEqual(channels.total_orders_count, 0);
+    assert.strictEqual(channels.total_gmv_bdt, 0);
+    assert.strictEqual(channels.top_channel_by_gmv, null);
+    const fin = await analyticsService.getFinancialMetrics(empty, "TODAY");
+    assert.strictEqual(fin.gmv_bdt, 0);
+    assert.strictEqual(fin.period_change_pct, null, "no previous window, no change");
+    assert.strictEqual(fin.gross_margin_pct, null);
+    assert.ok(fin.time_series.every((pt) => pt.gmv_bdt === 0 && pt.orders_count === 0));
+    const rto = await analyticsService.getRtoGeographyReport(empty);
+    assert.strictEqual(rto.total_shipments_evaluated, 0);
+    assert.strictEqual(rto.overall_rto_rate_pct, null);
+    assert.strictEqual(rto.high_risk_districts_count, 0);
+  });
+
+  await runTest("Period change is computed from the previous window of the same length", async () => {
+    const ctx = { ...testContext, tenant: { ...testContext.tenant, id: "ten_analytics_trend" } } as RequestContext;
+    const at = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString();
+    const add = (id: string, total: number, daysAgo: number) =>
+      db.createOrder(
+        {
+          id, tenant_id: "ten_analytics_trend", order_number: id, customer_id: "c", status: "DELIVERED", currency: "BDT",
+          subtotal: total, discount_total: 0, shipping_total: 0, tax_total: 0, grand_total: total, payment_method: "COD",
+          payment_status: "PAID", fulfillment_status: "FULFILLED", source: "WEBSITE", shipping_address_snapshot: {},
+          created_at: at(daysAgo), updated_at: at(daysAgo),
+        } as Order,
+        []
+      );
+    add("ord_trend_prev", 1000, 10); // previous 7-day window
+    add("ord_trend_now", 1500, 2); // current window
+    const fin = await analyticsService.getFinancialMetrics(ctx, "7D");
+    assert.strictEqual(fin.gmv_bdt, 1500);
+    assert.strictEqual(fin.period_change_pct, 50);
   });
 
   // ==========================================

@@ -83,7 +83,7 @@ export default function RecommendationsPage() {
 
       {/* Status Filter Tabs */}
       <div style={{ display: "flex", gap: 8, marginBottom: 24, flexWrap: "wrap" }}>
-        {["ALL", "PENDING", "REVIEWING", "APPROVED", "EXECUTED", "REJECTED"].map((s) => (
+        {["ALL", "PROPOSED", "REVIEWING", "APPROVED", "EXECUTED", "REJECTED"].map((s) => (
           <button
             key={s}
             className={statusFilter === s ? styles.actionBtn : styles.secondaryBtn}
@@ -120,33 +120,29 @@ export default function RecommendationsPage() {
               {/* 7-Factor Explainability Matrix */}
               <div className={styles.badgeRow}>
                 <span className={styles.badgeLime}>
-                  +৳{rec.expected_impact?.estimated_revenue_gain_bdt?.toLocaleString() || 0}
+                  {typeof rec.expected_benefit?.revenue_impact_bdt === "number"
+                    ? `+৳${rec.expected_benefit.revenue_impact_bdt.toLocaleString()}`
+                    : "Impact not estimated"}
                 </span>
                 <span className={styles.badgeNeutral}>
-                  Conf: {Math.round((rec.expected_impact?.confidence_score || 0.9) * 100)}%
+                  Conf: {typeof rec.confidence === "number" ? `${Math.round(rec.confidence * 100)}%` : "—"}
                 </span>
-                <span className={styles.badgeNeutral}>
-                  Risk: {rec.governance?.risk_level || "LOW"}
-                </span>
-                <span className={styles.badgeNeutral}>
-                  Autonomy Level {rec.governance?.minimum_autonomy_level ?? 2}
-                </span>
-                <span className={styles.badgeNeutral}>
-                  {rec.governance?.is_reversible ? "Reversible" : "Irreversible"}
-                </span>
+                <span className={styles.badgeNeutral}>Risk: {rec.action_risk_level ?? "—"}</span>
+                <span className={styles.badgeNeutral}>Autonomy Level {rec.required_autonomy_level ?? "—"}</span>
+                <span className={styles.badgeNeutral}>{rec.required_approval ? "Needs approval" : "No approval needed"}</span>
               </div>
 
               {/* Trade-Off Warning (if any) */}
-              {rec.expected_impact?.potential_risks && (
-                <div style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 12, color: "#ffc107", marginBottom: 14 }}>
+              {Array.isArray(rec.risks) && rec.risks.length > 0 && (
+                <div style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 12, color: "var(--color-warning)", marginBottom: 14 }}>
                   <AlertTriangle size={14} />
-                  <span>Trade-off: {rec.expected_impact.potential_risks}</span>
+                  <span>Trade-off: {rec.risks.join("; ")}</span>
                 </div>
               )}
 
               {/* Action Buttons */}
               <div className={styles.actionRow}>
-                {rec.status === "PENDING" && (
+                {rec.status === "PROPOSED" && (
                   <button
                     className={styles.actionBtn}
                     onClick={() => handleProposeDecision(rec.id)}

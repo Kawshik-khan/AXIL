@@ -1086,11 +1086,11 @@ export default function AutomationsHubPage() {
               </div>
               <div style={{ display: "flex", justifyContent: "space-between" }}>
                 <span style={{ color: "#9ca3af" }}>Webhook Signature Success Rate</span>
-                <span>{Math.round((health?.webhook_success_rate || 1) * 100)}%</span>
+                <span>{typeof health?.webhook_success_rate === "number" ? `${Math.round(health.webhook_success_rate * 100)}%` : "—"}</span>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between" }}>
                 <span style={{ color: "#9ca3af" }}>Average Invocation Duration</span>
-                <span>{health?.average_duration_ms || 120}ms</span>
+                <span>{typeof health?.average_duration_ms === "number" ? `${health.average_duration_ms}ms` : "—"}</span>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between" }}>
                 <span style={{ color: "#9ca3af" }}>Pending Retries in Queue</span>

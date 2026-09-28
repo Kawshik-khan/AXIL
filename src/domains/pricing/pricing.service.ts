@@ -27,6 +27,15 @@ export class PricingService {
    * Authoritative server-side price calculation.
    * Client-provided totals are NEVER trusted.
    */
+  /** The tenant's delivery charges (tenant settings; 60 / 120 BDT when not set). Shown in reports, used for orders. */
+  public static getDeliveryFees(tenantId: string): { inside_dhaka_bdt: number; outside_dhaka_bdt: number } {
+    const settings = (db.findTenantById(tenantId)?.settings || {}) as Record<string, unknown>;
+    return {
+      inside_dhaka_bdt: typeof settings.delivery_charge_inside_dhaka === "number" ? settings.delivery_charge_inside_dhaka : 60,
+      outside_dhaka_bdt: typeof settings.delivery_charge_outside_dhaka === "number" ? settings.delivery_charge_outside_dhaka : 120,
+    };
+  }
+
   public static async calculateOrderPricing(
     tenantId: string,
     items: Array<{ variant_id: string; quantity: number }>,
@@ -37,11 +46,8 @@ export class PricingService {
       throw new BadRequestError("Cannot calculate pricing for an empty order item list.");
     }
 
-    const tenant = db.findTenantById(tenantId);
-    const settings = (tenant?.settings || {}) as Record<string, any>;
-    const insideDhakaFee = typeof settings.delivery_charge_inside_dhaka === "number" ? settings.delivery_charge_inside_dhaka : 60;
-    const outsideDhakaFee = typeof settings.delivery_charge_outside_dhaka === "number" ? settings.delivery_charge_outside_dhaka : 120;
-    const shippingTotal = deliveryZone === "INSIDE_DHAKA" ? insideDhakaFee : outsideDhakaFee;
+    const fees = PricingService.getDeliveryFees(tenantId);
+    const shippingTotal = deliveryZone === "INSIDE_DHAKA" ? fees.inside_dhaka_bdt : fees.outside_dhaka_bdt;
 
     let subtotal = 0;
     const computedItems: PricingCalculationResult["items"] = [];

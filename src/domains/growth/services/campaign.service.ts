@@ -209,25 +209,30 @@ export class CampaignService {
     }
 
     const audience = db.getAudienceById(tenantId, campaign.audience_id);
-    const audienceSize = audience?.estimated_size || 100;
+    const audienceSize = audience?.estimated_size ?? 0;
 
-    // Simulation assumptions based on channel
+    // A what-if, labelled SIMULATED. Inputs that aren't the tenant's own data are listed as assumptions (FX-30).
     const conversionRate = campaign.channel === "WHATSAPP" ? 0.085 : campaign.channel === "FACEBOOK_MESSENGER" ? 0.055 : 0.035;
-    const expectedOrders = Math.max(1, Math.round(audienceSize * conversionRate));
-    const aov = 1650; // Avg D2C basket value
-    const expectedRevenue = expectedOrders * aov;
     const channelCostPerMsg = campaign.channel === "WHATSAPP" ? 1.2 : 0.2;
-    const expectedCost = Math.round(audienceSize * channelCostPerMsg + (campaign.budget_bdt || 0));
-    const marginDelta = 18.5; // Estimated ROI %
+    const expectedOrders = Math.round(audienceSize * conversionRate);
+    const recent = db.getAllOrders(tenantId).filter((o) => o.status !== "CANCELLED" && Date.parse(o.created_at) >= Date.now() - 90 * 86_400_000);
+    const aov = recent.length > 0 ? recent.reduce((sum, o) => sum + o.grand_total, 0) / recent.length : null;
 
     const snapshot: CampaignSimulationSnapshot = {
       simulated_at: new Date().toISOString(),
       estimated_reach: audienceSize,
       expected_conversion_rate: Number((conversionRate * 100).toFixed(1)),
       expected_orders: expectedOrders,
-      expected_revenue_bdt: expectedRevenue,
-      expected_cost_bdt: expectedCost,
-      expected_margin_delta_pct: marginDelta,
+      expected_revenue_bdt: aov === null ? null : Math.round(expectedOrders * aov),
+      expected_cost_bdt: Math.round(audienceSize * channelCostPerMsg + (campaign.budget_bdt || 0)),
+      expected_margin_delta_pct: null,
+      assumptions: [
+        `Conversion rate ${Number((conversionRate * 100).toFixed(1))}% for ${campaign.channel} is an assumption, not measured for your shop.`,
+        `Message cost ৳${channelCostPerMsg} each is an assumption.`,
+        aov === null
+          ? "No orders in the last 90 days, so revenue isn't estimated."
+          : `Average order value ৳${Math.round(aov).toLocaleString()} is your last 90 days.`,
+      ],
       simulated_label: "SIMULATED",
     };
 
@@ -471,14 +476,8 @@ export class CampaignService {
       }
     }
 
-    const conversionRate = 0.07;
-    const conversions = delivered > 0 ? Math.max(1, Math.round(delivered * conversionRate)) : 0;
-    const aov = 1650;
-    const attributedRevenue = conversions * aov;
-    const incrementalRevenue = Math.round(attributedRevenue * 0.75);
-    const totalCost = (campaign.budget_bdt || 0) + delivered * 1.5;
-    const roas = totalCost > 0 ? Number((attributedRevenue / totalCost).toFixed(2)) : 0;
-
+    // Sends and failures only. Outcomes (orders, revenue, ROAS) come from recorded attributions later, never from an
+    // assumed conversion rate (FX-30). They used to be 7% of delivered x ৳1,650.
     const result: CampaignResult = {
       planned_audience: customerIds.length,
       actual_audience: customerIds.length,
@@ -486,12 +485,13 @@ export class CampaignService {
       messages_delivered: delivered,
       messages_failed: failed,
       messages_suppressed: suppressed,
-      engagements: Math.round(delivered * 0.35),
-      conversions,
-      attributed_revenue_bdt: attributedRevenue,
-      incremental_revenue_bdt: incrementalRevenue,
-      total_cost_bdt: totalCost,
-      roas,
+      engagements: null,
+      conversions: null,
+      attributed_revenue_bdt: null,
+      incremental_revenue_bdt: null,
+      total_cost_bdt: campaign.budget_bdt || 0,
+      roas: null,
+      attribution_status: "NOT_MEASURED",
       evaluated_at: new Date().toISOString(),
     };
 

@@ -14,7 +14,6 @@ import {
   ShieldCheck,
   ShieldAlert,
   ArrowUpRight,
-  TrendingUp,
   RefreshCw,
   Plus,
   Play,
@@ -417,21 +416,19 @@ export default function MarketingPage() {
             <div className={`${styles.bentoCard} ${styles.col3}`}>
               <div className={styles.cardHeader}>
                 <span className={styles.cardTitle}>Attributed Revenue</span>
-                <span className={`${styles.trendBadge} ${styles.trendPositive}`}>
-                  <TrendingUp size={12} /> +18.5%
-                </span>
+
               </div>
               <div className={styles.cardBigValue}>৳{overview?.total_attributed_revenue_bdt?.toLocaleString() || "0"}</div>
               <div className={styles.cardMeta}>
-                <span>Incremental Lift: <strong>৳{overview?.total_incremental_lift_bdt?.toLocaleString() || "0"}</strong> (70% model)</span>
+                <span>Incremental lift: <strong>not measured</strong> (needs a control group)</span>
               </div>
             </div>
 
             <div className={`${styles.bentoCard} ${styles.col3} ${styles.aiCard}`}>
               <div className={styles.cardHeader}>
-                <span className={styles.cardTitle}>WhatsApp Recovery</span>
+                <span className={styles.cardTitle}>Cart recovery</span>
                 <span className={`${styles.trendBadge} ${styles.trendPositive}`}>
-                  <CheckCircle2 size={12} /> {overview?.cart_recovery_rate_pct || 0}% Conv
+                  <CheckCircle2 size={12} /> {overview?.cart_recovery_rate_pct ?? 0}% of value recovered
                 </span>
               </div>
               <div className={styles.cardBigValue}>৳{overview?.total_recovered_revenue_bdt?.toLocaleString() || "0"}</div>
@@ -808,7 +805,14 @@ export default function MarketingPage() {
                 <div style={{ marginBottom: "16px", padding: "10px 14px", background: "#FFFFFF", borderRadius: "8px", border: "1px solid var(--color-border-subtle, rgba(0,0,0,0.08))", display: "flex", justifyContent: "space-between", fontSize: "12px" }}>
                   <span>Est. Reach: <strong>{cmp.simulation_snapshot.estimated_reach}</strong></span>
                   <span>Exp. Conv: <strong>{cmp.simulation_snapshot.expected_conversion_rate}%</strong></span>
-                  <span>Exp. Revenue: <strong>৳{cmp.simulation_snapshot.expected_revenue_bdt?.toLocaleString()}</strong></span>
+                  <span>
+                    Exp. Revenue (simulated):{" "}
+                    <strong>
+                      {typeof cmp.simulation_snapshot.expected_revenue_bdt === "number"
+                        ? `৳${cmp.simulation_snapshot.expected_revenue_bdt.toLocaleString()}`
+                        : "not estimated"}
+                    </strong>
+                  </span>
                 </div>
               )}
 
@@ -817,8 +821,16 @@ export default function MarketingPage() {
                 <div style={{ marginBottom: "16px", padding: "10px 14px", background: "#E8F5E9", borderRadius: "8px", border: "1px solid #C8E6C9", display: "flex", justifyContent: "space-between", fontSize: "12px", color: "#2E7D32" }}>
                   <span>Sent: <strong>{cmp.result_metrics.messages_sent}</strong></span>
                   <span>Delivered: <strong>{cmp.result_metrics.messages_delivered}</strong></span>
-                  <span>Attributed GMV: <strong>৳{cmp.result_metrics.attributed_revenue_bdt?.toLocaleString()}</strong></span>
-                  <span>ROAS: <strong>{cmp.result_metrics.roas}x</strong></span>
+                  <span>Failed: <strong>{cmp.result_metrics.messages_failed}</strong></span>
+                  <span>
+                    Attributed GMV:{" "}
+                    <strong>
+                      {typeof cmp.result_metrics.attributed_revenue_bdt === "number"
+                        ? `৳${cmp.result_metrics.attributed_revenue_bdt.toLocaleString()}`
+                        : "not measured"}
+                    </strong>
+                  </span>
+                  <span>ROAS: <strong>{typeof cmp.result_metrics.roas === "number" ? `${cmp.result_metrics.roas}x` : "—"}</strong></span>
                 </div>
               )}
 
@@ -875,7 +887,7 @@ export default function MarketingPage() {
                   Multi-Touch Marketing Attribution Model
                 </h3>
                 <p style={{ fontSize: "12px", color: "var(--color-text-secondary, #70736F)", marginTop: "2px" }}>
-                  Compares revenue credit distribution across touchpoints and isolates incremental lift from baseline organic orders.
+                  How revenue from recorded campaign touchpoints is credited under each model. Incremental lift needs a control group and isn't measured.
                 </p>
               </div>
 
@@ -902,9 +914,9 @@ export default function MarketingPage() {
                 </div>
               </div>
               <div style={{ padding: "16px", background: "#FAFBF8", borderRadius: "12px", border: "1px solid var(--color-border-subtle, rgba(0,0,0,0.06))" }}>
-                <div style={{ fontSize: "12px", color: "var(--color-text-secondary, #70736F)", textTransform: "uppercase" }}>Estimated Incremental Lift</div>
-                <div style={{ fontSize: "28px", fontWeight: 700, color: "#2E7D32", marginTop: "4px" }}>
-                  ৳{attribution?.total_incremental_lift_bdt?.toLocaleString() || "0"}
+                <div style={{ fontSize: "12px", color: "var(--color-text-secondary, #70736F)", textTransform: "uppercase" }}>Incremental Lift</div>
+                <div style={{ fontSize: "28px", fontWeight: 700, color: "var(--color-text-muted)", marginTop: "4px" }}>
+                  Not measured
                 </div>
               </div>
               <div style={{ padding: "16px", background: "#FAFBF8", borderRadius: "12px", border: "1px solid var(--color-border-subtle, rgba(0,0,0,0.06))" }}>
@@ -939,8 +951,8 @@ export default function MarketingPage() {
                       </td>
                       <td>{item.orders_attributed}</td>
                       <td style={{ fontWeight: 700 }}>৳{item.revenue_bdt?.toLocaleString()}</td>
-                      <td style={{ color: "#2E7D32", fontWeight: 600 }}>৳{item.incremental_lift_bdt?.toLocaleString()}</td>
-                      <td style={{ fontWeight: 600 }}>{item.roas}x</td>
+                      <td style={{ color: "var(--color-text-muted)" }}>Not measured</td>
+                      <td style={{ fontWeight: 600 }}>{typeof item.roas === "number" ? `${item.roas}x` : "—"}</td>
                     </tr>
                   ))}
                 </tbody>

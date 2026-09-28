@@ -389,7 +389,8 @@ export async function runMarketingTests() {
     assert.strictEqual(result.planned_audience, 1);
     assert.strictEqual(result.messages_sent, 1);
     assert.strictEqual(result.messages_delivered, 1);
-    assert.ok(result.attributed_revenue_bdt > 0);
+    assert.strictEqual(result.attributed_revenue_bdt, null, "no assumed conversions (FX-30)");
+    assert.strictEqual(result.roas, null);
 
     const updatedCmp = db.getCampaignById(tenantId, highRiskCampaignId);
     assert.strictEqual(updatedCmp?.status, "COMPLETED");
@@ -416,7 +417,7 @@ export async function runMarketingTests() {
     const lastTouch = marketingService.getAttributionReport(tenantId, "LAST_TOUCH");
     assert.strictEqual(lastTouch.active_model, "LAST_TOUCH");
     assert.ok(typeof lastTouch.total_attributed_revenue_bdt === "number");
-    assert.ok(typeof lastTouch.total_incremental_lift_bdt === "number");
+    assert.strictEqual(lastTouch.total_incremental_lift_bdt, null, "needs a control group; not assumed (FX-30)");
     assert.ok(Array.isArray(lastTouch.campaigns_breakdown));
 
     const linear = marketingService.getAttributionReport(tenantId, "LINEAR");
@@ -434,8 +435,14 @@ export async function runMarketingTests() {
     assert.ok(overview.total_recovered_revenue_bdt >= 0);
     assert.ok(overview.total_attributed_revenue_bdt >= 0);
     assert.ok(Array.isArray(overview.insights));
-    assert.ok(overview.insights.length > 0);
-    assert.ok(overview.insights[0].title.startsWith("✦"));
+    // Insights are built from the tenant's data, never literal text (FX-30)
+    const carts = db.getAbandonedCarts(tenantId);
+    const cartInsight = overview.insights.find((i) => i.id === "ins_cart_recovery");
+    if (carts.length > 0) {
+      assert.ok(cartInsight, "cart recovery insight present when carts exist");
+      assert.ok(cartInsight.summary.includes(`of ${carts.length} abandoned carts`), cartInsight.summary);
+    }
+    assert.ok(overview.insights.every((i) => !/18\.4%|86 dormant|Eid Winter Drop/.test(`${i.title} ${i.summary}`)));
   });
 
   // Summary

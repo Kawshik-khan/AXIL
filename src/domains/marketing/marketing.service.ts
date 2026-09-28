@@ -54,7 +54,8 @@ export interface MarketingOverviewMetrics {
   cart_recovery_rate_pct: number;
   active_abandoned_carts_count: number;
   total_attributed_revenue_bdt: number;
-  total_incremental_lift_bdt: number;
+  /** Not measured (needs a control group). */
+  total_incremental_lift_bdt: number | null;
   active_campaigns_count: number;
   pending_approvals_count: number;
   kill_switch_active: boolean;
@@ -581,7 +582,6 @@ export class MarketingService {
     const orders = db.getAllOrders(tenantId, { hydrate: true });
 
     let totalAttributed = 0;
-    let totalIncremental = 0;
 
     const campaignCredits: Record<
       string,
@@ -590,8 +590,8 @@ export class MarketingService {
         channel: string;
         orders_attributed: number;
         revenue_bdt: number;
-        incremental_lift_bdt: number;
-        roas: number;
+        incremental_lift_bdt: number | null;
+        roas: number | null;
       }
     > = {};
 
@@ -601,29 +601,27 @@ export class MarketingService {
         channel: cmp.channel,
         orders_attributed: 0,
         revenue_bdt: 0,
-        incremental_lift_bdt: 0,
-        roas: cmp.result_metrics?.roas || 0,
+        incremental_lift_bdt: null,
+        roas: cmp.result_metrics?.roas ?? null,
       };
     }
 
     for (const att of attributions) {
       totalAttributed += att.order_total_bdt;
-      totalIncremental += att.incremental_revenue_estimated_bdt;
 
       for (const [cid, credit] of Object.entries(att.campaign_credits)) {
         if (!campaignCredits[cid]) {
           const matchedCmp = campaigns.find((c) => c.id === cid);
           campaignCredits[cid] = {
-            campaign_name: matchedCmp?.name || "Cart Recovery Nudge",
-            channel: matchedCmp?.channel || "WHATSAPP",
+            campaign_name: matchedCmp?.name || (cid === "cmp_cart_recovery" ? "Cart recovery" : cid),
+            channel: matchedCmp?.channel || att.touchpoints.find((t) => t.campaign_id === cid)?.channel || "UNKNOWN",
             orders_attributed: 0,
             revenue_bdt: 0,
-            incremental_lift_bdt: 0,
-            roas: matchedCmp?.result_metrics?.roas || 3.8,
+            incremental_lift_bdt: null, // needs a control group (FX-30)
+            roas: matchedCmp?.result_metrics?.roas ?? null,
           };
         }
         campaignCredits[cid].revenue_bdt += credit.attributed_revenue_bdt;
-        campaignCredits[cid].incremental_lift_bdt += Math.round(credit.attributed_revenue_bdt * 0.7);
         campaignCredits[cid].orders_attributed += 1;
       }
     }
@@ -631,7 +629,7 @@ export class MarketingService {
     return {
       active_model: model,
       total_attributed_revenue_bdt: totalAttributed,
-      total_incremental_lift_bdt: totalIncremental,
+      total_incremental_lift_bdt: null, // not measured: needs a control group
       campaigns_breakdown: Object.entries(campaignCredits).map(([id, data]) => ({
         id,
         ...data,
@@ -675,9 +673,37 @@ export class MarketingService {
     const recoveryRate = totalAbandoned > 0 ? Number(((totalRecovered / totalAbandoned) * 100).toFixed(1)) : 0;
 
     const totalAttributed = attributions.reduce((sum, a) => sum + a.order_total_bdt, 0);
-    const totalIncremental = attributions.reduce((sum, a) => sum + a.incremental_revenue_estimated_bdt, 0);
 
     const pendingApprovals = campaigns.filter((c) => c.status === "REVIEW" && c.required_approval);
+    const dormant = db.getCustomerLifecycles(tenantId).filter((l) => l.stage === "DORMANT").length;
+
+    // Built from the numbers above; an insight appears only when its data exists (FX-30). These were literal text
+    // ("converting at 18.4%", "86 dormant customers", "Eid Winter Drop targets 240 recipients").
+    const insights: MarketingOverviewMetrics["insights"] = [];
+    if (carts.length > 0) {
+      insights.push({
+        id: "ins_cart_recovery",
+        title: "Cart recovery",
+        summary: `${recoveredCarts.length} of ${carts.length} abandoned carts recovered (${recoveryRate}% of abandoned value). ${activeCarts.length} still open.`,
+        severity: recoveryRate < 10 && activeCarts.length > 0 ? "MEDIUM" : "LOW",
+      });
+    }
+    if (dormant > 0) {
+      insights.push({
+        id: "ins_dormant",
+        title: `${dormant} dormant customers`,
+        summary: `${dormant} customers are in the dormant lifecycle stage and could be re-engaged.`,
+        severity: "MEDIUM",
+      });
+    }
+    if (pendingApprovals.length > 0) {
+      insights.push({
+        id: "ins_approvals",
+        title: `${pendingApprovals.length} campaign(s) awaiting approval`,
+        summary: pendingApprovals.map((c) => c.name).slice(0, 3).join(", "),
+        severity: "HIGH",
+      });
+    }
 
     return {
       total_recovered_revenue_bdt: totalRecovered,
@@ -685,30 +711,11 @@ export class MarketingService {
       cart_recovery_rate_pct: recoveryRate,
       active_abandoned_carts_count: activeCarts.length,
       total_attributed_revenue_bdt: totalAttributed,
-      total_incremental_lift_bdt: totalIncremental,
+      total_incremental_lift_bdt: null, // not measured: needs a control group
       active_campaigns_count: campaigns.filter((c) => c.status === "RUNNING" || c.status === "APPROVED").length,
       pending_approvals_count: pendingApprovals.length,
       kill_switch_active: campaignService.isKillSwitchActive(tenantId),
-      insights: [
-        {
-          id: "ins_cart_surge",
-          title: "✦ High Cart Recovery Conversion on WhatsApp",
-          summary: "WhatsApp nudges with culturally authentic Banglish copy are converting at 18.4% with average recovery time of 42 minutes.",
-          severity: "LOW",
-        },
-        {
-          id: "ins_dormant_risk",
-          title: "✦ 86 Dormant Customers Ready for Re-engagement",
-          summary: "Identified 86 past customers inactive for 60+ days. Recommended 'COMEBACK15' promo with projected lift of ৳32,000.",
-          severity: "MEDIUM",
-        },
-        {
-          id: "ins_approval_gate",
-          title: "✦ High-Risk Broadcast Awaiting Approval",
-          summary: "Eid Winter Drop targets 240 recipients (threshold: 50). Merchant authorization required before dispatch.",
-          severity: "HIGH",
-        },
-      ],
+      insights,
     };
   }
 }

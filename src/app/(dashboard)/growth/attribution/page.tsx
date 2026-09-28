@@ -63,9 +63,11 @@ export default function AttributionPage() {
                 <TrendingUp size={16} color="#3b82f6" />
               </div>
               <div className={styles.metricValue}>
-                ৳{(attribution?.total_incremental_revenue_bdt || 0).toLocaleString()}
+                {typeof attribution?.total_incremental_revenue_bdt === "number"
+                  ? `৳${attribution.total_incremental_revenue_bdt.toLocaleString()}`
+                  : "Not measured"}
               </div>
-              <div className={styles.metricSubtext}>Lift above baseline organic conversion</div>
+              <div className={styles.metricSubtext}>Needs a control group to measure</div>
             </div>
 
             <div className={`${styles.bentoCard} ${styles.col4}`}>
@@ -74,7 +76,7 @@ export default function AttributionPage() {
                 <Layers size={16} color="#f59e0b" />
               </div>
               <div className={styles.metricValue}>
-                {attribution?.blended_roas || "0.0"}x
+                {typeof attribution?.blended_roas === "number" ? `${attribution.blended_roas}x` : "—"}
               </div>
               <div className={styles.metricSubtext}>Return on total marketing spend</div>
             </div>

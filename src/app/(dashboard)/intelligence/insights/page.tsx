@@ -134,7 +134,7 @@ export default function InsightsExplorerPage() {
               <div key={opp.id} className={`${styles.bentoCard} ${styles.col6}`}>
                 <div className={styles.cardTitle}>
                   <span>{opp.title}</span>
-                  <span className={styles.badgeLime}>+{Math.round((opp.confidence || 0.9) * 100)}% Conf</span>
+                  <span className={styles.badgeLime}>{typeof opp.confidence === "number" ? `${Math.round(opp.confidence * 100)}% Conf` : "Conf —"}</span>
                 </div>
                 <p className={styles.recDesc}>{opp.description}</p>
                 <div className={styles.badgeRow}>
