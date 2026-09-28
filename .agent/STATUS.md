@@ -6,7 +6,7 @@
 > **target** design. When a doc and this file disagree, this file wins for "what exists"; the doc wins for
 > "what we are building toward". Never report a target-design capability as working unless this file says LIVE.
 
-**Overall posture: NOT production-ready. Do not expose to any network.** Phase 0 containment (FX-00…FX-08, [ADR-103](DECISIONS.md#adr-103-fail-closed-authentication-secrets-and-webhook-signatures-phase-0-containment)) and Phase 1 access control (FX-10…FX-19, [ADR-104](DECISIONS.md#adr-104-access-control-and-integrity-phase-1)) are merged to `main` and tagged `release/phase-0` / `release/phase-1`. Phase 2 performance and read-path integrity (FX-20…FX-24, [ADR-105](DECISIONS.md#adr-105-coalesced-persistence-write-free-reads-and-complete-analytics-phase-2)) is on branch `phase-2-performance` (2026-09-28). Remaining blockers before any network exposure: the JSON-file store is still one file owned by one process (Postgres cutover, Phase 4), fabricated metrics and simulated integrations (H7–H9, H14, Phase 3), unenforced platform safety controls (H11) and N8.
+**Overall posture: NOT production-ready. Do not expose to any network.** Phase 0 containment (FX-00…FX-08, [ADR-103](DECISIONS.md#adr-103-fail-closed-authentication-secrets-and-webhook-signatures-phase-0-containment)) and Phase 1 access control (FX-10…FX-19, [ADR-104](DECISIONS.md#adr-104-access-control-and-integrity-phase-1)) are merged to `main` and tagged `release/phase-0` / `release/phase-1`. Phase 2 performance and read-path integrity (FX-20…FX-24, [ADR-105](DECISIONS.md#adr-105-coalesced-persistence-write-free-reads-and-complete-analytics-phase-2)) is merged to `main` and tagged `release/phase-2` (2026-09-28). Remaining blockers before any network exposure: the JSON-file store is still one file owned by one process (Postgres cutover, Phase 4), fabricated metrics and simulated integrations (H7–H9, H14, Phase 3), unenforced platform safety controls (H11) and N8.
 
 ---
 
@@ -43,7 +43,7 @@
 | Type-check | `npm run type-check` reports 12 errors, all in the unwired `customer.repository.ts` / `social.repository.ts` (H15); unchanged by Phases 0 and 1 | Zero errors | BROKEN |
 | Tests | `npm test` → 25 custom suites, 769 tests, all pass: `security-regression-tests.ts` (46, Phase 0), `rbac-matrix-tests.ts` (287, Phase 1), `phase1-integrity-tests.ts` (61, Phase 1 + review fixes), `persistence-tests.ts` (8, real store in child processes), `phase2-analytics-tests.ts` (6) and `phase2-readonly-tests.ts` (14; sweeps all 141 tenant and 16 platform GET routes for store changes and write requests) among them; `scripts/smoke-security.mjs` replays the exploits against a running server | Unit + integration + eval + E2E | PARTIAL — no E2E/UI tests, no load test (FX-63) |
 | Agent evals | `src/domains/ai/eval/golden-dataset.ts` + `evaluation.service.ts`; no `test:eval` script | Gated eval suite | PARTIAL |
-| Git | Local git repository: `main` = Phase 1 (tags `release/phase-0`, `release/phase-1`) ← `phase-2-performance`; `.gitignore` keeps out env files, `.data/`, `.backups/` and generated seeds | Versioned, PR-reviewed | PARTIAL — no remote, no CI; Phase 2 not merged yet |
+| Git | Local git repository: `main` = Phase 2 (tags `release/phase-0`, `release/phase-1`, `release/phase-2`); `.gitignore` keeps out env files, `.data/`, `.backups/` and generated seeds | Versioned, PR-reviewed | PARTIAL — no remote, no CI |
 
 ---
 
