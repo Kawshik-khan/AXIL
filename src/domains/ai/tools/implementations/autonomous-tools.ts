@@ -116,13 +116,17 @@ const CreateBusinessObjectiveInputSchema = z.object({
   description: z.string().describe("Detailed objective statement"),
   hierarchy_level: z.enum(["ENTERPRISE", "BUSINESS_UNIT", "BRAND", "STORE", "DOMAIN", "WORKFLOW", "AGENT_TASK"]).default("ENTERPRISE"),
   scope_entity_id: z.string().optional(),
-  priority: z.number().default(1),
+  priority: z.number().int().min(1).max(10).default(1),
   target_metric: z.string().default("REVENUE_BDT"),
-  target_value: z.number().default(1000000),
-  baseline_value: z.number().default(500000),
+  // The merchant's numbers, never defaults: these were 10,00,000 / 5,00,000 / 50,000 (FX-30, N15)
+  target_value: z.number().finite(),
+  baseline_value: z.number().finite(),
   unit: z.string().default("BDT"),
-  allowed_domains: z.array(z.string()).default(["COMMERCE", "OPERATIONS", "INTELLIGENCE", "GROWTH", "ENTERPRISE"]),
-  budget_allocated_bdt: z.number().default(50000),
+  allowed_domains: z
+    .array(z.enum(["COMMERCE", "OPERATIONS", "INTELLIGENCE", "GROWTH", "ENTERPRISE", "PRICING", "MARKETING", "INVENTORY", "PROCUREMENT", "FULFILLMENT", "FINANCE", "SUPPORT"]))
+    .min(1)
+    .default(["COMMERCE", "OPERATIONS", "INTELLIGENCE", "GROWTH", "ENTERPRISE"]),
+  budget_allocated_bdt: z.number().nonnegative().default(0),
   constraints: z.array(z.object({
     type: z.enum(["BUDGET", "MARGIN", "RISK", "TIME", "INVENTORY", "APPROVAL", "POLICY", "CUSTOM"]).default("BUDGET"),
     name: z.string(),
@@ -156,8 +160,10 @@ export class CreateBusinessObjectiveTool implements IAgentTool<z.infer<typeof Cr
           name: { type: "string", description: "Objective name" },
           description: { type: "string", description: "Detailed statement" },
           hierarchy_level: { type: "string", description: "Hierarchy tier" },
+          target_value: { type: "number", description: "Target value, as stated by the merchant" },
+          baseline_value: { type: "number", description: "Current or baseline value, as stated by the merchant" },
         },
-        required: ["name", "description"],
+        required: ["name", "description", "target_value", "baseline_value"],
       },
       timeout_ms: 15000,
       idempotent: this.idempotent,
@@ -173,7 +179,7 @@ export class CreateBusinessObjectiveTool implements IAgentTool<z.infer<typeof Cr
       description: input.description,
       hierarchy_level: input.hierarchy_level as any,
       scope_entity_id: input.scope_entity_id,
-      status: "ACTIVE",
+      status: "PROPOSED", // an agent proposes; a person activates it (N15)
       target_metric: input.target_metric,
       target_value: input.target_value,
       baseline_value: input.baseline_value,
@@ -196,8 +202,8 @@ export class CreateBusinessObjectiveTool implements IAgentTool<z.infer<typeof Cr
         description: c.description,
       })),
       progress_percent: 0,
-      forecast_achievement_percent: 65,
-      created_by: context.user?.id || "admin",
+      forecast_achievement_percent: null,
+      created_by: context.user.id,
       created_at: now,
       updated_at: now,
     });

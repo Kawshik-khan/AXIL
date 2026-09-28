@@ -28,6 +28,7 @@ export default function EnterpriseHierarchyPage() {
   const [newStoreName, setNewStoreName] = useState("");
   const [newStoreCode, setNewStoreCode] = useState("");
   const [newStoreChannel, setNewStoreChannel] = useState("ONLINE_STORE");
+  const [newStoreBrand, setNewStoreBrand] = useState("");
   const [creating, setCreating] = useState(false);
   const [message, setMessage] = useState<{ text: string; type: "success" | "error" } | null>(null);
 
@@ -65,22 +66,27 @@ export default function EnterpriseHierarchyPage() {
 
   const handleCreateStore = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newStoreName || !newStoreCode) return;
+    if (!newStoreName || !newStoreCode || !newStoreBrand) return;
 
     try {
       setCreating(true);
       const res = await fetch("/api/v1/enterprise/stores", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        // The server uses this workspace's organization; the store goes under the chosen brand (N13). This used to
+        // send the shared "org_default" (404 since FX-13) and no brand.
         body: JSON.stringify({
-          organization_id: "org_default",
+          brand_id: newStoreBrand,
           name: newStoreName,
           code: newStoreCode.toUpperCase(),
-          channel_type: newStoreChannel,
+          store_type: newStoreChannel,
         }),
       });
 
-      if (!res.ok) throw new Error("Failed to create store");
+      if (!res.ok) {
+        const json = await res.json().catch(() => null);
+        throw new Error(json?.error?.message || "Failed to create store");
+      }
       setMessage({ text: `Store ${newStoreName} created successfully`, type: "success" });
       setNewStoreName("");
       setNewStoreCode("");
@@ -145,7 +151,31 @@ export default function EnterpriseHierarchyPage() {
           <div className={styles.cardTitle} style={{ marginBottom: 16 }}>
             <Store size={18} color="#c7f900" /> Provision New Enterprise Store Channel
           </div>
-          <form onSubmit={handleCreateStore} style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr) auto", gap: 16, alignItems: "flex-end" }}>
+          <form onSubmit={handleCreateStore} style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr) auto", gap: 16, alignItems: "flex-end" }}>
+            <div>
+              <label style={{ display: "block", fontSize: 12, color: "var(--color-text-muted)", marginBottom: 6 }}>Brand</label>
+              <select
+                value={newStoreBrand}
+                onChange={(e) => setNewStoreBrand(e.target.value)}
+                required
+                style={{
+                  width: "100%",
+                  padding: "10px 12px",
+                  background: "var(--color-surface-soft)",
+                  border: "1px solid var(--color-border-subtle)",
+                  borderRadius: 8,
+                  color: "var(--color-text-primary)",
+                  fontSize: 13,
+                }}
+              >
+                <option value="">{brands.length === 0 ? "Create a brand first" : "Choose a brand"}</option>
+                {brands.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name}
+                  </option>
+                ))}
+              </select>
+            </div>
             <div>
               <label style={{ display: "block", fontSize: 12, color: "#9ca3af", marginBottom: 6 }}>Store Name</label>
               <input
@@ -199,11 +229,10 @@ export default function EnterpriseHierarchyPage() {
                   fontSize: 13,
                 }}
               >
-                <option value="ONLINE_STORE">Online Website</option>
-                <option value="PHYSICAL_RETAIL">Physical Retail Outlet</option>
-                <option value="FACEBOOK_SHOP">Facebook Shop / F-commerce</option>
-                <option value="WHATSAPP_STORE">WhatsApp Conversational Commerce</option>
-                <option value="MARKETPLACE">Marketplace Store (Daraz/Amazon)</option>
+                <option value="ONLINE_STORE">Online store</option>
+                <option value="PHYSICAL_OUTLET">Physical outlet</option>
+                <option value="POPUP">Pop-up</option>
+                <option value="MARKETPLACE_OUTLET">Marketplace outlet (Daraz etc.)</option>
               </select>
             </div>
             <div style={{ display: "flex", gap: 8 }}>

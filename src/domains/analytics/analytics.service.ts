@@ -28,94 +28,10 @@ import { Order, OrderStatus } from "@/types/commerce";
 import { PricingService } from "@/domains/pricing/pricing.service";
 import { channelOfOrder, SALES_CHANNEL_NAMES } from "@/lib/sales-channel";
 
-// All 64 districts of Bangladesh by division. Geography only: every count comes from the tenant's orders (FX-30).
-export interface DistrictSpec {
-  district: string;
-  division: string;
-  zone: DeliveryZone;
-}
-
-export const BD_64_DISTRICTS: DistrictSpec[] = [
-  // Dhaka Division (13 Districts)
-  { district: "Dhaka", division: "Dhaka", zone: "INSIDE_DHAKA" },
-  { district: "Gazipur", division: "Dhaka", zone: "OUTSIDE_DHAKA" },
-  { district: "Narayanganj", division: "Dhaka", zone: "OUTSIDE_DHAKA" },
-  { district: "Narsingdi", division: "Dhaka", zone: "OUTSIDE_DHAKA" },
-  { district: "Tangail", division: "Dhaka", zone: "OUTSIDE_DHAKA" },
-  { district: "Kishoreganj", division: "Dhaka", zone: "OUTSIDE_DHAKA" },
-  { district: "Manikganj", division: "Dhaka", zone: "OUTSIDE_DHAKA" },
-  { district: "Munshiganj", division: "Dhaka", zone: "OUTSIDE_DHAKA" },
-  { district: "Faridpur", division: "Dhaka", zone: "OUTSIDE_DHAKA" },
-  { district: "Gopalganj", division: "Dhaka", zone: "OUTSIDE_DHAKA" },
-  { district: "Madaripur", division: "Dhaka", zone: "OUTSIDE_DHAKA" },
-  { district: "Rajbari", division: "Dhaka", zone: "OUTSIDE_DHAKA" },
-  { district: "Shariatpur", division: "Dhaka", zone: "OUTSIDE_DHAKA" },
-
-  // Chattogram Division (11 Districts)
-  { district: "Chattogram", division: "Chattogram", zone: "OUTSIDE_DHAKA" },
-  { district: "Cox's Bazar", division: "Chattogram", zone: "OUTSIDE_DHAKA" },
-  { district: "Cumilla", division: "Chattogram", zone: "OUTSIDE_DHAKA" },
-  { district: "Feni", division: "Chattogram", zone: "OUTSIDE_DHAKA" },
-  { district: "Brahmanbaria", division: "Chattogram", zone: "OUTSIDE_DHAKA" },
-  { district: "Noakhali", division: "Chattogram", zone: "OUTSIDE_DHAKA" },
-  { district: "Lakshmipur", division: "Chattogram", zone: "OUTSIDE_DHAKA" },
-  { district: "Chandpur", division: "Chattogram", zone: "OUTSIDE_DHAKA" },
-  { district: "Khagrachhari", division: "Chattogram", zone: "OUTSIDE_DHAKA" },
-  { district: "Rangamati", division: "Chattogram", zone: "OUTSIDE_DHAKA" },
-  { district: "Bandarban", division: "Chattogram", zone: "OUTSIDE_DHAKA" },
-
-  // Rajshahi Division (8 Districts)
-  { district: "Rajshahi", division: "Rajshahi", zone: "OUTSIDE_DHAKA" },
-  { district: "Bogura", division: "Rajshahi", zone: "OUTSIDE_DHAKA" },
-  { district: "Pabna", division: "Rajshahi", zone: "OUTSIDE_DHAKA" },
-  { district: "Sirajganj", division: "Rajshahi", zone: "OUTSIDE_DHAKA" },
-  { district: "Naogaon", division: "Rajshahi", zone: "OUTSIDE_DHAKA" },
-  { district: "Natore", division: "Rajshahi", zone: "OUTSIDE_DHAKA" },
-  { district: "Chapainawabganj", division: "Rajshahi", zone: "OUTSIDE_DHAKA" },
-  { district: "Joypurhat", division: "Rajshahi", zone: "OUTSIDE_DHAKA" },
-
-  // Khulna Division (10 Districts)
-  { district: "Khulna", division: "Khulna", zone: "OUTSIDE_DHAKA" },
-  { district: "Jashore", division: "Khulna", zone: "OUTSIDE_DHAKA" },
-  { district: "Kushtia", division: "Khulna", zone: "OUTSIDE_DHAKA" },
-  { district: "Jhenaidah", division: "Khulna", zone: "OUTSIDE_DHAKA" },
-  { district: "Chuadanga", division: "Khulna", zone: "OUTSIDE_DHAKA" },
-  { district: "Meherpur", division: "Khulna", zone: "OUTSIDE_DHAKA" },
-  { district: "Magura", division: "Khulna", zone: "OUTSIDE_DHAKA" },
-  { district: "Narail", division: "Khulna", zone: "OUTSIDE_DHAKA" },
-  { district: "Satkhira", division: "Khulna", zone: "OUTSIDE_DHAKA" },
-  { district: "Bagerhat", division: "Khulna", zone: "OUTSIDE_DHAKA" },
-
-  // Barishal Division (6 Districts)
-  { district: "Barishal", division: "Barishal", zone: "OUTSIDE_DHAKA" },
-  { district: "Patuakhali", division: "Barishal", zone: "OUTSIDE_DHAKA" },
-  { district: "Bhola", division: "Barishal", zone: "OUTSIDE_DHAKA" },
-  { district: "Pirojpur", division: "Barishal", zone: "OUTSIDE_DHAKA" },
-  { district: "Barguna", division: "Barishal", zone: "OUTSIDE_DHAKA" },
-  { district: "Jhalokati", division: "Barishal", zone: "OUTSIDE_DHAKA" },
-
-  // Sylhet Division (4 Districts)
-  { district: "Sylhet", division: "Sylhet", zone: "OUTSIDE_DHAKA" },
-  { district: "Moulvibazar", division: "Sylhet", zone: "OUTSIDE_DHAKA" },
-  { district: "Habiganj", division: "Sylhet", zone: "OUTSIDE_DHAKA" },
-  { district: "Sunamganj", division: "Sylhet", zone: "OUTSIDE_DHAKA" },
-
-  // Rangpur Division (8 Districts)
-  { district: "Rangpur", division: "Rangpur", zone: "OUTSIDE_DHAKA" },
-  { district: "Dinajpur", division: "Rangpur", zone: "OUTSIDE_DHAKA" },
-  { district: "Gaibandha", division: "Rangpur", zone: "OUTSIDE_DHAKA" },
-  { district: "Kurigram", division: "Rangpur", zone: "OUTSIDE_DHAKA" },
-  { district: "Lalmonirhat", division: "Rangpur", zone: "OUTSIDE_DHAKA" },
-  { district: "Nilphamari", division: "Rangpur", zone: "OUTSIDE_DHAKA" },
-  { district: "Panchagarh", division: "Rangpur", zone: "OUTSIDE_DHAKA" },
-  { district: "Thakurgaon", division: "Rangpur", zone: "OUTSIDE_DHAKA" },
-
-  // Mymensingh Division (4 Districts)
-  { district: "Mymensingh", division: "Mymensingh", zone: "OUTSIDE_DHAKA" },
-  { district: "Jamalpur", division: "Mymensingh", zone: "OUTSIDE_DHAKA" },
-  { district: "Netrokona", division: "Mymensingh", zone: "OUTSIDE_DHAKA" },
-  { district: "Sherpur", division: "Mymensingh", zone: "OUTSIDE_DHAKA" },
-];
+// All 64 districts of Bangladesh by division: geography only, every count comes from the tenant's orders (FX-30)
+export { BD_64_DISTRICTS } from "@/lib/bd-geography";
+export type { DistrictSpec } from "@/lib/bd-geography";
+import { BD_64_DISTRICTS } from "@/lib/bd-geography";
 
 /** Below this many shipments a district's RTO rate isn't meaningful and is reported as insufficient data. */
 export const RTO_MIN_SHIPMENTS = 20;

@@ -4,6 +4,7 @@ import React, { useState, useEffect } from "react";
 import { ShoppingBag, X, Check, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/Button/Button";
 import styles from "./SocialInbox.module.css";
+import { DistrictPicker, useDeliveryFees } from "@/components/orders/DistrictPicker";
 
 interface SocialOrderModalProps {
   isOpen: boolean;
@@ -21,10 +22,10 @@ export const SocialOrderModal: React.FC<SocialOrderModalProps> = ({
   const [products, setProducts] = useState<any[]>([]);
   const [selectedVariantId, setSelectedVariantId] = useState("");
   const [quantity, setQuantity] = useState(1);
-  const [division, setDivision] = useState("Dhaka");
-  const [district, setDistrict] = useState("Dhaka");
+  const [district, setDistrict] = useState("");
+  const [customerPhone, setCustomerPhone] = useState("");
+  const deliveryFees = useDeliveryFees();
   const [addressLine, setAddressLine] = useState("");
-  const [deliveryZone, setDeliveryZone] = useState<"INSIDE_DHAKA" | "OUTSIDE_DHAKA">("INSIDE_DHAKA");
   const [paymentMethod, setPaymentMethod] = useState("COD");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
@@ -60,6 +61,10 @@ export const SocialOrderModal: React.FC<SocialOrderModalProps> = ({
       setErrorMsg("Delivery address line is required.");
       return;
     }
+    if (!district) {
+      setErrorMsg("Choose the delivery district.");
+      return;
+    }
 
     try {
       setIsSubmitting(true);
@@ -70,12 +75,11 @@ export const SocialOrderModal: React.FC<SocialOrderModalProps> = ({
           conversation_id: conversation.id,
           items: [{ variant_id: selectedVariantId, quantity }],
           delivery_address: {
-            division,
             district,
             address_line_1: addressLine.trim(),
           },
-          delivery_zone: deliveryZone,
           payment_method: paymentMethod,
+          ...(customer?.phone ? {} : { customer_phone: customerPhone.trim() }),
         }),
       });
 
@@ -193,48 +197,35 @@ export const SocialOrderModal: React.FC<SocialOrderModalProps> = ({
             />
           </div>
 
-          {/* Delivery Zone & District */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-            <div>
-              <label style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--color-text-muted)", display: "block", marginBottom: "4px" }}>
-                Delivery Zone
-              </label>
-              <select
-                value={deliveryZone}
-                onChange={(e) => {
-                  const z = e.target.value as any;
-                  setDeliveryZone(z);
-                  if (z === "INSIDE_DHAKA") {
-                    setDistrict("Dhaka");
-                    setDivision("Dhaka");
-                  } else {
-                    setDistrict("Chittagong");
-                    setDivision("Chittagong");
-                  }
-                }}
-                style={{
-                  width: "100%",
-                  background: "var(--color-surface)",
-                  border: "1px solid var(--color-border)",
-                  borderRadius: "6px",
-                  padding: "8px 10px",
-                  color: "var(--color-text-primary)",
-                  fontSize: "0.8125rem",
-                }}
-              >
-                <option value="INSIDE_DHAKA">Inside Dhaka (৳60-70)</option>
-                <option value="OUTSIDE_DHAKA">Outside Dhaka (৳120)</option>
-              </select>
-            </div>
+          {/* District decides the zone and charge; the fee comes from settings (FX-36, was a literal in this form) */}
+          <DistrictPicker
+            district={district}
+            onChange={setDistrict}
+            fees={deliveryFees}
+            labelStyle={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--color-text-muted)" }}
+            selectStyle={{
+              width: "100%",
+              background: "var(--color-surface)",
+              border: "1px solid var(--color-border)",
+              borderRadius: "6px",
+              padding: "8px 10px",
+              color: "var(--color-text-primary)",
+              fontSize: "0.8125rem",
+            }}
+          />
 
+          {/* Phone, when the social customer has none on record (identity resolution no longer invents one) */}
+          {!customer?.phone && (
             <div>
               <label style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--color-text-muted)", display: "block", marginBottom: "4px" }}>
-                District
+                Customer phone *
               </label>
               <input
-                type="text"
-                value={district}
-                onChange={(e) => setDistrict(e.target.value)}
+                type="tel"
+                placeholder="e.g. 01712345678"
+                value={customerPhone}
+                onChange={(e) => setCustomerPhone(e.target.value)}
+                required
                 style={{
                   width: "100%",
                   background: "var(--color-surface)",
@@ -246,7 +237,7 @@ export const SocialOrderModal: React.FC<SocialOrderModalProps> = ({
                 }}
               />
             </div>
-          </div>
+          )}
 
           {/* Address Line 1 */}
           <div>

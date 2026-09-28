@@ -12,17 +12,20 @@ export interface CreateSocialOrderPayload {
   conversation_id: string;
   items: Array<{ variant_id: string; quantity: number }>;
   delivery_address: {
-    division: string;
+    division?: string;
     district: string;
     upazila?: string;
     area?: string;
     address_line_1: string;
     postal_code?: string;
   };
-  delivery_zone: "INSIDE_DHAKA" | "OUTSIDE_DHAKA";
+  /** Ignored: derived from the district. */
+  delivery_zone?: "INSIDE_DHAKA" | "OUTSIDE_DHAKA";
   payment_method: PaymentMethod;
   coupon_code?: string;
   notes?: string;
+  /** Used when the conversation's customer has no phone on record. */
+  customer_phone?: string;
 }
 
 export class SocialOrderService {
@@ -54,11 +57,10 @@ export class SocialOrderService {
       customer: {
         first_name: customer.first_name,
         last_name: customer.last_name,
-        phone: customer.phone,
+        phone: customer.phone || payload.customer_phone || "",
         email: customer.email,
       },
       delivery_address: payload.delivery_address,
-      delivery_zone: payload.delivery_zone,
       items: payload.items,
       payment_method: payload.payment_method,
       coupon_code: payload.coupon_code,

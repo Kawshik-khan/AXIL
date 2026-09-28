@@ -55,7 +55,8 @@ export interface BusinessObjective {
   required_approvals: string[];
   constraints: ObjectiveConstraint[];
   progress_percent: number;
-  forecast_achievement_percent: number;
+  /** null until a forecast has actually been computed (it used to be set to made-up values). */
+  forecast_achievement_percent: number | null;
   created_by: string;
   created_at: string;
   updated_at: string;
@@ -832,9 +833,11 @@ export interface SLODefinition {
   target_unit: string;
   measurement_window: "ROLLING_1H" | "ROLLING_24H" | "ROLLING_7D" | "ROLLING_30D";
   error_budget_percent: number;
-  error_budget_remaining_percent: number;
-  current_value: number;
-  status: "MET" | "AT_RISK" | "BREACHED";
+  /** null until measured. */
+  error_budget_remaining_percent: number | null;
+  /** null until measured. */
+  current_value: number | null;
+  status: "MET" | "AT_RISK" | "BREACHED" | "NOT_MEASURED";
   incident_policy_id?: string;
   created_at: string;
   updated_at: string;

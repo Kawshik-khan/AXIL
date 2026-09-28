@@ -146,8 +146,8 @@ export default function BusinessObjectivesPage() {
                 </div>
                 <div style={{ background: "rgba(255,255,255,0.02)", padding: 10, borderRadius: 8 }}>
                   <div style={{ fontSize: 11, color: "#9ca3af" }}>Forecast Probability</div>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: "#60a5fa", marginTop: 2 }}>
-                    {obj.forecast_achievement_percent}%
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "var(--color-text-primary)", marginTop: 2 }}>
+                    {obj.forecast_achievement_percent !== null ? `${obj.forecast_achievement_percent}%` : "Not forecast"}
                   </div>
                 </div>
               </div>

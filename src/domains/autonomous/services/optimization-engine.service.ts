@@ -107,18 +107,19 @@ export class OptimizationEngineService {
   recommendOptimizations(tenantId: string): Array<{
     domain: string;
     recommendation: string;
-    expected_improvement: string;
+    /** Not estimated: this used to claim 30% of the remaining gap (FX-30). */
+    expected_improvement: string | null;
     priority: "LOW" | "MEDIUM" | "HIGH";
   }> {
     const recommendations = [];
     const objectives = db.data.business_objectives.filter((o) => o.tenant_id === tenantId && o.status === "ACTIVE");
 
     for (const obj of objectives) {
-      if (obj.progress_percent < 40 && obj.forecast_achievement_percent < 70) {
+      if (obj.progress_percent < 40 && obj.forecast_achievement_percent !== null && obj.forecast_achievement_percent < 70) {
         recommendations.push({
           domain: obj.allowed_domains[0] || "GENERAL",
           recommendation: `Accelerate ${obj.name} — progress at ${obj.progress_percent}% with ${obj.forecast_achievement_percent}% forecast`,
-          expected_improvement: `+${Math.round((obj.target_value - obj.current_value) * 0.3)} ${obj.unit}`,
+          expected_improvement: null,
           priority: "HIGH" as const,
         });
       }

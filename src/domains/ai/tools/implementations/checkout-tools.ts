@@ -130,7 +130,8 @@ const CreateOrderDraftInputSchema = z.object({
   customer_name: z.string().describe("Customer full name"),
   customer_phone: z.string().describe("Customer phone number (e.g. 01712345678)"),
   address_line: z.string().describe("Delivery address street/area"),
-  delivery_zone: z.enum(["INSIDE_DHAKA", "OUTSIDE_DHAKA"]).default("INSIDE_DHAKA"),
+  // The customer's district, as they stated it; the zone and charge follow from it (FX-36: this assumed "Chittagong")
+  district: z.string().min(1).describe("Delivery district, one of Bangladesh's 64 (e.g. Dhaka, Sylhet, Cumilla)"),
   items: z
     .array(
       z.object({
@@ -168,12 +169,12 @@ export class CreateOrderDraftTool implements IAgentTool<z.infer<typeof CreateOrd
           customer_name: { type: "string" },
           customer_phone: { type: "string" },
           address_line: { type: "string" },
-          delivery_zone: { type: "string", enum: ["INSIDE_DHAKA", "OUTSIDE_DHAKA"] },
+          district: { type: "string", description: "Delivery district, one of Bangladesh's 64" },
           items: { type: "array" },
           payment_method: { type: "string", enum: ["COD", "BKASH", "NAGAD", "CARD"] },
           coupon_code: { type: "string" },
         },
-        required: ["customer_name", "customer_phone", "address_line", "items"],
+        required: ["customer_name", "customer_phone", "address_line", "district", "items"],
       },
       timeout_ms: 6000,
       idempotent: this.idempotent,
@@ -196,11 +197,9 @@ export class CreateOrderDraftTool implements IAgentTool<z.infer<typeof CreateOrd
         phone: input.customer_phone,
       },
       delivery_address: {
-        division: input.delivery_zone === "INSIDE_DHAKA" ? "Dhaka" : "Chittagong",
-        district: input.delivery_zone === "INSIDE_DHAKA" ? "Dhaka" : "Chittagong",
+        district: input.district,
         address_line_1: input.address_line,
       },
-      delivery_zone: input.delivery_zone,
       items: input.items,
       payment_method: input.payment_method,
       coupon_code: input.coupon_code,

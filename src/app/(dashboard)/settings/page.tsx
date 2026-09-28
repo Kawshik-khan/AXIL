@@ -68,8 +68,9 @@ export default function SettingsPage() {
         setBusinessName(ten.name);
         setCurrency(ten.currency || "BDT");
         setTimezone(ten.timezone || "Asia/Dhaka");
-        setInsideDhakaFee(String(ten.settings?.delivery_charge_inside_dhaka ?? 60));
-        setOutsideDhakaFee(String(ten.settings?.delivery_charge_outside_dhaka ?? 120));
+        // The fees orders are charged (settings or the defaults in PricingService), not a second copy of the defaults
+        setInsideDhakaFee(String(t.data.delivery_fees?.inside_dhaka_bdt ?? ten.settings?.delivery_charge_inside_dhaka ?? ""));
+        setOutsideDhakaFee(String(t.data.delivery_fees?.outside_dhaka_bdt ?? ten.settings?.delivery_charge_outside_dhaka ?? ""));
       }
       if (usersRes.ok) {
         const u = await usersRes.json();

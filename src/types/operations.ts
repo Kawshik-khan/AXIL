@@ -303,11 +303,12 @@ export interface CourierPerformance {
 
 export interface CourierRecommendation {
   order_id: string;
-  recommended_courier: CourierProviderName;
-  estimated_cost_bdt: number;
-  estimated_transit_hours: number;
+  /** null without delivery history per courier: no default courier is assumed (FX-30). */
+  recommended_courier: CourierProviderName | null;
+  estimated_cost_bdt: number | null;
+  estimated_transit_hours: number | null;
   reason: string;
-  fallback_courier: CourierProviderName;
+  fallback_courier: CourierProviderName | null;
 }
 
 export interface FulfillmentPlan {
@@ -316,7 +317,8 @@ export interface FulfillmentPlan {
   order_id: string;
   allocated_warehouse_id: string;
   warehouse_name: string;
-  assigned_courier: CourierProviderName;
+  /** null when there's no courier performance to choose from; the merchant picks the courier. */
+  assigned_courier: CourierProviderName | null;
   items_available: boolean;
   picking_priority: "NORMAL" | "HIGH" | "URGENT";
   packing_priority: "NORMAL" | "HIGH" | "URGENT";

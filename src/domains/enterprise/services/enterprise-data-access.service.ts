@@ -63,6 +63,15 @@ export class EnterpriseDataAccessService {
   }
 
   /**
+   * Business units the user may see: all with organization-wide scope, else the ones assigned to them (N13)
+   */
+  public getAuthorizedBusinessUnits(user: EnterpriseUserRecord): BusinessUnit[] {
+    const all = db.getBusinessUnits(user.organization_id);
+    if (user.assigned_scope.all_access) return all;
+    return all.filter((bu) => user.assigned_scope.business_unit_ids?.includes(bu.id));
+  }
+
+  /**
    * Validates if a requested entity is within the caller's authorized scope
    */
   public isEntityAuthorized(

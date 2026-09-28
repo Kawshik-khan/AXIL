@@ -2088,8 +2088,8 @@ class CommerceDatabase {
           type: "FORECASTING",
           artifact_uri: "models/forecasting/demand-hw-v1.json",
           feature_version: "v1.2",
-          status: "DEPLOYED",
-          metrics: { mae: 2.1, rmse: 3.4, mape: 5.2 },
+          status: "READY",
+          metrics: {}, // never evaluated: the seeded MAE/RMSE/precision were made up
           limitations: ["Requires at least 5 historical observations", "Sensitive to sudden promotional shocks"],
           created_at: now,
           updated_at: now,
@@ -2101,8 +2101,8 @@ class CommerceDatabase {
           type: "FORECASTING",
           artifact_uri: "models/forecasting/sales-arima-v1.json",
           feature_version: "v1.1",
-          status: "DEPLOYED",
-          metrics: { mae: 120.0, rmse: 195.0, mape: 4.8 },
+          status: "READY",
+          metrics: {}, // never evaluated: the seeded MAE/RMSE/precision were made up
           limitations: ["Assumes baseline day-of-week seasonality"],
           created_at: now,
           updated_at: now,
@@ -2114,8 +2114,8 @@ class CommerceDatabase {
           type: "SEGMENTATION",
           artifact_uri: "models/segmentation/rfm-quantile-v1.json",
           feature_version: "v1.0",
-          status: "DEPLOYED",
-          metrics: { silhouette_score: 0.78 },
+          status: "READY",
+          metrics: {}, // never evaluated: the seeded MAE/RMSE/precision were made up
           limitations: ["Calibrated for Bangladeshi retail order distributions"],
           created_at: now,
           updated_at: now,
@@ -2127,8 +2127,8 @@ class CommerceDatabase {
           type: "ANOMALY_DETECTION",
           artifact_uri: "models/detection/zscore-v1.json",
           feature_version: "v1.0",
-          status: "DEPLOYED",
-          metrics: { precision: 0.94, recall: 0.91 },
+          status: "READY",
+          metrics: {}, // never evaluated: the seeded MAE/RMSE/precision were made up
           limitations: ["Detects deviations > 2.5 standard deviations from 14-day rolling mean"],
           created_at: now,
           updated_at: now,
@@ -2353,103 +2353,9 @@ class CommerceDatabase {
       });
     }
 
-    if (this.data.courier_performances.length === 0) {
-      this.data.courier_performances.push(
-        {
-          courier_provider: "STEADFAST",
-          tenant_id: tenantId,
-          delivery_success_rate: 0.94,
-          average_delivery_hours: 28,
-          return_rate: 0.05,
-          active_shipments_count: 42,
-          cost_per_kg_bdt: 60,
-          is_available: true,
-          rating_score: 92,
-          last_updated: now,
-        },
-        {
-          courier_provider: "PATHAO",
-          tenant_id: tenantId,
-          delivery_success_rate: 0.91,
-          average_delivery_hours: 22,
-          return_rate: 0.08,
-          active_shipments_count: 18,
-          cost_per_kg_bdt: 70,
-          is_available: true,
-          rating_score: 89,
-          last_updated: now,
-        },
-        {
-          courier_provider: "REDX",
-          tenant_id: tenantId,
-          delivery_success_rate: 0.88,
-          average_delivery_hours: 36,
-          return_rate: 0.11,
-          active_shipments_count: 9,
-          cost_per_kg_bdt: 65,
-          is_available: true,
-          rating_score: 84,
-          last_updated: now,
-        }
-      );
-    }
+    // No seeded courier performance (success rates, ratings, costs): measured values in the demo seed (FX-30 follow-up): the demo workspace starts without telemetry, like any new workspace
 
-    if (this.data.provider_health.length === 0) {
-      this.data.provider_health.push(
-        {
-          id: "ph_bkash",
-          tenant_id: tenantId,
-          provider_id: "bkash",
-          provider_name: "bKash Direct Gateway",
-          provider_type: "PAYMENT_GATEWAY",
-          status: "HEALTHY",
-          latency_ms: 120,
-          success_rate_percent: 99.2,
-          consecutive_failures: 0,
-          circuit_breaker_open: false,
-          last_checked_at: now,
-        },
-        {
-          id: "ph_nagad",
-          tenant_id: tenantId,
-          provider_id: "nagad",
-          provider_name: "Nagad Online MFS",
-          provider_type: "PAYMENT_GATEWAY",
-          status: "HEALTHY",
-          latency_ms: 145,
-          success_rate_percent: 98.6,
-          consecutive_failures: 0,
-          circuit_breaker_open: false,
-          last_checked_at: now,
-        },
-        {
-          id: "ph_steadfast",
-          tenant_id: tenantId,
-          provider_id: "steadfast",
-          provider_name: "Steadfast Courier API",
-          provider_type: "COURIER",
-          status: "HEALTHY",
-          latency_ms: 210,
-          success_rate_percent: 97.8,
-          consecutive_failures: 0,
-          circuit_breaker_open: false,
-          last_checked_at: now,
-        },
-        {
-          id: "ph_pathao",
-          tenant_id: tenantId,
-          provider_id: "pathao",
-          provider_name: "Pathao Logistics API",
-          provider_type: "COURIER",
-          status: "HEALTHY",
-          latency_ms: 180,
-          success_rate_percent: 98.4,
-          consecutive_failures: 0,
-          circuit_breaker_open: false,
-          last_checked_at: now,
-        }
-      );
-    }
+    // No seeded provider health (bKash/Nagad/Steadfast/Pathao HEALTHY with latencies; none is integrated): measured values in the demo seed (FX-30 follow-up): the demo workspace starts without telemetry, like any new workspace
 
     if (this.data.sla_policies.length === 0) {
       this.data.sla_policies.push(
@@ -2551,7 +2457,7 @@ class CommerceDatabase {
           status: "ACTIVE",
           target_metric: "revenue_bdt",
           target_value: 12000000,
-          current_value: 8500000,
+          current_value: 10000000, // no progress measured yet
           baseline_value: 10000000,
           unit: "BDT",
           time_horizon_start: "2026-01-01T00:00:00Z",
@@ -2559,7 +2465,7 @@ class CommerceDatabase {
           priority: 1,
           risk_tolerance: "MODERATE",
           budget_allocated_bdt: 500000,
-          budget_spent_bdt: 125000,
+          budget_spent_bdt: 0,
           allowed_domains: ["PRICING", "MARKETING", "GROWTH", "INVENTORY"],
           allowed_actions: ["PRICING_ADJUSTMENT", "CAMPAIGN_LAUNCH", "OFFER_CREATION"],
           required_approvals: ["FINANCE_REVIEW"],
@@ -2567,8 +2473,8 @@ class CommerceDatabase {
             { type: "MARGIN", name: "Gross Margin Floor", operator: "MIN", value: 35, unit: "percent" },
             { type: "BUDGET", name: "Marketing Spend Cap", operator: "MAX", value: 500000, unit: "BDT" },
           ],
-          progress_percent: 42,
-          forecast_achievement_percent: 78,
+          progress_percent: 0,
+          forecast_achievement_percent: null,
           created_by: userId,
           created_at: now,
           updated_at: now,
@@ -2585,7 +2491,7 @@ class CommerceDatabase {
           status: "ACTIVE",
           target_metric: "stockout_rate",
           target_value: 2.5,
-          current_value: 5.1,
+          current_value: 5.0, // no progress measured yet
           baseline_value: 5.0,
           unit: "percent",
           time_horizon_start: "2026-01-01T00:00:00Z",
@@ -2593,15 +2499,15 @@ class CommerceDatabase {
           priority: 2,
           risk_tolerance: "CONSERVATIVE",
           budget_allocated_bdt: 100000,
-          budget_spent_bdt: 35000,
+          budget_spent_bdt: 0,
           allowed_domains: ["INVENTORY", "PROCUREMENT"],
           allowed_actions: ["STOCK_TRANSFER", "PURCHASE_ORDER"],
           required_approvals: [],
           constraints: [
             { type: "INVENTORY", name: "Min Safety Stock Days", operator: "MIN", value: 7, unit: "days" },
           ],
-          progress_percent: 28,
-          forecast_achievement_percent: 65,
+          progress_percent: 0,
+          forecast_achievement_percent: null,
           created_by: userId,
           created_at: now,
           updated_at: now,
@@ -2617,7 +2523,7 @@ class CommerceDatabase {
           status: "ACTIVE",
           target_metric: "delivery_success_rate",
           target_value: 95,
-          current_value: 88.5,
+          current_value: 87, // no progress measured yet
           baseline_value: 87,
           unit: "percent",
           time_horizon_start: "2026-01-01T00:00:00Z",
@@ -2625,15 +2531,15 @@ class CommerceDatabase {
           priority: 3,
           risk_tolerance: "MODERATE",
           budget_allocated_bdt: 200000,
-          budget_spent_bdt: 65000,
+          budget_spent_bdt: 0,
           allowed_domains: ["FULFILLMENT", "SHIPPING", "SUPPORT"],
           allowed_actions: ["COURIER_SWITCH", "CUSTOMER_NOTIFICATION", "EXCEPTION_RESOLVE"],
           required_approvals: [],
           constraints: [
             { type: "BUDGET", name: "Courier Cost Cap", operator: "MAX", value: 200000, unit: "BDT" },
           ],
-          progress_percent: 55,
-          forecast_achievement_percent: 82,
+          progress_percent: 0,
+          forecast_achievement_percent: null,
           created_by: userId,
           created_at: now,
           updated_at: now,
@@ -2716,64 +2622,9 @@ class CommerceDatabase {
         }
       );
 
-      // Platform Health Baseline
-      this.data.platform_health_records.push({
-        id: "ph_baseline",
-        tenant_id: tenantId,
-        overall_status: "HEALTHY",
-        dimensions: {
-          COMMERCE: { dimension: "COMMERCE", status: "HEALTHY", score: 92, indicators: [{ name: "Order Processing", value: 99.2, threshold: 95, status: "HEALTHY" }], active_issues: 0, last_checked_at: now },
-          INTELLIGENCE: { dimension: "INTELLIGENCE", status: "HEALTHY", score: 88, indicators: [{ name: "Forecast Accuracy", value: 82, threshold: 75, status: "HEALTHY" }], active_issues: 0, last_checked_at: now },
-          GROWTH: { dimension: "GROWTH", status: "HEALTHY", score: 85, indicators: [{ name: "Campaign Delivery", value: 96, threshold: 90, status: "HEALTHY" }], active_issues: 0, last_checked_at: now },
-          OPERATIONS: { dimension: "OPERATIONS", status: "HEALTHY", score: 90, indicators: [{ name: "SLA Compliance", value: 94, threshold: 90, status: "HEALTHY" }], active_issues: 1, last_checked_at: now },
-          ENTERPRISE: { dimension: "ENTERPRISE", status: "HEALTHY", score: 95, indicators: [{ name: "Data Access Control", value: 100, threshold: 99, status: "HEALTHY" }], active_issues: 0, last_checked_at: now },
-          INTEGRATIONS: { dimension: "INTEGRATIONS", status: "HEALTHY", score: 87, indicators: [{ name: "Sync Success Rate", value: 93, threshold: 85, status: "HEALTHY" }], active_issues: 0, last_checked_at: now },
-          AGENTS: { dimension: "AGENTS", status: "HEALTHY", score: 91, indicators: [{ name: "Agent Success Rate", value: 94, threshold: 85, status: "HEALTHY" }], active_issues: 0, last_checked_at: now },
-          WORKFLOWS: { dimension: "WORKFLOWS", status: "HEALTHY", score: 89, indicators: [{ name: "Workflow Completion", value: 96, threshold: 90, status: "HEALTHY" }], active_issues: 0, last_checked_at: now },
-          MODELS: { dimension: "MODELS", status: "HEALTHY", score: 93, indicators: [{ name: "Model Availability", value: 99.5, threshold: 99, status: "HEALTHY" }], active_issues: 0, last_checked_at: now },
-          DATA: { dimension: "DATA", status: "HEALTHY", score: 86, indicators: [{ name: "Data Quality Score", value: 88, threshold: 80, status: "HEALTHY" }], active_issues: 2, last_checked_at: now },
-          SECURITY: { dimension: "SECURITY", status: "HEALTHY", score: 97, indicators: [{ name: "Auth Compliance", value: 100, threshold: 99, status: "HEALTHY" }], active_issues: 0, last_checked_at: now },
-        },
-        autonomous_mode: "SEMI_AUTONOMOUS",
-        uptime_percent_24h: 99.8,
-        assessed_at: now,
-      });
+      // No seeded platform health (11 dimensions with scores, 99.8% uptime): measured values in the demo seed (FX-30 follow-up): the demo workspace starts without telemetry, like any new workspace
 
-      // SLO Definitions
-      this.data.slo_definitions.push(
-        {
-          id: "slo_api_availability",
-          tenant_id: tenantId,
-          name: "API Availability",
-          service: "commerce-api",
-          indicator: "api_availability",
-          target_value: 99.9,
-          target_unit: "percent",
-          measurement_window: "ROLLING_30D",
-          error_budget_percent: 0.1,
-          error_budget_remaining_percent: 0.07,
-          current_value: 99.93,
-          status: "MET",
-          created_at: now,
-          updated_at: now,
-        },
-        {
-          id: "slo_decision_latency",
-          tenant_id: tenantId,
-          name: "Decision Latency",
-          service: "decision-engine",
-          indicator: "decision_p99_latency_ms",
-          target_value: 5000,
-          target_unit: "ms",
-          measurement_window: "ROLLING_24H",
-          error_budget_percent: 1,
-          error_budget_remaining_percent: 0.65,
-          current_value: 3200,
-          status: "MET",
-          created_at: now,
-          updated_at: now,
-        }
-      );
+      // No seeded SLOs with made-up current values and error budgets: measured values in the demo seed (FX-30 follow-up): the demo workspace starts without telemetry, like any new workspace
     }
 
     // Demo webhook rows. Each is reachable at /api/v1/automation/webhooks/<provider>?wh=<id> and must be

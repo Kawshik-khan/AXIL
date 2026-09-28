@@ -111,7 +111,7 @@ for (const installation of db.data.integration_installations || []) {
   counts[result]++;
   out(`integration  ${installation.id}: ${result}`);
   if (result === "reencrypted" && next) {
-    writes.push(() => db.updateIntegrationInstallation(installation.id, { credentials_encrypted: next }));
+    writes.push(() => db.updateIntegrationInstallation(installation.organization_id, installation.id, { credentials_encrypted: next }));
   }
 }
 

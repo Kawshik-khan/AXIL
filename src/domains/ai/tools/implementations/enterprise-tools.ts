@@ -259,13 +259,12 @@ export class ResolveSemanticMetricTool implements IAgentTool<z.infer<typeof Reso
   }
 
   public async execute(context: RequestContext, input: z.infer<typeof ResolveSemanticMetricInputSchema>): Promise<any> {
+    const orgId = resolveOrganizationId(context, input.organization_id);
     return semanticMetricsService.queryMetric(
-      {
-        metric_key: input.metric_key,
-        entity_type: "ORGANIZATION",
-        entity_id: resolveOrganizationId(context, input.organization_id),
-      },
-      context.tenant.id
+      orgId,
+      { metric_key: input.metric_key, entity_type: "ORGANIZATION", entity_id: orgId },
+      context.tenant.id,
+      buildCaller(context, orgId)
     );
   }
 }

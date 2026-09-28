@@ -1,5 +1,6 @@
 import { randomSuffix } from "@/lib/ids";
 import { db } from "@/infrastructure/db";
+import { findDistrict } from "@/lib/bd-geography";
 import { Order, OrderItem, OrderStatus, PaymentMethod, CustomerSource } from "@/types/commerce";
 import { RequestContext } from "@/lib/context";
 import { RbacService } from "@/domains/rbac/service";
@@ -64,14 +65,16 @@ export class OrderService {
         email?: string;
       };
       delivery_address: {
-        division: string;
+        /** Ignored: derived from the district. */
+        division?: string;
         district: string;
         upazila?: string;
         area?: string;
         address_line_1: string;
         postal_code?: string;
       };
-      delivery_zone: "INSIDE_DHAKA" | "OUTSIDE_DHAKA";
+      /** Ignored: derived from the district (a client-chosen zone could undercharge delivery). */
+      delivery_zone?: "INSIDE_DHAKA" | "OUTSIDE_DHAKA";
       items: Array<{ variant_id: string; quantity: number }>;
       payment_method: PaymentMethod;
       coupon_code?: string;
@@ -88,6 +91,19 @@ export class OrderService {
     if (!payload.customer || !payload.customer.phone) {
       throw new BadRequestError("Customer phone number is required.");
     }
+    for (const item of payload.items) {
+      if (!Number.isInteger(item.quantity) || item.quantity <= 0) {
+        throw new BadRequestError("Item quantities must be whole numbers above zero.");
+      }
+    }
+    // The district must be one of the 64; division and delivery zone follow from it (FX-36 M5: outside-Dhaka orders
+    // were stored as "Chittagong", and the zone, which sets the delivery charge, came from the client)
+    const place = findDistrict(payload.delivery_address?.district);
+    if (!place) {
+      throw new BadRequestError("Choose the delivery district (one of Bangladesh's 64 districts).");
+    }
+    const deliveryAddress = { ...payload.delivery_address, district: place.district, division: place.division };
+    const deliveryZone = place.zone;
 
     // 1. Resolve or create customer profile
     let customer = await CustomerService.getCustomerByPhone(context, payload.customer.phone);
@@ -98,7 +114,7 @@ export class OrderService {
         phone: payload.customer.phone,
         email: payload.customer.email,
         source: payload.source || "MANUAL",
-        address: payload.delivery_address,
+        address: deliveryAddress,
       });
     }
 
@@ -106,7 +122,7 @@ export class OrderService {
     const pricing = await PricingService.calculateOrderPricing(
       context.tenant.id,
       payload.items,
-      payload.delivery_zone,
+      deliveryZone,
       payload.coupon_code
     );
 
@@ -174,8 +190,8 @@ export class OrderService {
       fulfillment_status: "UNFULFILLED",
       shipping_address_snapshot: {
         country: "Bangladesh",
-        division: payload.delivery_address.division,
-        district: payload.delivery_address.district,
+        division: deliveryAddress.division,
+        district: deliveryAddress.district,
         upazila: payload.delivery_address.upazila,
         area: payload.delivery_address.area,
         address_line_1: payload.delivery_address.address_line_1,

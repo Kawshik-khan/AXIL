@@ -72,7 +72,7 @@ export class BusinessObjectivesService {
     objective_id: string;
     progress_percent: number;
     status: ObjectiveStatus;
-    forecast_achievement_percent: number;
+    forecast_achievement_percent: number | null;
     at_risk_reasons: string[];
   } {
     const obj = this.findById(tenantId, objectiveId);
@@ -86,7 +86,7 @@ export class BusinessObjectivesService {
     if (obj.budget_spent_bdt > obj.budget_allocated_bdt * 0.9) {
       atRiskReasons.push("Budget utilization above 90%");
     }
-    if (progress < obj.forecast_achievement_percent * 0.5) {
+    if (obj.forecast_achievement_percent !== null && progress < obj.forecast_achievement_percent * 0.5) {
       atRiskReasons.push("Progress significantly below forecast");
     }
 

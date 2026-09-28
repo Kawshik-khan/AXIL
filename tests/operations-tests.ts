@@ -389,7 +389,15 @@ export async function runOperationsTests() {
     assert.ok(plan.id.startsWith("flp_"));
     assert.strictEqual(plan.allocated_warehouse_id, wh1.id);
     assert.strictEqual(plan.items_available, true);
-    assert.ok(plan.assigned_courier);
+    // No courier history: no courier is assumed (it used to default to Steadfast at ৳60 / 24 h)
+    assert.strictEqual(plan.assigned_courier, null);
+
+    // With recorded performance, the best-scoring courier is chosen
+    const now = new Date().toISOString();
+    db.upsertCourierPerformance({ courier_provider: "PATHAO", tenant_id: tenantId, delivery_success_rate: 0.95, average_delivery_hours: 20, return_rate: 0.03, active_shipments_count: 5, cost_per_kg_bdt: 70, is_available: true, rating_score: 90, last_updated: now });
+    db.upsertCourierPerformance({ courier_provider: "REDX", tenant_id: tenantId, delivery_success_rate: 0.8, average_delivery_hours: 30, return_rate: 0.1, active_shipments_count: 5, cost_per_kg_bdt: 60, is_available: true, rating_score: 70, last_updated: now });
+    const planned = fulfillmentOperationsService.planFulfillment(tenantId, order.id);
+    assert.strictEqual(planned.assigned_courier, "PATHAO");
   });
 
   console.log(`\n${ANSI_BOLD}[6. Courier Operations & Carrier Failover]${ANSI_RESET}`);

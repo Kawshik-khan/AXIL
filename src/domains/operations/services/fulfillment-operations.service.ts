@@ -65,13 +65,14 @@ export class FulfillmentOperationsService {
     const courierPerfs = db.getCourierPerformances(tenantId).filter((cp) => cp.is_available);
 
     if (courierPerfs.length === 0) {
+      // Used to recommend Steadfast at ৳60 and 24 h with Pathao as fallback, from no data (FX-30)
       return {
         order_id: orderId,
-        recommended_courier: "STEADFAST",
-        estimated_cost_bdt: 60,
-        estimated_transit_hours: 24,
-        reason: "Default reliable provider fallback",
-        fallback_courier: "PATHAO",
+        recommended_courier: null,
+        estimated_cost_bdt: null,
+        estimated_transit_hours: null,
+        reason: "No courier performance recorded yet; choose the courier yourself.",
+        fallback_courier: null,
       };
     }
 
@@ -79,7 +80,7 @@ export class FulfillmentOperationsService {
     courierPerfs.sort((a, b) => b.rating_score * b.delivery_success_rate - a.rating_score * a.delivery_success_rate);
 
     const top = courierPerfs[0];
-    const second = courierPerfs[1] || courierPerfs[0];
+    const second = courierPerfs[1] ?? null;
 
     return {
       order_id: orderId,
@@ -87,7 +88,7 @@ export class FulfillmentOperationsService {
       estimated_cost_bdt: top.cost_per_kg_bdt,
       estimated_transit_hours: top.average_delivery_hours,
       reason: `Highest composite score (${top.rating_score}/100) with ${(top.delivery_success_rate * 100).toFixed(1)}% success rate.`,
-      fallback_courier: second.courier_provider,
+      fallback_courier: second?.courier_provider ?? null,
     };
   }
 }

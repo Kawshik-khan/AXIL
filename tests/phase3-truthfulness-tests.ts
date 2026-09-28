@@ -19,6 +19,14 @@ import { N8nProviderService } from "@/domains/automation/services/n8n-provider.s
 import { GetOrderStatusTool } from "@/domains/ai/tools/implementations/order-tools";
 import { GetIntegrationStatusTool } from "@/domains/ai/tools/implementations/enterprise-tools";
 import type { Order } from "@/types/commerce";
+import { ProductService } from "@/domains/catalog/product.service";
+import { findDistrict } from "@/lib/bd-geography";
+import { encryptCredential } from "@/lib/security";
+import { planCredentialMigration } from "@/domains/enterprise/services/credential-migration";
+import { cleanDemoTelemetry, type DemoTelemetryData } from "@/infrastructure/db/demo-telemetry-cleanup";
+import { fulfillmentOperationsService } from "@/domains/operations/services/fulfillment-operations.service";
+import { CreateBusinessObjectiveTool } from "@/domains/ai/tools/implementations/autonomous-tools";
+import type { IntegrationInstallation } from "@/types/enterprise";
 
 const ANSI_GREEN = "\x1b[32m";
 const ANSI_RED = "\x1b[31m";
@@ -408,6 +416,155 @@ async function main() {
     assert.strictEqual(m.recentOrders.length, 0);
   });
 
+  // ---------------------------------------------------------------------------
+  console.log(`\n${ANSI_BOLD}[N13-N15, demo seed, delivery fee] Follow-ups${ANSI_RESET}`);
+  // ---------------------------------------------------------------------------
+
+  await runTest("N13: stores, brands and business units list only the caller's enterprise scope", async () => {
+    const stores = await call("GET", "enterprise/stores", scopedAdmin.token);
+    assert.strictEqual(stores.status, 200);
+    assert.deepStrictEqual((stores.json.data?.stores as Array<{ id: string }>).map((x) => x.id), [storeA.id]);
+    const units = await call("GET", "enterprise/business-units", scopedAdmin.token);
+    assert.deepStrictEqual(units.json.data?.business_units, [], "no business unit is assigned to this member");
+    const all = await call("GET", "enterprise/stores", owner.token);
+    assert.strictEqual((all.json.data?.stores as unknown[]).length, 2);
+    assert.strictEqual((await call("GET", "enterprise/brands", suspendedAdmin.token)).status, 403);
+  });
+
+  await runTest("N13: creating stores needs a real brand in scope; units need organization-wide scope", async () => {
+    const noBrand = await call("POST", "enterprise/stores", owner.token, { body: { name: "X", code: "X1", brand_id: "br_does_not_exist" } });
+    assert.strictEqual(noBrand.status, 404);
+    const ok = await call("POST", "enterprise/stores", owner.token, { body: { name: "Store C", code: "SC", brand_id: `${orgId}_br`, store_type: "POPUP" } });
+    assert.strictEqual(ok.status, 201);
+    assert.strictEqual((ok.json.data as { business_unit_id: string }).business_unit_id, `${orgId}_bu`, "unit comes from the brand");
+    const scopedStore = await call("POST", "enterprise/stores", scopedAdmin.token, { body: { name: "Y", code: "Y1", brand_id: `${orgId}_br` } });
+    assert.strictEqual(scopedStore.status, 403, "a store-scoped member can't add stores under the brand");
+    const unit = await call("POST", "enterprise/business-units", scopedAdmin.token, { body: { name: "U", code: "U1" } });
+    assert.strictEqual(unit.status, 403);
+    const extra = await call("POST", "enterprise/stores", owner.token, { body: { name: "Z", code: "Z1", brand_id: `${orgId}_br`, organization_id: orgId, business_unit_id: "bu_x" } });
+    assert.strictEqual(extra.status, 400, "strict body: the unit can't be chosen separately");
+  });
+
+  await runTest("N13/N12: metrics use this organization and the caller's scope, with no invented values", async () => {
+    const org = await call("GET", "enterprise/metrics", owner.token, { query: "?metric_key=gross_margin_pct" });
+    assert.strictEqual(org.status, 200);
+    const margin = org.json.data as { value: number | null; data_quality_status: string };
+    assert.ok(margin.value === null || typeof margin.value === "number");
+    assert.notStrictEqual(margin.value, 32.5, "the literal margin is gone");
+    assert.strictEqual((await call("GET", "enterprise/metrics", scopedAdmin.token, { query: "?metric_key=gross_revenue" })).status, 403);
+    const store = await call("POST", "enterprise/metrics", owner.token, { body: { metric_key: "gross_revenue", entity_type: "STORE", entity_id: storeA.id } });
+    assert.strictEqual(store.status, 200);
+    assert.strictEqual((store.json.data as { value: unknown }).value, null, "orders carry no store");
+    assert.strictEqual((await call("GET", "enterprise/metrics", owner.token, { query: "?metric_key=made_up_metric" })).status, 404);
+  });
+
+  await runTest("N14: legacy base64 integration credentials are re-encrypted; unreadable ones cleared", () => {
+    const base = { organization_id: "org_x", provider_id: "p", provider_name: "SAP", category: "ERP", status: "HEALTHY", config: {}, sync_frequency_minutes: 60, created_at: nowIso(), updated_at: nowIso() };
+    const legacy = planCredentialMigration({ ...base, id: "a", credentials_encrypted: Buffer.from(JSON.stringify({ api_key: "n14-plain" })).toString("base64") } as IntegrationInstallation);
+    assert.strictEqual(legacy.result, "reencrypted");
+    assert.ok(legacy.update?.credentials_encrypted && !legacy.update.credentials_encrypted.includes("n14-plain"));
+    assert.strictEqual(planCredentialMigration({ ...base, id: "b", credentials_encrypted: encryptCredential({ k: 1 }) } as IntegrationInstallation).result, "already_encrypted");
+    const junk = planCredentialMigration({ ...base, id: "c", credentials_encrypted: "garbage!!" } as IntegrationInstallation);
+    assert.strictEqual(junk.result, "unreadable");
+    assert.strictEqual(junk.update?.status, "DISCONNECTED");
+  });
+
+  await runTest("N15: objectives POST is strict; new objectives are PROPOSED with the baseline approvals", async () => {
+    const extra = await call("POST", "autonomous/objectives", owner.token, { body: { name: "Grow", target_value: 10, baseline_value: 5, status: "ACTIVE" } });
+    assert.strictEqual(extra.status, 400, "status isn't client-settable");
+    const badDomain = await call("POST", "autonomous/objectives", owner.token, { body: { name: "Grow", target_value: 10, baseline_value: 5, allowed_domains: ["EVERYTHING"] } });
+    assert.strictEqual(badDomain.status, 400);
+    const ok = await call("POST", "autonomous/objectives", owner.token, { body: { name: "Grow", target_value: 10, baseline_value: 5, required_approvals: [] } });
+    assert.strictEqual(ok.status, 201);
+    const obj = ok.json.data as { status: string; required_approvals: string[]; created_by: string; forecast_achievement_percent: unknown };
+    assert.strictEqual(obj.status, "PROPOSED");
+    assert.ok(obj.required_approvals.includes("HIGH_RISK_PRICING") && obj.required_approvals.includes("BUDGET_OVERRUN"));
+    assert.strictEqual(obj.created_by, owner.id);
+    assert.strictEqual(obj.forecast_achievement_percent, null);
+    const parent = await call("POST", "autonomous/objectives", owner.token, { body: { name: "Child", target_value: 1, baseline_value: 0, parent_objective_id: "obj_someone_else" } });
+    assert.strictEqual(parent.status, 404);
+
+    // The AI tool proposes too, and needs the merchant's numbers
+    const ctx = await AuthService.resolveRequestContext(owner.token);
+    assert.ok(ctx);
+    const tool = new CreateBusinessObjectiveTool();
+    assert.throws(() => tool.schema.parse({ name: "Grow sales", description: "x" }), "target and baseline are required");
+    const viaTool = (await tool.execute(ctx, tool.schema.parse({ name: "Grow sales", description: "x", target_value: 100, baseline_value: 50 }))) as { data: { status: string } };
+    assert.strictEqual(viaTool.data.status, "PROPOSED");
+  });
+
+  await runTest("FX-36: orders need a real district; division and zone (and the fee) follow from it", async () => {
+    const ctx = await AuthService.resolveRequestContext(owner.token);
+    assert.ok(ctx);
+    if (db.getWarehouses(tenantId).length === 0) {
+      db.createWarehouse({ id: uid("wh_p3"), tenant_id: tenantId, name: "Main", code: "MAIN", address: "Dhaka", city: "Dhaka", district: "Dhaka", status: "ACTIVE", created_at: nowIso(), updated_at: nowIso() });
+    }
+    const product = await ProductService.createProduct(ctx, { name: "P3 Panjabi", sku: uid("P3SKU"), base_price: 1000, initial_stock: 10 });
+    const variantId = (product as { variants?: Array<{ id: string }> }).variants?.[0]?.id;
+    assert.ok(variantId, "product has a variant");
+    const body = (district: string, zone?: string) => ({
+      customer: { first_name: "Rahim", phone: "01712345678" },
+      delivery_address: { district, address_line_1: "House 1" },
+      ...(zone ? { delivery_zone: zone } : {}),
+      items: [{ variant_id: variantId, quantity: 1 }],
+      payment_method: "COD",
+    });
+    assert.strictEqual((await call("POST", "orders", owner.token, { body: body("Atlantis") })).status, 400);
+    assert.strictEqual((await call("POST", "orders", owner.token, { body: { ...body("Dhaka"), items: [{ variant_id: variantId, quantity: 1.5 }] } })).status, 400);
+    const fees = (await call("GET", "tenants/current", owner.token)).json.data?.delivery_fees as { inside_dhaka_bdt: number; outside_dhaka_bdt: number };
+    // A client claiming "inside Dhaka" for Sylhet is charged the outside-Dhaka fee
+    const sylhet = await call("POST", "orders", owner.token, { body: body("sylhet", "INSIDE_DHAKA") });
+    assert.strictEqual(sylhet.status, 201);
+    const order = sylhet.json.data?.order as { shipping_total: number; shipping_address_snapshot: { district: string; division: string } };
+    assert.strictEqual(order.shipping_address_snapshot.district, "Sylhet");
+    assert.strictEqual(order.shipping_address_snapshot.division, "Sylhet");
+    assert.strictEqual(order.shipping_total, fees.outside_dhaka_bdt);
+    assert.strictEqual(findDistrict("Chittagong")?.district, "Chattogram", "old spellings are accepted");
+  });
+
+  await runTest("demo seed: no made-up telemetry; old stores can be cleaned without touching user records", () => {
+    db.clearAllForTesting();
+    db.ensureDefaultSeed();
+    assert.strictEqual(db.data.platform_health_records.length, 0);
+    assert.strictEqual(db.data.provider_health.length, 0);
+    assert.strictEqual(db.data.courier_performances.length, 0);
+    assert.strictEqual(db.data.slo_definitions.length, 0);
+    assert.ok(db.data.model_registry.every((m) => Object.keys(m.metrics).length === 0));
+    assert.ok(db.data.business_objectives.every((o) => o.progress_percent === 0 && o.forecast_achievement_percent === null));
+
+    const now = nowIso();
+    const old: DemoTelemetryData = {
+      provider_health: [{ id: "ph_bkash" }, { id: "ph_user_added" }],
+      platform_health_records: [{ id: "ph_baseline" }],
+      slo_definitions: [{ id: "slo_api_availability" } as never, { id: "slo_mine" } as never],
+      courier_performances: [
+        { courier_provider: "STEADFAST", tenant_id: "t", delivery_success_rate: 0.94, average_delivery_hours: 28, return_rate: 0.05, active_shipments_count: 42, cost_per_kg_bdt: 60, is_available: true, rating_score: 92, last_updated: now },
+        { courier_provider: "PATHAO", tenant_id: "t", delivery_success_rate: 0.9, average_delivery_hours: 20, return_rate: 0.05, active_shipments_count: 7, cost_per_kg_bdt: 70, is_available: true, rating_score: 80, last_updated: now },
+      ],
+      model_registry: [{ id: "mod_rfm_segmenter_v1", metrics: { silhouette_score: 0.78 }, status: "DEPLOYED" } as never],
+      business_objectives: [
+        { id: "obj_increase_revenue", progress_percent: 42, baseline_value: 10, current_value: 8, forecast_achievement_percent: 78, budget_spent_bdt: 5 } as never,
+        { id: "obj_delivery_success", progress_percent: 60, baseline_value: 1, current_value: 2, forecast_achievement_percent: 1, budget_spent_bdt: 1 } as never,
+      ],
+    };
+    const dry = cleanDemoTelemetry(old, { apply: false });
+    assert.deepStrictEqual(dry, { provider_health_removed: 1, platform_health_removed: 1, slos_removed: 1, courier_performances_removed: 1, model_metrics_cleared: 1, objectives_reset: 1 });
+    assert.strictEqual(old.provider_health.length, 2, "a dry run changes nothing");
+    cleanDemoTelemetry(old, { apply: true });
+    assert.deepStrictEqual(old.provider_health.map((x) => x.id), ["ph_user_added"]);
+    assert.deepStrictEqual(old.slo_definitions.map((x) => x.id), ["slo_mine"]);
+    assert.deepStrictEqual(old.courier_performances.map((x) => x.courier_provider), ["PATHAO"]);
+    assert.strictEqual(old.business_objectives[0].progress_percent, 0);
+    assert.strictEqual(old.business_objectives[1].progress_percent, 60, "an objective the user changed is left alone");
+  });
+
+  await runTest("no courier history: no courier is recommended (no Steadfast / ৳60 / 24 h default)", () => {
+    const rec = fulfillmentOperationsService.recommendCourier("ten_without_history", "ord_x");
+    assert.strictEqual(rec.recommended_courier, null);
+    assert.strictEqual(rec.estimated_cost_bdt, null);
+    assert.strictEqual(rec.estimated_transit_hours, null);
+  });
+
   await runTest("grep gate: known fabrication patterns are gone from src/", () => {
     const patterns: Array<[RegExp, string]> = [
       [/baselineGMV|syntheticBase/, "synthetic baselines"],
@@ -416,6 +573,9 @@ async function main() {
       [/Math\.random\(\)\s*\*\s*\d+\s*\+\s*\d+\)/, "random latencies"],
       [/STF-2026-PENDING|"Steadfast Courier \/ Pathao"/, "invented courier"],
       [/target_url\.includes\("fail"\)/, "URL-based fake delivery"],
+      [/\(৳120\)|৳120 delivery charge|৳60-70/, "literal delivery fee in the UI"],
+      [/\? "Dhaka" : "Chittagong"/, "invented outside-Dhaka district"],
+      [/calculatedValue = 32\.5|: 94\.2;|forecast_achievement_percent: 65/, "literal metric values"],
       [/(idx|index)\s*\*\s*[0-9.]+\)*[,;]?\s*$/m, "per-position invented values"],
       [/totalRevenue \* 0\.\d+/, "fixed revenue shares"],
       [/assigned_scope:\s*\{[^}]*all_access:\s*true[^}]*\},?\s*\n\s*status:\s*"ACTIVE"/, "synthetic all-access caller"],

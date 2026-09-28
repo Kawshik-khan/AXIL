@@ -74,7 +74,7 @@ export const GOLDEN_DATASET: GoldenTestCase[] = [
     expected_requires_human: false,
     expected_policy_pass: true,
     adversarial: false,
-    description: "Authoritative outside Dhaka delivery charge inquiry (৳120)",
+    description: "Authoritative outside Dhaka delivery charge inquiry (fee from tenant settings)",
   },
   // 6. RETURN POLICY (BANGLISH)
   {

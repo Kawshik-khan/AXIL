@@ -25,7 +25,7 @@ export class SLOEngineService {
   }
 
   /** Evaluate SLO compliance. */
-  evaluateSLOs(tenantId: string): Array<{ slo_id: string; name: string; status: string; current: number; target: number }> {
+  evaluateSLOs(tenantId: string): Array<{ slo_id: string; name: string; status: string; current: number | null; target: number }> {
     return this.getSLOs(tenantId).map((slo) => ({
       slo_id: slo.id,
       name: slo.name,
@@ -40,6 +40,9 @@ export class SLOEngineService {
     db.markDirty(); // persists direct changes to db.data (FX-20)
     const slo = this.findById(tenantId, sloId);
     if (!slo) throw new AppError("NOT_FOUND", `SLO not found: ${sloId}`, 404);
+    if (slo.error_budget_remaining_percent === null) {
+      throw new AppError("NOT_MEASURED", `SLO ${sloId} has no measurements yet, so its error budget is unknown.`, 409);
+    }
 
     const totalMinutes = 43200; // 30 days in minutes
     const budgetMinutes = totalMinutes * (slo.error_budget_percent / 100);

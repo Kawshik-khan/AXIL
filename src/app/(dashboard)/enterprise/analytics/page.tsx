@@ -132,9 +132,15 @@ export default function EnterpriseAnalyticsPage() {
                 <span style={{ fontSize: 11, color: "#c7f900", fontWeight: 700 }}>SAMPLE: {metricResult.sample_count}</span>
               </div>
               <div style={{ fontSize: 32, fontWeight: 800, color: "#ffffff", marginBottom: 4 }}>
-                {metricResult.unit === "BDT" ? "৳" : ""}
-                {metricResult.value.toLocaleString()}
-                {metricResult.unit === "%" ? "%" : ""}
+                {metricResult.value === null ? (
+                  "—"
+                ) : (
+                  <>
+                    {metricResult.unit === "BDT" ? "৳" : ""}
+                    {metricResult.value.toLocaleString()}
+                    {metricResult.unit === "%" || metricResult.unit === "PERCENT" ? "%" : ""}
+                  </>
+                )}
               </div>
               <div style={{ fontSize: 12, color: "#9ca3af" }}>
                 Formula: <code style={{ color: "#c7f900" }}>{metricResult.formula_used}</code>

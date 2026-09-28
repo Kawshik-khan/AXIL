@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import { DistrictPicker, useDeliveryFees } from "@/components/orders/DistrictPicker";
 import Link from "next/link";
 import {
   ShoppingBag,
@@ -49,7 +50,8 @@ export default function OrdersPage() {
   const [custFirstName, setCustFirstName] = useState("");
   const [custLastName, setCustLastName] = useState("");
   const [custPhone, setCustPhone] = useState("");
-  const [deliveryZone, setDeliveryZone] = useState<"INSIDE_DHAKA" | "OUTSIDE_DHAKA">("INSIDE_DHAKA");
+  const [district, setDistrict] = useState("");
+  const deliveryFees = useDeliveryFees();
   const [addressLine, setAddressLine] = useState("");
   const [selectedVariantId, setSelectedVariantId] = useState("");
   const [orderQuantity, setOrderQuantity] = useState("1");
@@ -144,6 +146,10 @@ export default function OrdersPage() {
       setOrderFormError("Delivery address is required.");
       return;
     }
+    if (!district) {
+      setOrderFormError("Choose the delivery district.");
+      return;
+    }
     if (!selectedVariantId) {
       setOrderFormError("Please select at least one product.");
       return;
@@ -160,10 +166,10 @@ export default function OrdersPage() {
             last_name: custLastName.trim() || "Customer",
             phone: custPhone.trim(),
           },
-          delivery_zone: deliveryZone,
+          // The server derives division and delivery zone from the district (FX-36: this sent "Chittagong" for
+          // every outside-Dhaka order)
           delivery_address: {
-            division: deliveryZone === "INSIDE_DHAKA" ? "Dhaka" : "Chittagong",
-            district: deliveryZone === "INSIDE_DHAKA" ? "Dhaka" : "Chittagong",
+            district,
             address_line_1: addressLine.trim(),
           },
           items: [
@@ -477,24 +483,21 @@ export default function OrdersPage() {
           />
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-              <label style={{ fontSize: "13px", fontWeight: 500 }}>Delivery Zone *</label>
-              <select
-                value={deliveryZone}
-                onChange={(e) => setDeliveryZone(e.target.value as any)}
-                style={{
-                  padding: "10px",
-                  borderRadius: "var(--radius-control)",
-                  border: "1px solid var(--color-border-subtle)",
-                  fontFamily: "inherit",
-                  fontSize: "13px",
-                  background: "var(--color-bg-primary)",
-                }}
-              >
-                <option value="INSIDE_DHAKA">Inside Dhaka (৳60 delivery charge)</option>
-                <option value="OUTSIDE_DHAKA">Outside Dhaka (৳120 delivery charge)</option>
-              </select>
-            </div>
+            {/* District decides the zone and the charge; the fee comes from settings (FX-36, was a literal in this form) */}
+            <DistrictPicker
+              district={district}
+              onChange={setDistrict}
+              fees={deliveryFees}
+              labelStyle={{ fontSize: "13px", fontWeight: 500 }}
+              selectStyle={{
+                padding: "10px",
+                borderRadius: "var(--radius-control)",
+                border: "1px solid var(--color-border-subtle)",
+                fontFamily: "inherit",
+                fontSize: "13px",
+                background: "var(--color-bg-primary)",
+              }}
+            />
 
             <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
               <label style={{ fontSize: "13px", fontWeight: 500 }}>Payment Method *</label>

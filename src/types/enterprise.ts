@@ -223,12 +223,13 @@ export interface SemanticMetricQuery {
 export interface SemanticMetricResult {
   metric_key: string;
   metric_name: string;
-  value: number;
+  /** null when there's no data, or for store/brand/unit entities (orders carry no store). */
+  value: number | null;
   unit: string;
   currency?: string;
   time_grain: MetricTimeGrain;
   dimensions_applied: Record<string, string>;
-  data_quality_status: "VERIFIED" | "ESTIMATED" | "DEGRADED";
+  data_quality_status: "VERIFIED" | "ESTIMATED" | "DEGRADED" | "NOT_MEASURED";
   formula_used: string;
   calculated_at: string;
   sample_count: number;
