@@ -17,7 +17,7 @@ Next.js 14 App Router · React 18 · TypeScript (strict) · Zod · jose/bcryptjs
 |---|---|---|
 | Dev server | `npm run dev` | http://localhost:3000. Needs `JWT_SECRET` and `CREDENTIALS_ENCRYPTION_KEY` in `.env.local`: two different random values, 32+ chars each. `DEV_AUTH_BYPASS=1` is an opt-in for token-less local browsing and is logged. |
 | Type-check | `npm run type-check` | Currently has pre-existing errors (H15). Record the count before and after; never increase it. |
-| All tests | `npm test` | 22 custom suites via `tests/ts-runner.cjs`; the security, RBAC-matrix and Phase 1 integrity suites run first. `&&` stops at the first failing suite, so run a suite on its own to see everything |
+| All tests | `npm test` | 25 custom suites via `tests/ts-runner.cjs`; the security, RBAC-matrix, Phase 1 integrity and Phase 2 persistence / analytics / read-only suites run first. `&&` stops at the first failing suite, so run a suite on its own to see everything |
 | One suite | `node tests/ts-runner.cjs ./tests/<name>-tests.ts` | e.g. `security-regression-tests.ts`, `commerce-tests.ts` |
 | Proxy config | `TRUST_PROXY=1`, `TRUST_PROXY_HOPS=<n>` | Only behind your own reverse proxy; enables per-client rate limits |
 | Exploit replay | `BASE_URL=http://localhost:3000 node scripts/smoke-security.mjs` | Against a running server started without `DEV_AUTH_BYPASS`; run after touching auth, webhooks or platform routes |
@@ -43,7 +43,8 @@ src/lib/permissions.ts               PERMISSIONS, RoleName, ROLE_PERMISSIONS
 src/domains/rbac/service.ts          RbacService.assertCan (tenant)
 src/domains/platform/services/       PlatformAuthorizationService, entitlements, flags, audit, support
 src/domains/ai/                      agents, policy, tools/tool-registry.ts, prompts, rag, eval
-src/infrastructure/db/index.ts       JSON store (~9k lines — grep it, never read whole)
+src/infrastructure/db/index.ts       JSON store (~9k lines — grep it, never read whole); getAll* for analytics, paged getters need a limit
+src/domains/intelligence/services/intelligence-snapshot.service.ts  GET reads (never write) vs recompute writes (ADR-105)
 src/styles/tokens.css                Design tokens (canonical)
 n8n/workflows/*.json                 Exported n8n workflows
 tests/*-tests.ts                     Test suites
@@ -83,6 +84,9 @@ export async function POST(request: Request) {
 6. Business config (delivery fees, thresholds) comes from tenant settings/constants in code — never hard-coded into prompts or docs.
 7. Simulated integrations must report `SIMULATED`/`NOT_SENT`, never success. No fabricated metrics.
 8. Smallest safe change; no drive-by rewrites; no new heavy dependencies without asking.
+9. GET handlers never write (`tests/phase2-readonly-tests.ts` enforces it). Return defaults without storing them; computed
+   intelligence is stored only by an explicit POST (e.g. `/api/v1/intelligence/recompute`). Analytics read every row
+   (`db.getAll*`), never a paged result.
 
 ## 6. Task router — read before starting
 

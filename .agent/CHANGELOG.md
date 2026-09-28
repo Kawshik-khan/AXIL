@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [Unreleased] - Phase 2 performance and read-path integrity (2026-09-28, branch `phase-2-performance`)
+See [ADR-105](DECISIONS.md#adr-105-coalesced-persistence-write-free-reads-and-complete-analytics-phase-2).
+
+### Performance
+- Store writes are coalesced into one async flush every 250 ms (temp file, fsync, rename) instead of a synchronous whole-file write per mutation (C6).
+- GET requests never write. Intelligence endpoints serve a stored snapshot or compute in memory: under 0.6 s cold on 10,000 customers, down from 79–405 s (H8).
+- O(n) lookups in order search and hydration, inventory, product, customer and inventory intelligence, and campaign recipients (M7).
+
+### Fixed
+- Analytics, intelligence, growth, enterprise and operations numbers use every order, customer and product, not the first 50 (H6).
+- Write failures are reported and retried; crash leftovers are quarantined; a second process, host or seed script refuses to start instead of overwriting the running app's data, and every write first checks the lock (C7).
+- Audience, marketing, stockout, reconciliation, order-health and pricing screens no longer slow down with every row now counted (1–3 s → under 0.1 s at 10,000 customers).
+- AI order lookups find any order, not only the newest 50. Recommendations shown live can be proposed as decisions.
+- A recompute keeps an approve/reject decision only for the same entities and until it expires.
+- `/health/ready` reflects persistence health, data-dir writability and writer-lock ownership (L3).
+- Cohorts no longer mix tenants (N9); the marketing frequency cap counts all of a customer's messages (N10).
+- Payment exceptions no longer disappear on the second page load; lifecycle lookups for unknown customers return 404.
+
+### Added
+- `POST /api/v1/intelligence/recompute` (`analytics.manage`) stores all intelligence snapshots in one idempotent pass and keeps decisions already made.
+- `PERSIST_DEBOUNCE_MS`, `COMMERCEOS_DATA_DIR` and `COMMERCEOS_FORCE_LOCK` settings.
+- Test suites `persistence-tests.ts`, `phase2-analytics-tests.ts` and `phase2-readonly-tests.ts`.
+
+### Changed (action required)
+- Run exactly one app process per data directory, and stop the app before running seed scripts. A second one exits with "CommerceOS refused to start".
+- Intelligence recommendations, opportunities and risks are stored only by `POST /api/v1/intelligence/recompute` (no UI button yet), workflows and the intelligence agent; page views no longer create them.
+
 ## [Unreleased] - Phase 1 access control and integrity (2026-09-28, branch `phase-1-access-control`)
 See [ADR-104](DECISIONS.md#adr-104-access-control-and-integrity-phase-1).
 

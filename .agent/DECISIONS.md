@@ -1276,3 +1276,58 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
     - the webhook dedup fix (N2);
     - no platform session from the workspace login;
     - the workflow engine records a creator-less workflow as SYSTEM.
+
+---
+
+## ADR-105: Coalesced Persistence, Write-Free Reads and Complete Analytics (Phase 2)
+- **Date**: 2026-09-28
+- **Status**: Approved. Builds on ADR-104. Interim until the Postgres cutover (FX-45); decision D3 (one replica) stays in force.
+- **Context**: The audit measured:
+  - every mutation serialising and writing the whole store synchronously, freezing the server (C6);
+  - swallowed write errors, leftover temp files and lost writes when two processes shared the file (C7);
+  - analytics reading a 50-row page as if it were everything (H6);
+  - GET endpoints that wrote once per row and appended duplicates, taking 79–405 s (H8);
+  - O(n·m) lookups (M7) and a readiness probe that was always "ready" (L3).
+- **Decision**:
+  1. **Coalesced persistence.**
+     - Store mutations only mark the store dirty. One async flush per `PERSIST_DEBOUNCE_MS` (default 250 ms) writes compact JSON to a temp file, fsyncs it and renames it over the data file.
+     - A failed write keeps the store dirty, is logged, retried after 1 s and reported by `/health/ready`.
+     - SIGTERM/SIGINT flush before exit. Services that edit `db.data` directly call `db.markDirty()`.
+     - `COMMERCEOS_DATA_DIR` moves the data directory (used by tests).
+  2. **One writer per store.**
+     - At start the process takes `.data/commerceos.lock` (`{pid, host, started_at}`, exclusive create).
+     - A lock held by a live process on this host, or by any other host, makes the process refuse to start. `COMMERCEOS_FORCE_LOCK=1` overrides the other-host case when that host is known to be gone.
+     - A dead holder's lock is claimed by an atomic rename and re-verified. A lock that exists but can't be read, or is empty and younger than 10 s, counts as live.
+     - Every flush first checks the lock file still names this process; if not, writing stops (`LOCK_LOST`) and readiness fails.
+     - A blocked store refuses writes with 503 and never seeds. There is no read-only mode: store methods change memory before persisting.
+     - Next.js helper processes (the dev static-paths worker and `next build` workers, recognised by `NEXT_PHASE`, the jest-worker child entry script or a worker thread) load the store but never lock or write it.
+     - `/health/ready` is unauthenticated and returns booleans and reason codes only.
+     - Store-writing scripts call `assertNoOtherStoreWriter()`, back up the configured data file and report success only after the flush succeeds.
+     - Stale `commerceos.json.tmp*` files are moved to `.data/quarantine/`, never deleted. An unreadable data file blocks persistence instead of being overwritten with an empty store.
+  3. **Complete analytics.**
+     - `getOrders`, `getCustomers` and `getProducts` require an explicit `limit`.
+     - Analytics use `getAllOrders` (optionally hydrated with items and customer name through maps), `getAllCustomers` and `getAllProducts`. Frequency caps use `getCustomerMessages`.
+  4. **Write-free GETs.**
+     - Detectors and analyzers are split into pure `compute*` functions and persisting wrappers.
+     - GET handlers call `intelligenceSnapshots.read`: while the tenant's last recompute of that kind is younger than 15 minutes they return exactly the rows it produced; otherwise they compute in memory. Nothing is written either way.
+     - `POST /api/v1/intelligence/recompute` (`analytics.manage`, audited, 2 per minute per workspace) stores every kind, each as one batched `upsertComputedRows` with deterministic ids (`opp_/risk_/rec_${tenant}_${kind}_${entity}`, `anom_${tenant}_${metric}_${day}`, `coh_${tenant}_${month}`, `dqr_${tenant}_${day}`). Rows about a set of entities hash the set into the id.
+     - Recompute writes and live reads merge with stored rows through one rule (`src/lib/computed-rows.ts`): a row under review is not touched; a decision (status, reviewer, rejection reason, dispatched workflow and its original expiry) carries over only while unexpired and about the same entities; otherwise the row is a new proposal. Per-entity snapshots drop rows no longer produced; event-like kinds keep history.
+     - Proposing a decision on a recommendation shown live stores the current set first; an unknown id is a 404 without any write.
+     - Get-or-create reads return defaults without storing them: AI policy, autonomy policy, business hours, operational budget (a daily reset applies to a copy), enterprise metrics, assets and providers.
+     - Other GETs use read-only previews: payment exceptions, customer lifecycle, benchmarks, organization data quality.
+     - `tests/phase2-readonly-tests.ts` fingerprints every store collection around each of the 141 tenant GET routes (plus query variants and organization-scoped routes), before and after a recompute.
+  5. **O(n) hot spots.** Per-tenant maps in `getOrders` search and hydration, `getInventory`, inventory and product intelligence, customer intelligence and campaign recipients.
+- **Consequences**:
+  - A crash can lose at most the last debounce window of writes.
+  - Deployments must run exactly one replica with a `Recreate` update strategy (DEVOPS.md).
+  - Intelligence responses carry `meta.snapshot` (`SNAPSHOT` or `LIVE`, `computed_at`). Response bodies are otherwise unchanged.
+  - Growth insights and recommendations are recomputed instead of being generated once and returned forever. Recommendations, opportunities and risks no longer multiply on every page view.
+  - Pre-Phase-2 duplicate rows stay in existing stores; snapshot reads ignore them. Cohort rows written before Phase 2 have no tenant and are ignored.
+  - `GET /growth/lifecycle/[customerId]` answers 404 for customers that don't exist.
+- **Deviations from FIX_IMPLEMENTATION_PLAN Phase 2**:
+  - FX-21 step 3: no in-process 15-minute recompute timer. Background writes would reintroduce unrequested flushes, and stale reads already compute live in O(n).
+  - FX-21 step 6: enterprise defaults are built in memory on read and stored by the explicit paths, not at tenant provisioning.
+  - FX-22 step 1: `getAllOrders` takes `{ hydrate: true }` (items plus customer name and phone) instead of `{ withItems }`, since most call sites read the customer fields. `getProducts` and the frequency cap's conversation/message reads had the same truncation and were fixed too.
+  - FX-23: `getDashboardMetrics` still scans each collection once per call (accepted until Phase 4, as the plan allows).
+  - FX-24 "refuse to start": in `next dev`/`next start` the store module loads on the first request that needs it, so a second server exits then, not at boot.
+  - Also done in Phase 2: tenant-scoped cohort records (N9), a complete frequency cap (N10), per-tenant lookups in `getInventory`, the payment-exception and lifecycle read fixes, O(n) rewrites of the loops the 50-row cap had hidden (audiences, marketing, stockout, reconciliation, order health, pricing), AI order lookup over every order, and enterprise defaults stored when an organization is created.
