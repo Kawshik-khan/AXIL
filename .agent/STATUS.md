@@ -6,7 +6,7 @@
 > **target** design. When a doc and this file disagree, this file wins for "what exists"; the doc wins for
 > "what we are building toward". Never report a target-design capability as working unless this file says LIVE.
 
-**Overall posture: NOT production-ready. Do not expose to any network.** Phase 0 containment (FX-00…FX-08, [ADR-103](DECISIONS.md#adr-103-fail-closed-authentication-secrets-and-webhook-signatures-phase-0-containment)) and Phase 1 access control (FX-10…FX-19, [ADR-104](DECISIONS.md#adr-104-access-control-and-integrity-phase-1)) are merged to `main` and tagged `release/phase-0` / `release/phase-1`. Phase 2 performance and read-path integrity (FX-20…FX-24, [ADR-105](DECISIONS.md#adr-105-coalesced-persistence-write-free-reads-and-complete-analytics-phase-2)) is merged to `main` and tagged `release/phase-2` (2026-09-28). Phase 3 (FX-30…FX-39, N11, N13–N15; [ADR-106](DECISIONS.md#adr-106-truthful-data-and-honest-integrations-phase-3), [ADR-107](DECISIONS.md#adr-107-enforced-safety-controls-one-order-writer-and-a-real-ai-provider-phase-3-completion)) is complete on branch `phase-3-truthful-data`, awaiting merge. Remaining blockers before any network exposure: the JSON-file store is still one file owned by one process (Postgres cutover, Phase 4); integrations are honestly reported as not sent / not verified but none is built (Phase 5); four one-time data scripts must be run on existing stores (see §4).
+**Overall posture: NOT production-ready. Do not expose to any network.** Phase 0 containment (FX-00…FX-08, [ADR-103](DECISIONS.md#adr-103-fail-closed-authentication-secrets-and-webhook-signatures-phase-0-containment)) and Phase 1 access control (FX-10…FX-19, [ADR-104](DECISIONS.md#adr-104-access-control-and-integrity-phase-1)) are merged to `main` and tagged `release/phase-0` / `release/phase-1`. Phase 2 performance and read-path integrity (FX-20…FX-24, [ADR-105](DECISIONS.md#adr-105-coalesced-persistence-write-free-reads-and-complete-analytics-phase-2)) is merged to `main` and tagged `release/phase-2` (2026-09-28). Phase 3 (FX-30…FX-39, N11, N13–N15; [ADR-106](DECISIONS.md#adr-106-truthful-data-and-honest-integrations-phase-3), [ADR-107](DECISIONS.md#adr-107-enforced-safety-controls-one-order-writer-and-a-real-ai-provider-phase-3-completion)) is merged to `main` and tagged `release/phase-3` (2026-09-29). Remaining blockers before any network exposure: the JSON-file store is still one file owned by one process (Postgres cutover, Phase 4); integrations are honestly reported as not sent / not verified but none is built (Phase 5); four one-time data scripts must be run on existing stores (see §4).
 
 ---
 
@@ -43,7 +43,7 @@
 | Type-check / build | `npm run type-check` reports 0 errors (FX-38 removed the dead repositories; `declarations.d.ts` no longer shadows Next.js types); `next build` exits 0 (230 pages) | Zero errors, build passes | LIVE (H15 closed) |
 | Tests | `npm test` → 26 custom suites, 825 tests, all pass (suites use the demo AI and never a live model unless `TEST_LLM_LIVE=1`): `phase3-truthfulness-tests.ts` (54, Phase 3: enterprise scoping, honest integrations, order lifecycle, safety controls, impersonation, invitations, AI provider, and a grep gate for known fabrication patterns and stray order-status writers), `security-regression-tests.ts` (46, Phase 0), `rbac-matrix-tests.ts` (287, Phase 1), `phase1-integrity-tests.ts` (61, Phase 1 + review fixes), `persistence-tests.ts` (8, real store in child processes), `phase2-analytics-tests.ts` (6) and `phase2-readonly-tests.ts` (14; sweeps all 141 tenant and 16 platform GET routes for store changes and write requests) among them; `scripts/smoke-security.mjs` replays the exploits against a running server | Unit + integration + eval + E2E | PARTIAL — no E2E/UI tests, no load test (FX-63) |
 | Agent evals | `src/domains/ai/eval/golden-dataset.ts` + `evaluation.service.ts`; no `test:eval` script | Gated eval suite | PARTIAL |
-| Git | Local git repository: `main` = Phase 2 (tags `release/phase-0`, `release/phase-1`, `release/phase-2`); Phase 3 on `phase-3-truthful-data`, not merged yet; `.gitignore` keeps out env files, `.data/`, `.backups/` and generated seeds | Versioned, PR-reviewed | PARTIAL — no remote, no CI |
+| Git | Local git repository: `main` = Phase 3 (tags `release/phase-0` … `release/phase-3`); `.gitignore` keeps out env files, `.data/`, `.backups/` and generated seeds | Versioned, PR-reviewed | PARTIAL — no remote, no CI |
 
 ---
 
@@ -188,7 +188,7 @@ Basic CRUD (orders, products, inventory, customers, inbox, settings) is genuinel
   - Step-up tokens aren't tied to one action.
   - The widget's 300-per-minute per-channel cap can be filled by one visitor rotating ids. It's a spam backstop; without a trusted proxy there's no client address to key on.
 
-**Next:** run the four data scripts on the real store (stop the app first), merge Phase 3, then Phase 4 (Postgres, FX-40…).
+**Next:** run the four data scripts on the real store (stop the app first), then Phase 4 (Postgres, FX-40…).
 **Hardening:** two-operator approval for mutating support sessions; Postgres cutover for C7 (FX-45).
 **Hygiene:** M8, M17, L4–L7.
 
