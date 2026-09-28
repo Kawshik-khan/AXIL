@@ -20,6 +20,7 @@ export class AutonomousWorkflowsService {
     objectiveId?: string,
     strategyId?: string
   ): AutonomousWorkflowRun {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     const run: AutonomousWorkflowRun = {
       id: `awf_${workflowType.toLowerCase()}_${Date.now()}`,
       tenant_id: tenantId,
@@ -48,6 +49,7 @@ export class AutonomousWorkflowsService {
 
   /** Transition workflow through the autonomous loop steps. */
   transitionStep(tenantId: string, runId: string, toStep: string, state?: Record<string, unknown>): AutonomousWorkflowRun {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     const run = this.findById(tenantId, runId);
     if (!run) throw new AppError("NOT_FOUND", `Workflow run not found: ${runId}`, 404);
 
@@ -94,6 +96,7 @@ export class AutonomousWorkflowsService {
 
   /** Fail a workflow with reason. */
   failWorkflow(tenantId: string, runId: string, reason: string): AutonomousWorkflowRun {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     const run = this.findById(tenantId, runId);
     if (!run) throw new AppError("NOT_FOUND", `Workflow run not found: ${runId}`, 404);
     run.status = "FAILED";

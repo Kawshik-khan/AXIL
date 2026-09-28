@@ -72,6 +72,7 @@ export class AutonomousControlPlaneService {
   }
 
   private getOrCreateHealth(tenantId: string): PlatformHealth {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     let health = db.data.platform_health_records.find((h) => h.tenant_id === tenantId);
     if (!health) {
       health = {
@@ -106,6 +107,7 @@ export class AutonomousControlPlaneService {
     reason: string,
     pausedBy: string
   ): { success: boolean; paused_scope: string; reason: string } {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     const health = this.getOrCreateHealth(tenantId);
     if (scope.level === "ALL") {
       health.autonomous_mode = "EMERGENCY_HALTED";
@@ -144,6 +146,7 @@ export class AutonomousControlPlaneService {
     scope: { level: "ALL" | "DOMAIN" | "AGENT" | "WORKFLOW"; target?: string },
     resumedBy: string
   ): { success: boolean; resumed_scope: string } {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     const health = this.getOrCreateHealth(tenantId);
     if (scope.level === "ALL") {
       health.autonomous_mode = "SEMI_AUTONOMOUS";
@@ -159,6 +162,7 @@ export class AutonomousControlPlaneService {
    * Kill switch — immediately halt all autonomous operations (§43).
    */
   killSwitch(tenantId: string, reason: string, activatedBy: string): { halted: boolean; reason: string } {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     const health = this.getOrCreateHealth(tenantId);
     health.autonomous_mode = "EMERGENCY_HALTED";
     health.overall_status = "CRITICAL";

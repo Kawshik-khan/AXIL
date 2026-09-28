@@ -1,6 +1,8 @@
 import { randomSuffix } from "@/lib/ids";
 import fs from "fs";
 import path from "path";
+import os from "os";
+import { logger } from "@/lib/logger";
 import bcrypt from "bcryptjs";
 import { RoleName } from "@/lib/permissions";
 import { DISABLED_PASSWORD_HASH } from "@/lib/security";
@@ -576,31 +578,159 @@ function safePatch<T extends object>(patch: T): T {
   return rest as T;
 }
 
+export interface PersistenceHealth {
+  ok: boolean;
+  data_dir: string;
+  dirty: boolean;
+  last_persist_at: string | null;
+  last_persist_error: { at: string; message: string } | null;
+  blocked_reason: string | null;
+  lock: { held: boolean; path: string; owner?: { pid: number; host: string; started_at: string } };
+  debounce_ms: number;
+}
+
 class CommerceDatabase {
   public data: DatabaseSchema;
   private filePath: string;
-  private isPersisting = false;
-  private needsPersistAgain = false;
+  private dataDir: string;
   private isTestInstance = false;
 
+  // ---- Coalesced asynchronous persistence (FIX_IMPLEMENTATION_PLAN FX-20, audit C6/C7) ----
+  // Mutations mark the store dirty; one flush per debounce window writes a compact snapshot to a temp file, fsyncs it and
+  // renames it over the data file. Failures are kept, reported by /health/ready and retried, never swallowed.
+  // Trade-off: acknowledged writes from the last debounce window (+ write time) can be lost on a crash. Phase 4
+  // (Postgres) removes this.
+  private flushTimer: ReturnType<typeof setTimeout> | null = null;
+  private flushing: Promise<void> | null = null;
+  private dirty = false;
+  public lastPersistError: { at: string; message: string } | null = null;
+  public lastPersistAt: string | null = null;
+  /** Set when writing would be unsafe (the data file couldn't be read, or another process owns the store). */
+  private persistenceBlocked: string | null = null;
+  private readonly debounceMs = Number(process.env.PERSIST_DEBOUNCE_MS ?? 250);
+  private lockPath: string;
+  private lockHeld = false;
+
   constructor() {
-    const dataDir = path.join(process.cwd(), ".data");
-    if (!fs.existsSync(dataDir)) {
+    this.dataDir = process.env.COMMERCEOS_DATA_DIR ? path.resolve(process.env.COMMERCEOS_DATA_DIR) : path.join(process.cwd(), ".data");
+    this.filePath = path.join(this.dataDir, "commerceos.json");
+    this.lockPath = path.join(this.dataDir, "commerceos.lock");
+    const persistent = process.env.NODE_ENV !== "test";
+    if (persistent) {
       try {
-        fs.mkdirSync(dataDir, { recursive: true });
-      } catch {
-        // Fallback
+        fs.mkdirSync(this.dataDir, { recursive: true });
+      } catch (err) {
+        this.persistenceBlocked = `Data directory ${this.dataDir} can't be created: ${(err as Error).message}`;
+        logger.error("db.data_dir_unavailable", { data_dir: this.dataDir, error: (err as Error).message });
       }
+      if (!this.persistenceBlocked) this.acquireWriterLock();
     }
-    this.filePath = path.join(dataDir, "commerceos.json");
     this.data = this.loadData();
+    if (persistent && !this.persistenceBlocked) this.quarantineStaleTempFiles();
     this.ensureDefaultSeed();
   }
 
-  private loadData(): DatabaseSchema {
+  /**
+   * Single-writer guard (FX-24, audit C7): only one process may own the JSON store. A second `next dev`, a seed script
+   * or another replica would overwrite this process's writes (and vice versa). A stale lock from a dead process is taken
+   * over; a lock held by a live process blocks persistence here and /health/ready reports it.
+   */
+  private acquireWriterLock(): void {
+    const owner = { pid: process.pid, host: os.hostname(), started_at: new Date().toISOString() };
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const fd = fs.openSync(this.lockPath, "wx");
+        fs.writeSync(fd, JSON.stringify(owner));
+        fs.closeSync(fd);
+        this.lockHeld = true;
+        const release = () => {
+          try {
+            const current = JSON.parse(fs.readFileSync(this.lockPath, "utf-8")) as { pid?: number };
+            if (current.pid === process.pid) fs.rmSync(this.lockPath, { force: true });
+          } catch {
+            // lock already gone
+          }
+        };
+        process.once("exit", release);
+        return;
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "EEXIST") {
+          this.persistenceBlocked = `Writer lock ${this.lockPath} can't be created: ${(err as Error).message}`;
+          return;
+        }
+        const holder = CommerceDatabase.readLockOwner(this.lockPath);
+        if (holder && holder.pid !== process.pid && holder.host === os.hostname() && CommerceDatabase.isProcessAlive(holder.pid)) {
+          this.persistenceBlocked = `Another process (pid ${holder.pid}, started ${holder.started_at}) owns the data store. Only one writer is allowed.`;
+          logger.error("db.writer_lock_held", { lock: this.lockPath, owner_pid: holder.pid, owner_started_at: holder.started_at });
+          return;
+        }
+        // Stale lock (dead process, or our own pid after a restart): take it over.
+        logger.warn("db.writer_lock_stale", { lock: this.lockPath, owner_pid: holder?.pid });
+        fs.rmSync(this.lockPath, { force: true });
+      }
+    }
+  }
+
+  public static readLockOwner(lockPath: string): { pid: number; host: string; started_at: string } | null {
     try {
-      if (fs.existsSync(this.filePath)) {
-        const raw = fs.readFileSync(this.filePath, "utf-8");
+      return JSON.parse(fs.readFileSync(lockPath, "utf-8")) as { pid: number; host: string; started_at: string };
+    } catch {
+      return null;
+    }
+  }
+
+  public static isProcessAlive(pid: number): boolean {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (err) {
+      return (err as NodeJS.ErrnoException).code === "EPERM";
+    }
+  }
+
+  /** Temp files left by a crash may hold writes that never reached the data file: keep them, don't delete (FX-20). */
+  private quarantineStaleTempFiles(): void {
+    try {
+      const stale = fs.readdirSync(this.dataDir).filter((f) => f.startsWith("commerceos.json.tmp"));
+      if (stale.length === 0) return;
+      const quarantine = path.join(this.dataDir, "quarantine");
+      fs.mkdirSync(quarantine, { recursive: true });
+      for (const name of stale) {
+        const from = path.join(this.dataDir, name);
+        const mtime = fs.statSync(from).mtime.toISOString();
+        fs.renameSync(from, path.join(quarantine, name));
+        logger.warn("db.stale_temp_quarantined", { file: name, mtime });
+      }
+    } catch (err) {
+      logger.error("db.quarantine_failed", { error: (err as Error).message });
+    }
+  }
+
+  public getPersistenceHealth(): PersistenceHealth {
+    const owner = this.lockHeld ? undefined : CommerceDatabase.readLockOwner(this.lockPath) ?? undefined;
+    return {
+      ok: !this.persistenceBlocked && !this.lastPersistError && (this.lockHeld || this.isTestInstance || process.env.NODE_ENV === "test"),
+      data_dir: this.dataDir,
+      dirty: this.dirty,
+      last_persist_at: this.lastPersistAt,
+      last_persist_error: this.lastPersistError,
+      blocked_reason: this.persistenceBlocked,
+      lock: { held: this.lockHeld, path: this.lockPath, ...(owner ? { owner } : {}) },
+      debounce_ms: this.debounceMs,
+    };
+  }
+
+  private loadData(): DatabaseSchema {
+    let raw: string | null = null;
+    try {
+      if (fs.existsSync(this.filePath)) raw = fs.readFileSync(this.filePath, "utf-8");
+    } catch (err) {
+      // The file exists but can't be read (locked, permissions): never start writing an empty store over it (FX-20).
+      this.persistenceBlocked = `Data file ${this.filePath} can't be read: ${(err as Error).message}`;
+      logger.error("db.data_file_unreadable", { file: this.filePath, error: (err as Error).message });
+    }
+    try {
+      if (raw !== null) {
         const parsed = JSON.parse(raw);
         return {
           tenants: parsed.tenants || [],
@@ -837,15 +967,16 @@ class CommerceDatabase {
           impersonation_sessions: parsed.impersonation_sessions || [],
         };
       }
-    } catch {
-      // If the file is corrupted, move it aside so seeds can recover cleanly
+    } catch (err) {
+      // Corrupt JSON: keep it aside (never delete) so it can be inspected or repaired, then start from seeds.
       try {
         if (fs.existsSync(this.filePath)) {
           const backupPath = `${this.filePath}.corrupted.${Date.now()}`;
           fs.renameSync(this.filePath, backupPath);
+          logger.error("db.data_file_corrupt", { file: this.filePath, moved_to: backupPath, error: (err as Error).message });
         }
-      } catch {
-        // Continue
+      } catch (moveErr) {
+        this.persistenceBlocked = `Corrupt data file could not be moved aside: ${(moveErr as Error).message}`;
       }
     }
     return {
@@ -1078,38 +1209,50 @@ class CommerceDatabase {
     };
   }
 
+  /** Called by every mutating method: marks the store dirty and schedules one coalesced flush. */
   private persist(): void {
-    if (this.isPersisting) {
-      this.needsPersistAgain = true;
-      return;
-    }
     if (this.isTestInstance || process.env.NODE_ENV === "test") return;
-    this.isPersisting = true;
-    try {
-      const str = JSON.stringify(this.data, null, 2);
-      const tmpPath = `${this.filePath}.tmp.${Date.now()}`;
-      const fd = fs.openSync(tmpPath, "w");
-      const buf = Buffer.from(str, "utf-8");
-      const CHUNK_SIZE = 1024 * 1024; // 1MB chunk size
-      let offset = 0;
-      while (offset < buf.length) {
-        const bytesToWrite = Math.min(CHUNK_SIZE, buf.length - offset);
-        fs.writeSync(fd, buf, offset, bytesToWrite);
-        offset += bytesToWrite;
-      }
-      fs.fsyncSync(fd);
-      fs.closeSync(fd);
-      // Atomic replace
-      fs.renameSync(tmpPath, this.filePath);
-    } catch {
-      // Memory fallback
-    } finally {
-      this.isPersisting = false;
-      if (this.needsPersistAgain) {
-        this.needsPersistAgain = false;
-        setTimeout(() => this.persist(), 50);
-      }
+    this.dirty = true;
+    if (this.persistenceBlocked) return; // unsafe to write; /health/ready reports why
+    if (!this.flushTimer) {
+      this.flushTimer = setTimeout(() => {
+        this.flushTimer = null;
+        void this.flush();
+      }, this.debounceMs);
     }
+  }
+
+  /** For services that mutate `db.data` directly instead of through a store method. */
+  public markDirty(): void {
+    this.persist();
+  }
+
+  /** Writes the current snapshot if anything changed. Safe to call concurrently; also used on shutdown. */
+  public async flush(): Promise<void> {
+    if (this.flushing) await this.flushing;
+    if (!this.dirty || this.persistenceBlocked || this.isTestInstance || process.env.NODE_ENV === "test") return;
+    this.dirty = false;
+    const tmpPath = `${this.filePath}.tmp`;
+    this.flushing = (async () => {
+      try {
+        await fs.promises.writeFile(tmpPath, JSON.stringify(this.data), "utf-8"); // compact: far smaller than indented
+        const fh = await fs.promises.open(tmpPath, "r+");
+        await fh.sync();
+        await fh.close();
+        await fs.promises.rename(tmpPath, this.filePath);
+        this.lastPersistError = null;
+        this.lastPersistAt = new Date().toISOString();
+      } catch (err) {
+        this.dirty = true; // retry, never silently drop
+        this.lastPersistError = { at: new Date().toISOString(), message: (err as Error).message };
+        logger.error("db.persist_failed", { file: this.filePath, error: (err as Error).message });
+        await fs.promises.rm(tmpPath, { force: true }).catch(() => undefined);
+        setTimeout(() => void this.flush(), 1000);
+      } finally {
+        this.flushing = null;
+      }
+    })();
+    await this.flushing;
   }
 
   private seedPasswordHashCache: string | null = null;
@@ -9130,4 +9273,18 @@ class CommerceDatabase {
   }
 }
 
-export const db = new CommerceDatabase();
+/**
+ * One store per process (FX-24): Next.js can evaluate this module more than once (dev reloads, separate route bundles).
+ * Two instances would each hold their own copy of the data and overwrite each other's writes.
+ */
+const globalStore = globalThis as typeof globalThis & { __commerceosDb?: CommerceDatabase; __commerceosDbShutdownHooked?: boolean };
+export const db: CommerceDatabase = globalStore.__commerceosDb ?? (globalStore.__commerceosDb = new CommerceDatabase());
+
+if (!globalStore.__commerceosDbShutdownHooked && process.env.NODE_ENV !== "test") {
+  globalStore.__commerceosDbShutdownHooked = true;
+  for (const signal of ["SIGTERM", "SIGINT"] as const) {
+    process.once(signal, () => {
+      void db.flush().finally(() => process.exit(0));
+    });
+  }
+}

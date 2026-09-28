@@ -20,6 +20,7 @@ export class StrategyEngineService {
   }
 
   createStrategy(strategy: Strategy): Strategy {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     // Verify linked objective exists
     const obj = db.data.business_objectives.find(
       (o) => o.id === strategy.objective_id && o.tenant_id === strategy.tenant_id
@@ -33,6 +34,7 @@ export class StrategyEngineService {
   }
 
   simulateStrategy(tenantId: string, strategyId: string): StrategySimulation {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     const strategy = this.findById(tenantId, strategyId);
     if (!strategy) throw new AppError("NOT_FOUND", `Strategy not found: ${strategyId}`, 404);
     strategy.status = "SIMULATING";
@@ -68,6 +70,7 @@ export class StrategyEngineService {
   }
 
   activateStrategy(tenantId: string, strategyId: string): Strategy {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     const strategy = this.findById(tenantId, strategyId);
     if (!strategy) throw new AppError("NOT_FOUND", `Strategy not found: ${strategyId}`, 404);
     strategy.status = "ACTIVE";
@@ -82,6 +85,7 @@ export class StrategyEngineService {
   }
 
   recordOutcome(tenantId: string, strategyId: string, outcome: StrategyOutcome): Strategy {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     const strategy = this.findById(tenantId, strategyId);
     if (!strategy) throw new AppError("NOT_FOUND", `Strategy not found: ${strategyId}`, 404);
     strategy.outcome = outcome;

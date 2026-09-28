@@ -16,6 +16,7 @@ export class IntegrationHubService {
    * Initializes standard supported integration catalog
    */
   public seedDefaultProviders(): IntegrationProvider[] {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     const defaultProviders: IntegrationProvider[] = [
       {
         id: "prov_sap_s4hana",

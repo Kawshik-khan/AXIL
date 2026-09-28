@@ -15,6 +15,10 @@ import {
   LifecycleStage,
 } from "../src/types/growth";
 import { ActionRiskLevel } from "../src/types/orchestration";
+import { assertNoOtherStoreWriter } from "./lib/store-guard";
+
+// Refuse to write the JSON store while the app (or another script) owns it (FX-24).
+assertNoOtherStoreWriter();
 
 const TENANT_ID = "ten_default_dhaka";
 const USER_ID = "usr_owner_default";

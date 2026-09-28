@@ -18,6 +18,10 @@ import fs from 'fs';
 import path from 'path';
 import { db } from '../src/infrastructure/db';
 import { Customer, CustomerAddress, CustomerSource } from '../src/types/commerce';
+import { assertNoOtherStoreWriter } from './lib/store-guard';
+
+// Refuse to write the JSON store while the app (or another script) owns it (FX-24).
+assertNoOtherStoreWriter();
 
 const TENANT_ID = 'ten_default_dhaka';
 

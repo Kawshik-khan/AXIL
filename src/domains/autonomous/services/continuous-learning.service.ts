@@ -23,6 +23,7 @@ export class ContinuousLearningService {
 
   /** Record a decision/workflow outcome as a learning opportunity. */
   recordOutcome(tenantId: string, sourceDecisionId: string, outcome: Record<string, unknown>): void {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     // Outcomes are stored for future analysis; no immediate model changes
     db.data.global_events.push({
       event_id: `evt_learn_${Date.now()}_${randomSuffix()}`,
@@ -46,6 +47,7 @@ export class ContinuousLearningService {
 
   /** Create a learning candidate from observed patterns. */
   createLearningCandidate(candidate: LearningCandidate): LearningCandidate {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     candidate.status = "IDENTIFIED";
     candidate.created_at = new Date().toISOString();
     candidate.updated_at = candidate.created_at;
@@ -55,6 +57,7 @@ export class ContinuousLearningService {
 
   /** Validate a candidate with offline evaluation. */
   evaluateCandidate(tenantId: string, candidateId: string): LearningCandidate {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     const candidate = this.findById(tenantId, candidateId);
     if (!candidate) throw new AppError("NOT_FOUND", `Candidate not found: ${candidateId}`, 404);
     candidate.status = "VALIDATING";
@@ -72,6 +75,7 @@ export class ContinuousLearningService {
 
   /** Deploy candidate to shadow mode — runs in parallel without affecting production. */
   deployToShadow(tenantId: string, candidateId: string): LearningCandidate {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     const candidate = this.findById(tenantId, candidateId);
     if (!candidate) throw new AppError("NOT_FOUND", `Candidate not found: ${candidateId}`, 404);
     if (candidate.status !== "VALIDATED") throw new Error("Candidate must be validated before shadow deployment");
@@ -89,6 +93,7 @@ export class ContinuousLearningService {
 
   /** Promote from shadow to canary testing. */
   promoteToCanary(tenantId: string, candidateId: string): LearningCandidate {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     const candidate = this.findById(tenantId, candidateId);
     if (!candidate) throw new AppError("NOT_FOUND", `Candidate not found: ${candidateId}`, 404);
     if (candidate.status !== "SHADOW_TESTING") throw new Error("Candidate must complete shadow testing");
@@ -106,6 +111,7 @@ export class ContinuousLearningService {
 
   /** Submit for governance review before production deployment. */
   submitForGovernance(tenantId: string, candidateId: string): LearningCandidate {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     const candidate = this.findById(tenantId, candidateId);
     if (!candidate) throw new AppError("NOT_FOUND", `Candidate not found: ${candidateId}`, 404);
     if (candidate.status !== "CANARY_TESTING") throw new Error("Candidate must complete canary testing");
@@ -116,6 +122,7 @@ export class ContinuousLearningService {
 
   /** Deploy to production after governance approval. */
   promoteToProduction(tenantId: string, candidateId: string, approvedBy: string): LearningCandidate {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     const candidate = this.findById(tenantId, candidateId);
     if (!candidate) throw new AppError("NOT_FOUND", `Candidate not found: ${candidateId}`, 404);
     if (candidate.status !== "GOVERNANCE_REVIEW") throw new Error("Candidate must be in governance review");
@@ -132,6 +139,7 @@ export class ContinuousLearningService {
 
   /** Rollback a deployed candidate when safety thresholds fail (§16). */
   rollback(tenantId: string, candidateId: string, reason: string): LearningCandidate {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     const candidate = this.findById(tenantId, candidateId);
     if (!candidate) throw new AppError("NOT_FOUND", `Candidate not found: ${candidateId}`, 404);
     candidate.status = "ROLLED_BACK";

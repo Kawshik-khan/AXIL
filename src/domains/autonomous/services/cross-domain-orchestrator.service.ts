@@ -20,6 +20,7 @@ export class CrossDomainOrchestratorService {
    * Route a structured message between domain agents.
    */
   routeAgentMessage(message: CrossDomainAgentMessage): CrossDomainAgentMessage {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     message.created_at = new Date().toISOString();
     db.data.cross_domain_messages.push(message);
     return message;
@@ -29,6 +30,7 @@ export class CrossDomainOrchestratorService {
    * Create a proposal from one agent to others for collaborative action.
    */
   createProposal(proposal: AgentProposal): AgentProposal {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     proposal.status = "PENDING";
     proposal.created_at = new Date().toISOString();
     db.data.agent_proposals.push(proposal);
@@ -43,6 +45,7 @@ export class CrossDomainOrchestratorService {
     proposalId: string,
     vote: { agent: AgentType; vote: "APPROVE" | "REJECT" | "ABSTAIN" | "COUNTER_PROPOSE"; reason: string }
   ): AgentProposal {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     const proposal = db.data.agent_proposals.find(
       (p) => p.id === proposalId && p.tenant_id === tenantId
     );
@@ -66,6 +69,7 @@ export class CrossDomainOrchestratorService {
    * Detect and record a conflict between agents.
    */
   detectConflict(conflict: AgentConflict): AgentConflict {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     conflict.status = "DETECTED";
     conflict.created_at = new Date().toISOString();
     db.data.agent_conflicts.push(conflict);
@@ -81,6 +85,7 @@ export class CrossDomainOrchestratorService {
     strategy: AgentConflictResolutionStrategy,
     resolvedBy: string
   ): AgentConflict {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     const conflict = db.data.agent_conflicts.find(
       (c) => c.id === conflictId && c.tenant_id === tenantId
     );

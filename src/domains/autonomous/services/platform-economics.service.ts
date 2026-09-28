@@ -10,6 +10,7 @@ import { PlatformCostRecord } from "@/types/autonomous";
 export class PlatformEconomicsService {
   /** Track a cost record for the period. */
   trackCost(record: PlatformCostRecord): PlatformCostRecord {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     record.computed_at = new Date().toISOString();
     db.data.platform_cost_records.push(record);
     return record;

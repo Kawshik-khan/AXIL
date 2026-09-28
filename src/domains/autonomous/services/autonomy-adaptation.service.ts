@@ -16,6 +16,7 @@ export class AutonomyAdaptationService {
 
   /** Assess whether autonomy level should change based on performance evidence. */
   assessAutonomyLevel(tenantId: string, domain: string): AutonomyRecommendation {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     const agentRuns = db.data.agent_runs?.filter((r) => r.tenant_id === tenantId) || [];
     const recent = agentRuns.filter((r) => Date.now() - new Date(r.created_at).getTime() < 30 * 86400000);
     const successRate = recent.length > 0
@@ -60,6 +61,7 @@ export class AutonomyAdaptationService {
 
   /** Simulate the impact of changing autonomy level. */
   simulateAdaptation(tenantId: string, recommendationId: string): AutonomyRecommendation {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     const rec = db.data.autonomy_recommendations.find(
       (r) => r.id === recommendationId && r.tenant_id === tenantId
     );
@@ -75,6 +77,7 @@ export class AutonomyAdaptationService {
 
   /** Apply an approved autonomy adaptation. Cannot self-approve (§44). */
   applyAdaptation(tenantId: string, recommendationId: string, approvedBy: string): AutonomyRecommendation {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     const rec = db.data.autonomy_recommendations.find(
       (r) => r.id === recommendationId && r.tenant_id === tenantId
     );

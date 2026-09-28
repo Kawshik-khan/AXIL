@@ -36,6 +36,7 @@ export class BusinessObjectivesService {
    * Create a new business objective with constraints and hierarchy position.
    */
   createObjective(objective: BusinessObjective): BusinessObjective {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     // Validate parent exists if specified
     if (objective.parent_objective_id) {
       const parent = db.data.business_objectives.find(
@@ -51,6 +52,7 @@ export class BusinessObjectivesService {
    * Update objective progress and status.
    */
   updateObjective(tenantId: string, objectiveId: string, updates: Partial<BusinessObjective>): BusinessObjective {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     const idx = db.data.business_objectives.findIndex(
       (o) => o.id === objectiveId && o.tenant_id === tenantId
     );
@@ -174,6 +176,7 @@ export class BusinessObjectivesService {
    * Record an objective run evaluation.
    */
   recordRun(run: ObjectiveRun): ObjectiveRun {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     db.data.objective_runs.push(run);
     return run;
   }
@@ -182,6 +185,7 @@ export class BusinessObjectivesService {
    * Record an objective outcome measurement.
    */
   recordOutcome(outcome: ObjectiveOutcome): ObjectiveOutcome {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     db.data.objective_outcomes.push(outcome);
     return outcome;
   }

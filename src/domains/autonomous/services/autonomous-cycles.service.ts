@@ -49,6 +49,7 @@ export class AutonomousCyclesService {
   }
 
   private startCycle(tenantId: string, cycleType: "DAILY_CYCLE" | "WEEKLY_CYCLE" | "MONTHLY_CYCLE", steps: string[]): AutonomousWorkflowRun {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     const run: AutonomousWorkflowRun = {
       id: `awf_${cycleType.toLowerCase()}_${Date.now()}`,
       tenant_id: tenantId,
@@ -70,6 +71,7 @@ export class AutonomousCyclesService {
 
   /** Advance a workflow run to the next step. */
   advanceStep(tenantId: string, runId: string, nextStep: string): AutonomousWorkflowRun {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     const run = db.data.autonomous_workflow_runs.find(
       (w) => w.id === runId && w.tenant_id === tenantId
     );
@@ -81,6 +83,7 @@ export class AutonomousCyclesService {
 
   /** Complete a workflow run with outcome metrics. */
   completeRun(tenantId: string, runId: string, metrics: Record<string, { before: number; after: number }>): AutonomousWorkflowRun {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     const run = db.data.autonomous_workflow_runs.find(
       (w) => w.id === runId && w.tenant_id === tenantId
     );

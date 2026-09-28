@@ -23,6 +23,7 @@ export class GlobalDecisionEngineService {
    * Create a new global decision requiring evaluation.
    */
   createDecision(decision: GlobalDecision): GlobalDecision {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     decision.status = "PENDING";
     decision.created_at = new Date().toISOString();
     decision.updated_at = decision.created_at;
@@ -54,6 +55,7 @@ export class GlobalDecisionEngineService {
   evaluateOptions(tenantId: string, decisionId: string): {
     ranked_options: Array<{ option_id: string; name: string; score: number; recommendation: string }>;
   } {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     const decision = this.findById(tenantId, decisionId);
     if (!decision) throw new AppError("NOT_FOUND", `Decision not found: ${decisionId}`, 404);
 
@@ -76,6 +78,7 @@ export class GlobalDecisionEngineService {
    * Simulate a decision option. Simulation NEVER modifies production (§12).
    */
   simulateDecision(tenantId: string, decisionId: string, optionId: string): DecisionSimulation {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     const decision = this.findById(tenantId, decisionId);
     if (!decision) throw new AppError("NOT_FOUND", `Decision not found: ${decisionId}`, 404);
 
@@ -108,6 +111,7 @@ export class GlobalDecisionEngineService {
    * Apply policy checks to a decision.
    */
   applyPolicy(tenantId: string, decisionId: string): DecisionPolicyResult {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     const decision = this.findById(tenantId, decisionId);
     if (!decision) throw new AppError("NOT_FOUND", `Decision not found: ${decisionId}`, 404);
 
@@ -147,6 +151,7 @@ export class GlobalDecisionEngineService {
    * Approve a pending decision.
    */
   approveDecision(tenantId: string, decisionId: string, approvedBy: string): GlobalDecision {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     const decision = this.findById(tenantId, decisionId);
     if (!decision) throw new AppError("NOT_FOUND", `Decision not found: ${decisionId}`, 404);
     if (decision.status !== "AWAITING_APPROVAL" && decision.status !== "SIMULATING" && decision.status !== "PENDING") {
@@ -165,6 +170,7 @@ export class GlobalDecisionEngineService {
    * Reject a pending decision.
    */
   rejectDecision(tenantId: string, decisionId: string, reason: string): GlobalDecision {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     const decision = this.findById(tenantId, decisionId);
     if (!decision) throw new AppError("NOT_FOUND", `Decision not found: ${decisionId}`, 404);
 
@@ -179,6 +185,7 @@ export class GlobalDecisionEngineService {
    * Execute an approved decision.
    */
   executeDecision(tenantId: string, decisionId: string): GlobalDecision {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     const decision = this.findById(tenantId, decisionId);
     if (!decision) throw new AppError("NOT_FOUND", `Decision not found: ${decisionId}`, 404);
     if (decision.status !== "APPROVED") {
@@ -195,6 +202,7 @@ export class GlobalDecisionEngineService {
    * Verify the outcome of an executed decision.
    */
   verifyOutcome(tenantId: string, decisionId: string, outcome: DecisionOutcomeRecord): GlobalDecision {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     const decision = this.findById(tenantId, decisionId);
     if (!decision) throw new AppError("NOT_FOUND", `Decision not found: ${decisionId}`, 404);
 

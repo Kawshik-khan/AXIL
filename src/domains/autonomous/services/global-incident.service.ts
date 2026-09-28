@@ -25,6 +25,7 @@ export interface AutonomousIncident {
 export class GlobalIncidentService {
   /** Create a new incident. */
   createIncident(incident: AutonomousIncident): AutonomousIncident {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     incident.status = "DETECTED";
     incident.detected_at = new Date().toISOString();
     incident.timeline = [{ timestamp: incident.detected_at, event: "Incident detected", actor: "system" }];

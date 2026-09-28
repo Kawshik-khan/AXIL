@@ -73,6 +73,7 @@ export class PlatformHealthService {
 
   /** Update a health dimension score. */
   updateDimensionHealth(tenantId: string, dimension: HealthDimension, score: number, status: HealthStatus): void {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     const health = this.getSystemHealth(tenantId);
     if (!health) return;
     if (health.dimensions[dimension]) {

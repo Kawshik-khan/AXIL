@@ -17,6 +17,7 @@ export class SLOEngineService {
   }
 
   createSLO(slo: SLODefinition): SLODefinition {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     slo.created_at = new Date().toISOString();
     slo.updated_at = slo.created_at;
     db.data.slo_definitions.push(slo);
@@ -36,6 +37,7 @@ export class SLOEngineService {
 
   /** Calculate error budget for an SLO. */
   calculateErrorBudget(tenantId: string, sloId: string): ErrorBudget {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     const slo = this.findById(tenantId, sloId);
     if (!slo) throw new AppError("NOT_FOUND", `SLO not found: ${sloId}`, 404);
 

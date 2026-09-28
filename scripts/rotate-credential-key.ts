@@ -20,6 +20,10 @@ import fs from "fs";
 import path from "path";
 import { db } from "@/infrastructure/db";
 import { encryptCredential, decryptCredential } from "@/lib/security";
+import { assertNoOtherStoreWriter } from "./lib/store-guard";
+
+// Refuse to write the JSON store while the app (or another script) owns it (FX-24).
+assertNoOtherStoreWriter();
 
 const out = (line: string) => process.stdout.write(`${line}\n`);
 const fail = (line: string): never => {

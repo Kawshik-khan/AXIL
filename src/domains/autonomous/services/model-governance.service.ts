@@ -18,6 +18,7 @@ export class ModelGovernanceService {
   }
 
   registerModel(model: AIModel): AIModel {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     model.lifecycle_status = "DEVELOPMENT";
     model.created_at = new Date().toISOString();
     model.updated_at = model.created_at;
@@ -26,6 +27,7 @@ export class ModelGovernanceService {
   }
 
   evaluateModel(tenantId: string, modelId: string, evaluation: ModelEvaluation): AIModel {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     const model = this.findById(tenantId, modelId);
     if (!model) throw new AppError("NOT_FOUND", `Model not found: ${modelId}`, 404);
     model.lifecycle_status = "EVALUATION";
@@ -36,6 +38,7 @@ export class ModelGovernanceService {
   }
 
   approveModel(tenantId: string, modelId: string, approvedBy: string): AIModel {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     const model = this.findById(tenantId, modelId);
     if (!model) throw new AppError("NOT_FOUND", `Model not found: ${modelId}`, 404);
     if (model.lifecycle_status !== "EVALUATION") throw new Error("Model must be evaluated before approval");
@@ -47,6 +50,7 @@ export class ModelGovernanceService {
   }
 
   deployModel(tenantId: string, modelId: string, environment: "STAGING" | "CANARY" | "PRODUCTION"): ModelDeployment {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     const model = this.findById(tenantId, modelId);
     if (!model) throw new AppError("NOT_FOUND", `Model not found: ${modelId}`, 404);
     const deployment: ModelDeployment = {
@@ -68,6 +72,7 @@ export class ModelGovernanceService {
   }
 
   retireModel(tenantId: string, modelId: string): AIModel {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     const model = this.findById(tenantId, modelId);
     if (!model) throw new AppError("NOT_FOUND", `Model not found: ${modelId}`, 404);
     model.lifecycle_status = "RETIRED";

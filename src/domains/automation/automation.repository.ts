@@ -43,9 +43,11 @@ export class AutomationRepository extends BaseRepository<AutomationRecord & Reco
   }
 
   async createAutomation(item: AutomationRecord): Promise<AutomationRecord> {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     if (!this.isNeonConfigured()) {
       if (!db.data.automations) db.data.automations = [];
       db.data.automations.push(item as any);
+      db.markDirty();
       return item;
     }
 
@@ -70,6 +72,7 @@ export class AutomationRepository extends BaseRepository<AutomationRecord & Reco
       ]
     );
 
+    db.markDirty();
     return created || item;
   }
 }

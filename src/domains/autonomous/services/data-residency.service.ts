@@ -12,6 +12,7 @@ export class DataResidencyService {
   }
 
   createPolicy(policy: DataResidencyPolicy): DataResidencyPolicy {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     policy.created_at = new Date().toISOString();
     policy.updated_at = policy.created_at;
     db.data.data_residency_policies.push(policy);

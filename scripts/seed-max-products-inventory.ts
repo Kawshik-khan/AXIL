@@ -2,6 +2,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { db } from '../src/infrastructure/db';
 import { Product, ProductVariant, Warehouse, InventoryItem, StockMovement, Category, Brand, Order, OrderItem } from '../src/types/commerce';
+import { assertNoOtherStoreWriter } from './lib/store-guard';
+
+// Refuse to write the JSON store while the app (or another script) owns it (FX-24).
+assertNoOtherStoreWriter();
 
 const TENANT_ID = 'ten_default_dhaka';
 

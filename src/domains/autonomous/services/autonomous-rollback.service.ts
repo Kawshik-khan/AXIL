@@ -19,6 +19,7 @@ export class AutonomousRollbackService {
 
   /** Execute a rollback to previous state. */
   executeRollback(rollback: RollbackAction): RollbackAction {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     rollback.status = "EXECUTING";
     rollback.initiated_at = new Date().toISOString();
     // Simulate rollback execution
@@ -31,6 +32,7 @@ export class AutonomousRollbackService {
 
   /** Create a compensating action for irreversible operations. */
   createCompensatingAction(tenantId: string, originalAction: string, compensatingDescription: string): RollbackAction {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     const action: RollbackAction = {
       id: `rback_compensate_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,

@@ -24,6 +24,7 @@ export class BulkImportService {
     rawRows: Record<string, any>[],
     options?: BulkImportOptions
   ): Promise<BulkImportResult> {
+    db.markDirty(); // persists direct changes to db.data (FX-20)
     RbacService.assertCan(context, PERMISSIONS.PRODUCTS_CREATE);
 
     const startTime = Date.now();
@@ -293,6 +294,7 @@ export class BulkImportService {
       });
     }
 
+    db.markDirty();
     return {
       batch_id: batchId,
       total_rows: rawRows.length,
