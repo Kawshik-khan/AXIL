@@ -186,7 +186,8 @@ export interface DecisionOption {
   actions: string[];
   expected_outcome: Record<string, unknown>;
   estimated_cost_bdt: number;
-  estimated_revenue_impact_bdt: number;
+  /** null unless estimated from data (FX-30) */
+  estimated_revenue_impact_bdt: number | null;
   risk_score: number; // 0–100
   confidence: number; // 0–1
   pros: string[];
@@ -208,9 +209,9 @@ export interface DecisionSimulation {
   simulation_id: string;
   option_id: string;
   scenarios_evaluated: number;
-  expected_revenue_bdt: number;
+  expected_revenue_bdt: number | null;
   expected_cost_bdt: number;
-  expected_margin_percent: number;
+  expected_margin_percent: number | null;
   risk_score: number;
   confidence: number;
   side_effects: string[];
@@ -306,8 +307,8 @@ export interface StrategySimulation {
   best_case: Record<string, number>;
   worst_case: Record<string, number>;
   expected_case: Record<string, number>;
-  risk_score: number;
-  confidence: number;
+  risk_score: number | null;
+  confidence: number | null;
   recommendation: string;
   simulated_at: string;
 }
@@ -424,28 +425,31 @@ export interface UnifiedCommerceContext {
     total_orders: number;
     average_order_value_bdt: number;
     active_customers: number;
-    conversion_rate: number;
+    /** null: no visit data */
+    conversion_rate: number | null;
   };
   inventory: {
     total_skus: number;
     stockout_risk_count: number;
     overstock_count: number;
-    inventory_turnover: number;
+    inventory_turnover: number | null;
     pending_transfers: number;
   };
   operations: {
     system_mode: "AUTONOMOUS" | "SEMI_AUTONOMOUS" | "COPILOT" | "EMERGENCY_HALTED";
     overall_health_score: number;
     open_exceptions: number;
-    sla_compliance_percent: number;
+    sla_compliance_percent: number | null;
     active_workflows: number;
   };
   growth: {
     active_campaigns: number;
     active_journeys: number;
     active_experiments: number;
-    customer_acquisition_cost_bdt: number;
-    repeat_purchase_rate: number;
+    /** null: no acquisition spend is recorded */
+    customer_acquisition_cost_bdt: number | null;
+    /** % of buying customers with 2+ orders; null without buyers */
+    repeat_purchase_rate: number | null;
   };
   intelligence: {
     active_forecasts: number;
@@ -515,7 +519,7 @@ export interface LearningCandidate {
     passed: boolean;
     tests_run: number;
     tests_passed: number;
-    safety_score: number;
+    safety_score: number | null;
     details: string[];
   };
   shadow_results?: {
@@ -717,15 +721,16 @@ export interface AutonomyRecommendation {
     success_rate: number;
     failure_rate: number;
     financial_impact_bdt: number;
-    verification_pass_rate: number;
-    human_override_rate: number;
+    verification_pass_rate: number | null;
+    human_override_rate: number | null;
     sample_size: number;
     period_days: number;
   };
   simulation_result?: {
     expected_improvement: Record<string, number>;
-    risk_score: number;
-    confidence: number;
+    risk_score: number | null;
+    confidence: number | null;
+    note?: string;
   };
   status: "PROPOSED" | "SIMULATING" | "UNDER_REVIEW" | "APPROVED" | "REJECTED" | "APPLIED";
   reviewed_by?: string;
@@ -776,7 +781,8 @@ export interface PlatformHealth {
   overall_status: HealthStatus;
   dimensions: Record<HealthDimension, DomainHealthRecord>;
   autonomous_mode: "AUTONOMOUS" | "SEMI_AUTONOMOUS" | "COPILOT" | "EMERGENCY_HALTED";
-  uptime_percent_24h: number;
+  /** null: uptime isn't monitored */
+  uptime_percent_24h: number | null;
   last_incident_at?: string;
   assessed_at: string;
 }
@@ -801,18 +807,18 @@ export interface AutonomousQualityScorecard {
   period: "DAILY" | "WEEKLY" | "MONTHLY";
   period_start: string;
   period_end: string;
-  decision_accuracy: number;          // 0–1
-  verification_success_rate: number;   // 0–1
-  policy_compliance_rate: number;      // 0–1
-  exception_recovery_rate: number;     // 0–1
-  human_escalation_rate: number;       // 0–1
-  duplicate_execution_rate: number;    // 0–1
-  false_automation_rate: number;       // 0–1
-  autonomous_action_failure_rate: number; // 0–1
-  forecast_accuracy: number;           // 0–1
-  recommendation_adoption_rate: number; // 0–1
-  objective_achievement_rate: number;  // 0–1
-  cost_efficiency_ratio: number;       // business_value / automation_cost
+  decision_accuracy: number | null;          // 0–1 (null = not measured)
+  verification_success_rate: number | null;   // 0–1 (null = not measured)
+  policy_compliance_rate: number | null;      // 0–1 (null = not measured)
+  exception_recovery_rate: number | null;     // 0–1 (null = not measured)
+  human_escalation_rate: number | null;       // 0–1 (null = not measured)
+  duplicate_execution_rate: number | null;    // 0–1 (null = not measured)
+  false_automation_rate: number | null;       // 0–1 (null = not measured)
+  autonomous_action_failure_rate: number | null; // 0–1 (null = not measured)
+  forecast_accuracy: number | null;           // 0–1 (null = not measured)
+  recommendation_adoption_rate: number | null; // 0–1 (null = not measured)
+  objective_achievement_rate: number | null;  // 0–1 (null = not measured)
+  cost_efficiency_ratio: number | null; // business_value / automation_cost; null = not measured
   computed_at: string;
 }
 

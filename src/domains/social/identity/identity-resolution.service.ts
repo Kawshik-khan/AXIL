@@ -119,14 +119,20 @@ export class IdentityResolutionService {
     const firstName = nameParts[0] || "Social";
     const lastName = nameParts.slice(1).join(" ") || `(${channelType.slice(0, 2)})`;
 
-    const newCustomer = await CustomerService.createCustomer(mockContext, {
-      first_name: firstName,
-      last_name: lastName,
-      phone: profileData?.phone || `+8801700${Math.floor(100000 + Math.random() * 900000)}`,
-      email: profileData?.email,
-      source: channelType === "WEBSITE_CHAT" ? "WEBSITE" : "SOCIAL",
-      notes: `Ingressed from ${channelType} ID ${externalUserId}`,
-    });
+    // No phone: store none. This used to invent "+8801700" + 6 random digits, which could be a real person's
+    // number (messaging a stranger) or match an existing customer and merge into their record (FX-30, N6).
+    const newCustomer = await CustomerService.createCustomer(
+      mockContext,
+      {
+        first_name: firstName,
+        last_name: lastName,
+        phone: profileData?.phone ?? "",
+        email: profileData?.email,
+        source: channelType === "WEBSITE_CHAT" ? "WEBSITE" : "SOCIAL",
+        notes: `Ingressed from ${channelType} ID ${externalUserId}`,
+      },
+      { allowMissingPhone: true }
+    );
 
     const newIdentity: CustomerIdentity = {
       id: `cid_${Date.now()}_${randomSuffix()}`,

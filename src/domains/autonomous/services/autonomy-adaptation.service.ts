@@ -46,8 +46,8 @@ export class AutonomyAdaptationService {
         success_rate: Math.round(successRate * 100) / 100,
         failure_rate: Math.round(failureRate * 100) / 100,
         financial_impact_bdt: 0,
-        verification_pass_rate: 0.94,
-        human_override_rate: 0.05,
+        verification_pass_rate: null, // not measured (was a literal 0.94) (FX-30)
+        human_override_rate: null, // not measured (was a literal 0.05)
         sample_size: recent.length,
         period_days: 30,
       },
@@ -68,9 +68,11 @@ export class AutonomyAdaptationService {
     if (!rec) throw new AppError("NOT_FOUND", `Recommendation not found: ${recommendationId}`, 404);
     rec.status = "SIMULATING";
     rec.simulation_result = {
-      expected_improvement: { throughput_percent: 15, cost_reduction_percent: 8 },
-      risk_score: 22,
-      confidence: 0.78,
+      // No simulation model exists; the +15% throughput / -8% cost were literals (FX-30)
+      expected_improvement: {},
+      risk_score: null,
+      confidence: null,
+      note: "Not simulated: there's no model for autonomy changes yet. Decide from the evidence above.",
     };
     return rec;
   }

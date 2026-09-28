@@ -549,7 +549,8 @@ export interface ProductPerformanceSnapshot {
   category_name?: string;
   units_sold_30d: number;
   revenue_bdt_30d: number;
-  gross_margin_pct: number;
+  /** From recorded cost prices; null when no sold item has one (FX-30: was a fixed 40%). */
+  gross_margin_pct: number | null;
   return_rate_pct: number;
   cancellation_rate_pct: number;
   performance_score: number; // 0 to 100 transparent score

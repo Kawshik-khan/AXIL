@@ -363,7 +363,11 @@ export async function runIntelligenceTests() {
     // Factor 2: Rationale
     assert(rec.rationale.length > 0, "Factor 2: Must contain root-cause rationale");
     // Factor 3: Expected Revenue Gain or Cost Saving
-    assert(typeof (rec.expected_benefit.revenue_impact_bdt ?? rec.expected_benefit.cost_saving_bdt) === "number", "Factor 3: Estimated financial gain/saving required");
+    // Factor 3: the expected benefit is stated; a figure appears only when computed from data (FX-30)
+    assert(rec.expected_benefit.summary.length > 0, "Factor 3: Expected benefit must be stated");
+    const gain = rec.expected_benefit.revenue_impact_bdt ?? rec.expected_benefit.cost_saving_bdt;
+    assert(gain === undefined || typeof gain === "number", "Factor 3: a stated figure must be a computed number");
+    assert(!/12,?000/.test(rec.expected_benefit.summary), "no literal ৳12,000 figures");
     // Factor 4: Confidence Score
     assert(rec.confidence >= 0.5, "Factor 4: Confidence score required");
     // Factor 5: Risk Level

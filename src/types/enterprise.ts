@@ -631,22 +631,28 @@ export interface EnterpriseOverview {
     active_channels: number;
     consolidated_revenue_bdt: number;
     consolidated_orders: number;
-    blended_gross_margin_pct: number;
+    /** null without revenue */
+    blended_gross_margin_pct: number | null;
     network_stockout_risk_items: number;
     active_incidents_count: number;
-    data_quality_health_pct: number;
+    /** Open data-quality defects (there's no defined health score). */
+    data_quality_open_issues: number;
+    /** @deprecated always null: there's no defined data-quality score */
+    data_quality_health_pct: number | null;
     connected_integrations_count: number;
-    ai_budget_used_pct: number;
+    /** null without an AI budget */
+    ai_budget_used_pct: number | null;
   };
+  /** Orders aren't attributed to stores yet, so per-store revenue, orders and SLA are unknown (null). */
   entity_health_matrix: Array<{
     entity_id: string;
     entity_name: string;
     entity_type: EntityType;
-    status: "HEALTHY" | "DEGRADED" | "CRITICAL";
-    revenue_bdt: number;
-    order_count: number;
-    stockout_count: number;
-    fulfillment_sla_pct: number;
+    status: "HEALTHY" | "DEGRADED" | "CRITICAL" | "UNKNOWN";
+    revenue_bdt: number | null;
+    order_count: number | null;
+    stockout_count: number | null;
+    fulfillment_sla_pct: number | null;
   }>;
   recent_incidents: EnterpriseIncident[];
   recent_syncs: IntegrationSyncRecord[];

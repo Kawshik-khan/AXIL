@@ -66,17 +66,18 @@ export class AIProviderAbstractionService {
       provider_id: provider.id,
       model: provider.supported_models[0],
       response: `[Simulated response from ${provider.name}]`,
-      cost_bdt: provider.cost_per_1k_input_tokens * 0.5,
+      cost_bdt: 0, // simulated: no provider was called, so nothing was spent (FX-31)
     };
   }
 
   /** Health check all providers. */
-  healthCheck(): Array<{ provider_id: string; name: string; status: AIProviderStatus; latency_ms: number }> {
+  /** Configured status only: providers aren't pinged, so latency is null (was a random 50-250 ms) (FX-30). */
+  healthCheck(): Array<{ provider_id: string; name: string; status: AIProviderStatus; latency_ms: number | null }> {
     return db.data.ai_providers.map((p) => ({
       provider_id: p.id,
       name: p.name,
       status: p.status,
-      latency_ms: p.status === "ACTIVE" ? Math.floor(Math.random() * 200) + 50 : -1,
+      latency_ms: null,
     }));
   }
 

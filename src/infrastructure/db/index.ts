@@ -5028,6 +5028,8 @@ class CommerceDatabase {
   }
 
   public findCustomerByPhone(tenantId: string, normalizedPhone: string): Customer | undefined {
+    // An empty phone means "no phone" (social contacts): it must never match another customer (FX-30, N6)
+    if (!normalizedPhone || !normalizedPhone.trim()) return undefined;
     return this.data.customers.find((c) => c.tenant_id === tenantId && c.phone === normalizedPhone);
   }
 

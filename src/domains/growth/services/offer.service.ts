@@ -6,6 +6,8 @@
 import { db } from "@/infrastructure/db";
 import { GrowthOffer, OfferSimulationResult } from "@/types/growth";
 import { simulationService } from "@/domains/intelligence/services/simulation.service";
+import { PricingService } from "@/domains/pricing/pricing.service";
+import { COGS_FALLBACK_RATIO } from "@/domains/analytics/analytics.service";
 
 export class OfferService {
   /**
@@ -26,19 +28,25 @@ export class OfferService {
    * Simulates the financial and margin impact of an offer before broad activation
    */
   public simulateOffer(tenantId: string, offer: GrowthOffer): OfferSimulationResult {
-    const orders = db.getAllOrders(tenantId, { hydrate: true });
-    const sampleSize = Math.max(orders.length, 10);
-
-    const avgOrderVal = sampleSize > 0
-      ? orders.reduce((sum, o) => sum + (o.grand_total || 1500), 0) / sampleSize
-      : 1500;
+    // The shop's own average order value; no invented ৳1,500 or divide-by-at-least-10 (FX-30)
+    const orders = db.getAllOrders(tenantId).filter((o) => o.status !== "CANCELLED");
+    const avgOrderVal = orders.length > 0 ? orders.reduce((sum, o) => sum + (o.grand_total || 0), 0) / orders.length : null;
+    const deliveryFee = PricingService.getDeliveryFees(tenantId).outside_dhaka_bdt;
+    const assumptions = [
+      `Cost of goods is taken as ${Math.round(COGS_FALLBACK_RATIO * 100)}% of revenue (no per-offer cost model).`,
+      "Order volume comes from the price-elasticity simulation, not from past offers.",
+    ];
 
     // Run what-if elasticity simulation via Phase 6
     const discountPct = offer.type === "PERCENTAGE"
       ? offer.value
       : offer.type === "FIXED_AMOUNT"
-      ? (offer.value / avgOrderVal) * 100
-      : 5; // Free shipping equates to ~5% subsidy
+      ? avgOrderVal
+        ? (offer.value / avgOrderVal) * 100
+        : 0
+      : avgOrderVal
+      ? (deliveryFee / avgOrderVal) * 100 // free shipping = the delivery charge the shop gives up
+      : 0;
 
     const sim = simulationService.simulateScenario(
       tenantId,
@@ -57,37 +65,40 @@ export class OfferService {
     // Calculate discount cost
     let avgDiscountPerOrder = 0;
     if (offer.type === "PERCENTAGE") {
-      avgDiscountPerOrder = (avgOrderVal * offer.value) / 100;
+      avgDiscountPerOrder = ((avgOrderVal ?? 0) * offer.value) / 100;
       if (offer.rules.max_discount_bdt) {
         avgDiscountPerOrder = Math.min(avgDiscountPerOrder, offer.rules.max_discount_bdt);
       }
     } else if (offer.type === "FIXED_AMOUNT") {
       avgDiscountPerOrder = offer.value;
     } else if (offer.type === "FREE_SHIPPING") {
-      avgDiscountPerOrder = 100; // avg delivery subsidy
+      avgDiscountPerOrder = deliveryFee; // the shop's outside-Dhaka delivery charge (was an invented ৳100)
     }
 
     const projectedDiscountCost = Math.round(projectedOrders * avgDiscountPerOrder);
-    const estimatedCOGS = Math.round(projectedGrossRev * 0.6); // 60% baseline COGS
+    const estimatedCOGS = Math.round(projectedGrossRev * COGS_FALLBACK_RATIO);
     const projectedNetMargin = Math.round(projectedGrossRev - estimatedCOGS - projectedDiscountCost);
     const netMarginPct = projectedGrossRev > 0 ? (projectedNetMargin / projectedGrossRev) * 100 : 0;
 
     const marginSafe = netMarginPct >= 15; // Requires at least 15% net margin
     let riskWarning: string | undefined;
 
-    if (!marginSafe) {
+    if (avgOrderVal === null) {
+      riskWarning = "No order history yet, so the offer's impact can't be simulated.";
+    } else if (!marginSafe) {
       riskWarning = `Compressed net margin (${netMarginPct.toFixed(1)}%). Offer cost ৳${projectedDiscountCost} degrades target baseline profitability.`;
     }
 
     return {
       offer_id: offer.id,
-      estimated_redemption_rate_pct: 22.5,
+      estimated_redemption_rate_pct: null,
       estimated_order_volume: projectedOrders,
       projected_gross_revenue_bdt: projectedGrossRev,
       projected_discount_cost_bdt: projectedDiscountCost,
       projected_net_margin_bdt: projectedNetMargin,
       margin_safe: marginSafe,
       risk_warning: riskWarning,
+      assumptions,
     };
   }
 

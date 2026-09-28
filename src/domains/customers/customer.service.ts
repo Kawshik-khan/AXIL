@@ -75,21 +75,24 @@ export class CustomerService {
         address_line_1: string;
         postal_code?: string;
       };
-    }
+    },
+    /** Social/chat contacts may have no phone; they're stored with "" instead of an invented number (FX-30, N6). */
+    opts: { allowMissingPhone?: boolean } = {}
   ): Promise<Customer> {
     RbacService.assertCan(context, PERMISSIONS.CUSTOMERS_CREATE);
 
     if (!payload.first_name || payload.first_name.trim().length === 0) {
       throw new BadRequestError("Customer first name is required.");
     }
-    if (!payload.phone || payload.phone.trim().length === 0) {
+    const hasPhone = Boolean(payload.phone && payload.phone.trim().length > 0);
+    if (!hasPhone && !opts.allowMissingPhone) {
       throw new BadRequestError("Customer phone number is required.");
     }
 
-    const normalizedPhone = this.normalizePhoneNumber(payload.phone);
+    const normalizedPhone = hasPhone ? this.normalizePhoneNumber(payload.phone) : "";
 
-    // Deduplication check: Return existing customer if phone matches
-    const existing = db.findCustomerByPhone(context.tenant.id, normalizedPhone);
+    // Deduplication check: Return existing customer if phone matches (only for a real phone number)
+    const existing = normalizedPhone ? db.findCustomerByPhone(context.tenant.id, normalizedPhone) : undefined;
     if (existing) {
       return existing;
     }

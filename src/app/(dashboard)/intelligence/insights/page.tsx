@@ -138,8 +138,14 @@ export default function InsightsExplorerPage() {
                 </div>
                 <p className={styles.recDesc}>{opp.description}</p>
                 <div className={styles.badgeRow}>
-                  <span className={styles.badgeLime}>Estimated Gain: +৳{opp.estimated_impact?.potential_revenue_bdt?.toLocaleString() || 0}</span>
-                  <span className={styles.badgeNeutral}>Orders: +{opp.estimated_impact?.potential_orders || 0}</span>
+                  <span className={styles.badgeLime}>
+                    {typeof opp.estimated_impact?.potential_revenue_bdt === "number"
+                      ? `Value: ৳${opp.estimated_impact.potential_revenue_bdt.toLocaleString()}`
+                      : "Value not estimated"}
+                  </span>
+                  {typeof opp.estimated_impact?.potential_orders === "number" && (
+                    <span className={styles.badgeNeutral}>Orders: +{opp.estimated_impact.potential_orders}</span>
+                  )}
                   <span className={styles.badgeNeutral}>Type: {opp.type}</span>
                 </div>
                 {opp.evidence?.[0] && (

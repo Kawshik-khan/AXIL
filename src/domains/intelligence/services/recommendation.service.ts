@@ -30,6 +30,13 @@ export class RecommendationService {
     const restockOpp = opportunities.find((o) => o.type === "RESTOCK_DEMAND");
     if (restockOpp) {
       const entity = restockOpp.affected_entities[0];
+      const revenue = restockOpp.estimated_impact.potential_revenue_bdt;
+      const variant = entity ? db.findVariantById(tenantId, entity.id) : undefined;
+      // Purchase cost at the variant's own cost/price ratio; omitted when unknown (was 60% of revenue, or of ৳10,000) (FX-30)
+      const cost =
+        typeof revenue === "number" && variant?.cost_price && variant.price > 0
+          ? Math.round(revenue * (variant.cost_price / variant.price))
+          : undefined;
       const rec: Recommendation = {
         id: `rec_${tenantId}_restock_${entity?.id ?? "inventory"}`,
         tenant_id: tenantId,
@@ -40,12 +47,14 @@ export class RecommendationService {
         evidence: restockOpp.evidence,
         affected_entities: restockOpp.affected_entities,
         expected_benefit: {
-          revenue_impact_bdt: restockOpp.estimated_impact.potential_revenue_bdt,
-          order_gain: restockOpp.estimated_impact.potential_orders,
-          summary: `Protects projected revenue of ~৳${restockOpp.estimated_impact.potential_revenue_bdt} over 30 days.`,
+          revenue_impact_bdt: revenue,
+          summary:
+            typeof revenue === "number"
+              ? `The reorder quantity is worth ৳${revenue.toLocaleString()} at current prices.`
+              : "Value not estimated (no price recorded for this variant).",
         },
         expected_cost: {
-          financial_cost_bdt: Math.round((restockOpp.estimated_impact.potential_revenue_bdt || 10000) * 0.6),
+          financial_cost_bdt: cost,
           operational_complexity: "LOW",
         },
         confidence: 0.92,
@@ -86,9 +95,8 @@ export class RecommendationService {
         evidence: overstockRisk.evidence,
         affected_entities: overstockRisk.affected_entities,
         expected_benefit: {
-          revenue_impact_bdt: 12000,
-          cost_saving_bdt: 12000,
-          summary: "Frees up warehouse storage capacity and converts locked inventory into liquid cash.",
+          // Not estimated: no markdown history (was a literal ৳12,000 revenue and ৳12,000 saving) (FX-30)
+          summary: "Frees up warehouse storage capacity and converts locked inventory into cash; value not estimated.",
         },
         expected_cost: {
           operational_complexity: "LOW",

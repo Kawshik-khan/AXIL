@@ -80,7 +80,7 @@ export class AutonomousControlPlaneService {
         tenant_id: tenantId,
         overall_status: "HEALTHY",
         autonomous_mode: "SEMI_AUTONOMOUS",
-        uptime_percent_24h: 99.9,
+        uptime_percent_24h: null, // not monitored (was a literal 99.9)
         dimensions: {} as Record<HealthDimension, DomainHealthRecord>,
         assessed_at: new Date().toISOString(),
       };

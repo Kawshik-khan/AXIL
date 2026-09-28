@@ -5,6 +5,7 @@
 
 import { db } from "@/infrastructure/db";
 import { ProductPerformanceSnapshot } from "@/types/intelligence";
+import { AnalyticsService } from "@/domains/analytics/analytics.service";
 import { intelligenceSnapshots } from "./intelligence-snapshot.service";
 
 export class ProductIntelligenceService {
@@ -21,7 +22,8 @@ export class ProductIntelligenceService {
   public computeProductPerformance(tenantId: string): ProductPerformanceSnapshot[] {
     const products = db.getAllProducts(tenantId); // variants attached through a map (FX-23)
     const orders = db.getAllOrders(tenantId, { hydrate: true });
-    const returns = db.getReturns(tenantId);
+    const returnedOrderIds = new Set(db.getReturns(tenantId).map((r) => r.order_id));
+    const costs = AnalyticsService.unitCosts(tenantId);
 
     const thirtyDaysAgo = Date.now() - 30 * 86400000;
     const recentOrders = orders.filter(
@@ -31,7 +33,7 @@ export class ProductIntelligenceService {
     // Aggregate units sold & revenue per product
     const productStats: Record<
       string,
-      { units: number; revenue: number; ordersCount: number }
+      { units: number; revenue: number; ordersCount: number; returnedOrders: number; costedRevenue: number; cost: number }
     > = {};
 
     for (const order of recentOrders) {
@@ -40,11 +42,19 @@ export class ProductIntelligenceService {
         const prodId = item.product_id;
         if (prodId) {
           if (!productStats[prodId]) {
-            productStats[prodId] = { units: 0, revenue: 0, ordersCount: 0 };
+            productStats[prodId] = { units: 0, revenue: 0, ordersCount: 0, returnedOrders: 0, costedRevenue: 0, cost: 0 };
           }
-          productStats[prodId].units += item.quantity || 1;
-          productStats[prodId].revenue += (item.unit_price || 0) * (item.quantity || 1);
+          const qty = item.quantity || 1;
+          const lineRevenue = (item.unit_price || 0) * qty;
+          productStats[prodId].units += qty;
+          productStats[prodId].revenue += lineRevenue;
           productStats[prodId].ordersCount += 1;
+          if (returnedOrderIds.has(order.id)) productStats[prodId].returnedOrders += 1;
+          const unitCost = costs.get(item.variant_id);
+          if (unitCost !== undefined) {
+            productStats[prodId].costedRevenue += lineRevenue;
+            productStats[prodId].cost += unitCost * qty;
+          }
         }
       }
     }
@@ -52,20 +62,21 @@ export class ProductIntelligenceService {
     const snapshots: ProductPerformanceSnapshot[] = [];
 
     for (const prod of products) {
-      const stats = productStats[prod.id] || { units: 0, revenue: 0, ordersCount: 0 };
+      const stats = productStats[prod.id] || { units: 0, revenue: 0, ordersCount: 0, returnedOrders: 0, costedRevenue: 0, cost: 0 };
       const prodVariants = prod.variants ?? [];
       const sku = prodVariants[0]?.sku || prod.slug || "SKU-UNKNOWN";
 
       // Calculate transparent 100-point performance score
       // Formula: Velocity (40pts) + Margin (30pts) + Order Consistency (20pts) - Penalty (10pts)
       const velocityPoints = Math.min(stats.units * 4, 40); // 10 units sold = 40 pts
-      const grossMarginPct = 40.0; // Standard retail margin
-      const marginPoints = Math.min((grossMarginPct / 50) * 30, 30);
+      // Margin from recorded cost prices; unknown margin earns no margin points (was a fixed 40% for every product)
+      const grossMarginPct =
+        stats.costedRevenue > 0 ? Number((((stats.costedRevenue - stats.cost) / stats.costedRevenue) * 100).toFixed(1)) : null;
+      const marginPoints = grossMarginPct === null ? 0 : Math.max(0, Math.min((grossMarginPct / 50) * 30, 30));
       const consistencyPoints = Math.min(stats.ordersCount * 2, 20);
 
-      // Return rate penalty
-      const prodReturns = returns.filter((r) => r.tenant_id === tenantId);
-      const returnRate = stats.ordersCount > 0 ? (prodReturns.length / stats.ordersCount) * 100 : 0;
+      // Return rate from this product's own returned orders (was every return of the tenant, for every product)
+      const returnRate = stats.ordersCount > 0 ? (stats.returnedOrders / stats.ordersCount) * 100 : 0;
       const penaltyPoints = returnRate > 10 ? 10 : returnRate > 5 ? 5 : 0;
 
       const score = Math.max(0, Math.min(100, Math.round(velocityPoints + marginPoints + consistencyPoints - penaltyPoints)));

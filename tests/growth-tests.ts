@@ -678,7 +678,9 @@ export async function runGrowthTests() {
     assert.ok(rec.recommended_channel, "Factor 3: Recommended channel required");
     assert.ok(rec.rationale, "Factor 4: Rationale required");
     assert.ok(rec.evidence && rec.evidence.length > 0, "Factor 5: Evidence required");
-    assert.ok(rec.expected_impact?.projected_revenue_bdt > 0, "Factor 6: Expected revenue impact required");
+    // Factor 6: the impact is stated; no projection without history (FX-30: were fixed ৳45,000 / ৳28,000)
+    assert.ok(rec.expected_impact?.summary, "Factor 6: Expected impact must be stated");
+    assert.ok(rec.expected_impact.projected_revenue_bdt === null || rec.expected_impact.projected_revenue_bdt > 0);
     assert.ok(rec.action_risk_level, "Factor 7: Action risk level required");
   });
 

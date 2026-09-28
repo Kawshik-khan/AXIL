@@ -490,13 +490,16 @@ export interface OfferUsage {
 
 export interface OfferSimulationResult {
   offer_id: string;
-  estimated_redemption_rate_pct: number;
+  /** Not measured: no redemption history (FX-30: was a fixed 22.5%). */
+  estimated_redemption_rate_pct: number | null;
   estimated_order_volume: number;
   projected_gross_revenue_bdt: number;
   projected_discount_cost_bdt: number;
   projected_net_margin_bdt: number;
   margin_safe: boolean; // false if margin drops below safe baseline
   risk_warning?: string;
+  /** Inputs that aren't the tenant's own data. */
+  assumptions: string[];
 }
 
 // ============================================================
@@ -670,8 +673,9 @@ export interface GrowthRecommendation {
   rationale: string;
   evidence: EvidenceItem[];
   expected_impact: {
-    projected_revenue_bdt: number;
-    projected_roi_multiplier: number;
+    /** null when there's no history to project from (FX-30: were fixed ৳45,000 / ৳28,000). */
+    projected_revenue_bdt: number | null;
+    projected_roi_multiplier: number | null;
     summary: string;
   };
   action_risk_level: ActionRiskLevel;

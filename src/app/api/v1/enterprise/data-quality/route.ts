@@ -16,7 +16,7 @@ export async function GET(request: Request) {
     const rules = db.getDataQualityRules(orgId);
 
     return apiSuccess({
-      health_score_pct: issues.length === 0 ? 100 : Math.max(65, 100 - issues.length * 5),
+      health_score_pct: null, // no defined score; was 100 - 5 per issue, floored at 65 (FX-30)
       open_defects_count: issues.length,
       rules_count: rules.length,
       rules,

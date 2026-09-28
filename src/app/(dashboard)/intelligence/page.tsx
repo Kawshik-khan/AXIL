@@ -268,7 +268,11 @@ export default function IntelligenceExecutivePage() {
               <div style={{ fontSize: 13, fontWeight: 600, color: "#fff" }}>{opp.title}</div>
               <p style={{ fontSize: 12, color: "#a0a4ab", margin: "4px 0" }}>{opp.description}</p>
               <div className={styles.badgeRow}>
-                <span className={styles.badgeLime}>+৳{opp.estimated_impact?.potential_revenue_bdt?.toLocaleString() || 0}</span>
+                <span className={styles.badgeLime}>
+                  {typeof opp.estimated_impact?.potential_revenue_bdt === "number"
+                    ? `৳${opp.estimated_impact.potential_revenue_bdt.toLocaleString()}`
+                    : "Value not estimated"}
+                </span>
                 <span className={styles.badgeNeutral}>{opp.type}</span>
               </div>
             </div>

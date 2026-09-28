@@ -526,7 +526,9 @@ export default function GrowthCommandCenterPage() {
                 <div className={styles.itemMain}>
                   <div style={{ fontSize: "13px", fontWeight: 600, color: "#ffffff" }}>{rec.title}</div>
                   <div style={{ fontSize: "11px", color: "rgba(255, 255, 255, 0.65)" }}>
-                    Projected: +৳{(rec.expected_impact?.projected_revenue_bdt || 0).toLocaleString()} • {rec.expected_impact?.projected_roi_multiplier}x ROI
+                    {typeof rec.expected_impact?.projected_revenue_bdt === "number"
+                      ? `Projected: +৳${rec.expected_impact.projected_revenue_bdt.toLocaleString()}${typeof rec.expected_impact.projected_roi_multiplier === "number" ? ` • ${rec.expected_impact.projected_roi_multiplier}x ROI` : ""}`
+                      : "Impact not estimated"}
                   </div>
                 </div>
                 <span className={`${styles.statusPill} ${rec.action_risk_level === "HIGH" ? styles.statusReview : styles.statusRunning}`}>

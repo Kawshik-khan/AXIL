@@ -66,7 +66,7 @@ export class GlobalDecisionEngineService {
       .map((opt) => ({
         option_id: opt.id,
         name: opt.name,
-        score: (opt.confidence * 100) - (opt.risk_score * 0.5) + (opt.estimated_revenue_impact_bdt > 0 ? 20 : 0),
+        score: (opt.confidence * 100) - (opt.risk_score * 0.5) + ((opt.estimated_revenue_impact_bdt ?? 0) > 0 ? 20 : 0),
         recommendation: opt.confidence > 0.8 && opt.risk_score < 30 ? "RECOMMENDED" : "REVIEW_REQUIRED",
       }))
       .sort((a, b) => b.score - a.score);
@@ -91,12 +91,13 @@ export class GlobalDecisionEngineService {
     const simulation: DecisionSimulation = {
       simulation_id: `sim_${decisionId}_${optionId}_${Date.now()}`,
       option_id: optionId,
-      scenarios_evaluated: 100,
+      scenarios_evaluated: 0, // no scenario model exists (was a literal 100) (FX-30)
       expected_revenue_bdt: option.estimated_revenue_impact_bdt,
       expected_cost_bdt: option.estimated_cost_bdt,
-      expected_margin_percent: option.estimated_revenue_impact_bdt > 0
-        ? ((option.estimated_revenue_impact_bdt - option.estimated_cost_bdt) / option.estimated_revenue_impact_bdt) * 100
-        : 0,
+      expected_margin_percent:
+        option.estimated_revenue_impact_bdt && option.estimated_revenue_impact_bdt > 0
+          ? ((option.estimated_revenue_impact_bdt - option.estimated_cost_bdt) / option.estimated_revenue_impact_bdt) * 100
+          : null,
       risk_score: option.risk_score,
       confidence: option.confidence,
       side_effects: option.cons,

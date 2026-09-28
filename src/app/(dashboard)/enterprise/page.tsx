@@ -157,16 +157,14 @@ export default function EnterpriseOverviewPage() {
           <div className={styles.statLabel}>Consolidated Revenue</div>
           <div className={styles.statValue}>৳{(m?.consolidated_revenue_bdt || 0).toLocaleString()}</div>
           <div className={styles.statMeta}>
-            <span className={styles.trendPositive}>+18.4%</span> vs prior month • {m?.consolidated_orders || 0} orders
+            {m?.consolidated_orders ?? 0} orders
           </div>
         </div>
 
         <div className={`${styles.col3} ${styles.statCard}`}>
           <div className={styles.statLabel}>Blended Gross Margin</div>
-          <div className={styles.statValue}>{(m?.blended_gross_margin_pct || 0)}%</div>
-          <div className={styles.statMeta}>
-            <span className={styles.trendPositive}>Healthy</span> • Target 30.0%
-          </div>
+          <div className={styles.statValue}>{typeof m?.blended_gross_margin_pct === "number" ? `${m.blended_gross_margin_pct}%` : "—"}</div>
+          <div className={styles.statMeta}>From orders and recorded cost prices</div>
         </div>
 
         <div className={`${styles.col3} ${styles.statCard}`}>
@@ -181,10 +179,8 @@ export default function EnterpriseOverviewPage() {
 
         <div className={`${styles.col3} ${styles.statCard}`}>
           <div className={styles.statLabel}>AI Budget & Quota</div>
-          <div className={styles.statValue}>{(m?.ai_budget_used_pct || 0)}%</div>
-          <div className={styles.statMeta}>
-            <span className={styles.trendPositive}>Normal</span> • Rate limits governed
-          </div>
+          <div className={styles.statValue}>{typeof m?.ai_budget_used_pct === "number" ? `${m.ai_budget_used_pct}%` : "—"}</div>
+          <div className={styles.statMeta}>{typeof m?.ai_budget_used_pct === "number" ? "Of this month's AI budget" : "No AI budget set"}</div>
         </div>
       </div>
 
@@ -227,9 +223,9 @@ export default function EnterpriseOverviewPage() {
                           {item.entity_type}
                         </span>
                       </td>
-                      <td>৳{item.revenue_bdt.toLocaleString()}</td>
-                      <td>{item.order_count}</td>
-                      <td>{item.fulfillment_sla_pct}%</td>
+                      <td>{typeof item.revenue_bdt === "number" ? `৳${item.revenue_bdt.toLocaleString()}` : "—"}</td>
+                      <td>{item.order_count ?? "—"}</td>
+                      <td>{typeof item.fulfillment_sla_pct === "number" ? `${item.fulfillment_sla_pct}%` : "—"}</td>
                       <td>
                         <span
                           className={

@@ -351,10 +351,10 @@ export class EvaluateGlobalDecisionTool implements IAgentTool<z.infer<typeof Eva
         actions: ["EXECUTE_OPTION"],
         expected_outcome: opt.expected_impact,
         estimated_cost_bdt: opt.estimated_cost_bdt,
-        estimated_revenue_impact_bdt: opt.estimated_cost_bdt * 2.5,
+        estimated_revenue_impact_bdt: null, // not estimated (was cost x 2.5) (FX-30)
         risk_score: opt.risk_score,
         confidence: 0.85,
-        pros: ["Positive projected margin", "Quick implementation"],
+        pros: ["Quick implementation"],
         cons: ["Operational attention required"],
         tradeoffs: ["Cost vs Speed"],
       })),

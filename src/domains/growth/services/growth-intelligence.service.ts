@@ -108,7 +108,12 @@ export class GrowthIntelligenceService {
     const expiry = new Date(Date.now() + 7 * 86400000).toISOString();
 
     const dormancyInsight = insights.find((i) => i.type === "HIGH_VALUE_DORMANCY");
+    const lifecycles = db.getCustomerLifecycles(tenantId);
     if (dormancyInsight) {
+      const dormantVips = lifecycles.filter(
+        (l) => (l.stage === "DORMANT" || l.stage === "AT_RISK") && l.total_revenue_bdt > 10000
+      );
+      const pastRevenue = dormantVips.reduce((sum, l) => sum + l.total_revenue_bdt, 0);
       recommendations.push({
         id: `grec_${tenantId}_vip_dormancy_winback`,
         tenant_id: tenantId,
@@ -116,12 +121,12 @@ export class GrowthIntelligenceService {
         strategy: "Target high-value dormant purchasers with an exclusive 15% comeback voucher and personalized top catalog picks.",
         target_audience_name: "VIP Dormant Customers (>৳10k LTV)",
         recommended_channel: "WHATSAPP",
-        rationale: "Reactivating a verified high-value customer costs 5x less than acquiring a new customer, and protects historical customer equity.",
+        rationale: `${dormantVips.length} customers who spent over ৳10,000 (৳${Math.round(pastRevenue).toLocaleString()} in total) have gone quiet.`,
         evidence: dormancyInsight.evidence,
         expected_impact: {
-          projected_revenue_bdt: 45000,
-          projected_roi_multiplier: 4.8,
-          summary: "Projected reactivation of 25-30% of dormant VIPs, yielding ~৳45,000 in recovered revenue.",
+          projected_revenue_bdt: null,
+          projected_roi_multiplier: null,
+          summary: "Not estimated: there's no win-back history yet to project a reactivation rate from.",
         },
         action_risk_level: ActionRiskLevel.HIGH,
         required_autonomy_level: 3,
@@ -135,32 +140,35 @@ export class GrowthIntelligenceService {
       });
     }
 
-    // General Cross-Sell recommendation
-    recommendations.push({
+    // Cross-sell after delivery: only when there were deliveries to follow up (was always proposed, with invented evidence)
+    const deliveredLastWeek = db
+      .getAllOrders(tenantId)
+      .filter((o) => o.status === "DELIVERED" && Date.parse(o.updated_at) >= Date.now() - 7 * 86_400_000).length;
+    if (deliveredLastWeek > 0) recommendations.push({
       id: `grec_${tenantId}_post_delivery_cross_sell`,
       tenant_id: tenantId,
       title: "Activate Automated Post-Delivery Accessory Cross-Sell Journey",
       strategy: "Trigger an automated message 3 days after courier delivery recommending top matching accessories with free delivery subsidy.",
       target_audience_name: "Recent Delivered Purchasers (Last 7 Days)",
       recommended_channel: "WHATSAPP",
-      rationale: "Customer satisfaction is highest immediately following successful order delivery, presenting an optimal conversion window for accessories.",
+      rationale: `${deliveredLastWeek} orders were delivered in the last 7 days; a follow-up can suggest related products.`,
       evidence: [
         {
-          id: `evi_rec_${Date.now()}_${randomSuffix()}`,
+          id: `evi_${tenantId}_delivered_7d`,
           source_type: "ORDER" as const,
-          source_id: "post_purchase_window",
-          metric: "reorder_interval_days",
-          value: 3,
+          source_id: "orders_delivered_last_7_days",
+          metric: "delivered_orders_7d",
+          value: deliveredLastWeek,
           timestamp: now.toISOString(),
-          confidence: 0.88,
+          confidence: 1,
           query_version: "v1.0",
-          description: "Optimal re-order window is 3-7 days post-delivery in Bangladeshi D2C retail",
+          description: `${deliveredLastWeek} orders delivered in the last 7 days`,
         },
       ],
       expected_impact: {
-        projected_revenue_bdt: 28000,
-        projected_roi_multiplier: 6.2,
-        summary: "Boosts second-order conversion velocity by 18% with negligible operational overhead.",
+        projected_revenue_bdt: null,
+        projected_roi_multiplier: null,
+        summary: "Not estimated: no cross-sell history yet.",
       },
       action_risk_level: ActionRiskLevel.MEDIUM,
       required_autonomy_level: 2,

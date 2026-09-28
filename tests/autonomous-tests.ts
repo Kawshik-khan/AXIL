@@ -215,7 +215,8 @@ export async function runAutonomousTests() {
 
     // Simulation
     const sim = globalDecisionEngineService.simulateDecision(tenantId, decision.id, decision.options[0].id);
-    assert.ok(sim.scenarios_evaluated > 0, "Simulation scenarios should be evaluated");
+    // No scenario model exists: the simulation says so instead of claiming 100 scenarios (FX-30)
+    assert.strictEqual(sim.scenarios_evaluated, 0);
 
     // Human Approval
     const approved = globalDecisionEngineService.approveDecision(tenantId, decision.id, "human_supervisor");
@@ -280,8 +281,10 @@ export async function runAutonomousTests() {
     assert.strictEqual(strategy.status, "DRAFT");
 
     const sim = strategyEngineService.simulateStrategy(tenantId, strategy.id);
-    assert.ok(sim.scenarios_tested > 0);
-    assert.ok(sim.expected_case.margin_percent > 0);
+    // Not simulated: no invented cost multiples or margins (FX-30)
+    assert.strictEqual(sim.scenarios_tested, 0);
+    assert.deepStrictEqual(sim.expected_case, {});
+    assert.ok(/Not simulated/.test(sim.recommendation));
 
     const tradeoffs = strategyEngineService.evaluateTradeoffs(tenantId, strategy.id);
     assert.ok(Array.isArray(tradeoffs.tradeoffs));
@@ -373,26 +376,14 @@ export async function runAutonomousTests() {
 
     assert.strictEqual(candidate.status, "IDENTIFIED");
 
-    // Evaluate candidate
+    // Evaluation isn't implemented, so nothing passes: no invented "24 of 25 tests" (FX-30)
     const evaluated = continuousLearningService.evaluateCandidate(tenantId, candidate.id);
-    assert.strictEqual(evaluated.status, "VALIDATED");
+    assert.strictEqual(evaluated.status, "IDENTIFIED");
+    assert.strictEqual(evaluated.validation_results?.passed, false);
+    assert.strictEqual(evaluated.validation_results?.tests_run, 0);
 
-    // Promote to Shadow
-    const shadow = continuousLearningService.deployToShadow(tenantId, candidate.id);
-    assert.strictEqual(shadow.status, "SHADOW_TESTING");
-
-    // Promote to Canary
-    const canary = continuousLearningService.promoteToCanary(tenantId, candidate.id);
-    assert.strictEqual(canary.status, "CANARY_TESTING");
-
-    // Submit for Governance
-    const gov = continuousLearningService.submitForGovernance(tenantId, candidate.id);
-    assert.strictEqual(gov.status, "GOVERNANCE_REVIEW");
-
-    // Promote to Production
-    const prod = continuousLearningService.promoteToProduction(tenantId, candidate.id, "lead_governance_architect");
-    assert.strictEqual(prod.status, "DEPLOYED");
-    assert.strictEqual(prod.governance_review?.reviewer, "lead_governance_architect");
+    // An unvalidated candidate can't move toward production
+    assert.throws(() => continuousLearningService.deployToShadow(tenantId, candidate.id), /validated/);
   });
 
   // -------------------------------------------------------------

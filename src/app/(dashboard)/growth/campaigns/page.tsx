@@ -95,12 +95,24 @@ export default function CampaignsPage() {
               {/* Simulation metrics if present */}
               {cmp.simulation_snapshot && (
                 <div style={{ margin: "12px 0", padding: "10px 14px", background: "var(--color-surface-soft, #FAFBF8)", borderRadius: "8px", border: "1px solid var(--color-border-subtle, rgba(0,0,0,0.06))" }}>
-                  <div style={{ fontSize: "11px", color: "var(--color-text-primary, #202124)", fontWeight: 700, letterSpacing: "0.02em" }}>✦ SIMULATION PROJECTIONS</div>
+                  <div style={{ fontSize: "11px", color: "var(--color-text-primary, #202124)", fontWeight: 700, letterSpacing: "0.02em" }}>SIMULATED — assumptions, not a forecast</div>
                   <div style={{ display: "flex", gap: "16px", marginTop: "6px", fontSize: "12px", color: "var(--color-text-secondary, #70736F)" }}>
-                    <span>Projected: <strong style={{ color: "var(--color-text-primary, #202124)" }}>৳{cmp.simulation_snapshot.projected_revenue_bdt?.toLocaleString()}</strong></span>
-                    <span>Orders: <strong style={{ color: "var(--color-text-primary, #202124)" }}>{cmp.simulation_snapshot.projected_conversions}</strong></span>
-                    <span>Est. Margin: <strong style={{ color: "var(--color-success, #10b981)" }}>+{cmp.simulation_snapshot.projected_margin_impact_pct}%</strong></span>
+                    <span>
+                      Revenue:{" "}
+                      <strong style={{ color: "var(--color-text-primary, #202124)" }}>
+                        {typeof cmp.simulation_snapshot.expected_revenue_bdt === "number"
+                          ? `৳${cmp.simulation_snapshot.expected_revenue_bdt.toLocaleString()}`
+                          : "not estimated"}
+                      </strong>
+                    </span>
+                    <span>Orders: <strong style={{ color: "var(--color-text-primary, #202124)" }}>{cmp.simulation_snapshot.expected_orders ?? "—"}</strong></span>
+                    <span>Reach: <strong style={{ color: "var(--color-text-primary, #202124)" }}>{cmp.simulation_snapshot.estimated_reach ?? "—"}</strong></span>
                   </div>
+                  {Array.isArray(cmp.simulation_snapshot.assumptions) && (
+                    <div style={{ marginTop: "6px", fontSize: "11px", color: "var(--color-text-secondary, #70736F)" }}>
+                      {cmp.simulation_snapshot.assumptions.join(" ")}
+                    </div>
+                  )}
                 </div>
               )}
 

@@ -42,13 +42,14 @@ export class StrategyEngineService {
 
     const sim: StrategySimulation = {
       simulation_id: `ssim_${strategyId}_${Date.now()}`,
-      scenarios_tested: 50,
-      best_case: { revenue_impact_bdt: strategy.plan.estimated_cost_bdt * 3, margin_percent: 42 },
-      worst_case: { revenue_impact_bdt: strategy.plan.estimated_cost_bdt * -0.5, margin_percent: 28 },
-      expected_case: { revenue_impact_bdt: strategy.plan.estimated_cost_bdt * 1.8, margin_percent: 36 },
-      risk_score: 35,
-      confidence: 0.72,
-      recommendation: "Proceed with monitoring — expected ROI positive under moderate assumptions.",
+      // No simulation model exists: outcomes were the plan's cost x 3 / -0.5 / 1.8 and fixed margins (FX-30)
+      scenarios_tested: 0,
+      best_case: {},
+      worst_case: {},
+      expected_case: {},
+      risk_score: null,
+      confidence: null,
+      recommendation: "Not simulated: there's no outcome model yet. Judge the plan on its own merits.",
       simulated_at: new Date().toISOString(),
     };
     strategy.simulation = sim;

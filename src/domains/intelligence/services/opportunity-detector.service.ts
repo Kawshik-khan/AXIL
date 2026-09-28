@@ -43,9 +43,8 @@ export class OpportunityDetectorService {
         description: `High conversion velocity and positive customer retention make this product an ideal candidate for expanded social promotion.`,
         evidence: [evidence],
         affected_entities: [{ type: "PRODUCT", id: topSeller.product_id, name: topSeller.product_name }],
+        // No projection: the +30% revenue / +35% orders were assumed factors (FX-30). The evidence has the real 30-day numbers.
         estimated_impact: {
-          potential_revenue_bdt: Math.round(topSeller.revenue_bdt_30d * 0.3),
-          potential_orders: Math.round(topSeller.units_sold_30d * 0.35),
           timeframe_days: 14,
         },
         confidence: 0.88,
@@ -80,8 +79,11 @@ export class OpportunityDetectorService {
         evidence: [evidence],
         affected_entities: [{ type: "INVENTORY_VARIANT", id: lowStockHighDemand.variant_id, name: lowStockHighDemand.product_name }],
         estimated_impact: {
-          potential_revenue_bdt: Math.round(lowStockHighDemand.recommended_reorder_qty * 1200),
-          potential_orders: lowStockHighDemand.recommended_reorder_qty,
+          // Reorder quantity at the variant's own price (was x ৳1,200 for every product)
+          potential_revenue_bdt: (() => {
+            const price = db.findVariantById(tenantId, lowStockHighDemand.variant_id)?.price;
+            return typeof price === "number" ? Math.round(lowStockHighDemand.recommended_reorder_qty * price) : undefined;
+          })(),
           timeframe_days: 30,
         },
         confidence: 0.92,
@@ -114,9 +116,7 @@ export class OpportunityDetectorService {
         ],
         affected_entities: [{ type: "CUSTOMER_SEGMENT", id: "LOYAL_CUSTOMERS", name: "Repeat Buyer Segment" }],
         estimated_impact: {
-          potential_revenue_bdt: 18500,
-          potential_orders: 12,
-          timeframe_days: 7,
+          timeframe_days: 7, // no projection: there's no re-engagement history (was a literal ৳18,500 / 12 orders)
         },
         confidence: 0.85,
         priority: "MEDIUM",

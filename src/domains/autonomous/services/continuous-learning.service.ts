@@ -60,15 +60,16 @@ export class ContinuousLearningService {
     db.markDirty(); // persists direct changes to db.data (FX-20)
     const candidate = this.findById(tenantId, candidateId);
     if (!candidate) throw new AppError("NOT_FOUND", `Candidate not found: ${candidateId}`, 404);
-    candidate.status = "VALIDATING";
+    // Offline evaluation isn't implemented. This used to record "24 of 25 tests passed" and mark the candidate
+    // VALIDATED without running anything (FX-30). A candidate now can't be validated, so it can't be deployed.
     candidate.validation_results = {
-      passed: true,
-      tests_run: 25,
-      tests_passed: 24,
-      safety_score: 0.92,
-      details: ["Accuracy improvement: +3.2%", "No regression on edge cases", "Cost neutral"],
+      passed: false,
+      tests_run: 0,
+      tests_passed: 0,
+      safety_score: null,
+      details: ["Offline evaluation isn't implemented yet; nothing was tested."],
     };
-    candidate.status = "VALIDATED";
+    candidate.status = "IDENTIFIED";
     candidate.updated_at = new Date().toISOString();
     return candidate;
   }

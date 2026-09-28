@@ -55,6 +55,12 @@ export class UnifiedContextService {
     });
     const successfulRuns = recentAgentRuns.filter((r) => r.status === "COMPLETED");
 
+    // Repeat purchase rate from orders: buying customers with 2+ orders (was a literal 28.5)
+    const ordersPerCustomer = new Map<string, number>();
+    for (const o of orders) if (o.status !== "CANCELLED") ordersPerCustomer.set(o.customer_id, (ordersPerCustomer.get(o.customer_id) ?? 0) + 1);
+    const buyers = ordersPerCustomer.size;
+    const repeaters = [...ordersPerCustomer.values()].filter((n) => n >= 2).length;
+
     return {
       tenant_id: tenantId,
       generated_at: now,
@@ -63,28 +69,28 @@ export class UnifiedContextService {
         total_orders: orders.length,
         average_order_value_bdt: Math.round(avgOrderValue * 100) / 100,
         active_customers: customers.filter((c) => c.status === "ACTIVE").length,
-        conversion_rate: 3.2, // Calculated from real analytics in production
+        conversion_rate: null, // no visit data exists (was a literal 3.2) (FX-30)
       },
       inventory: {
         total_skus: products.length,
         stockout_risk_count: lowStockItems.length,
         overstock_count: inventory.filter((i) => i.quantity_available > (i.reorder_point || 5) * 5).length,
-        inventory_turnover: 4.2,
+        inventory_turnover: null, // not computed (was a literal 4.2)
         pending_transfers: 0,
       },
       operations: {
         system_mode: health?.autonomous_mode || "COPILOT",
         overall_health_score: health?.dimensions?.OPERATIONS?.score || 0,
         open_exceptions: exceptions.filter((e) => e.status !== "RESOLVED").length,
-        sla_compliance_percent: 94,
+        sla_compliance_percent: null, // SLAs aren't tracked (was a literal 94)
         active_workflows: workflows.filter((w) => !["COMPLETED", "FAILED", "ROLLED_BACK"].includes(w.status)).length,
       },
       growth: {
         active_campaigns: campaigns.filter((c) => c.status === "RUNNING").length,
-        active_journeys: 0,
+        active_journeys: db.getJourneys(tenantId).filter((j) => j.status === "ACTIVE").length,
         active_experiments: experiments.filter((e) => e.status === "RUNNING").length,
-        customer_acquisition_cost_bdt: 350,
-        repeat_purchase_rate: 28.5,
+        customer_acquisition_cost_bdt: null, // no acquisition spend recorded (was a literal 350)
+        repeat_purchase_rate: buyers > 0 ? Math.round((repeaters / buyers) * 1000) / 10 : null,
       },
       intelligence: {
         active_forecasts: db.data.forecast_runs?.filter((f) => f.tenant_id === tenantId).length || 0,
@@ -117,10 +123,10 @@ export class UnifiedContextService {
    */
   detectOpportunities(context: UnifiedCommerceContext): string[] {
     const opportunities: string[] = [...context.detected_opportunities];
-    if (context.growth.repeat_purchase_rate < 30) {
+    if (context.growth.repeat_purchase_rate !== null && context.growth.repeat_purchase_rate < 30) {
       opportunities.push("Repeat purchase rate below 30% — retention campaign opportunity");
     }
-    if (context.commerce.conversion_rate < 3) {
+    if (context.commerce.conversion_rate !== null && context.commerce.conversion_rate < 3) {
       opportunities.push("Conversion rate below 3% — checkout optimization opportunity");
     }
     return opportunities;

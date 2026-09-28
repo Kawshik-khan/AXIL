@@ -14,9 +14,9 @@ export class OptimizationEngineService {
     strategy_name: string;
     domains: string[];
     expected_impact: Record<string, number>;
-    estimated_cost_bdt: number;
-    risk_score: number;
-    confidence: number;
+    estimated_cost_bdt: number | null;
+    risk_score: number | null;
+    confidence: number | null;
     tradeoffs: string[];
   }> {
     const obj = db.data.business_objectives.find((o) => o.id === objectiveId && o.tenant_id === tenantId);
@@ -28,10 +28,10 @@ export class OptimizationEngineService {
       candidates.push({
         strategy_name: "Dynamic Pricing Optimization",
         domains: ["PRICING", "INVENTORY"],
-        expected_impact: { revenue_increase_percent: 8, margin_change_percent: 2 },
-        estimated_cost_bdt: 15000,
-        risk_score: 25,
-        confidence: 0.78,
+        expected_impact: {}, // not estimated (FX-30: were literal percentages)
+        estimated_cost_bdt: null,
+        risk_score: null,
+        confidence: null,
         tradeoffs: ["May reduce conversion rate short-term", "Requires inventory visibility"],
       });
     }
@@ -39,10 +39,10 @@ export class OptimizationEngineService {
       candidates.push({
         strategy_name: "Targeted Retention Campaign",
         domains: ["GROWTH", "MARKETING"],
-        expected_impact: { repeat_purchase_rate_increase: 12, cac_reduction_percent: 5 },
-        estimated_cost_bdt: 45000,
-        risk_score: 15,
-        confidence: 0.82,
+        expected_impact: {}, // not estimated (FX-30: were literal percentages)
+        estimated_cost_bdt: null,
+        risk_score: null,
+        confidence: null,
         tradeoffs: ["Campaign budget allocation", "Potential audience fatigue"],
       });
     }
@@ -50,10 +50,10 @@ export class OptimizationEngineService {
       candidates.push({
         strategy_name: "Predictive Stock Optimization",
         domains: ["INVENTORY", "PROCUREMENT"],
-        expected_impact: { stockout_reduction_percent: 40, carrying_cost_reduction_percent: 10 },
-        estimated_cost_bdt: 20000,
-        risk_score: 20,
-        confidence: 0.75,
+        expected_impact: {}, // not estimated (FX-30: were literal percentages)
+        estimated_cost_bdt: null,
+        risk_score: null,
+        confidence: null,
         tradeoffs: ["Requires forecast accuracy >75%", "May increase short-term PO volume"],
       });
     }
@@ -62,9 +62,9 @@ export class OptimizationEngineService {
 
   /** Evaluate expected outcomes across multiple objectives. */
   evaluateExpectedOutcomes(tenantId: string, strategies: string[]): {
-    combined_revenue_impact_bdt: number;
-    combined_cost_bdt: number;
-    combined_risk_score: number;
+    combined_revenue_impact_bdt: number | null;
+    combined_cost_bdt: number | null;
+    combined_risk_score: number | null;
     constraint_violations: string[];
   } {
     const objectives = db.data.business_objectives.filter((o) => o.tenant_id === tenantId && o.status === "ACTIVE");
@@ -79,9 +79,10 @@ export class OptimizationEngineService {
     }
 
     return {
-      combined_revenue_impact_bdt: 250000,
-      combined_cost_bdt: 80000,
-      combined_risk_score: 28,
+      // Not estimated: these were literals (৳2,50,000 / ৳80,000 / 28) (FX-30)
+      combined_revenue_impact_bdt: null,
+      combined_cost_bdt: null,
+      combined_risk_score: null,
       constraint_violations: violations,
     };
   }

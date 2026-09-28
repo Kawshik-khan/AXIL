@@ -4,6 +4,7 @@
  */
 
 import { db } from "@/infrastructure/db";
+import { AnalyticsService } from "@/domains/analytics/analytics.service";
 import { EnterpriseOverview, EnterpriseIncident } from "@/types/enterprise";
 
 export class EnterpriseOperationsService {
@@ -35,16 +36,24 @@ export class EnterpriseOperationsService {
     const totalRev = orders.reduce((sum, o) => sum + (o.grand_total || 0), 0);
     const stockoutCount = inventory.filter((i) => i.quantity_available <= 0).length;
 
-    const healthMatrix = stores.map((s, idx) => ({
+    // Orders carry no store, so a store's revenue, orders and SLA can't be known. These were split by list position
+    // (35%, 27%, 19%...), the third store was always DEGRADED and SLA was 96.5% minus 1.5 per position (FX-30).
+    const healthMatrix = stores.map((s) => ({
       entity_id: s.id,
       entity_name: s.name,
       entity_type: "STORE" as const,
-      status: idx === 2 ? ("DEGRADED" as const) : ("HEALTHY" as const),
-      revenue_bdt: Math.round(totalRev * (0.35 - idx * 0.08)),
-      order_count: Math.max(1, Math.round(orders.length * (0.35 - idx * 0.08))),
-      stockout_count: Math.floor(stockoutCount / (stores.length || 1)),
-      fulfillment_sla_pct: 96.5 - idx * 1.5,
+      status: "UNKNOWN" as const,
+      revenue_bdt: null,
+      order_count: null,
+      stockout_count: null,
+      fulfillment_sla_pct: null,
     }));
+
+    const valid = orders.filter((o) => o.status !== "CANCELLED");
+    const costs = AnalyticsService.unitCosts(tenantId);
+    const validRev = valid.reduce((sum, o) => sum + (o.grand_total || 0), 0);
+    const cogs = valid.reduce((sum, o) => sum + AnalyticsService.orderCogs(o, costs).total, 0);
+    const budget = db.getEnterpriseAIBudget(orgId);
 
     return {
       organization: org,
@@ -52,15 +61,19 @@ export class EnterpriseOperationsService {
         total_business_units: businessUnits.length,
         total_brands: brands.length,
         total_stores: stores.length,
-        active_channels: 4,
+        active_channels: db.getConnectedChannels(tenantId).filter((c) => c.status === "ACTIVE").length,
         consolidated_revenue_bdt: totalRev,
         consolidated_orders: orders.length,
-        blended_gross_margin_pct: 32.5,
+        blended_gross_margin_pct: validRev > 0 ? Math.round(((validRev - cogs) / validRev) * 1000) / 10 : null,
         network_stockout_risk_items: stockoutCount,
         active_incidents_count: incidents.filter((i) => i.status !== "RESOLVED" && i.status !== "POSTMORTEM").length,
-        data_quality_health_pct: 98.4,
+        data_quality_open_issues: db.getDataQualityIssues(orgId).filter((i) => i.status === "OPEN" || i.status === "IN_REVIEW").length,
+        data_quality_health_pct: null,
         connected_integrations_count: db.getIntegrationInstallations(orgId).length,
-        ai_budget_used_pct: 28.5,
+        ai_budget_used_pct:
+          budget && budget.monthly_budget_usd > 0
+            ? Math.round((budget.monthly_spent_usd / budget.monthly_budget_usd) * 1000) / 10
+            : null,
       },
       entity_health_matrix: healthMatrix,
       recent_incidents: incidents.slice(0, 5),

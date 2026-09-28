@@ -541,7 +541,7 @@ export class AnalyticsService {
   }
 
   /** Unit cost per variant where one is recorded (variant cost price, else product cost price). */
-  private static unitCosts(tenantId: string): Map<string, number> {
+  public static unitCosts(tenantId: string): Map<string, number> {
     const productsById = new Map(db.getAllProducts(tenantId).map((p) => [p.id, p])); // O(V + P) (FX-23)
     const costs = new Map<string, number>();
     for (const v of db.getAllProductVariants(tenantId)) {
@@ -553,7 +553,7 @@ export class AnalyticsService {
   }
 
   /** COGS of one order, and how much of it is estimated with COGS_FALLBACK_RATIO. */
-  private static orderCogs(order: Order, costs: Map<string, number>): { total: number; estimated: number } {
+  public static orderCogs(order: Order, costs: Map<string, number>): { total: number; estimated: number } {
     if (!order.items || order.items.length === 0) {
       const estimate = order.subtotal * COGS_FALLBACK_RATIO;
       return { total: estimate, estimated: estimate };
