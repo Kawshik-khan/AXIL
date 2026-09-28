@@ -1,37 +1,52 @@
 /**
  * CommerceOS Phase 9: Enterprise Analytics & Cross-Entity BI Service
  * Multi-store, multi-brand, business unit, and regional analytics with drill-down and roll-up.
+ *
+ * Orders carry no store, brand or business unit, so per-entity figures can't be measured yet. This used to split the
+ * workspace's revenue evenly across stores (at least one order each), give stores an SLA of 95.5% minus 1.2 per
+ * position, and report fixed channel (45/35/12/8%) and regional (65/20/10/5%) shares (FX-30). Now:
+ * - entities list the stores in the caller's scope (N11) with null figures;
+ * - organization totals, channel and regional sums are real, from the workspace's orders, but only for callers with
+ *   organization-wide scope: a member scoped to some stores can't be shown workspace-wide revenue, and it can't be
+ *   narrowed to their stores, so those figures are null for them.
  */
 
 import { db } from "@/infrastructure/db";
 import { enterpriseDataAccessService } from "./enterprise-data-access.service";
 import { EnterpriseUserRecord } from "@/types/enterprise";
+import { channelOfOrder } from "@/lib/sales-channel";
 
 export interface EntityAnalyticsSummary {
   entity_id: string;
   entity_name: string;
   entity_type: "STORE" | "BRAND" | "BUSINESS_UNIT";
-  revenue_bdt: number;
-  orders_count: number;
-  aov_bdt: number;
-  active_skus_count: number;
-  delivery_sla_pct: number;
+  revenue_bdt: number | null;
+  orders_count: number | null;
+  aov_bdt: number | null;
+  active_skus_count: number | null;
+  delivery_sla_pct: number | null;
 }
 
 export interface ConsolidatedEnterpriseAnalytics {
   organization_id: string;
-  total_revenue_bdt: number;
-  total_orders_count: number;
-  blended_aov_bdt: number;
+  /** Null for callers without organization-wide scope. */
+  total_revenue_bdt: number | null;
+  total_orders_count: number | null;
+  blended_aov_bdt: number | null;
   entities: EntityAnalyticsSummary[];
+  /** NOT_MEASURED until orders are attributed to stores. */
+  entity_data_status: "MEASURED" | "NOT_MEASURED";
+  /** Revenue by sales channel (BDT); empty for callers without organization-wide scope. */
   channel_distribution: Record<string, number>;
+  /** Revenue by delivery division (BDT); orders without one count as "Unknown". */
   regional_distribution: Record<string, number>;
+  scope: "ORGANIZATION" | "PARTIAL";
   generated_at: string;
 }
 
 export class EnterpriseAnalyticsService {
   /**
-   * Generates consolidated analytics scoped to authorized entities
+   * Consolidated analytics for the caller's scope
    */
   public getConsolidatedAnalytics(
     orgId: string,
@@ -39,57 +54,55 @@ export class EnterpriseAnalyticsService {
     tenantId: string
   ): ConsolidatedEnterpriseAnalytics {
     const authorizedStores = enterpriseDataAccessService.getAuthorizedStores(caller);
-    const orders = db.getAllOrders(tenantId, { hydrate: true }).filter((o) => o.status !== "CANCELLED");
-    const shipments = db.getShipments(tenantId);
-    const inventory = db.getInventory(tenantId);
+    const entities: EntityAnalyticsSummary[] = authorizedStores.map((store) => ({
+      entity_id: store.id,
+      entity_name: store.name,
+      entity_type: "STORE",
+      revenue_bdt: null,
+      orders_count: null,
+      aov_bdt: null,
+      active_skus_count: null,
+      delivery_sla_pct: null,
+    }));
 
-    // Calculate baseline totals
-    const totalRevenue = orders.reduce((sum, o) => sum + (o.grand_total || 0), 0);
-    const totalOrders = orders.length;
-    const aov = totalOrders > 0 ? Math.round(totalRevenue / totalOrders) : 0;
+    const base = {
+      organization_id: orgId,
+      entities,
+      entity_data_status: "NOT_MEASURED" as const,
+      generated_at: new Date().toISOString(),
+    };
 
-    // Distribute among authorized stores
-    const entitySummaries: EntityAnalyticsSummary[] = authorizedStores.map((store, index) => {
-      // Split revenue deterministically based on store index / weight for demo/testing
-      const storeShare = authorizedStores.length > 0 ? 1 / authorizedStores.length : 1;
-      const storeRev = Math.round(totalRevenue * storeShare);
-      const storeOrd = Math.max(1, Math.round(totalOrders * storeShare));
-
+    if (!caller.assigned_scope.all_access) {
       return {
-        entity_id: store.id,
-        entity_name: store.name,
-        entity_type: "STORE",
-        revenue_bdt: storeRev,
-        orders_count: storeOrd,
-        aov_bdt: storeOrd > 0 ? Math.round(storeRev / storeOrd) : 0,
-        active_skus_count: Math.max(10, Math.round(inventory.length / (authorizedStores.length || 1))),
-        delivery_sla_pct: 95.5 - index * 1.2,
+        ...base,
+        total_revenue_bdt: null,
+        total_orders_count: null,
+        blended_aov_bdt: null,
+        channel_distribution: {},
+        regional_distribution: {},
+        scope: "PARTIAL",
       };
-    });
+    }
 
-    const channelDist: Record<string, number> = {
-      WEBSITE: Math.round(totalRevenue * 0.45),
-      FACEBOOK: Math.round(totalRevenue * 0.35),
-      WHATSAPP: Math.round(totalRevenue * 0.12),
-      DARAZ: Math.round(totalRevenue * 0.08),
-    };
-
-    const regionalDist: Record<string, number> = {
-      Dhaka: Math.round(totalRevenue * 0.65),
-      Chittagong: Math.round(totalRevenue * 0.2),
-      Sylhet: Math.round(totalRevenue * 0.1),
-      Others: Math.round(totalRevenue * 0.05),
-    };
+    const orders = db.getAllOrders(tenantId).filter((o) => o.status !== "CANCELLED");
+    const totalRevenue = orders.reduce((sum, o) => sum + (o.grand_total || 0), 0);
+    const channelDist: Record<string, number> = {};
+    const regionalDist: Record<string, number> = {};
+    for (const o of orders) {
+      const channel = channelOfOrder(o);
+      channelDist[channel] = (channelDist[channel] ?? 0) + (o.grand_total || 0);
+      const region = o.shipping_address_snapshot?.division?.trim() || "Unknown";
+      regionalDist[region] = (regionalDist[region] ?? 0) + (o.grand_total || 0);
+    }
 
     return {
-      organization_id: orgId,
+      ...base,
       total_revenue_bdt: totalRevenue,
-      total_orders_count: totalOrders,
-      blended_aov_bdt: aov,
-      entities: entitySummaries,
+      total_orders_count: orders.length,
+      blended_aov_bdt: orders.length > 0 ? Math.round(totalRevenue / orders.length) : null,
       channel_distribution: channelDist,
       regional_distribution: regionalDist,
-      generated_at: new Date().toISOString(),
+      scope: "ORGANIZATION",
     };
   }
 }

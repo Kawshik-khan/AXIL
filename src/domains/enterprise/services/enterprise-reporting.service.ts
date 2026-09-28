@@ -38,7 +38,7 @@ export class EnterpriseReportingService {
       entity_scope: { organization_id: orgId, all_access: true },
       format: params.format || "CSV",
       schedule: params.schedule || "WEEKLY",
-      recipient_emails: params.recipient_emails || ["executives@commerceos.io"],
+      recipient_emails: params.recipient_emails ?? [], // no invented recipients (FX-31)
       created_at: new Date().toISOString(),
     };
 
@@ -57,9 +57,9 @@ export class EnterpriseReportingService {
     const analytics = enterpriseAnalyticsService.getConsolidatedAnalytics(orgId, caller, tenantId);
 
     const summaryMetrics: Record<string, number | string> = {
-      total_revenue_bdt: analytics.total_revenue_bdt,
-      total_orders_count: analytics.total_orders_count,
-      blended_aov_bdt: analytics.blended_aov_bdt,
+      total_revenue_bdt: analytics.total_revenue_bdt ?? "not measured",
+      total_orders_count: analytics.total_orders_count ?? "not measured",
+      blended_aov_bdt: analytics.blended_aov_bdt ?? "not measured",
       reporting_stores_count: analytics.entities.length,
     };
 
@@ -68,7 +68,8 @@ export class EnterpriseReportingService {
     const csvRows = analytics.entities
       .map(
         (e) =>
-          `"${e.entity_id}","${e.entity_name}",${e.revenue_bdt},${e.orders_count},${e.aov_bdt},${e.delivery_sla_pct}%`
+          // Per-store figures aren't measured yet (orders carry no store): empty cells, not invented numbers (FX-30)
+          `"${e.entity_id}","${e.entity_name}",${e.revenue_bdt ?? ""},${e.orders_count ?? ""},${e.aov_bdt ?? ""},${e.delivery_sla_pct != null ? `${e.delivery_sla_pct}%` : ""}`
       )
       .join("\n");
     const exportCsv = csvHeader + csvRows;

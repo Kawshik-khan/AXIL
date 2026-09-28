@@ -115,15 +115,15 @@ export default function EnterpriseBenchmarksPage() {
         <div className={`${styles.col4} ${styles.statCard}`}>
           <div className={styles.statLabel}>Cohort Average</div>
           <div className={styles.statValue}>
-            {benchmark?.cohort_average ? benchmark.cohort_average.toLocaleString() : "—"}
+            {benchmark?.cohort_average != null ? benchmark.cohort_average.toLocaleString() : "—"}
           </div>
           <div className={styles.statMeta}>Cross-entity cohort mean baseline</div>
         </div>
 
         <div className={`${styles.col4} ${styles.statCard}`}>
           <div className={styles.statLabel}>Median Benchmark (P50)</div>
-          <div className={styles.statValue} style={{ color: "#c7f900" }}>
-            {benchmark?.cohort_median ? benchmark.cohort_median.toLocaleString() : "—"}
+          <div className={styles.statValue} style={{ color: "var(--color-lime-hover)" }}>
+            {benchmark?.cohort_median != null ? benchmark.cohort_median.toLocaleString() : "—"}
           </div>
           <div className={styles.statMeta}>Network central median performance</div>
         </div>
@@ -134,7 +134,11 @@ export default function EnterpriseBenchmarksPage() {
             {benchmark?.population_count ? `${benchmark.population_count} entities` : "—"}
           </div>
           <div className={styles.statMeta}>
-            {benchmark?.is_statistically_significant ? "Statistically valid sample" : "Small cohort sample"}
+            {benchmark?.data_status === "NOT_MEASURED"
+              ? "Not measured"
+              : benchmark?.is_statistically_significant
+              ? "Statistically valid sample"
+              : "Small cohort sample"}
           </div>
         </div>
       </div>
@@ -149,6 +153,9 @@ export default function EnterpriseBenchmarksPage() {
             </div>
           </div>
 
+          {benchmark?.limitations_disclosure && (
+            <p style={{ fontSize: 13, color: "var(--color-text-secondary)", margin: "0 0 12px" }}>{benchmark.limitations_disclosure}</p>
+          )}
           <div style={{ overflowX: "auto" }}>
             <table className={styles.matrixTable}>
               <thead>
@@ -165,15 +172,20 @@ export default function EnterpriseBenchmarksPage() {
                 {benchmark?.items && benchmark.items.length > 0 ? (
                   benchmark.items.map((item) => (
                     <tr key={item.entity_id}>
-                      <td style={{ fontWeight: 800, color: item.rank === 1 ? "#c7f900" : "#ffffff" }}>
-                        #{item.rank}
+                      <td style={{ fontWeight: 800, color: item.rank === 1 ? "var(--color-lime-hover)" : "var(--color-text-primary)" }}>
+                        {item.rank != null ? `#${item.rank}` : "—"}
                       </td>
-                      <td style={{ fontWeight: 600, color: "#ffffff" }}>{item.entity_name}</td>
-                      <td>{item.value.toLocaleString()}</td>
+                      <td style={{ fontWeight: 600, color: "var(--color-text-primary)" }}>{item.entity_name}</td>
+                      <td>{item.value != null ? item.value.toLocaleString() : "—"}</td>
                       <td>
-                        <span style={{ fontWeight: 700, color: "#c7f900" }}>{item.percentile}th</span>
+                        <span style={{ fontWeight: 700, color: "var(--color-lime-hover)" }}>
+                          {item.percentile != null ? `${item.percentile}th` : "—"}
+                        </span>
                       </td>
                       <td>
+                        {item.percentile == null ? (
+                          "—"
+                        ) : (
                         <span
                           className={
                             item.percentile >= 70
@@ -189,10 +201,22 @@ export default function EnterpriseBenchmarksPage() {
                             ? "Median Tier"
                             : "Uplift Required"}
                         </span>
+                        )}
                       </td>
-                      <td style={{ fontSize: 12, color: item.variance_from_average_pct >= 0 ? "#c7f900" : "#f87171" }}>
-                        {item.variance_from_average_pct > 0 ? "+" : ""}
-                        {item.variance_from_average_pct}% vs average
+                      <td
+                        style={{
+                          fontSize: 12,
+                          color:
+                            item.variance_from_average_pct == null
+                              ? "var(--color-text-muted)"
+                              : item.variance_from_average_pct >= 0
+                              ? "var(--color-lime-hover)"
+                              : "var(--color-danger)",
+                        }}
+                      >
+                        {item.variance_from_average_pct == null
+                          ? "—"
+                          : `${item.variance_from_average_pct > 0 ? "+" : ""}${item.variance_from_average_pct}% vs average`}
                       </td>
                     </tr>
                   ))

@@ -70,11 +70,12 @@ export class EnterpriseWorkflowsService {
   ): Promise<{
     status: "COMPLETED";
     benchmarkTitle: string;
-    cohortAverage: number;
-    leaderEntity: string;
+    cohortAverage: number | null;
+    /** Null while the benchmark is NOT_MEASURED: listing order isn't a ranking. */
+    leaderEntity: string | null;
   }> {
     const benchmark = enterpriseBenchmarkingService.generateStoreBenchmark(orgId, metricKey, caller, tenantId);
-    const leader = benchmark.items.length > 0 ? benchmark.items[0].entity_name : "N/A";
+    const leader = benchmark.items.find((i) => i.rank === 1)?.entity_name ?? null;
 
     return {
       status: "COMPLETED",

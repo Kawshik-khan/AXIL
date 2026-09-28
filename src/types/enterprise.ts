@@ -252,10 +252,11 @@ export interface BenchmarkComparisonItem {
   entity_name: string;
   entity_type: EntityType;
   metric_key: string;
-  value: number;
-  rank: number;
-  percentile: number;
-  variance_from_average_pct: number;
+  /** Null until orders are attributed to stores and brands (FX-30/N11): the values used to be invented per position. */
+  value: number | null;
+  rank: number | null;
+  percentile: number | null;
+  variance_from_average_pct: number | null;
 }
 
 export interface EnterpriseBenchmark {
@@ -267,8 +268,10 @@ export interface EnterpriseBenchmark {
   population_count: number;
   time_period: string;
   items: BenchmarkComparisonItem[];
-  cohort_average: number;
-  cohort_median: number;
+  cohort_average: number | null;
+  cohort_median: number | null;
+  /** NOT_MEASURED: the entities in scope are listed, but there is no per-entity data to compare. */
+  data_status: "MEASURED" | "NOT_MEASURED";
   limitations_disclosure: string;
   is_statistically_significant: boolean;
   generated_at: string;

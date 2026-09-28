@@ -265,9 +265,12 @@ export async function runEnterpriseTests() {
     assert.strictEqual(benchmark.organization_id, orgId);
     assert.strictEqual(benchmark.benchmark_type, "STORE_VS_STORE");
     assert.strictEqual(benchmark.items.length, 2);
-    assert.strictEqual(benchmark.items[0].rank, 1);
-    assert(benchmark.cohort_average > 0);
-    assert(benchmark.cohort_median > 0);
+    // Orders carry no store: the stores in scope are listed, with no invented values or ranks (FX-30)
+    assert.strictEqual(benchmark.data_status, "NOT_MEASURED");
+    assert.ok(benchmark.items.every((i) => i.value === null && i.rank === null && i.percentile === null));
+    assert.strictEqual(benchmark.cohort_average, null);
+    assert.strictEqual(benchmark.cohort_median, null);
+    assert.strictEqual(benchmark.is_statistically_significant, false);
 
     const brandBench = enterpriseBenchmarkingService.generateBrandBenchmark(
       orgId,

@@ -1,4 +1,4 @@
-import { resolveOrganizationId } from "@/domains/enterprise/organization-access";
+import { resolveOrganizationId, resolveEnterpriseCaller } from "@/domains/enterprise/organization-access";
 /**
  * CommerceOS Phase 9: Enterprise Intelligence & Ecosystem Tools
  * Implements the 16 authoritative enterprise tools grounded in domain services.
@@ -27,19 +27,9 @@ import { enterpriseInventoryService } from "@/domains/enterprise/services/enterp
 import { enterpriseProcurementService } from "@/domains/enterprise/services/enterprise-procurement.service";
 import { EnterpriseUserRecord } from "@/types/enterprise";
 
+// The caller's real enterprise role and scope, not a synthetic all-access admin (N11)
 function buildCaller(context: RequestContext, organizationId: string): EnterpriseUserRecord {
-  return {
-    id: context.user?.id || "usr_system",
-    organization_id: organizationId,
-    user_id: context.user?.id || "usr_system",
-    name: context.user?.name || "Enterprise User",
-    email: context.user?.email || "user@enterprise.com",
-    enterprise_role: "ENTERPRISE_ADMIN",
-    assigned_scope: { organization_id: organizationId, all_access: true },
-    status: "ACTIVE",
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  };
+  return resolveEnterpriseCaller(context, organizationId);
 }
 
 // ============================================================

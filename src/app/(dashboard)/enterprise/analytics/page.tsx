@@ -182,6 +182,11 @@ export default function EnterpriseAnalyticsPage() {
               Store-Level Performance Breakdown
             </div>
           </div>
+          {analytics?.entity_data_status === "NOT_MEASURED" && (
+            <p style={{ fontSize: 13, color: "var(--color-text-secondary)", margin: "0 0 12px" }}>
+              Not measured: orders aren&apos;t attributed to stores yet, so per-store figures are blank.
+            </p>
+          )}
 
           <div style={{ overflowX: "auto" }}>
             <table className={styles.matrixTable}>
@@ -199,19 +204,23 @@ export default function EnterpriseAnalyticsPage() {
               <tbody>
                 {analytics?.entities && analytics.entities.length > 0 ? (
                   analytics.entities.map((ent) => {
+                    // Per-store figures are null until orders carry a store; shown as "—", not invented (FX-30)
                     const sharePct =
-                      analytics.total_revenue_bdt > 0
+                      ent.revenue_bdt != null && analytics.total_revenue_bdt
                         ? Math.round((ent.revenue_bdt / analytics.total_revenue_bdt) * 100)
-                        : 0;
+                        : null;
                     return (
                       <tr key={ent.entity_id}>
-                        <td style={{ fontWeight: 600, color: "#ffffff" }}>{ent.entity_name}</td>
-                        <td>৳{ent.revenue_bdt.toLocaleString()}</td>
-                        <td>{ent.orders_count}</td>
-                        <td>৳{ent.aov_bdt.toLocaleString()}</td>
-                        <td>{ent.active_skus_count} SKUs</td>
-                        <td>{ent.delivery_sla_pct}%</td>
+                        <td style={{ fontWeight: 600, color: "var(--color-text-primary)" }}>{ent.entity_name}</td>
+                        <td>{ent.revenue_bdt != null ? `৳${ent.revenue_bdt.toLocaleString()}` : "—"}</td>
+                        <td>{ent.orders_count ?? "—"}</td>
+                        <td>{ent.aov_bdt != null ? `৳${ent.aov_bdt.toLocaleString()}` : "—"}</td>
+                        <td>{ent.active_skus_count != null ? `${ent.active_skus_count} SKUs` : "—"}</td>
+                        <td>{ent.delivery_sla_pct != null ? `${ent.delivery_sla_pct}%` : "—"}</td>
                         <td>
+                          {sharePct == null ? (
+                            "—"
+                          ) : (
                           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                             <div
                               style={{
@@ -226,12 +235,13 @@ export default function EnterpriseAnalyticsPage() {
                                 style={{
                                   width: `${sharePct}%`,
                                   height: "100%",
-                                  background: "#c7f900",
+                                  background: "var(--color-lime-hover)",
                                 }}
                               />
                             </div>
-                            <span style={{ fontSize: 11, color: "#9ca3af" }}>{sharePct}%</span>
+                            <span style={{ fontSize: 11, color: "var(--color-text-muted)" }}>{sharePct}%</span>
                           </div>
+                          )}
                         </td>
                       </tr>
                     );

@@ -58,7 +58,8 @@ export class EnterpriseFinanceService {
     total_refunds_bdt: number;
     total_net_revenue_bdt: number;
     currency: string;
-    store_breakdown: Array<{ store_id: string; revenue_bdt: number }>;
+    /** revenue_bdt is null: orders aren't attributed to stores yet (it used to split gross 40/30/20% by position) (FX-30). */
+    store_breakdown: Array<{ store_id: string; revenue_bdt: number | null }>;
   } {
     const orders = db.getAllOrders(tenantId, { hydrate: true });
     const gross = orders.reduce((sum, o) => sum + (o.grand_total || 0), 0);
@@ -66,10 +67,7 @@ export class EnterpriseFinanceService {
     const net = gross - refunds;
 
     const stores = db.getEnterpriseStores(orgId);
-    const storeBreakdown = stores.map((s, idx) => ({
-      store_id: s.id,
-      revenue_bdt: Math.round(gross * (0.4 - idx * 0.1)),
-    }));
+    const storeBreakdown = stores.map((s) => ({ store_id: s.id, revenue_bdt: null }));
 
     return {
       total_gross_revenue_bdt: gross,
