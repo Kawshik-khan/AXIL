@@ -3,11 +3,11 @@
 > **Status:** TARGET. No Dockerfile, Kubernetes, or CI exists; only `n8n/docker-compose.yml`. Env vars: see the real `.env.example` (Neon, Pinecone, Upstash).
 
 > **Current constraint — exactly one replica (FIX_IMPLEMENTATION_PLAN FX-24, decision D3).** Until the Postgres cutover (FX-45), data lives in one JSON file, `.data/commerceos.json`, owned by one process:
-> - At start the app takes `.data/commerceos.lock`. A second process on the same host (another `next dev`, a seed script, a second replica) is refused, and its `/health/ready` answers 503.
+> - At start the app takes `.data/commerceos.lock`. A second process (another `next dev`, a seed script, a second replica on this or another host) refuses to start with "CommerceOS refused to start". Every flush re-checks the lock and stops writing if it no longer names this process. `COMMERCEOS_FORCE_LOCK=1` takes over a lock left by a host that is certainly gone.
 > - Writes are coalesced and flushed asynchronously every `PERSIST_DEBOUNCE_MS` (default 250 ms), with an atomic rename. A crash can lose at most the last window. SIGTERM/SIGINT flush before exit.
-> - `/health/ready` reports persistence health, the last write error, data-dir writability and lock ownership. Route traffic only when it returns 200.
+> - `/health/ready` reports persistence health, data-dir writability and whether this process holds the lock, as booleans and a reason code (details go to the log). Route traffic only when it returns 200.
 > - Rate limits and MFA replay state are held in process memory, which is another reason for one replica.
-> - Set `replicas: 1` and a `Recreate` (not rolling) update strategy until FX-45. Two containers on one volume would corrupt each other's data; the lock only protects processes on the same host.
+> - Set `replicas: 1` and a `Recreate` (not rolling) update strategy until FX-45. The lock refuses a second container on the same volume, but its identity is pid + host name, so containers must not share a fixed host name.
 
 ## 1. Containerization & Architecture Topology
 
