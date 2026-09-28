@@ -9,6 +9,7 @@ import { ToolDefinition, ToolRiskLevel } from "@/types/ai";
 import { RequestContext } from "@/lib/context";
 import { PERMISSIONS } from "@/lib/permissions";
 import { db } from "@/infrastructure/db";
+import { PricingService } from "@/domains/pricing/pricing.service";
 
 const GetShipmentStatusInputSchema = z.object({
   tracking_code: z.string().describe("Courier tracking code or consignment ID"),
@@ -109,9 +110,10 @@ export class GetShippingEstimateTool implements IAgentTool<z.infer<typeof GetShi
   }
 
   public async execute(context: RequestContext, input: z.infer<typeof GetShippingEstimateInputSchema>) {
-    const settings = context.tenant.settings || {};
-    const chargeInside = Number(settings.delivery_charge_inside_dhaka || 60);
-    const chargeOutside = Number(settings.delivery_charge_outside_dhaka || 120);
+    // `|| 60` turned a free-delivery setting of 0 into 60; getDeliveryFees only defaults when unset (FX-31)
+    const fees = PricingService.getDeliveryFees(context.tenant.id);
+    const chargeInside = fees.inside_dhaka_bdt;
+    const chargeOutside = fees.outside_dhaka_bdt;
 
     const isInside = input.delivery_zone === "INSIDE_DHAKA";
     return {
@@ -119,7 +121,6 @@ export class GetShippingEstimateTool implements IAgentTool<z.infer<typeof GetShi
       delivery_charge: isInside ? chargeInside : chargeOutside,
       currency: "BDT",
       estimated_days: isInside ? "1-2 business days" : "2-4 business days",
-      courier_partner: "Steadfast Courier / Pathao",
     };
   }
 }

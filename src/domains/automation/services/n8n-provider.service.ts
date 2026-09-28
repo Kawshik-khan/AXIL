@@ -149,7 +149,6 @@ export class N8nProviderService {
       tenant_id: params.tenantId,
       automation_id: params.automationId,
       workflow_version_id: params.workflowVersionId,
-      n8n_execution_id: `n8n_exec_${Date.now()}`,
       status: "RUNNING",
       execution_mode: executionMode,
       started_at: new Date(startTime).toISOString(),
@@ -186,69 +185,52 @@ export class N8nProviderService {
         status: "SUCCESS",
         completed_at: new Date().toISOString(),
         duration_ms: duration,
-        output_result_reference: JSON.stringify({ dry_run: true, simulated: true, verified: true }),
+        output_result_reference: JSON.stringify({ dry_run: true, simulated: true }),
       });
 
       return {
         execution: updatedExec,
         success: true,
         statusCode: 200,
-        responseBody: { dry_run: true, verified: true, message: "Dry-run simulation executed successfully" },
+        // n8n was not called; nothing here was verified by n8n (FX-31)
+        responseBody: { dry_run: true, simulated: true, message: "Dry run: n8n was not called." },
       };
     }
 
-    // 5. Real invocation or Mock Local Dispatch
+    // 5. Real invocation. There used to be a "mock" branch here: any localhost or example.com URL (including the
+    // localhost default used when no n8n is configured) returned success without a request (FX-31).
     try {
-      // In production/test runtime: execute fetch with timeout
-      // Prepare standard CommerceOS envelope and propagation headers
       const targetUrl = `${instance.base_url.replace(/\/$/, "")}/webhook/${params.webhookPath.replace(/^\//, "")}`;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), this.REQUEST_TIMEOUT_MS);
 
-      // Simulate robust dispatch if external network is unconfigured
-      let isMockSuccess = false;
-      let mockResponseBody: Record<string, unknown> = {};
-
-      if (targetUrl.includes("localhost") || targetUrl.includes("example.com")) {
-        // Deterministic local mock execution for integration tests
-        isMockSuccess = true;
-        mockResponseBody = {
-          success: true,
-          verified: true,
-          execution_id: executionId,
+      const res = await fetch(targetUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Tenant-ID": params.tenantId,
+          "X-Correlation-ID": params.correlationId,
+          "X-Causation-ID": params.causationId || "",
+          "Idempotency-Key": params.idempotencyKey,
+          "X-Execution-Mode": executionMode,
+        },
+        body: JSON.stringify({
+          event: params.event,
           correlation_id: params.correlationId,
-        };
-      } else {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), this.REQUEST_TIMEOUT_MS);
+          causation_id: params.causationId,
+          idempotency_key: params.idempotencyKey,
+          timestamp: new Date().toISOString(),
+        }),
+        signal: controller.signal,
+      });
 
-        const res = await fetch(targetUrl, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Tenant-ID": params.tenantId,
-            "X-Correlation-ID": params.correlationId,
-            "X-Causation-ID": params.causationId || "",
-            "Idempotency-Key": params.idempotencyKey,
-            "X-Execution-Mode": executionMode,
-          },
-          body: JSON.stringify({
-            event: params.event,
-            correlation_id: params.correlationId,
-            causation_id: params.causationId,
-            idempotency_key: params.idempotencyKey,
-            timestamp: new Date().toISOString(),
-          }),
-          signal: controller.signal,
-        });
+      clearTimeout(timeoutId);
 
-        clearTimeout(timeoutId);
-
-        if (!res.ok) {
-          throw new Error(`n8n responded with HTTP ${res.status}: ${res.statusText}`);
-        }
-
-        mockResponseBody = (await res.json()) as Record<string, unknown>;
-        isMockSuccess = true;
+      if (!res.ok) {
+        throw new Error(`n8n responded with HTTP ${res.status}: ${res.statusText}`);
       }
+
+      const responseBody = (await res.json().catch(() => ({}))) as Record<string, unknown>;
 
       const duration = Date.now() - startTime;
       ProviderCircuitBreakerService.recordSuccess(params.tenantId, "N8N");
@@ -257,21 +239,21 @@ export class N8nProviderService {
         status: "SUCCESS",
         completed_at: new Date().toISOString(),
         duration_ms: duration,
-        metadata: { response: mockResponseBody },
+        metadata: { response: responseBody },
       });
 
       const completedExecution = db.updateAutomationExecution(params.tenantId, executionId, {
         status: "SUCCESS",
         completed_at: new Date().toISOString(),
         duration_ms: duration,
-        output_result_reference: JSON.stringify(mockResponseBody),
+        output_result_reference: JSON.stringify(responseBody),
       });
 
       return {
         execution: completedExecution,
-        success: isMockSuccess,
+        success: true,
         statusCode: 200,
-        responseBody: mockResponseBody,
+        responseBody,
       };
     } catch (err) {
       const duration = Date.now() - startTime;

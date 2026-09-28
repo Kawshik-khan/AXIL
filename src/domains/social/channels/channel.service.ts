@@ -188,7 +188,7 @@ export class ChannelService {
   public static async testChannelHealth(
     context: RequestContext,
     channelId: string
-  ): Promise<{ healthy: boolean; status: ChannelStatus; error?: string }> {
+  ): Promise<{ healthy: boolean; status: ChannelStatus; verified?: boolean; error?: string }> {
     RbacService.assertCan(context, PERMISSIONS.SOCIAL_CHANNEL_READ);
     const channel = await this.getChannelById(context, channelId);
     const adapter = this.getAdapter(channel.type);
@@ -202,6 +202,11 @@ export class ChannelService {
     }
 
     const result = await adapter.validateCredentials(creds);
+    if (result.valid && result.verified === false) {
+      // Credentials have the right shape but weren't checked with the provider (FX-31). Inbound webhooks still work,
+      // so the channel keeps its status; the check just doesn't claim a live connection.
+      return { healthy: false, status: channel.status, verified: false, error: result.error };
+    }
     if (!result.valid) {
       db.updateConnectedChannel(context.tenant.id, channelId, {
         status: "ERROR",

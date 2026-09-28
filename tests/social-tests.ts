@@ -401,7 +401,10 @@ export async function runSocialCommerceTests() {
       idempotency_key: idempotencyKey,
     });
 
-    assert.strictEqual(sentMsg1.status, "SENT");
+    // Meta sending isn't implemented: the message is recorded as FAILED with the reason, never as SENT (FX-31)
+    assert.strictEqual(sentMsg1.status, "FAILED");
+    assert.ok(/not connected|Nothing was sent/.test(sentMsg1.failure_reason ?? ""), sentMsg1.failure_reason);
+    assert.strictEqual(sentMsg1.retry_count, 1, "a non-retryable error isn't retried");
 
     // Verify conversation automation_paused was locked to true because a human responded
     const updatedConv = db.findConversationById(contextA.tenant.id, activeConvA.id);

@@ -9,7 +9,7 @@ import { enterpriseRbacService } from "@/domains/enterprise/services/enterprise-
 import { semanticMetricsService } from "@/domains/enterprise/services/semantic-metrics.service";
 import { enterpriseBenchmarkingService } from "@/domains/enterprise/services/enterprise-benchmarking.service";
 import { enterpriseReportingService } from "@/domains/enterprise/services/enterprise-reporting.service";
-import { integrationHubService } from "@/domains/enterprise/services/integration-hub.service";
+import { integrationHubService, toPublicInstallation } from "@/domains/enterprise/services/integration-hub.service";
 import { developerPlatformService } from "@/domains/enterprise/services/developer-platform.service";
 import { webhookPlatformService } from "@/domains/enterprise/services/webhook-platform.service";
 import { dataGovernanceService } from "@/domains/enterprise/services/data-governance.service";
@@ -328,7 +328,15 @@ export async function runEnterpriseTests() {
     });
 
     assert.strictEqual(installed.provider_id, "prov_sap_s4hana");
-    assert.strictEqual(installed.status, "HEALTHY");
+    // Saved, never checked with SAP; credentials encrypted, not base64 (FX-31)
+    assert.strictEqual(installed.status, "NOT_VERIFIED");
+    assert.strictEqual(installed.last_sync_at, undefined);
+    assert.ok(!Buffer.from(installed.credentials_encrypted, "base64").toString("utf8").includes("sap_test_secret_123"));
+    assert.ok(!("credentials_encrypted" in toPublicInstallation(installed)));
+    await assert.rejects(
+      async () => integrationHubService.triggerProviderSync(orgId, installed.id),
+      (err: Error & { code?: string }) => err.code === "INTEGRATION_NOT_CONFIGURED",
+    );
 
     const syncRecord = await syncEngineService.executeSync({
       organizationId: orgId,
@@ -339,6 +347,8 @@ export async function runEnterpriseTests() {
     });
     assert.strictEqual(syncRecord.status, "COMPLETED");
     assert.strictEqual(syncRecord.entity_type, "ORDERS");
+    // Processing local items doesn't prove the provider connection
+    assert.strictEqual(db.getIntegrationInstallations(orgId).find((i) => i.id === installed.id)?.status, "NOT_VERIFIED");
 
     // Conflict detection and resolution
     const conflictResult = conflictResolutionService.evaluateConflict({
@@ -423,7 +433,11 @@ export async function runEnterpriseTests() {
       payload: { order_id: "ord_9901", amount: 4500 },
     });
     assert(dispatchRecords.length >= 1);
-    assert.strictEqual(dispatchRecords[0].status, "DELIVERED");
+    // Signed and recorded, but no HTTP delivery exists: never "DELIVERED" (FX-31)
+    assert.strictEqual(dispatchRecords[0].status, "NOT_SENT");
+    assert.strictEqual(dispatchRecords[0].http_status, undefined);
+    assert.strictEqual(dispatchRecords[0].duration_ms, null);
+    assert.strictEqual(dispatchRecords[0].signature.length, 64);
   });
 
   // -------------------------------------------------------------

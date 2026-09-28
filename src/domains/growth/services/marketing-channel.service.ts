@@ -1,4 +1,3 @@
-import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 7: Marketing Channel Abstraction & Orchestration Service
  * Integrates WhatsApp, Messenger, Instagram, Web Chat, Email, and Telegram for governed campaign delivery.
@@ -9,6 +8,19 @@ import {
   MarketingChannelType,
   ChannelDeliveryResult,
 } from "@/types/growth";
+
+/**
+ * No marketing channel is integrated yet, so nothing is sent: report NOT_SENT, never a made-up message id and
+ * delivery time (FX-31, non-negotiable 7). Campaign results then show these as failed, not delivered.
+ */
+function notSent(channel: MarketingChannelType, recipientId: string): ChannelDeliveryResult {
+  return {
+    success: false,
+    channel,
+    recipient_id: recipientId,
+    error_message: `CHANNEL_NOT_CONNECTED: ${channel} sending isn't implemented yet. Nothing was sent.`,
+  };
+}
 
 export interface IMarketingChannelAdapter {
   readonly channelType: MarketingChannelType;
@@ -51,13 +63,7 @@ export class WhatsAppMarketingAdapter implements IMarketingChannelAdapter {
       };
     }
 
-    return {
-      success: true,
-      channel: "WHATSAPP",
-      recipient_id: params.recipientId,
-      external_message_id: `wamid.HBgL${Date.now()}`,
-      delivered_at: new Date().toISOString(),
-    };
+    return notSent("WHATSAPP", params.recipientId);
   }
 
   public async sendTemplate(params: {
@@ -86,13 +92,7 @@ export class FacebookMarketingAdapter implements IMarketingChannelAdapter {
     recipientId: string;
     content: string;
   }): Promise<ChannelDeliveryResult> {
-    return {
-      success: true,
-      channel: "FACEBOOK_MESSENGER",
-      recipient_id: params.recipientId,
-      external_message_id: `mid.$${Date.now()}`,
-      delivered_at: new Date().toISOString(),
-    };
+    return notSent("FACEBOOK_MESSENGER", params.recipientId);
   }
 
   public async sendTemplate(params: any): Promise<ChannelDeliveryResult> {
@@ -112,13 +112,7 @@ export class InstagramMarketingAdapter implements IMarketingChannelAdapter {
     recipientId: string;
     content: string;
   }): Promise<ChannelDeliveryResult> {
-    return {
-      success: true,
-      channel: "INSTAGRAM",
-      recipient_id: params.recipientId,
-      external_message_id: `ig_${Date.now()}_${randomSuffix()}`,
-      delivered_at: new Date().toISOString(),
-    };
+    return notSent("INSTAGRAM", params.recipientId);
   }
 
   public async sendTemplate(params: any): Promise<ChannelDeliveryResult> {
@@ -138,13 +132,7 @@ export class WebsiteMarketingAdapter implements IMarketingChannelAdapter {
     recipientId: string;
     content: string;
   }): Promise<ChannelDeliveryResult> {
-    return {
-      success: true,
-      channel: "WEBSITE_CHAT",
-      recipient_id: params.recipientId,
-      external_message_id: `web_${Date.now()}_${randomSuffix()}`,
-      delivered_at: new Date().toISOString(),
-    };
+    return notSent("WEBSITE_CHAT", params.recipientId);
   }
 
   public async sendTemplate(params: any): Promise<ChannelDeliveryResult> {
@@ -173,13 +161,7 @@ export class EmailMarketingAdapter implements IMarketingChannelAdapter {
       };
     }
 
-    return {
-      success: true,
-      channel: "EMAIL",
-      recipient_id: params.recipientId,
-      external_message_id: `email_${Date.now()}_${randomSuffix()}`,
-      delivered_at: new Date().toISOString(),
-    };
+    return notSent("EMAIL", params.recipientId);
   }
 
   public async sendTemplate(params: any): Promise<ChannelDeliveryResult> {
@@ -199,13 +181,7 @@ export class TelegramMarketingAdapter implements IMarketingChannelAdapter {
     recipientId: string;
     content: string;
   }): Promise<ChannelDeliveryResult> {
-    return {
-      success: true,
-      channel: "TELEGRAM",
-      recipient_id: params.recipientId,
-      external_message_id: `tg_${Date.now()}_${randomSuffix()}`,
-      delivered_at: new Date().toISOString(),
-    };
+    return notSent("TELEGRAM", params.recipientId);
   }
 
   public async sendTemplate(params: any): Promise<ChannelDeliveryResult> {

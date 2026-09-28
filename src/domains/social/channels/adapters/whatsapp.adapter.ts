@@ -1,4 +1,4 @@
-import { randomSuffix } from "@/lib/ids";
+import { IntegrationNotConfiguredError } from "@/lib/errors";
 import crypto from "crypto";
 import { ChannelType, NormalizedIncomingMessage } from "@/types/social";
 import {
@@ -173,48 +173,33 @@ export class WhatsAppAdapter implements IChannelProvider {
 
   public async sendTextMessage(
     _credentials: ChannelCredentials,
-    recipientId: string,
-    text: string,
+    _recipientId: string,
+    _text: string,
     _options?: { replyToMessageId?: string; metadata?: Record<string, unknown> }
   ): Promise<SendMessageResult> {
-    const mockId = `wamid.HB_${Date.now()}_${randomSuffix()}`;
-    return {
-      externalMessageId: mockId,
-      status: "SENT",
-      providerTimestamp: new Date().toISOString(),
-      rawResponse: { messages: [{ id: mockId }], recipient: recipientId, text },
-    };
+    // Used to return a made-up message id with status SENT (FX-31, non-negotiable 7)
+    throw new IntegrationNotConfiguredError("WhatsApp messaging", "sending isn't implemented yet");
   }
 
   public async sendMediaMessage(
     _credentials: ChannelCredentials,
-    recipientId: string,
-    mediaType: "IMAGE" | "VIDEO" | "AUDIO" | "FILE",
-    mediaUrl: string,
+    _recipientId: string,
+    _mediaType: "IMAGE" | "VIDEO" | "AUDIO" | "FILE",
+    _mediaUrl: string,
     _options?: { caption?: string; fileName?: string }
   ): Promise<SendMessageResult> {
-    const mockId = `wamid.HB_media_${Date.now()}_${randomSuffix()}`;
-    return {
-      externalMessageId: mockId,
-      status: "SENT",
-      providerTimestamp: new Date().toISOString(),
-      rawResponse: { messages: [{ id: mockId }], recipient: recipientId, media_type: mediaType, url: mediaUrl },
-    };
+    // Used to return a made-up message id with status SENT (FX-31, non-negotiable 7)
+    throw new IntegrationNotConfiguredError("WhatsApp messaging", "sending isn't implemented yet");
   }
 
   public async sendTemplateMessage(
     _credentials: ChannelCredentials,
-    recipientId: string,
-    templateName: string,
-    parameters: Record<string, string>
+    _recipientId: string,
+    _templateName: string,
+    _parameters: Record<string, string>
   ): Promise<SendMessageResult> {
-    const mockId = `wamid.HB_tpl_${Date.now()}_${randomSuffix()}`;
-    return {
-      externalMessageId: mockId,
-      status: "SENT",
-      providerTimestamp: new Date().toISOString(),
-      rawResponse: { messages: [{ id: mockId }], recipient: recipientId, template: templateName, parameters },
-    };
+    // Used to return a made-up message id with status SENT (FX-31, non-negotiable 7)
+    throw new IntegrationNotConfiguredError("WhatsApp messaging", "sending isn't implemented yet");
   }
 
   public async markMessageRead(
@@ -222,26 +207,23 @@ export class WhatsAppAdapter implements IChannelProvider {
     _recipientId: string,
     _messageId?: string
   ): Promise<boolean> {
-    return true;
+    return false; // not sent to the provider (FX-31)
   }
 
   public async getUserProfile(
     _credentials: ChannelCredentials,
     externalUserId: string
   ): Promise<UserProfileResult | null> {
-    return {
-      displayName: `WhatsApp User (+${externalUserId})`,
-      phone: externalUserId.startsWith("+") ? externalUserId : `+${externalUserId}`,
-    };
+    return null; // profiles aren't fetched from the provider yet; no invented names (FX-31)
   }
 
-  public async validateCredentials(credentials: ChannelCredentials): Promise<{ valid: boolean; error?: string }> {
+  public async validateCredentials(credentials: ChannelCredentials): Promise<{ valid: boolean; verified?: boolean; error?: string }> {
     if (!credentials.accessToken && !credentials.apiKey) {
       return { valid: false, error: "System user access token is required for WhatsApp Business Cloud API." };
     }
     if (!credentials.phoneNumberId) {
       return { valid: false, error: "Phone Number ID is required for WhatsApp Business." };
     }
-    return { valid: true };
+    return { valid: true, verified: false, error: "Live validation not implemented; credentials saved but not checked with WhatsApp." };
   }
 }

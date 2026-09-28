@@ -1,4 +1,4 @@
-import { AppError } from "@/lib/errors";
+import { AppError, IntegrationNotConfiguredError } from "@/lib/errors";
 import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 8: Autonomous Courier Operations & Failover Service
@@ -59,12 +59,8 @@ export class CourierOperationsService {
     tenantId: string,
     shipmentExceptionId: string,
     actor: string
-  ): {
-    success: boolean;
-    oldCourier: CourierProviderName;
-    newCourier: CourierProviderName;
-    newShipment: Shipment;
-  } {
+  ): never {
+    void actor;
     const exception = db.getShipmentExceptions(tenantId).find((se) => se.id === shipmentExceptionId);
     if (!exception) throw new AppError("NOT_FOUND", `Shipment exception not found: ${shipmentExceptionId}`, 404);
 
@@ -74,55 +70,12 @@ export class CourierOperationsService {
     const oldCourier = oldShipment.courier_provider;
     const alternateCourier = providerHealthService.getAlternateCourier(tenantId, oldCourier);
 
-    // Cancel old shipment in system
-    db.updateShipmentStatus(tenantId, oldShipment.id, "CANCELLED");
-
-    // Create new shipment with alternate courier
-    const newTracking = `TRK-${alternateCourier.substring(0, 3)}-${Date.now().toString().slice(-8)}`;
-    const newShipmentId = `shp_${Date.now()}_${randomSuffix()}`;
-    const now = new Date().toISOString();
-
-    const replacementShipment: Shipment = {
-      id: newShipmentId,
-      tenant_id: tenantId,
-      order_id: oldShipment.order_id,
-      courier_provider: alternateCourier,
-      consignment_id: `CSG-FAILOVER-${Date.now()}`,
-      tracking_number: newTracking,
-      status: "PENDING",
-      shipping_cost: oldShipment.shipping_cost,
-      shipped_at: now,
-      created_at: now,
-      updated_at: now,
-    };
-
-    const created = db.createShipment(replacementShipment);
-
-    // Mark exception resolved
-    db.updateShipmentException(tenantId, exception.id, {
-      status: "RESOLVED",
-      recovery_action_taken: `Re-dispatched via alternate courier ${alternateCourier} (${newTracking}) due to ${oldCourier} transit exception.`,
-      alternative_courier: alternateCourier,
-      resolved_at: now,
-    });
-
-    db.createAuditLog({
-      id: `aud_failover_${Date.now()}_${randomSuffix()}`,
-      tenant_id: tenantId,
-      actor_user_id: actor,
-      action: "COURIER_FAILOVER_EXECUTED",
-      resource_type: "shipment",
-      resource_id: created.id,
-      metadata: { old_courier: oldCourier, new_courier: alternateCourier, exception_id: exception.id },
-      created_at: now,
-    });
-
-    return {
-      success: true,
-      oldCourier,
-      newCourier: alternateCourier,
-      newShipment: created,
-    };
+    // No courier API is integrated, so the parcel can't be rebooked automatically. This used to cancel the real
+    // shipment, create a booking with an invented tracking number and mark the exception resolved (FX-31).
+    throw new IntegrationNotConfiguredError(
+      `${alternateCourier} booking`,
+      `book the parcel with ${alternateCourier} yourself and record its tracking number; the ${oldCourier} shipment was not changed`
+    );
   }
 }
 

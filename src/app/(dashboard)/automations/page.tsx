@@ -58,6 +58,14 @@ type ActiveTab =
   | "instances"
   | "health";
 
+const ROW: React.CSSProperties = {
+  display: "flex",
+  justifyContent: "space-between",
+  padding: "12px",
+  background: "rgba(255,255,255,0.03)",
+  borderRadius: "8px",
+};
+
 export default function AutomationsHubPage() {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<ActiveTab>("overview");
@@ -479,66 +487,30 @@ export default function AutomationsHubPage() {
               <div className={styles.cardHeader}>
                 <h3 className={styles.cardTitle}>Provider & n8n Health</h3>
               </div>
+              {/* From the providers endpoint. This card used to show fixed HEALTHY/CONNECTED badges for n8n, Steadfast,
+                  Pathao, bKash and "HMAC VERIFIED" whatever the real state was (FX-31). */}
               <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    padding: "12px",
-                    background: "rgba(255,255,255,0.03)",
-                    borderRadius: "8px",
-                  }}
-                >
-                  <span style={{ fontWeight: 600 }}>n8n Cluster</span>
-                  <span className={`${styles.badge} ${styles.badgeActive}`}>HEALTHY</span>
-                </div>
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    padding: "12px",
-                    background: "rgba(255,255,255,0.03)",
-                    borderRadius: "8px",
-                  }}
-                >
-                  <span style={{ fontWeight: 600 }}>Steadfast Courier</span>
-                  <span className={`${styles.badge} ${styles.badgeSuccess}`}>CONNECTED</span>
-                </div>
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    padding: "12px",
-                    background: "rgba(255,255,255,0.03)",
-                    borderRadius: "8px",
-                  }}
-                >
-                  <span style={{ fontWeight: 600 }}>Pathao Courier</span>
-                  <span className={`${styles.badge} ${styles.badgeSuccess}`}>CONNECTED</span>
-                </div>
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    padding: "12px",
-                    background: "rgba(255,255,255,0.03)",
-                    borderRadius: "8px",
-                  }}
-                >
-                  <span style={{ fontWeight: 600 }}>bKash Payment Gateway</span>
-                  <span className={`${styles.badge} ${styles.badgeSuccess}`}>CONNECTED</span>
-                </div>
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    padding: "12px",
-                    background: "rgba(255,255,255,0.03)",
-                    borderRadius: "8px",
-                  }}
-                >
-                  <span style={{ fontWeight: 600 }}>Webhook Gateway</span>
-                  <span className={`${styles.badge} ${styles.badgeActive}`}>HMAC VERIFIED</span>
+                {(providersData?.n8n_instances ?? []).length === 0 ? (
+                  <div style={ROW}>
+                    <span style={{ fontWeight: 600 }}>n8n</span>
+                    <span className={`${styles.badge} ${styles.badgeMuted}`}>NOT CONFIGURED</span>
+                  </div>
+                ) : (
+                  (providersData?.n8n_instances ?? []).map((inst) => (
+                    <div key={inst.id} style={ROW}>
+                      <span style={{ fontWeight: 600 }}>{inst.name}</span>
+                      <span className={`${styles.badge} ${inst.status === "ACTIVE" ? styles.badgeActive : styles.badgeMuted}`}>{inst.status}</span>
+                    </div>
+                  ))
+                )}
+                {Object.entries(providersData?.circuit_breakers ?? {}).map(([key, stat]) => (
+                  <div key={key} style={ROW}>
+                    <span style={{ fontWeight: 600 }}>{key} circuit</span>
+                    <span className={`${styles.badge} ${stat.state === "CLOSED" ? styles.badgeSuccess : styles.badgeWarning}`}>{stat.state}</span>
+                  </div>
+                ))}
+                <div style={{ fontSize: "12px", color: "var(--color-text-muted)" }}>
+                  Couriers and payment gateways aren&apos;t connected through automations yet; see the Connector Hub for saved credentials.
                 </div>
               </div>
             </div>

@@ -18,6 +18,17 @@ export class AppError extends Error {
   }
 }
 
+/**
+ * An external integration isn't connected or not implemented, so nothing was sent (FX-31, non-negotiable 7).
+ * Not retryable: trying again can't succeed until the integration exists.
+ */
+export class IntegrationNotConfiguredError extends AppError {
+  readonly retryable = false;
+  constructor(integration: string, detail?: string) {
+    super("INTEGRATION_NOT_CONFIGURED", `${integration} is not connected${detail ? ` (${detail})` : ""}. Nothing was sent.`, 424, { integration });
+  }
+}
+
 export class AuthenticationError extends AppError {
   constructor(message = "Authentication required or credentials invalid.", details?: Record<string, unknown>) {
     super("AUTHENTICATION_FAILED", message, 401, details);

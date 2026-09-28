@@ -1,3 +1,4 @@
+import { IntegrationNotConfiguredError } from "@/lib/errors";
 import { randomSuffix } from "@/lib/ids";
 import crypto from "crypto";
 import { ChannelType, NormalizedIncomingMessage } from "@/types/social";
@@ -70,48 +71,33 @@ export class WebsiteChatAdapter implements IChannelProvider {
 
   public async sendTextMessage(
     _credentials: ChannelCredentials,
-    recipientId: string,
-    text: string,
+    _recipientId: string,
+    _text: string,
     _options?: { replyToMessageId?: string; metadata?: Record<string, unknown> }
   ): Promise<SendMessageResult> {
-    const mockId = `web_out_${Date.now()}_${randomSuffix()}`;
-    return {
-      externalMessageId: mockId,
-      status: "SENT",
-      providerTimestamp: new Date().toISOString(),
-      rawResponse: { recipient_id: recipientId, message_id: mockId, text },
-    };
+    // Used to return a made-up message id with status SENT (FX-31, non-negotiable 7)
+    throw new IntegrationNotConfiguredError("Website chat messaging", "the widget has no way to receive replies yet");
   }
 
   public async sendMediaMessage(
     _credentials: ChannelCredentials,
-    recipientId: string,
-    mediaType: "IMAGE" | "VIDEO" | "AUDIO" | "FILE",
-    mediaUrl: string,
+    _recipientId: string,
+    _mediaType: "IMAGE" | "VIDEO" | "AUDIO" | "FILE",
+    _mediaUrl: string,
     _options?: { caption?: string; fileName?: string }
   ): Promise<SendMessageResult> {
-    const mockId = `web_media_${Date.now()}_${randomSuffix()}`;
-    return {
-      externalMessageId: mockId,
-      status: "SENT",
-      providerTimestamp: new Date().toISOString(),
-      rawResponse: { recipient_id: recipientId, message_id: mockId, media_type: mediaType, url: mediaUrl },
-    };
+    // Used to return a made-up message id with status SENT (FX-31, non-negotiable 7)
+    throw new IntegrationNotConfiguredError("Website chat messaging", "the widget has no way to receive replies yet");
   }
 
   public async sendTemplateMessage(
     _credentials: ChannelCredentials,
-    recipientId: string,
-    templateName: string,
-    parameters: Record<string, string>
+    _recipientId: string,
+    _templateName: string,
+    _parameters: Record<string, string>
   ): Promise<SendMessageResult> {
-    const mockId = `web_tpl_${Date.now()}_${randomSuffix()}`;
-    return {
-      externalMessageId: mockId,
-      status: "SENT",
-      providerTimestamp: new Date().toISOString(),
-      rawResponse: { recipient_id: recipientId, template: templateName, parameters },
-    };
+    // Used to return a made-up message id with status SENT (FX-31, non-negotiable 7)
+    throw new IntegrationNotConfiguredError("Website chat messaging", "the widget has no way to receive replies yet");
   }
 
   public async markMessageRead(
@@ -119,19 +105,17 @@ export class WebsiteChatAdapter implements IChannelProvider {
     _recipientId: string,
     _messageId?: string
   ): Promise<boolean> {
-    return true;
+    return false; // not sent to the provider (FX-31)
   }
 
   public async getUserProfile(
     _credentials: ChannelCredentials,
     externalUserId: string
   ): Promise<UserProfileResult | null> {
-    return {
-      displayName: `Website Visitor (${externalUserId.slice(-4)})`,
-    };
+    return null; // profiles aren't fetched from the provider yet; no invented names (FX-31)
   }
 
-  public async validateCredentials(_credentials: ChannelCredentials): Promise<{ valid: boolean; error?: string }> {
-    return { valid: true };
+  public async validateCredentials(_credentials: ChannelCredentials): Promise<{ valid: boolean; verified?: boolean; error?: string }> {
+    return { valid: true, verified: false, error: "Live validation not implemented; credentials saved but not checked with Website chat." };
   }
 }

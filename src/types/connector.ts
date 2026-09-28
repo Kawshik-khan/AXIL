@@ -11,7 +11,8 @@ export type ConnectorCategory =
 
 export type ConnectorStatus = "ACTIVE" | "NOT_CONFIGURED" | "ERROR" | "TESTING";
 
-export type ConnectorHealth = "HEALTHY" | "DEGRADED" | "DOWN" | "UNKNOWN";
+/** UNVERIFIED: credentials saved but never checked with the provider (FX-31). */
+export type ConnectorHealth = "HEALTHY" | "DEGRADED" | "DOWN" | "UNKNOWN" | "UNVERIFIED";
 
 export interface ConnectorFieldDefinition {
   name: string;
@@ -61,7 +62,7 @@ export interface ConnectorConfigRecord {
   status: ConnectorStatus;
   health_status: ConnectorHealth;
   last_tested_at?: string;
-  last_test_latency_ms?: number;
+  last_test_latency_ms?: number | null;
   last_error?: string;
   created_at: string;
   updated_at: string;
@@ -86,7 +87,10 @@ export interface TestConnectionPayload {
 
 export interface TestConnectionResult {
   success: boolean;
-  latency_ms: number;
+  /** VERIFIED: the provider answered. NOT_VERIFIED: no live test exists for it. FAILED: the provider refused or was unreachable. */
+  status: "VERIFIED" | "NOT_VERIFIED" | "FAILED";
+  /** Measured round trip; null when nothing was contacted. */
+  latency_ms: number | null;
   message: string;
   details?: Record<string, unknown>;
 }

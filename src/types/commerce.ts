@@ -289,6 +289,8 @@ export interface Shipment {
   order_id: string;
   courier_provider: CourierProviderName;
   consignment_id?: string;
+  /** MANUAL: booked by the merchant with the courier; CommerceOS didn't contact the courier (FX-31). */
+  booking_mode?: "MANUAL" | "API";
   tracking_number: string;
   status: DeliveryStatus;
   shipping_cost: number;

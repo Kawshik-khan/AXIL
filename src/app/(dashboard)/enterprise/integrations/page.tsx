@@ -58,9 +58,11 @@ export default function EnterpriseIntegrationsPage() {
       const res = await fetch(`/api/v1/enterprise/integrations/${id}/test`, { method: "POST" });
       const json = await res.json();
       if (json.data?.success) {
-        setMessage(`Connector test passed (${json.data.latency_ms}ms latency)`);
+        setMessage(`Connector test passed${typeof json.data.latency_ms === "number" ? ` (${json.data.latency_ms}ms latency)` : ""}`);
+      } else if (json.data?.status === "SIMULATED") {
+        setMessage(`Not verified: ${json.data.message}`);
       } else {
-        setMessage(`Connector test error: ${json.data?.message || "Failed"}`);
+        setMessage(`Connector test error: ${json.data?.message || json.error?.message || "Failed"}`);
       }
     } catch {
       setMessage("Error testing connection");
@@ -79,7 +81,8 @@ export default function EnterpriseIntegrationsPage() {
         body: JSON.stringify({ entity_type: "ORDER" }),
       });
       const json = await res.json();
-      setMessage(`Sync finished: ${json.data?.records_processed || 1} records processed successfully`);
+      // The sync endpoint refuses (424) until provider adapters exist; show its message instead of "success" (FX-31)
+      setMessage(res.ok ? `Sync finished: ${json.data?.records_processed ?? 0} records processed` : `Sync not run: ${json.error?.message || "failed"}`);
       fetchIntegrations();
     } catch {
       setMessage("Error triggering sync");
@@ -234,7 +237,7 @@ export default function EnterpriseIntegrationsPage() {
                 >
                   <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
                     <span style={{ fontWeight: 700, color: "#ffffff", fontSize: 14 }}>{item.provider_name}</span>
-                    <span className={item.status === "HEALTHY" ? styles.badgeHealthy : styles.badgeCritical}>
+                    <span className={item.status === "HEALTHY" ? styles.badgeHealthy : item.status === "NOT_VERIFIED" || item.status === "DEGRADED" ? styles.badgeDegraded : styles.badgeCritical}>
                       {item.status}
                     </span>
                   </div>

@@ -83,10 +83,8 @@ export class WebhookPlatformService {
       const signature = this.computeSignature(payloadStr, sub.secret);
       const deliveryId = `deliv_${Date.now()}_${randomSuffix()}`;
 
-      // Simulated HTTP delivery (succeeds unless URL contains 'fail')
-      const isFailed = sub.target_url.includes("fail");
-      const status = isFailed ? "FAILED" : "DELIVERED";
-
+      // No HTTP delivery exists yet. This used to report DELIVERED with HTTP 200, a random duration and a made-up
+      // response body, unless the URL contained "fail" (FX-31). The signed event is recorded as NOT_SENT.
       const delivery: WebhookDeliveryRecord = {
         id: deliveryId,
         subscription_id: sub.id,
@@ -95,19 +93,11 @@ export class WebhookPlatformService {
         target_url: sub.target_url,
         payload_json: payloadStr,
         signature,
-        http_status: isFailed ? 500 : 200,
-        duration_ms: Math.floor(40 + Math.random() * 80),
+        duration_ms: null,
         attempt_number: 1,
-        status,
-        response_body: isFailed ? "Internal Server Error" : '{"received": true}',
+        status: "NOT_SENT",
         delivered_at: new Date().toISOString(),
       };
-
-      if (isFailed) {
-        sub.failed_consecutive_deliveries++;
-      } else {
-        sub.failed_consecutive_deliveries = 0;
-      }
 
       db.createWebhookDelivery(delivery);
       deliveries.push(delivery);

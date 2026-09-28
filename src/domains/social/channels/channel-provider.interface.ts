@@ -119,5 +119,9 @@ export interface IChannelProvider {
   /**
    * Test channel connection credentials with provider API
    */
-  validateCredentials(credentials: ChannelCredentials): Promise<{ valid: boolean; error?: string }>;
+  /**
+   * `valid`: the credentials have the required fields. `verified`: the provider confirmed them live. Live checks
+   * aren't implemented yet (Phase 5), so adapters report verified: false (FX-31).
+   */
+  validateCredentials(credentials: ChannelCredentials): Promise<{ valid: boolean; verified?: boolean; error?: string }>;
 }

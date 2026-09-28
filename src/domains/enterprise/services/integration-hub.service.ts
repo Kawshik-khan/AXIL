@@ -1,4 +1,5 @@
-import { AppError } from "@/lib/errors";
+import { AppError, IntegrationNotConfiguredError } from "@/lib/errors";
+import { encryptCredential } from "@/lib/security";
 /**
  * CommerceOS Phase 9: Enterprise Integration Hub Service
  * Manages external integrations (ERP, CRM, Accounting, Marketplaces), installation lifecycles, and health telemetry.
@@ -10,6 +11,14 @@ import {
   IntegrationInstallation,
   IntegrationStatus,
 } from "@/types/enterprise";
+
+/** An installation without its stored credentials, for API responses. */
+export type PublicIntegrationInstallation = Omit<IntegrationInstallation, "credentials_encrypted">;
+
+export function toPublicInstallation(inst: IntegrationInstallation): PublicIntegrationInstallation {
+  const { credentials_encrypted: _omit, ...rest } = inst;
+  return rest;
+}
 
 export class IntegrationHubService {
   /**
@@ -113,12 +122,12 @@ export class IntegrationHubService {
       provider_id: provider.id,
       provider_name: provider.name,
       category: provider.category,
-      status: "HEALTHY",
-      credentials_encrypted: Buffer.from(JSON.stringify(params.credentials)).toString("base64"),
+      // Saved, never checked with the provider: this was HEALTHY with invented sync times, and the credentials were only
+      // base64-encoded and returned by the list endpoint (FX-31).
+      status: "NOT_VERIFIED",
+      credentials_encrypted: encryptCredential(params.credentials),
       config: params.config || {},
       sync_frequency_minutes: params.syncFrequencyMinutes || 60,
-      last_sync_at: new Date().toISOString(),
-      last_successful_sync_at: new Date().toISOString(),
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
@@ -147,6 +156,16 @@ export class IntegrationHubService {
       latency_ms: null,
       message: `No live connection test exists for ${inst.provider_name} yet; nothing was contacted and the credentials were not checked.`,
     };
+  }
+
+  /**
+   * A provider sync. No provider adapter can fetch from ERP/CRM/marketplace systems yet, so this refuses instead of
+   * recording a COMPLETED sync of a placeholder item and marking the installation HEALTHY (FX-31).
+   */
+  public triggerProviderSync(orgId: string, installationId: string): never {
+    const inst = db.data.integration_installations.find((i) => i.id === installationId && i.organization_id === orgId);
+    if (!inst) throw new AppError("NOT_FOUND", `Integration installation not found: ${installationId}`, 404);
+    throw new IntegrationNotConfiguredError(`${inst.provider_name} sync`, "no provider adapter exists yet");
   }
 
   /**

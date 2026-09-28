@@ -8,7 +8,7 @@ import {
 import { RequestContext } from "@/lib/context";
 import { RbacService } from "@/domains/rbac/service";
 import { PERMISSIONS } from "@/lib/permissions";
-import { BadRequestError, NotFoundError } from "@/lib/errors";
+import { BadRequestError, NotFoundError, ValidationError } from "@/lib/errors";
 
 export class ShippingService {
   /**
@@ -93,9 +93,14 @@ export class ShippingService {
       throw new NotFoundError(`Order '${payload.order_id}' not found.`);
     }
 
-    const trackingNumber =
-      payload.tracking_number ||
-      `TRK-${payload.courier_provider.slice(0, 3)}-${Date.now().toString().slice(-8)}`;
+    // No courier API is integrated, so CommerceOS can't book the parcel: the merchant books it with the courier and
+    // records the courier's tracking number. This used to invent TRK-/CSG- numbers that no courier knew (FX-31).
+    const trackingNumber = payload.tracking_number?.trim();
+    if (!trackingNumber) {
+      throw new ValidationError(
+        `Enter the tracking number from ${payload.courier_provider}: booking with the courier isn't integrated yet, so CommerceOS can't create one.`
+      );
+    }
 
     const shipmentId = `shp_${Date.now()}_${randomSuffix()}`;
     const now = new Date().toISOString();
@@ -105,8 +110,9 @@ export class ShippingService {
       tenant_id: context.tenant.id,
       order_id: payload.order_id,
       courier_provider: payload.courier_provider,
-      consignment_id: payload.consignment_id || `CSG-${Date.now()}`,
+      consignment_id: payload.consignment_id?.trim() || undefined,
       tracking_number: trackingNumber,
+      booking_mode: "MANUAL",
       status: "PENDING",
       shipping_cost: payload.shipping_cost || order.shipping_total,
       shipped_at: now,

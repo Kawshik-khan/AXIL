@@ -1,4 +1,4 @@
-import { randomSuffix } from "@/lib/ids";
+import { IntegrationNotConfiguredError } from "@/lib/errors";
 import crypto from "crypto";
 import { ChannelType, NormalizedIncomingMessage } from "@/types/social";
 import {
@@ -134,50 +134,34 @@ export class FacebookAdapter implements IChannelProvider {
   }
 
   public async sendTextMessage(
-    credentials: ChannelCredentials,
-    recipientId: string,
-    text: string,
+    _credentials: ChannelCredentials,
+    _recipientId: string,
+    _text: string,
     _options?: { replyToMessageId?: string; metadata?: Record<string, unknown> }
   ): Promise<SendMessageResult> {
-    const mockId = `m_mid.$${Date.now()}_fb_${randomSuffix()}`;
-    // If accessToken is provided and not test mode, call Meta Graph API, else return simulated successful result
-    return {
-      externalMessageId: mockId,
-      status: "SENT",
-      providerTimestamp: new Date().toISOString(),
-      rawResponse: { recipient_id: recipientId, message_id: mockId },
-    };
+    // Used to return a made-up message id with status SENT (FX-31, non-negotiable 7)
+    throw new IntegrationNotConfiguredError("Facebook Messenger messaging", "sending isn't implemented yet");
   }
 
   public async sendMediaMessage(
     _credentials: ChannelCredentials,
-    recipientId: string,
-    mediaType: "IMAGE" | "VIDEO" | "AUDIO" | "FILE",
-    mediaUrl: string,
+    _recipientId: string,
+    _mediaType: "IMAGE" | "VIDEO" | "AUDIO" | "FILE",
+    _mediaUrl: string,
     _options?: { caption?: string; fileName?: string }
   ): Promise<SendMessageResult> {
-    const mockId = `m_mid.$${Date.now()}_fb_media_${randomSuffix()}`;
-    return {
-      externalMessageId: mockId,
-      status: "SENT",
-      providerTimestamp: new Date().toISOString(),
-      rawResponse: { recipient_id: recipientId, message_id: mockId, media_type: mediaType, url: mediaUrl },
-    };
+    // Used to return a made-up message id with status SENT (FX-31, non-negotiable 7)
+    throw new IntegrationNotConfiguredError("Facebook Messenger messaging", "sending isn't implemented yet");
   }
 
   public async sendTemplateMessage(
     _credentials: ChannelCredentials,
-    recipientId: string,
-    templateName: string,
-    parameters: Record<string, string>
+    _recipientId: string,
+    _templateName: string,
+    _parameters: Record<string, string>
   ): Promise<SendMessageResult> {
-    const mockId = `m_mid.$${Date.now()}_fb_tpl_${randomSuffix()}`;
-    return {
-      externalMessageId: mockId,
-      status: "SENT",
-      providerTimestamp: new Date().toISOString(),
-      rawResponse: { recipient_id: recipientId, template: templateName, parameters },
-    };
+    // Used to return a made-up message id with status SENT (FX-31, non-negotiable 7)
+    throw new IntegrationNotConfiguredError("Facebook Messenger messaging", "sending isn't implemented yet");
   }
 
   public async markMessageRead(
@@ -185,23 +169,20 @@ export class FacebookAdapter implements IChannelProvider {
     _recipientId: string,
     _messageId?: string
   ): Promise<boolean> {
-    return true;
+    return false; // not sent to the provider (FX-31)
   }
 
   public async getUserProfile(
     _credentials: ChannelCredentials,
     externalUserId: string
   ): Promise<UserProfileResult | null> {
-    return {
-      displayName: `Facebook User ${externalUserId.slice(-4)}`,
-      username: `fb_user_${externalUserId.slice(-6)}`,
-    };
+    return null; // profiles aren't fetched from the provider yet; no invented names (FX-31)
   }
 
-  public async validateCredentials(credentials: ChannelCredentials): Promise<{ valid: boolean; error?: string }> {
+  public async validateCredentials(credentials: ChannelCredentials): Promise<{ valid: boolean; verified?: boolean; error?: string }> {
     if (!credentials.accessToken && !credentials.apiKey) {
       return { valid: false, error: "Access token or API key is required for Facebook Messenger." };
     }
-    return { valid: true };
+    return { valid: true, verified: false, error: "Live validation not implemented; credentials saved but not checked with Facebook Messenger." };
   }
 }

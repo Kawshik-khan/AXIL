@@ -16,7 +16,7 @@ import { enterpriseAnalyticsService } from "@/domains/enterprise/services/enterp
 import { enterpriseBenchmarkingService } from "@/domains/enterprise/services/enterprise-benchmarking.service";
 import { enterpriseReportingService } from "@/domains/enterprise/services/enterprise-reporting.service";
 import { semanticMetricsService } from "@/domains/enterprise/services/semantic-metrics.service";
-import { syncEngineService } from "@/domains/enterprise/services/sync-engine.service";
+import { integrationHubService } from "@/domains/enterprise/services/integration-hub.service";
 import { conflictResolutionService } from "@/domains/enterprise/services/conflict-resolution.service";
 import { dataQualityService } from "@/domains/enterprise/services/data-quality.service";
 import { dataLineageService } from "@/domains/enterprise/services/data-lineage.service";
@@ -367,14 +367,8 @@ export class TriggerIntegrationSyncTool implements IAgentTool<z.infer<typeof Tri
   }
 
   public async execute(context: RequestContext, input: z.infer<typeof TriggerIntegrationSyncInputSchema>): Promise<any> {
-    return syncEngineService.executeSync({
-      organizationId: resolveOrganizationId(context, input.organization_id),
-      integrationId: input.integration_id,
-      entityType: input.entity_type,
-      direction: "INBOUND",
-      items: [{ test_sync: true, triggered_at: new Date().toISOString() }],
-      processItemFn: async () => ({ success: true }),
-    });
+    // No provider adapter exists: refuses instead of recording a placeholder sync as COMPLETED (FX-31)
+    return integrationHubService.triggerProviderSync(resolveOrganizationId(context, input.organization_id), input.integration_id);
   }
 }
 

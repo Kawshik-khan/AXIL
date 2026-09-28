@@ -1,9 +1,13 @@
 import { resolveOrganizationId } from "@/domains/enterprise/organization-access";
 import { PERMISSIONS } from "@/lib/permissions";
 import { RbacService } from "@/domains/rbac/service";
-import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
-import { syncEngineService } from "@/domains/enterprise/services/sync-engine.service";
+import { extractRequestContext, apiError } from "@/lib/api-response";
+import { integrationHubService } from "@/domains/enterprise/services/integration-hub.service";
 
+/**
+ * Provider sync. This used to run the sync engine over a placeholder item that always "succeeded", record a COMPLETED
+ * sync and mark the installation HEALTHY. No provider adapter exists yet, so it answers 424 and records nothing (FX-31).
+ */
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -14,17 +18,7 @@ export async function POST(
     const { id } = await params;
     const body = await request.json().catch(() => ({}));
     const orgId = resolveOrganizationId(context, body.organization_id);
-
-    const result = await syncEngineService.executeSync({
-      organizationId: orgId,
-      integrationId: id,
-      entityType: body.entity_type || "ORDER",
-      direction: body.direction || "INBOUND",
-      items: body.items || [{ test_sync: true, triggered_at: new Date().toISOString() }],
-      processItemFn: async () => ({ success: true }),
-    });
-
-    return apiSuccess(result);
+    integrationHubService.triggerProviderSync(orgId, id);
   } catch (err) {
     return apiError(err);
   }

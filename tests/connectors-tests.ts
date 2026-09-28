@@ -335,6 +335,14 @@ async function main() {
   // -------------------------------------------------------------
   console.log(`\n${ANSI_BOLD}[5] Real-Time Connection Test Handshake${ANSI_RESET}`);
 
+  // Stub the network for the one provider test that makes a real request
+  const fetchCalls: string[] = [];
+  let stubStatus = 200;
+  globalThis.fetch = (async (url: string | URL | Request) => {
+    fetchCalls.push(String(url));
+    return new Response("{}", { status: stubStatus });
+  }) as typeof fetch;
+
   await runTest("Test AI LLM connection handshake", async () => {
     const result = await ConnectorService.testConnection(tenantAContext, {
       provider_id: "openai",
@@ -344,9 +352,31 @@ async function main() {
       },
     });
 
+    // A real check against OpenAI's public endpoint (fetch stubbed here: no network in tests) (FX-31)
+    assert.strictEqual(result.status, "VERIFIED");
     assert.strictEqual(result.success, true);
-    assert.ok(result.latency_ms > 0, "Latency must be recorded");
+    assert.ok(typeof result.latency_ms === "number", "measured latency");
     assert.ok(result.message.includes("OpenAI"), "Message should mention provider");
+    assert.deepStrictEqual(fetchCalls, ["https://api.openai.com/v1/models"]);
+
+    stubStatus = 401;
+    const refused = await ConnectorService.testConnection(tenantAContext, {
+      provider_id: "openai",
+      credentials: { api_key: "sk-proj-wrong-key-0000" },
+    });
+    assert.strictEqual(refused.status, "FAILED");
+    assert.strictEqual(refused.success, false);
+
+    // A custom endpoint is never fetched from the server (SSRF): reported as not verified
+    fetchCalls.length = 0;
+    const custom = await ConnectorService.testConnection(tenantAContext, {
+      provider_id: "openai",
+      endpoint_url: "http://169.254.169.254/latest",
+      credentials: { api_key: "sk-proj-valid-api-key-here-1234" },
+    });
+    assert.strictEqual(custom.status, "NOT_VERIFIED");
+    assert.deepStrictEqual(fetchCalls, [], "no request to a user-supplied URL");
+    stubStatus = 200;
   });
 
   await runTest("Fail test AI LLM connection when required API key is missing", async () => {
@@ -371,8 +401,10 @@ async function main() {
       },
     });
 
-    assert.strictEqual(result.success, true);
-    assert.ok(result.message.includes("ep-cool-fog-123.neon.tech"));
+    // No live database check exists: not verified, never "TCP handshake and auth check" (FX-31)
+    assert.strictEqual(result.status, "NOT_VERIFIED");
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(result.details?.host, "ep-cool-fog-123.neon.tech");
   });
 
   await runTest("Test Vector Database connection handshake for Qdrant and Pinecone", async () => {
@@ -384,9 +416,8 @@ async function main() {
         vector_dimension: 1536,
       },
     });
-    assert.strictEqual(qdrantResult.success, true);
+    assert.strictEqual(qdrantResult.status, "NOT_VERIFIED");
     assert.ok(qdrantResult.message.includes("Qdrant"));
-    assert.strictEqual(qdrantResult.details?.vector_dimension, 1536);
 
     const pineconeResult = await ConnectorService.testConnection(tenantAContext, {
       provider_id: "pinecone",
@@ -396,7 +427,7 @@ async function main() {
         index_name: "commerceos-catalog",
       },
     });
-    assert.strictEqual(pineconeResult.success, true);
+    assert.strictEqual(pineconeResult.status, "NOT_VERIFIED");
     assert.ok(pineconeResult.message.includes("Pinecone"));
   });
 
@@ -409,9 +440,10 @@ async function main() {
         key_prefix: "tenant_alpha:",
       },
     });
-    assert.strictEqual(redisResult.success, true);
-    assert.ok(redisResult.latency_ms > 0);
-    assert.strictEqual(redisResult.details?.ping, "PONG");
+    // Nothing was pinged: no latency and no "PONG" (FX-31)
+    assert.strictEqual(redisResult.status, "NOT_VERIFIED");
+    assert.strictEqual(redisResult.latency_ms, null);
+    assert.strictEqual(redisResult.details?.ping, undefined);
   });
 
   await runTest("Test Telegram Bot API connection handshake and missing token error", async () => {
@@ -422,10 +454,9 @@ async function main() {
         bot_username: "@CommerceOSStoreBot",
       },
     });
-    assert.strictEqual(validResult.success, true);
-    assert.ok(validResult.latency_ms > 0);
+    assert.strictEqual(validResult.status, "NOT_VERIFIED");
+    assert.strictEqual(validResult.latency_ms, null);
     assert.ok(validResult.message.includes("Telegram"));
-    assert.strictEqual(validResult.details?.bot_username, "@CommerceOSStoreBot");
 
     let threw = false;
     try {
@@ -450,8 +481,8 @@ async function main() {
         country_code: "BD",
       },
     });
-    assert.strictEqual(darazTest.success, true);
-    assert.ok(darazTest.latency_ms > 0);
+    assert.strictEqual(darazTest.status, "NOT_VERIFIED");
+    assert.strictEqual(darazTest.latency_ms, null);
     assert.ok(darazTest.message.includes("Daraz Marketplace"));
 
     const sapTest = await ConnectorService.testConnection(tenantAContext, {
@@ -463,8 +494,7 @@ async function main() {
         company_code: "1000",
       },
     });
-    assert.strictEqual(sapTest.success, true);
-    assert.ok(sapTest.latency_ms > 0);
+    assert.strictEqual(sapTest.status, "NOT_VERIFIED");
     assert.ok(sapTest.message.includes("SAP S/4HANA"));
   });
 
@@ -537,7 +567,7 @@ async function main() {
     const installations = db.getIntegrationInstallations(tenantAContext.tenant.id);
     const darazInst = installations.find((i: any) => i.provider_id === "prov_daraz_marketplace");
     assert.ok(darazInst, "Integration installation must be registered");
-    assert.strictEqual(darazInst.status, "HEALTHY");
+    assert.strictEqual(darazInst.status, "NOT_VERIFIED"); // saved, never checked with Daraz (FX-31)
     assert.strictEqual(darazInst.sync_frequency_minutes, 10);
 
     // Delete Enterprise connector and verify marked DISCONNECTED

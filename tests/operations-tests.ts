@@ -415,12 +415,15 @@ export async function runOperationsTests() {
     const exc = delays.find((d) => d.shipment_id === oldShipment.id);
     assert.ok(exc);
 
-    // Execute failover to alternate courier
-    const failover = courierOperationsService.executeCourierFailover(tenantId, exc.id, "test_dispatcher");
-    assert.strictEqual(failover.success, true);
-    assert.strictEqual(failover.oldCourier, "STEADFAST");
-    assert.notStrictEqual(failover.newCourier, "STEADFAST");
-    assert.strictEqual(failover.newShipment.status, "PENDING");
+    // Failover can't book with another courier (no courier API): it refuses and changes nothing, instead of
+    // cancelling the shipment and inventing a new booking (FX-31)
+    const shipmentsBefore = db.getShipments(tenantId).length;
+    assert.throws(
+      () => courierOperationsService.executeCourierFailover(tenantId, exc.id, "test_dispatcher"),
+      (err: Error & { code?: string }) => err.code === "INTEGRATION_NOT_CONFIGURED"
+    );
+    assert.strictEqual(db.findShipmentById(tenantId, oldShipment.id)?.status, "IN_TRANSIT", "original shipment untouched");
+    assert.strictEqual(db.getShipments(tenantId).length, shipmentsBefore, "no invented replacement shipment");
   });
 
   console.log(`\n${ANSI_BOLD}[7. Payment Operations & MFS Reconciliation]${ANSI_RESET}`);

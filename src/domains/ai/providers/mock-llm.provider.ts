@@ -172,7 +172,7 @@ export class MockLLMProvider implements LLMProvider {
           }
         } else if (parsedResult.delivery_charge !== undefined) {
           const zoneText = parsedResult.delivery_zone === "OUTSIDE_DHAKA" ? "ঢাকার বাইরে" : "ঢাকার ভেতরে";
-          responseContent = `${zoneText} ডেলিভারি চার্জ ৳${parsedResult.delivery_charge} (ডেলিভারি সময়: ${parsedResult.estimated_days}, কুরিয়ার: ${parsedResult.courier_partner})।`;
+          responseContent = `${zoneText} ডেলিভারি চার্জ ৳${parsedResult.delivery_charge} (ডেলিভারি সময়: ${parsedResult.estimated_days})।`;
         } else if (parsedResult.order_number) {
           responseContent = `আপনার অর্ডার ${parsedResult.order_number} এর বর্তমান স্ট্যাটাস: ${parsedResult.status}। কুরিয়ার ট্র্যাকিং: ${parsedResult.courier_tracking_code || "প্রসেসিং হচ্ছে"}।`;
         } else if (parsedResult.lead_id) {

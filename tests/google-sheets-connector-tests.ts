@@ -155,10 +155,11 @@ export async function runGoogleSheetsTests() {
       },
     });
 
-    assert.strictEqual(validResult.success, true);
-    assert.strictEqual(validResult.details.spreadsheet_id, "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms");
-    assert.strictEqual(validResult.details.sheet_name, "Products");
-    assert.strictEqual(validResult.details.access_mode, "Link-Shared (Web Export)");
+    // The link is parsed, but the sheet isn't fetched: not verified (FX-31)
+    assert.strictEqual(validResult.status, "NOT_VERIFIED");
+    assert.strictEqual(validResult.success, false);
+    assert.strictEqual(validResult.details?.spreadsheet_id, "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms");
+    assert.strictEqual(validResult.details?.sheet_name, "Products");
 
     // 2. Missing URL test
     let threwError = false;

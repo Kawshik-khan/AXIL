@@ -175,34 +175,21 @@ export class OperationsWorkflowService {
     }
 
     const targetException = delayedShipments[0];
-    const failoverResult = courierOperationsService.executeCourierFailover(
-      tenantId,
-      targetException.id,
-      "SHIPPING_OPERATIONS"
-    );
-
-    const receipt = this.createReceipt(
-      tenantId,
-      "COURIER_FAILOVER_DISPATCHED",
-      "SHIPPING_OPERATIONS",
-      "SHIPMENT",
-      failoverResult.newShipment.id,
-      {
-        old_courier: failoverResult.oldCourier,
-        new_courier: failoverResult.newCourier,
-        tracking_number: failoverResult.newShipment.tracking_number,
-      },
-      failoverResult.newShipment.tracking_number
-    );
-
-    return {
-      workflowName: "Delayed Shipment Recovery",
-      tenantId,
-      status: "SUCCESS",
-      summary: `Successfully rerouted delayed parcel from ${failoverResult.oldCourier} to ${failoverResult.newCourier} (New Tracking: ${failoverResult.newShipment.tracking_number}).`,
-      receipts: [receipt],
-      evidence: failoverResult,
-    };
+    // Rerouting needs a courier booking API, which isn't integrated: report that instead of a fabricated reroute
+    // with an invented tracking number (FX-31).
+    try {
+      courierOperationsService.executeCourierFailover(tenantId, targetException.id, "SHIPPING_OPERATIONS");
+    } catch (err) {
+      return {
+        workflowName: "Delayed Shipment Recovery",
+        tenantId,
+        status: "FAILED",
+        summary: `${delayedShipments.length} delayed shipment(s) need attention. Automatic rerouting isn't available: ${(err as Error).message}`,
+        receipts: [],
+        evidence: { delayed_count: delayedShipments.length, exception_id: targetException.id },
+      };
+    }
+    throw new Error("unreachable: courier failover never completes without a booking integration");
   }
 
   // ============================================================

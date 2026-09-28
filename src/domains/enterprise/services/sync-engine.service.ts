@@ -72,8 +72,12 @@ export class SyncEngineService {
       (i) => i.id === params.integrationId && i.organization_id === params.organizationId
     );
     if (installation) {
-      const newStatus = finalStatus === "FAILED" ? "FAILED" : conflicts > 0 ? "DEGRADED" : "HEALTHY";
-      integrationHubService.updateStatus(installation.organization_id, installation.id, newStatus, record.error_summary);
+      // Processing items handed to us says nothing about the provider connection, so a clean run doesn't promote the
+      // installation to HEALTHY (FX-31); failures and conflicts are still reported.
+      const newStatus = finalStatus === "FAILED" ? "FAILED" : conflicts > 0 ? "DEGRADED" : null;
+      if (newStatus) {
+        integrationHubService.updateStatus(installation.organization_id, installation.id, newStatus, record.error_summary);
+      }
     }
 
     return record;

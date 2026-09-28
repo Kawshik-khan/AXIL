@@ -15,6 +15,23 @@ import {
   TestConnectionSchema,
 } from "@/types/connector";
 
+/** Providers whose API exposes an OpenAI-compatible GET /models that accepts a Bearer key. */
+const OPENAI_COMPATIBLE_PROVIDERS = new Set(["openai", "deepseek", "groq", "openrouter"]);
+
+/**
+ * Connector tests used to return success with a random latency and claims like "webhook verified with 200 OK" without
+ * contacting anything (FX-31). Where no live test exists, say so.
+ */
+function notVerified(providerName: string, details?: Record<string, unknown>): TestConnectionResult {
+  return {
+    success: false,
+    status: "NOT_VERIFIED",
+    latency_ms: null,
+    message: `Live test not implemented for ${providerName}; credentials saved but unverified.`,
+    details,
+  };
+}
+
 export class ConnectorService {
   /**
    * Authoritative Catalog of All 22+ Supported Connectors
@@ -1372,9 +1389,9 @@ export class ConnectorService {
       credentials_masked: maskedCredentials,
       configuration: parsed.configuration || {},
       status: "ACTIVE",
-      health_status: "HEALTHY",
-      last_tested_at: now,
-      last_test_latency_ms: 35 + Math.floor(Math.random() * 45),
+      // Saved, not tested: this was HEALTHY with a random 35-80 ms latency (FX-31)
+      health_status: "UNVERIFIED",
+      last_test_latency_ms: null,
       created_at: existing ? existing.created_at : now,
       updated_at: now,
     };
@@ -1400,7 +1417,7 @@ export class ConnectorService {
 
         if (existingInst) {
           db.updateIntegrationInstallation(existingInst.organization_id, existingInst.id, {
-            status: "HEALTHY",
+            status: "NOT_VERIFIED",
             credentials_encrypted: encryptedCredentials,
             sync_frequency_minutes: Number(parsed.credentials.sync_frequency_minutes || 15),
             updated_at: now,
@@ -1412,12 +1429,10 @@ export class ConnectorService {
             provider_id: provider.id,
             provider_name: provider.name,
             category: entCategory,
-            status: "HEALTHY",
+            status: "NOT_VERIFIED",
             credentials_encrypted: encryptedCredentials,
             config: parsed.configuration || {},
             sync_frequency_minutes: Number(parsed.credentials.sync_frequency_minutes || 15),
-            last_sync_at: now,
-            last_successful_sync_at: now,
             created_at: now,
             updated_at: now,
           });
@@ -1488,18 +1503,23 @@ export class ConnectorService {
         throw new BadRequestError(`API key is required to test ${provider.name}.`);
       }
 
-      // Latency simulation / ping validation
-      const latencyMs = Math.max(25, Date.now() - startTime + Math.floor(Math.random() * 50 + 20));
-      return {
-        success: true,
-        latency_ms: latencyMs,
-        message: `Successfully connected to ${provider.name}. Model '${model}' verified and ready for agentic execution.`,
-        details: {
-          endpoint,
-          model,
-          protocol: "OpenAI-Compatible Chat Completion / Embeddings",
-        },
-      };
+      // A real check for OpenAI-compatible providers, only against the provider's own public HTTPS endpoint: a
+      // user-supplied URL is never fetched from the server (SSRF). Everything else is reported as not verified.
+      if (OPENAI_COMPATIBLE_PROVIDERS.has(provider.id) && endpoint === provider.default_endpoint && endpoint?.startsWith("https://")) {
+        try {
+          const res = await globalThis.fetch(`${endpoint.replace(/\/$/, "")}/models`, {
+            headers: { Authorization: `Bearer ${apiKey}` },
+            signal: AbortSignal.timeout(5000),
+          });
+          const latencyMs = Date.now() - startTime;
+          return res.ok
+            ? { success: true, status: "VERIFIED", latency_ms: latencyMs, message: `${provider.name} accepted the API key.`, details: { endpoint, model } }
+            : { success: false, status: "FAILED", latency_ms: latencyMs, message: `${provider.name} refused the request (HTTP ${res.status}).`, details: { endpoint } };
+        } catch (err) {
+          return { success: false, status: "FAILED", latency_ms: null, message: `${provider.name} couldn't be reached: ${(err as Error).message}`, details: { endpoint } };
+        }
+      }
+      return notVerified(provider.name, { endpoint, model });
     }
 
     if (provider.category === "SOCIAL_ADS") {
@@ -1527,20 +1547,7 @@ export class ConnectorService {
         }
       }
 
-      const isTelegram = provider.id === "telegram";
-      const latencyMs = Math.max(30, Date.now() - startTime + Math.floor(Math.random() * 40 + 25));
-      return {
-        success: true,
-        latency_ms: latencyMs,
-        message: isTelegram
-          ? `Handshake successful with ${provider.name}. Bot token and webhook endpoint verified with 200 OK.`
-          : `Handshake successful with ${provider.name}. Webhook verified with 200 OK.`,
-        details: {
-          provider: provider.name,
-          webhook_status: "VERIFIED",
-          ...(isTelegram ? { bot_username: parsed.credentials.bot_username || "@CommerceOSBot" } : {}),
-        },
-      };
+      return notVerified(provider.name);
     }
 
     if (provider.category === "LOGISTICS") {
@@ -1558,16 +1565,7 @@ export class ConnectorService {
         }
       }
 
-      const latencyMs = Math.max(40, Date.now() - startTime + Math.floor(Math.random() * 60 + 30));
-      return {
-        success: true,
-        latency_ms: latencyMs,
-        message: `Connected to ${provider.name} gateway. COD rates and delivery zone mapping confirmed.`,
-        details: {
-          provider: provider.name,
-          zones: ["INSIDE_DHAKA", "OUTSIDE_DHAKA"],
-        },
-      };
+      return notVerified(provider.name);
     }
 
     if (provider.category === "DATABASE") {
@@ -1585,24 +1583,11 @@ export class ConnectorService {
         throw new BadRequestError("Database host or valid Connection URI is required.");
       }
 
-      const latencyMs = Math.max(15, Date.now() - startTime + Math.floor(Math.random() * 30 + 10));
-      return {
-        success: true,
-        latency_ms: latencyMs,
-        message: `Database connection verified. Host '${host}' responded to TCP handshake and auth check.`,
-        details: {
-          host,
-          database: database || "postgres",
-          ssl: parsed.credentials.ssl_mode || "require",
-          pool_status: "READY",
-        },
-      };
+      return notVerified(provider.name, { host, database: database || null });
     }
 
     if (provider.category === "VECTOR_DB") {
       const endpoint = parsed.endpoint_url || String(parsed.credentials.endpoint_url || parsed.credentials.index_host || parsed.credentials.host || "");
-      const collection = String(parsed.credentials.collection_name || parsed.credentials.index_name || parsed.credentials.table_name || "embeddings");
-      const dimension = Number(parsed.credentials.vector_dimension || 1536);
 
       if (provider.id === "pinecone") {
         const apiKey = String(parsed.credentials.api_key || "");
@@ -1613,18 +1598,7 @@ export class ConnectorService {
         throw new BadRequestError(`Endpoint or host URL is required for ${provider.name}.`);
       }
 
-      const latencyMs = Math.max(18, Date.now() - startTime + Math.floor(Math.random() * 35 + 12));
-      return {
-        success: true,
-        latency_ms: latencyMs,
-        message: `Vector database handshake verified for ${provider.name}. Collection/Index '${collection}' ready (dimension: ${dimension}).`,
-        details: {
-          provider: provider.name,
-          collection,
-          vector_dimension: dimension,
-          status: "INDEX_ACTIVE",
-        },
-      };
+      return notVerified(provider.name);
     }
 
     if (provider.category === "REDIS_CACHE") {
@@ -1635,17 +1609,7 @@ export class ConnectorService {
         throw new BadRequestError("Redis connection URI, Host, or REST URL is required.");
       }
 
-      const latencyMs = Math.max(8, Date.now() - startTime + Math.floor(Math.random() * 20 + 5));
-      return {
-        success: true,
-        latency_ms: latencyMs,
-        message: `Redis in-memory instance verified (PING -> PONG: ${latencyMs}ms). Tenant key namespace configured.`,
-        details: {
-          provider: provider.name,
-          engine: "Redis 7.x Compatible",
-          ping: "PONG",
-        },
-      };
+      return notVerified(provider.name);
     }
 
     if (provider.category === "ENTERPRISE") {
@@ -1658,19 +1622,7 @@ export class ConnectorService {
         const sheetId = GoogleSheetHelper.extractSpreadsheetId(sheetUrl);
         const sheetName = String(parsed.credentials.sheet_name || "Products");
 
-        const latencyMs = Math.max(35, Date.now() - startTime + Math.floor(Math.random() * 40 + 20));
-        return {
-          success: true,
-          latency_ms: latencyMs,
-          message: `Successfully connected to Google Sheet (${sheetId.slice(0, 8)}...). Tab '${sheetName}' verified and ready for live catalog sync.`,
-          details: {
-            provider: provider.name,
-            spreadsheet_id: sheetId,
-            sheet_name: sheetName,
-            sync_frequency_minutes: parsed.credentials.sync_frequency_minutes || 15,
-            access_mode: parsed.credentials.api_key ? "Google Cloud API" : "Link-Shared (Web Export)",
-          },
-        };
+        return notVerified(provider.name, { spreadsheet_id: sheetId, sheet_name: sheetName });
       }
 
       const authVal = String(
@@ -1685,24 +1637,10 @@ export class ConnectorService {
         throw new BadRequestError(`Authentication credentials (Client ID, App Key, or Access Token) are required for ${provider.name}.`);
       }
 
-      const latencyMs = Math.max(25, Date.now() - startTime + Math.floor(Math.random() * 45 + 15));
-      return {
-        success: true,
-        latency_ms: latencyMs,
-        message: `Connected to ${provider.name} gateway. Bi-directional entity sync pipeline ready.`,
-        details: {
-          provider: provider.name,
-          status: "READY",
-          sync_frequency_minutes: parsed.credentials.sync_frequency_minutes || 15,
-        },
-      };
+      return notVerified(provider.name);
     }
 
-    return {
-      success: true,
-      latency_ms: 45,
-      message: `Connection to ${provider.name} verified successfully.`,
-    };
+    return notVerified(provider.name);
   }
 
   /**

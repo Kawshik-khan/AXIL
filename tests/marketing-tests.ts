@@ -203,16 +203,18 @@ export async function runMarketingTests() {
       cartId: recordedCartId,
     });
 
-    assert.strictEqual(nudge.success, true);
+    // The nudge is composed and fact-checked, but WhatsApp sending isn't integrated: reported as not sent (FX-31)
+    assert.strictEqual(nudge.success, false);
+    assert.ok(/CHANNEL_NOT_CONNECTED/.test(nudge.error ?? ""), nudge.error);
     assert.strictEqual(nudge.channel, "WHATSAPP");
     assert.strictEqual(nudge.recipient_phone, "+8801711229988");
     assert.ok(nudge.message_content.includes("Assalamu Alaikum Sadia!"));
     assert.ok(nudge.message_content.includes("Reply STOP to unsubscribe"));
     assert.ok(nudge.message_content.includes("1,850"));
 
-    // Verify stage updated to MESSAGED
+    // Not sent, so the cart isn't marked as messaged
     const cart = db.getAbandonedCartById(tenantId, recordedCartId);
-    assert.strictEqual(cart?.recovery_stage, "MESSAGED");
+    assert.notStrictEqual(cart?.recovery_stage, "MESSAGED");
   });
 
   await runTest("Suppress recovery nudge if customer has opted out of WhatsApp", async () => {
@@ -388,7 +390,8 @@ export async function runMarketingTests() {
 
     assert.strictEqual(result.planned_audience, 1);
     assert.strictEqual(result.messages_sent, 1);
-    assert.strictEqual(result.messages_delivered, 1);
+    assert.strictEqual(result.messages_delivered, 0, "nothing is delivered until a channel is integrated (FX-31)");
+    assert.strictEqual(result.messages_failed, 1);
     assert.strictEqual(result.attributed_revenue_bdt, null, "no assumed conversions (FX-30)");
     assert.strictEqual(result.roas, null);
 

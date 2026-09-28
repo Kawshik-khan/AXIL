@@ -139,21 +139,17 @@ export class GetOrderStatusTool implements IAgentTool<z.infer<typeof GetOrderSta
     const shipments = db.getShipments(context.tenant.id, order.id);
     const shipment = shipments[0];
 
-    const isInsideDhaka =
-      order.shipping_address_snapshot?.district?.toLowerCase() === "dhaka" ||
-      order.shipping_address_snapshot?.division?.toLowerCase() === "dhaka";
-
+    // Only what the shipment record says: no default courier, tracking code or delivery estimate, which the agent
+    // would otherwise repeat to the customer as fact (FX-31, non-negotiable 5)
     return {
       found: true,
       order_number: order.order_number,
       status: order.status,
       payment_status: order.payment_status,
-      shipment_status: shipment?.status || "PROCESSING",
-      courier_name: shipment?.courier_provider || "Steadfast Courier",
-      courier_tracking_code: shipment?.tracking_number || "STF-2026-PENDING",
-      estimated_delivery: isInsideDhaka
-        ? "Within 24-48 hours (Dhaka Metro)"
-        : "Within 2-4 business days (Outside Dhaka)",
+      shipment_status: shipment?.status ?? "NOT_SHIPPED",
+      courier_name: shipment?.courier_provider ?? null,
+      courier_tracking_code: shipment?.tracking_number ?? null,
+      estimated_delivery: shipment?.estimated_delivery ?? null,
     };
   }
 }

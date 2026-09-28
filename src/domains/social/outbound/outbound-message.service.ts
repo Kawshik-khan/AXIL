@@ -1,3 +1,4 @@
+import { IntegrationNotConfiguredError } from "@/lib/errors";
 import { randomSuffix } from "@/lib/ids";
 import { db } from "@/infrastructure/db";
 import { Message, MessageType } from "@/types/social";
@@ -203,6 +204,7 @@ export class OutboundMessageService {
         return updated;
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
+        if (err instanceof IntegrationNotConfiguredError) break; // retrying can't help (FX-31)
         if (attempts < this.MAX_RETRIES) {
           // Exponential backoff: 200ms * 2^(attempt-1)
           const backoffMs = 200 * Math.pow(2, attempts - 1);

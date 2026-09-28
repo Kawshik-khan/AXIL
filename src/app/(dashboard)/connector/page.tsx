@@ -838,12 +838,16 @@ export default function ConnectorPage() {
                         <span className={styles.configSnippetValue}>{config.endpoint_url}</span>
                       </div>
                     )}
-                    {config.last_test_latency_ms && (
+                    {typeof config.last_test_latency_ms === "number" && (
                       <div className={styles.configSnippetRow}>
                         <span className={styles.configSnippetLabel}>Latency:</span>
-                        <span style={{ color: "#2E7D32", fontWeight: 600 }}>
-                          {config.last_test_latency_ms} ms (Healthy)
-                        </span>
+                        <span style={{ fontWeight: 600 }}>{config.last_test_latency_ms} ms</span>
+                      </div>
+                    )}
+                    {config.health_status === "UNVERIFIED" && (
+                      <div className={styles.configSnippetRow}>
+                        <span className={styles.configSnippetLabel}>Status:</span>
+                        <span style={{ fontWeight: 600 }}>Saved, not verified with the provider</span>
                       </div>
                     )}
                   </div>
@@ -1039,12 +1043,13 @@ export default function ConnectorPage() {
 
             {/* Test Banner Feedback */}
             {testResult && (
-              <div className={`${styles.testBanner} ${styles.testBannerSuccess}`}>
+              // Success styling only for a real, verified connection (FX-31)
+              <div className={`${styles.testBanner} ${testResult.success ? styles.testBannerSuccess : styles.testBannerError}`}>
                 <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                  <CheckCircle2 size={16} />
+                  {testResult.success ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
                   <span>{testResult.message}</span>
                 </div>
-                <span style={{ fontWeight: 700 }}>{testResult.latency_ms} ms</span>
+                {typeof testResult.latency_ms === "number" && <span style={{ fontWeight: 700 }}>{testResult.latency_ms} ms</span>}
               </div>
             )}
 

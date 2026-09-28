@@ -306,6 +306,7 @@ export interface ReportExecution {
 export type IntegrationCategory = "ERP" | "CRM" | "ACCOUNTING" | "MARKETPLACE" | "PAYMENT" | "LOGISTICS";
 
 export type IntegrationStatus =
+  | "NOT_VERIFIED" // credentials saved, never checked with the provider (FX-31)
   | "CONNECTED"
   | "SYNCING"
   | "HEALTHY"
@@ -460,9 +461,11 @@ export interface WebhookDeliveryRecord {
   payload_json: string;
   signature: string;
   http_status?: number;
-  duration_ms: number;
+  /** Measured request time; null when no request was made. */
+  duration_ms: number | null;
   attempt_number: number;
-  status: "DELIVERED" | "FAILED" | "RETRY_SCHEDULED" | "DEAD_LETTERED";
+  /** NOT_SENT: no HTTP delivery exists yet, so the event was signed and recorded but not sent (FX-31). */
+  status: "DELIVERED" | "FAILED" | "RETRY_SCHEDULED" | "DEAD_LETTERED" | "NOT_SENT";
   response_body?: string;
   delivered_at: string;
 }

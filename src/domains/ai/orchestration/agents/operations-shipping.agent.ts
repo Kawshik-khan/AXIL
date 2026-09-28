@@ -8,6 +8,7 @@ import { AgentType } from "@/types/ai";
 import { ModelTier } from "@/domains/ai/providers/model-router";
 import { RequestContext } from "@/lib/context";
 import { ShippingService } from "@/domains/shipping/shipping.service";
+import { PricingService } from "@/domains/pricing/pricing.service";
 
 export class ShippingAgent extends BaseAgent {
   public readonly agentType: AgentType = "SHIPPING";
@@ -26,7 +27,9 @@ export class ShippingAgent extends BaseAgent {
   ) {
     const isInsideDhaka =
       city.toLowerCase().includes("dhaka") || city.toLowerCase().includes("ঢাকা");
-    const baseRate = isInsideDhaka ? 60 : 130;
+    // The tenant's delivery fees, not 60/130 literals (outside Dhaka was 130 here but 120 at checkout) (FX-31)
+    const fees = PricingService.getDeliveryFees(context.tenant.id);
+    const baseRate = isInsideDhaka ? fees.inside_dhaka_bdt : fees.outside_dhaka_bdt;
     const additionalWeight = Math.max(0, Math.ceil(weightKg - 1));
     const extraCharge = additionalWeight * (isInsideDhaka ? 20 : 25);
     const charge = baseRate + extraCharge;
@@ -36,7 +39,7 @@ export class ShippingAgent extends BaseAgent {
       charge,
       currency: "BDT",
       estimated_days: estimatedDays,
-      courier: isInsideDhaka ? "Pathao Courier" : "Steadfast Courier",
+      // No courier is named: the tenant's courier isn't known here and the booking is manual (FX-31)
     };
   }
 }

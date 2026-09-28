@@ -12,7 +12,8 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const orgId = resolveOrganizationId(context, searchParams.get("organization_id"));
 
-    const webhooks = db.getEnterpriseWebhooks(orgId);
+    // The signing secret is returned once, when the subscription is created; never in listings (FX-31)
+    const webhooks = db.getEnterpriseWebhooks(orgId).map(({ secret: _secret, ...rest }) => rest);
     return apiSuccess({
       total: webhooks.length,
       webhooks,

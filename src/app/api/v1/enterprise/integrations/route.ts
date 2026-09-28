@@ -2,7 +2,7 @@ import { resolveOrganizationId } from "@/domains/enterprise/organization-access"
 import { PERMISSIONS } from "@/lib/permissions";
 import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
-import { integrationHubService } from "@/domains/enterprise/services/integration-hub.service";
+import { integrationHubService, toPublicInstallation } from "@/domains/enterprise/services/integration-hub.service";
 import { db } from "@/infrastructure/db";
 
 export async function GET(request: Request) {
@@ -13,7 +13,7 @@ export async function GET(request: Request) {
     const orgId = resolveOrganizationId(context, searchParams.get("organization_id"));
 
     const providers = integrationHubService.listProviders(); // read-only (FX-21)
-    const installed = db.getIntegrationInstallations(orgId);
+    const installed = db.getIntegrationInstallations(orgId).map(toPublicInstallation); // never return credentials
     const conflicts = db.getIntegrationConflicts(orgId);
     const syncs = db.getIntegrationSyncs(orgId);
 
@@ -42,7 +42,7 @@ export async function POST(request: Request) {
       syncFrequencyMinutes: body.sync_interval_minutes || body.sync_frequency_minutes || 15,
     });
 
-    return apiSuccess(installed, undefined, 201);
+    return apiSuccess(toPublicInstallation(installed), undefined, 201);
   } catch (err) {
     return apiError(err);
   }
