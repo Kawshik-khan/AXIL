@@ -123,6 +123,7 @@ export class WebhookGatewayService {
         payload_size_bytes: payloadSize,
         timestamp: new Date().toISOString(),
       });
+      db.keepEvenIfRequestFails("automation_webhook_deliveries", deliveryId); // the request answers 4xx
 
       return {
         verified: false,
@@ -148,6 +149,7 @@ export class WebhookGatewayService {
         payload_size_bytes: payloadSize,
         timestamp: new Date().toISOString(),
       });
+      db.keepEvenIfRequestFails("automation_webhook_deliveries", deliveryId); // the request answers 4xx
       return { verified: false, code, reason, webhook, deliveryId };
     };
 

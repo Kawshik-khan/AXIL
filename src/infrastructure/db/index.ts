@@ -2,6 +2,7 @@ import { randomSuffix } from "@/lib/ids";
 import fs from "fs";
 import path from "path";
 import os from "os";
+import { AsyncLocalStorage } from "async_hooks";
 import { logger } from "@/lib/logger";
 import { envNumber } from "@/lib/env-number";
 import { AppError } from "@/lib/errors";
@@ -139,6 +140,23 @@ export interface CampaignKillSwitchRecord {
   id: string;
   tenant_id: string | null;
   active: boolean;
+  updated_at: string;
+}
+
+/**
+ * Emergency stop for automation runs: everywhere (GLOBAL), a workspace, a provider or one workflow. Stored, so every
+ * server honours it and it survives restarts (it used to live in one process's memory).
+ */
+export interface AutomationKillSwitchRecord {
+  /** `${scope}:${target}`, e.g. "TENANT:ten_1", "GLOBAL:*". */
+  id: string;
+  scope: "GLOBAL" | "TENANT" | "PROVIDER" | "WORKFLOW";
+  target_id: string | null;
+  /** The workspace a TENANT or WORKFLOW switch belongs to; null for GLOBAL and PROVIDER. */
+  tenant_id: string | null;
+  active: boolean;
+  reason?: string;
+  changed_by: string;
   updated_at: string;
 }
 
@@ -588,6 +606,7 @@ export interface DatabaseSchema {
   platform_api_keys: PlatformApiKeyRecord[];
   impersonation_sessions: ImpersonationSessionRecord[];
   campaign_kill_switches: CampaignKillSwitchRecord[];
+  automation_kill_switches: AutomationKillSwitchRecord[];
 }
 
 /**
@@ -675,6 +694,9 @@ class StoreLock {
   }
 }
 
+/** Which unit of work the running code belongs to: work a request left running after it responded is not part of a later one. */
+const unitContext = new AsyncLocalStorage<object>();
+
 /** Reads see other servers' changes at most this late (0: sync before every read request). */
 const SYNC_INTERVAL_MS = envNumber("STORE_SYNC_INTERVAL_MS", 1_000, 0);
 /** Changes made outside any unit of work (no store method reported them) are found and committed at least this often. */
@@ -724,6 +746,10 @@ export class CommerceDatabase {
   private unitTouched: Set<string> | "all" = new Set();
   /** Rows this unit saves even when its request fails (security events, audits of denied attempts). */
   private unitKeep = new Map<string, Set<string>>();
+  /** Identifies the running unit's async context (see `unitContext`). */
+  private unitToken: object | null = null;
+  /** What code outside the running unit (background work) changed while it ran. */
+  private foreignDuringUnit: Set<string> | "all" | null = null;
   private loopTimer: ReturnType<typeof setInterval> | null = null;
   private lastSyncAt = 0;
   private lastSweepAt = 0;
@@ -1284,6 +1310,7 @@ export class CommerceDatabase {
       platform_api_keys: parsed.platform_api_keys || [],
       impersonation_sessions: parsed.impersonation_sessions || [],
       campaign_kill_switches: parsed.campaign_kill_switches || [],
+      automation_kill_switches: parsed.automation_kill_switches || [],
     };
   }
 
@@ -1546,6 +1573,7 @@ export class CommerceDatabase {
       platform_api_keys: [],
       impersonation_sessions: [],
       campaign_kill_switches: [],
+      automation_kill_switches: [],
     };
   }
 
@@ -1562,10 +1590,19 @@ export class CommerceDatabase {
       throw new AppError("STORE_UNAVAILABLE", "The data store can't save changes right now. Nothing was saved.", 503);
     }
     if (this.backend === "pg") {
-      if (this.unitActive) {
+      if (this.unitActive && unitContext.getStore() === this.unitToken) {
         if (!collections || this.unitTouched === "all") this.unitTouched = "all";
         else for (const c of collections) this.unitTouched.add(c);
       } else {
+        // Background work, or work an earlier request left running: the background loop commits it
+        if (this.unitActive) {
+          if (!collections || this.foreignDuringUnit === "all") this.foreignDuringUnit = "all";
+          else {
+            const foreign = this.foreignDuringUnit ?? new Set<string>();
+            for (const c of collections) foreign.add(c);
+            this.foreignDuringUnit = foreign;
+          }
+        }
         this.dirty = true;
       }
       return;
@@ -1715,9 +1752,12 @@ export class CommerceDatabase {
       this.unitActive = true;
       this.unitTouched = new Set();
       this.unitKeep = new Map();
+      this.foreignDuringUnit = null;
+      const token = {};
+      this.unitToken = token;
       let result: T;
       try {
-        result = await work();
+        result = await unitContext.run(token, work);
       } catch (err) {
         this.unitActive = false;
         await this.failLocked(pg);
@@ -1739,7 +1779,7 @@ export class CommerceDatabase {
    * audit of a denied support-session request). Outside one it is saved like any other change.
    */
   public keepEvenIfRequestFails(collection: string, id: string): void {
-    if (!this.unitActive) return;
+    if (!this.unitActive || unitContext.getStore() !== this.unitToken) return;
     const ids = this.unitKeep.get(collection) ?? new Set<string>();
     ids.add(id);
     this.unitKeep.set(collection, ids);
@@ -1764,7 +1804,14 @@ export class CommerceDatabase {
     }
     const touched = this.unitTouched as Set<string> | "all";
     if (touched !== "all" && touched.size === 0) return;
-    const changes = pg.computeChanges(data);
+    // Background work changed data meanwhile: undo only what this unit reported, so that work isn't undone with it.
+    // Where both changed the same collection they can't be told apart, and the request's failure wins (logged).
+    const foreign = this.foreignDuringUnit as Set<string> | "all" | null;
+    if (foreign) {
+      const overlap = touched === "all" || foreign === "all" ? ["*"] : [...touched].filter((c) => foreign.has(c));
+      if (overlap.length) logger.warn("db.background_change_undone", { collections: overlap });
+    }
+    const changes = pg.computeChanges(data, foreign && touched !== "all" ? touched : undefined);
     if (changes.rowCount) pg.restore(data, changes);
   }
 
@@ -8709,6 +8756,40 @@ export class CommerceDatabase {
     return this.data.campaign_kill_switches.some((k) => k.active && (k.id === "global" || k.id === tenantId));
   }
 
+  /** Sets (or clears) an automation kill switch. Callers decide who may set which scope. */
+  public setAutomationKillSwitch(input: Omit<AutomationKillSwitchRecord, "id" | "updated_at">): AutomationKillSwitchRecord {
+    const target = input.scope === "GLOBAL" ? "*" : input.scope === "PROVIDER" ? (input.target_id ?? "").toUpperCase() : input.target_id ?? "";
+    const record: AutomationKillSwitchRecord = {
+      ...input,
+      id: `${input.scope}:${target}`,
+      target_id: input.scope === "GLOBAL" ? null : target,
+      updated_at: new Date().toISOString(),
+    };
+    const list = this.data.automation_kill_switches;
+    const index = list.findIndex((k) => k.id === record.id);
+    if (index >= 0) list[index] = record;
+    else list.push(record);
+    this.persist(["automation_kill_switches"]);
+    return record;
+  }
+
+  /** Active automation kill switches that apply to this workspace (and, when given, workflow and provider). */
+  public getActiveAutomationKillSwitches(tenantId: string, workflowId?: string, provider?: string): AutomationKillSwitchRecord[] {
+    return this.data.automation_kill_switches.filter(
+      (k) =>
+        k.active &&
+        (k.scope === "GLOBAL" ||
+          (k.scope === "TENANT" && k.target_id === tenantId) ||
+          (k.scope === "WORKFLOW" && !!workflowId && k.target_id === workflowId && k.tenant_id === tenantId) ||
+          (k.scope === "PROVIDER" && !!provider && k.target_id === provider.toUpperCase()))
+    );
+  }
+
+  /** How many automation kill switches are active (telemetry). */
+  public countActiveAutomationKillSwitches(): number {
+    return this.data.automation_kill_switches.filter((k) => k.active).length;
+  }
+
   // For clean test suite execution
   public clearAllForTesting(): void {
     // An explicitly persistent store (the Postgres test mode) keeps saving, so the clear itself is exercised.
@@ -8943,6 +9024,7 @@ export class CommerceDatabase {
       platform_api_keys: [],
       impersonation_sessions: [],
       campaign_kill_switches: [],
+      automation_kill_switches: [],
     };
     this.ensureDefaultSeed();
   }

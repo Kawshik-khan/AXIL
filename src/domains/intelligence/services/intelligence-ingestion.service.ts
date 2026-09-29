@@ -24,7 +24,6 @@ export interface IngestionResult {
 }
 
 export class IntelligenceIngestionService {
-  private processedEventIds: Set<string> = new Set();
 
   /**
    * Ingests a commerce domain event into the analytical layer with idempotency protection
@@ -37,14 +36,13 @@ export class IntelligenceIngestionService {
       throw new Error("Cannot ingest event: event id is required.");
     }
 
-    const eventKey = `${event.tenant_id}:${event.id}`;
     const idempotencyKey = event.idempotency_key || event.id;
 
     // 1. Check idempotency
     const existingEvents = db.getAnalyticsEvents(event.tenant_id);
-    const isDuplicate =
-      this.processedEventIds.has(eventKey) ||
-      existingEvents.some((e) => e.id === event.id || (e.payload?.idempotency_key === idempotencyKey && idempotencyKey));
+    // The store is the only record of what was ingested: a per-process cache disagreed with other servers and kept
+    // an event whose request was undone (ADR-109)
+    const isDuplicate = existingEvents.some((e) => e.id === event.id || (e.payload?.idempotency_key === idempotencyKey && idempotencyKey));
 
     if (isDuplicate) {
       return {
@@ -65,7 +63,6 @@ export class IntelligenceIngestionService {
       created_at: event.timestamp || new Date().toISOString(),
     };
     db.insertAnalyticsEvent(eventRecord);
-    this.processedEventIds.add(eventKey);
 
     // 3. Incremental rollups based on event type
     const rollupsUpdated: string[] = [];

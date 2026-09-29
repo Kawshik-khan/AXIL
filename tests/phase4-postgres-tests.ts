@@ -518,6 +518,62 @@ async function main() {
     assert.strictEqual(saved.rows[0].notes ?? undefined, before);
   });
 
+  await runTest("work a request left running is not part of a later request: a failing unit doesn't undo it, the background commits it", async () => {
+    let later!: () => void;
+    const laterGate = new Promise<void>((resolve) => (later = resolve));
+    let detached!: Promise<void>;
+    await A.unit(async () => {
+      detached = (async () => {
+        await laterGate; // e.g. a conversation summary saved after an LLM call, once the response has gone
+        A.recordPlatformSecurityEvent({ id: "sec_mw_late", event_type: "SUSPICIOUS_SESSION", severity: "LOW", description: "late", created_at: new Date().toISOString() });
+      })();
+      return true;
+    }, commitAll);
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => (open = resolve));
+    const failing = A.unit(async () => {
+      A.createTenant(tenant("ten_mw_fails"));
+      await gate;
+      return { status: 500 };
+    }, (res) => res.status < 400);
+    await new Promise((r) => setTimeout(r, 20));
+    later();
+    await detached; // lands while the failing unit runs
+    open();
+    await failing;
+    assert.ok(A.data.platform_security_events.some((x) => x.id === "sec_mw_late"), "the earlier request's late write survives");
+    assert.ok(!A.data.tenants.some((x) => x.id === "ten_mw_fails"));
+    await A.flush();
+    const late = await mwClient.query("SELECT 1 FROM commerceos.documents WHERE collection = 'platform_security_events' AND id = 'sec_mw_late'");
+    assert.strictEqual(late.rows.length, 1, "committed by the background");
+    const failed = await mwClient.query("SELECT 1 FROM commerceos.tenants WHERE id = 'ten_mw_fails'");
+    assert.strictEqual(failed.rows.length, 0);
+  });
+
+  await runTest("the automation kill switch is stored: set on one server, it halts runs on the other", async () => {
+    await A.unit(async () => {
+      A.setAutomationKillSwitch({ scope: "TENANT", target_id: "ten_mw", tenant_id: "ten_mw", active: true, reason: "test", changed_by: "usr_x" });
+      return true;
+    }, commitAll);
+    await B.syncNow();
+    assert.strictEqual(B.getActiveAutomationKillSwitches("ten_mw").length, 1);
+    assert.strictEqual(B.getActiveAutomationKillSwitches("ten_other").length, 0);
+    await B.unit(async () => {
+      B.setAutomationKillSwitch({ scope: "TENANT", target_id: "ten_mw", tenant_id: "ten_mw", active: false, changed_by: "usr_x" });
+      return true;
+    }, commitAll);
+    await A.syncNow();
+    assert.strictEqual(A.getActiveAutomationKillSwitches("ten_mw").length, 0);
+  });
+
+  await runTest("rejected webhook deliveries are kept although their request answers 4xx", () => {
+    const source = fs.readFileSync(path.join(ROOT, "src/domains/automation/services/webhook-gateway.service.ts"), "utf8");
+    const rejected = source.split('status: "REJECTED"').length - 1;
+    const kept = source.split('keepEvenIfRequestFails("automation_webhook_deliveries"').length - 1;
+    assert.ok(rejected > 0);
+    assert.strictEqual(kept, rejected, "every rejected delivery is marked to keep");
+  });
+
   await runTest("store refusals carry no internal names (collections, constraints) to the client", async () => {
     let open!: () => void;
     const gate = new Promise<void>((resolve) => (open = resolve));

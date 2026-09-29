@@ -9,25 +9,8 @@ import { db } from "@/infrastructure/db";
 import { RiskLevel } from "@/types/automation";
 import { PlatformSafetyService } from "@/domains/platform/services/platform-safety.service";
 
-export interface KillSwitchState {
-  globalPaused: boolean;
-  pausedTenants: Set<string>;
-  pausedProviders: Set<string>;
-  pausedWorkflows: Set<string>;
-  lastTrippedAt?: string;
-  lastTrippedBy?: string;
-  reason?: string;
-}
-
 export class AutomationSafetyService {
   private static readonly MAX_LINEAGE_DEPTH = 5;
-
-  private static killSwitchState: KillSwitchState = {
-    globalPaused: false,
-    pausedTenants: new Set(),
-    pausedProviders: new Set(),
-    pausedWorkflows: new Set(),
-  };
 
   /**
    * Evaluates if event lineage poses an infinite recursion loop hazard
@@ -69,32 +52,16 @@ export class AutomationSafetyService {
     workflowId?: string,
     provider?: string
   ): { isHalted: boolean; reason?: string } {
-    if (this.killSwitchState.globalPaused) {
-      return {
-        isHalted: true,
-        reason: `Global emergency kill switch is ACTIVE: ${this.killSwitchState.reason || "Platform emergency halt"}`,
-      };
+    // Stored, so a switch set on any app server (or before a restart) holds here too (ADR-109)
+    const active = db.getActiveAutomationKillSwitches(tenantId, workflowId, provider);
+    const global = active.find((k) => k.scope === "GLOBAL");
+    if (global) {
+      return { isHalted: true, reason: `Global emergency kill switch is ACTIVE: ${global.reason || "Platform emergency halt"}` };
     }
-
-    if (this.killSwitchState.pausedTenants.has(tenantId)) {
-      return {
-        isHalted: true,
-        reason: `Automation kill switch active for tenant '${tenantId}'`,
-      };
-    }
-
-    if (provider && this.killSwitchState.pausedProviders.has(provider.toUpperCase())) {
-      return {
-        isHalted: true,
-        reason: `Kill switch active for provider '${provider}'`,
-      };
-    }
-
-    if (workflowId && this.killSwitchState.pausedWorkflows.has(workflowId)) {
-      return {
-        isHalted: true,
-        reason: `Kill switch active for workflow '${workflowId}'`,
-      };
+    const scoped = active[0];
+    if (scoped) {
+      const what = scoped.scope === "TENANT" ? "this workspace" : scoped.scope === "WORKFLOW" ? `workflow '${workflowId}'` : `provider '${provider}'`;
+      return { isHalted: true, reason: `Automation kill switch active for ${what}` };
     }
 
     // Platform kill switches (operator console) apply too: they used to be recorded but never checked (FX-34, H11)
@@ -110,74 +77,48 @@ export class AutomationSafetyService {
   }
 
   /**
-   * Activates emergency kill switch
+   * Activates an emergency kill switch. GLOBAL and PROVIDER switches stop every workspace: only callers acting for the
+   * platform may set them (the tenant route allows its own workspace and its own workflows only).
    */
   public static tripKillSwitch(
     scope: "GLOBAL" | "TENANT" | "PROVIDER" | "WORKFLOW",
     targetId: string | undefined,
     actorId: string,
-    reason: string
+    reason: string,
+    tenantId: string | null = scope === "TENANT" ? targetId ?? null : null
   ): void {
-    const now = new Date().toISOString();
-    this.killSwitchState.lastTrippedAt = now;
-    this.killSwitchState.lastTrippedBy = actorId;
-    this.killSwitchState.reason = reason;
-
-    if (scope === "GLOBAL") {
-      this.killSwitchState.globalPaused = true;
-    } else if (scope === "TENANT" && targetId) {
-      this.killSwitchState.pausedTenants.add(targetId);
-    } else if (scope === "PROVIDER" && targetId) {
-      this.killSwitchState.pausedProviders.add(targetId.toUpperCase());
-    } else if (scope === "WORKFLOW" && targetId) {
-      this.killSwitchState.pausedWorkflows.add(targetId);
-    }
-
-    // Record audit log if tenant is defined
-    const auditTenantId = scope === "TENANT" && targetId ? targetId : "SYSTEM";
+    const record = db.setAutomationKillSwitch({ scope, target_id: targetId ?? null, tenant_id: tenantId, active: true, reason, changed_by: actorId });
     db.createAutomationAuditLog({
       id: `aud_ks_${Date.now()}_${randomSuffix()}`,
-      tenant_id: auditTenantId,
+      tenant_id: tenantId ?? "SYSTEM",
       actor_id: actorId,
       action: "KILL_SWITCH_ACTIVATED",
       resource_type: "kill_switch",
-      resource_id: targetId || "GLOBAL",
+      resource_id: record.target_id || "GLOBAL",
       metadata: { scope, reason },
-      timestamp: now,
+      timestamp: record.updated_at,
     });
   }
 
   /**
-   * Resumes operations by clearing kill switch
+   * Resumes operations by clearing a kill switch
    */
   public static resumeKillSwitch(
     scope: "GLOBAL" | "TENANT" | "PROVIDER" | "WORKFLOW",
     targetId: string | undefined,
-    actorId: string
+    actorId: string,
+    tenantId: string | null = scope === "TENANT" ? targetId ?? null : null
   ): void {
-    const now = new Date().toISOString();
-
-    if (scope === "GLOBAL") {
-      this.killSwitchState.globalPaused = false;
-      this.killSwitchState.reason = undefined;
-    } else if (scope === "TENANT" && targetId) {
-      this.killSwitchState.pausedTenants.delete(targetId);
-    } else if (scope === "PROVIDER" && targetId) {
-      this.killSwitchState.pausedProviders.delete(targetId.toUpperCase());
-    } else if (scope === "WORKFLOW" && targetId) {
-      this.killSwitchState.pausedWorkflows.delete(targetId);
-    }
-
-    const auditTenantId = scope === "TENANT" && targetId ? targetId : "SYSTEM";
+    const record = db.setAutomationKillSwitch({ scope, target_id: targetId ?? null, tenant_id: tenantId, active: false, changed_by: actorId });
     db.createAutomationAuditLog({
       id: `aud_ks_res_${Date.now()}_${randomSuffix()}`,
-      tenant_id: auditTenantId,
+      tenant_id: tenantId ?? "SYSTEM",
       actor_id: actorId,
       action: "KILL_SWITCH_RESUMED",
       resource_type: "kill_switch",
-      resource_id: targetId || "GLOBAL",
+      resource_id: record.target_id || "GLOBAL",
       metadata: { scope },
-      timestamp: now,
+      timestamp: record.updated_at,
     });
   }
 
@@ -190,15 +131,14 @@ export class AutomationSafetyService {
     activePausedCount: number;
     reason?: string;
   } {
+    const active = tenantId ? db.getActiveAutomationKillSwitches(tenantId) : [];
+    const global = active.find((k) => k.scope === "GLOBAL");
+    const tenant = active.find((k) => k.scope === "TENANT");
     return {
-      isGlobalPaused: this.killSwitchState.globalPaused,
-      isTenantPaused: tenantId ? this.killSwitchState.pausedTenants.has(tenantId) : false,
-      activePausedCount:
-        (this.killSwitchState.globalPaused ? 1 : 0) +
-        this.killSwitchState.pausedTenants.size +
-        this.killSwitchState.pausedProviders.size +
-        this.killSwitchState.pausedWorkflows.size,
-      reason: this.killSwitchState.reason,
+      isGlobalPaused: !!global,
+      isTenantPaused: !!tenant,
+      activePausedCount: db.countActiveAutomationKillSwitches(),
+      reason: (global ?? tenant)?.reason,
     };
   }
 

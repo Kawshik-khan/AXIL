@@ -465,6 +465,25 @@ async function main() {
     assert.strictEqual(row.secret_configured, true);
   });
 
+  await runTest("automation kill switch: a workspace can pause only itself or its own workflows, never everyone or another workspace", async () => {
+    const { token } = await AuthService.login(tenantA.user.email, ownerPassword);
+    const { POST } = await import("@/app/api/v1/automation/health/route");
+    const { AutomationSafetyService } = await import("@/domains/automation/services/automation-safety.service");
+    const call = (body: Record<string, unknown>) =>
+      POST(new Request(`${BASE}/api/v1/automation/health`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(body) }));
+    assert.strictEqual((await call({ action: "TRIP_KILL_SWITCH", scope: "GLOBAL" })).status, 403);
+    assert.strictEqual((await call({ action: "TRIP_KILL_SWITCH", scope: "PROVIDER", target_id: "N8N" })).status, 403);
+    assert.strictEqual((await call({ action: "TRIP_KILL_SWITCH", scope: "TENANT", target_id: tenantB.tenant.id })).status, 403);
+    assert.strictEqual((await call({ action: "TRIP_KILL_SWITCH", scope: "WORKFLOW", target_id: "wf_of_someone_else" })).status, 404);
+    assert.strictEqual((await call({ action: "TRIP_KILL_SWITCH", tenant_id: tenantB.tenant.id })).status, 400, "unknown fields are refused");
+    assert.strictEqual(AutomationSafetyService.isHaltedByKillSwitch(tenantB.tenant.id, undefined, "N8N").isHalted, false, "nothing was paused elsewhere");
+    assert.strictEqual((await call({ action: "TRIP_KILL_SWITCH", scope: "TENANT" })).status, 200);
+    assert.strictEqual(AutomationSafetyService.isHaltedByKillSwitch(tenantA.tenant.id).isHalted, true);
+    assert.strictEqual(AutomationSafetyService.isHaltedByKillSwitch(tenantB.tenant.id).isHalted, false);
+    assert.strictEqual((await call({ action: "RESUME_KILL_SWITCH", scope: "TENANT" })).status, 200);
+    assert.strictEqual(AutomationSafetyService.isHaltedByKillSwitch(tenantA.tenant.id).isHalted, false);
+  });
+
   await runTest("C4: there is no predictable fallback webhook secret", () => {
     assert.throws(() => WebhookGatewayService.resolveWebhookSecret(`UNSET_SECRET_${crypto.randomUUID().slice(0, 6).toUpperCase()}`));
   });

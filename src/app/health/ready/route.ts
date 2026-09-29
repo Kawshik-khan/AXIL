@@ -10,7 +10,7 @@ let lastNotReadyLogAt = 0;
 
 /**
  * Readiness (FIX_IMPLEMENTATION_PLAN FX-20 / FX-24 / FX-45, audit L3). Not ready when the store can't persist: the last
- * write failed, writing is blocked, this process doesn't hold the single-writer lock (JSON file) or lease (Postgres),
+ * write failed, writing is blocked, this process doesn't hold the single-writer lock (JSON file), it hasn't synced from other servers for 30 s (Postgres),
  * the data directory isn't writable (JSON), Postgres doesn't answer within 2 s or the store hasn't loaded yet
  * (Postgres). Records Postgres refused (the rest keeps saving) make it "degraded" with 200, so one bad record raises an
  * alert without taking every workspace out of a load balancer (Phase 4 security review L4).

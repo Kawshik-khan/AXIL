@@ -3,7 +3,7 @@ import { logger } from "@/lib/logger";
 import { secretProblems } from "@/lib/security";
 
 /**
- * With DATA_BACKEND=pg the store takes the writer lease and loads from Postgres before requests are served; until then
+ * With DATA_BACKEND=pg the store loads from Postgres before requests are served; until then
  * `db.data` answers 503 STORE_NOT_READY. The JSON store is ready as soon as its module loads, so this returns at once.
  */
 export async function loadStore(): Promise<void> {
