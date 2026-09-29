@@ -32,7 +32,7 @@ async function handlePOST(request: Request, { params }: { params: { provider: st
       return reject(401, "UNKNOWN_WEBHOOK", "Unknown or inactive webhook endpoint.");
     }
     // 600 calls per minute per endpoint (FX-14): bounds the rejected-delivery rows a flood of bad signatures can write.
-    if (!checkRateLimit(`webhook:${webhook.id}`, 600, MINUTE).allowed) {
+    if (!(await checkRateLimit(`webhook:${webhook.id}`, 600, MINUTE)).allowed) {
       return reject(429, "RATE_LIMITED", "Too many webhook calls for this endpoint.");
     }
 

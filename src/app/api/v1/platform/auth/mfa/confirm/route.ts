@@ -11,7 +11,7 @@ const Body = z.object({ code: z.string().trim().regex(/^\d{6}$/) }).strict();
 async function handlePOST(request: Request) {
   try {
     const context = await extractPlatformContext(request);
-    enforceRateLimit(`mfa:confirm:${context.platformUser.id}`, 5, 15 * MINUTE);
+    await enforceRateLimit(`mfa:confirm:${context.platformUser.id}`, 5, 15 * MINUTE);
     const { code } = parseOrThrow(Body, await readJson(request));
     PlatformMfaService.confirmEnrollment(context.platformUser.id, code);
     return apiSuccess({ mfa_enabled: true });

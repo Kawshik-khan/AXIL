@@ -457,11 +457,12 @@ async function main() {
   await runTest("a widget visitor sending more than 30 messages a minute → 429", async () => {
     const now = Date.now();
     const key = `widget:visitor:test:${uid("anon")}`;
-    for (let i = 0; i < 30; i++) assert.strictEqual(checkRateLimit(key, 30, 60_000, now).allowed, true);
-    const blocked = checkRateLimit(key, 30, 60_000, now);
+    for (let i = 0; i < 30; i++) assert.strictEqual((await checkRateLimit(key, 30, 60_000, now)).allowed, true);
+    const blocked = await checkRateLimit(key, 30, 60_000, now);
     assert.strictEqual(blocked.allowed, false);
     assert.ok(blocked.retryAfterSec > 0);
-    assert.strictEqual(checkRateLimit(key, 30, 60_000, now + 61_000).allowed, true, "the window slides");
+    // Two windows later (the shared limiter's sliding estimate still weighs part of the previous window at +61 s)
+    assert.strictEqual((await checkRateLimit(key, 30, 60_000, now + 121_000)).allowed, true, "the window slides");
   });
 
   // ---------------------------------------------------------------------------

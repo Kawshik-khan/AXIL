@@ -15,7 +15,7 @@ async function handlePOST(request: Request) {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.ANALYTICS_MANAGE);
     // Runs every detector and a full-store flush: cap it per workspace so a loop can't stall the server (review L-3)
-    enforceRateLimit(`intel:recompute:${context.tenant.id}`, 2, MINUTE);
+    await enforceRateLimit(`intel:recompute:${context.tenant.id}`, 2, MINUTE);
     const summary = intelligenceRecomputeService.recomputeAll(context.tenant.id);
     AuditService.log({
       tenantId: context.tenant.id,

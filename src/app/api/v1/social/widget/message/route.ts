@@ -45,11 +45,11 @@ async function handlePOST(request: Request) {
     // Anonymous traffic limits (FX-14): per visitor, per client behind a trusted proxy, and a per-channel backstop
     // because visitor ids are chosen by the browser.
     const client = clientKey(request);
-    const limits = [
+    const limits = await Promise.all([
       checkRateLimit(`widget:visitor:${channel.id}:${parsed.data.anonymous_id}`, 30, MINUTE),
       checkRateLimit(`widget:channel:${channel.id}`, 300, MINUTE),
       ...(client ? [checkRateLimit(`widget:client:${client}`, 60, MINUTE)] : []),
-    ];
+    ]);
     const blocked = limits.find((l) => !l.allowed);
     if (blocked) {
       return NextResponse.json(

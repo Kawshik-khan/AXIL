@@ -505,6 +505,29 @@ async function main() {
     await mwClient.query("UPDATE commerceos.store_state SET pruned_through = 0 WHERE id = 1");
   });
 
+  await runTest("rate limits are shared: hits on one server count on the other", async () => {
+    const key = `p4:shared:${Date.now()}`;
+    for (let i = 0; i < 3; i++) await A.rateLimitHit(key, 60_000, Date.now());
+    const hit = await B.rateLimitHit(key, 60_000, Date.now());
+    assert.ok(hit, "shared counters exist on the Postgres store");
+    assert.strictEqual(hit.current, 4);
+    const stored = await mwClient.query<{ n: string }>("SELECT count(*)::text AS n FROM commerceos.rate_limits WHERE key = $1", [key]);
+    assert.strictEqual(stored.rows[0].n, "1", "one row per key and window");
+  });
+
+  await runTest("the campaign kill switch is stored: set on one server, it holds on the other (and survives a restart)", async () => {
+    await A.unit(async () => {
+      A.setCampaignKillSwitch("ten_mw", true);
+      return true;
+    }, commitAll);
+    await B.syncNow();
+    assert.strictEqual(B.isCampaignKillSwitchActive("ten_mw"), true);
+    assert.strictEqual(B.isCampaignKillSwitchActive("ten_other"), false);
+    const restarted = await openStore(mwClient);
+    assert.strictEqual(restarted.isCampaignKillSwitchActive("ten_mw"), true);
+    await restarted.shutdown();
+  });
+
   await runTest("a backfill refuses while an app server is writing to the target", async () => {
     await assert.rejects(backfillStore({ tenants: [] }, mwClient, { replace: true, onRejected: "throw" }), /Stop every app server/);
   });
@@ -636,6 +659,39 @@ async function main() {
       });
     }
     assert.deepStrictEqual(hits, []);
+  });
+
+  await runTest("every rate limit is awaited (an un-awaited check would silently allow everything)", () => {
+    const hits: string[] = [];
+    for (const file of sourceFiles(path.join(ROOT, "src"))) {
+      const rel = path.relative(ROOT, file).replace(/\\/g, "/");
+      if (rel === "src/lib/rate-limit.ts") continue;
+      fs.readFileSync(file, "utf8").split("\n").forEach((line, i) => {
+        if (/(?<![\w.])enforceRateLimit\(/.test(line) && !/await enforceRateLimit\(/.test(line) && !/import /.test(line)) hits.push(`${rel}:${i + 1}`);
+        // checkRateLimit results are awaited directly, or all together (the widget's Promise.all)
+        if (
+          /(?<![\w.])checkRateLimit\(/.test(line) &&
+          !/await checkRateLimit\(|import |(public|private|function) checkRateLimit\(/.test(line) &&
+          rel !== "src/app/api/v1/social/widget/message/route.ts"
+        ) {
+          hits.push(`${rel}:${i + 1}`);
+        }
+      });
+    }
+    assert.deepStrictEqual(hits, []);
+  });
+
+  await runTest("every API route handler runs through withStore (units of work, ADR-109)", () => {
+    const missing: string[] = [];
+    for (const file of sourceFiles(path.join(ROOT, "src/app"))) {
+      if (!file.endsWith("route.ts")) continue;
+      const text = fs.readFileSync(file, "utf8");
+      if (/^export (async )?function (GET|POST|PUT|PATCH|DELETE)\b/m.test(text)) missing.push(path.relative(ROOT, file));
+      for (const m of text.matchAll(/^export const (GET|POST|PUT|PATCH|DELETE) = (\w+)\(/gm)) {
+        if (m[2] !== "withStore") missing.push(`${path.relative(ROOT, file)} ${m[1]}`);
+      }
+    }
+    assert.deepStrictEqual(missing, []);
   });
 
   await runTest("withTransaction propagates failures (no silent re-run over HTTP after a rollback, M8)", () => {

@@ -10,9 +10,9 @@ async function handlePOST(request: Request) {
     const body = await request.json();
     // Brute-force limits (FX-14): per account always, per client when a trusted proxy identifies it.
     const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
-    enforceRateLimit(`login:tenant:email:${email}`, 10, 15 * MINUTE);
+    await enforceRateLimit(`login:tenant:email:${email}`, 10, 15 * MINUTE);
     const client = clientKey(request);
-    if (client) enforceRateLimit(`login:tenant:client:${client}`, 50, 15 * MINUTE);
+    if (client) await enforceRateLimit(`login:tenant:client:${client}`, 50, 15 * MINUTE);
     const result = await AuthService.login(body.email, body.password, body.tenantId);
 
     const platformMembership = (await import("@/infrastructure/db")).db.findPlatformMembershipByUserId(result.user.id);

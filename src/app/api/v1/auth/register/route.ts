@@ -9,8 +9,8 @@ async function handlePOST(request: Request) {
   try {
     // Sign-up limits (FX-14): 5 per client per hour behind a trusted proxy, and a global cap of 30 per hour.
     const client = clientKey(request);
-    if (client) enforceRateLimit(`register:client:${client}`, 5, 60 * MINUTE);
-    enforceRateLimit("register:global", 30, 60 * MINUTE); // always, so no header can lift the overall cap
+    if (client) await enforceRateLimit(`register:client:${client}`, 5, 60 * MINUTE);
+    await enforceRateLimit("register:global", 30, 60 * MINUTE); // always, so no header can lift the overall cap
     const body = await request.json();
     const result = await AuthService.registerTenantWithOwner(body);
 

@@ -10,7 +10,7 @@ async function handlePOST(request: Request) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.AI_RUN);
-    enforceRateLimit(`ai:user:${context.user.id}`, 30, MINUTE); // costly model calls (FX-14)
+    await enforceRateLimit(`ai:user:${context.user.id}`, 30, MINUTE); // costly model calls (FX-14)
 
     const body = await request.json();
     if (!body.conversation_id) {

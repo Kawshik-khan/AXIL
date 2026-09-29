@@ -23,22 +23,16 @@ import { offerService } from "./offer.service";
 import { assertNotKilled } from "@/lib/safety-gate";
 
 export class CampaignService {
-  private globalKillSwitchActive = false;
-  private tenantKillSwitches: Record<string, boolean> = {};
-
   /**
-   * Sets emergency kill switch state
+   * Sets the emergency kill switch. Stored (it used to live in this service's memory: lost on restart, and one server's
+   * switch didn't stop another server's sends; FX-45).
    */
   public setKillSwitch(tenantId: string | null, active: boolean): void {
-    if (tenantId === null) {
-      this.globalKillSwitchActive = active;
-    } else {
-      this.tenantKillSwitches[tenantId] = active;
-    }
+    db.setCampaignKillSwitch(tenantId, active);
   }
 
   public isKillSwitchActive(tenantId: string): boolean {
-    return this.globalKillSwitchActive || Boolean(this.tenantKillSwitches[tenantId]);
+    return db.isCampaignKillSwitchActive(tenantId);
   }
 
   /**

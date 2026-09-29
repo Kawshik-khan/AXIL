@@ -31,9 +31,9 @@ async function handlePOST(request: Request) {
     }
     const { email, password } = parsed.data;
     // Brute-force limits (FX-14): per account always, per client when a trusted proxy identifies it.
-    enforceRateLimit(`login:platform:email:${email}`, 10, 15 * MINUTE);
+    await enforceRateLimit(`login:platform:email:${email}`, 10, 15 * MINUTE);
     const client = clientKey(request);
-    if (client) enforceRateLimit(`login:platform:client:${client}`, 50, 15 * MINUTE);
+    if (client) await enforceRateLimit(`login:platform:client:${client}`, 50, 15 * MINUTE);
 
     // Password first (bcrypt only — audit C8), membership second, so the endpoint does not reveal which
     // emails belong to platform operators.

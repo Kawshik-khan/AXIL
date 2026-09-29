@@ -17,7 +17,7 @@ const Body = z.object({ password: z.string().min(1).max(200) }).strict();
 async function handlePOST(request: Request) {
   try {
     const context = await extractPlatformContext(request);
-    enforceRateLimit(`mfa:enroll:${context.platformUser.id}`, 5, 15 * MINUTE);
+    await enforceRateLimit(`mfa:enroll:${context.platformUser.id}`, 5, 15 * MINUTE);
     const { password } = parseOrThrow(Body, await readJson(request));
     const user = db.findUserById(context.platformUser.id);
     if (!user || !(await verifyPassword(password, user.password_hash))) {

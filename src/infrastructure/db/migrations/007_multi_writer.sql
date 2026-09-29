@@ -37,6 +37,14 @@ CREATE TABLE IF NOT EXISTS commerceos.changes (
 );
 CREATE INDEX IF NOT EXISTS changes_at_idx ON commerceos.changes (at);
 
+-- Rate-limit counters shared by every server (sign-in guessing counts on all of them). Keys are SHA-256 hashes.
+CREATE TABLE IF NOT EXISTS commerceos.rate_limits (
+    key           text    NOT NULL,
+    window_start  bigint  NOT NULL,
+    hits          integer NOT NULL,
+    PRIMARY KEY (key, window_start)
+);
+
 CREATE TABLE IF NOT EXISTS commerceos.store_state (
     id              integer PRIMARY KEY CHECK (id = 1),
     epoch           text    NOT NULL,

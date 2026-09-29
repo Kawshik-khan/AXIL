@@ -23,7 +23,7 @@ async function handlePOST(request: Request) {
     if (!pending) {
       throw new AppError("MFA_TOKEN_INVALID", "Sign-in expired. Enter your email and password again.", 401);
     }
-    enforceRateLimit(`mfa:verify:${pending.userId}`, 5, 15 * MINUTE);
+    await enforceRateLimit(`mfa:verify:${pending.userId}`, 5, 15 * MINUTE);
 
     const user = db.findUserById(pending.userId);
     const membership = db.findPlatformMembershipByUserId(pending.userId);

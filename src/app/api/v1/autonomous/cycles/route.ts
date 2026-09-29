@@ -17,7 +17,7 @@ async function handlePOST(request: Request) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.AUTONOMOUS_EXECUTE);
-    enforceRateLimit(`autonomous-cycle:tenant:${context.tenant.id}`, 5, 60_000);
+    await enforceRateLimit(`autonomous-cycle:tenant:${context.tenant.id}`, 5, 60_000);
     const body = Body.parse(await request.json().catch(() => ({})));
     const run =
       body.cycle_type === "WEEKLY"

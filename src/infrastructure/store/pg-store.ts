@@ -145,6 +145,7 @@ export class PgStorePersistence {
   private epoch: string | null = null;
   private lastSeq = 0;
   private lastPruneAt = 0;
+  private lastRateLimitCleanup = 0;
   private lastUnwritable: RejectedRow[] = [];
 
   constructor(readonly client: SqlClient) {}
@@ -731,6 +732,28 @@ export class PgStorePersistence {
         list.push(r.record);
       }
     }
+  }
+
+  /**
+   * One hit on a shared rate limit: counts it in the current fixed window and returns this and the previous window's
+   * counts, for a sliding-window estimate (src/lib/rate-limit.ts). Old windows are deleted now and then.
+   */
+  async rateLimitHit(key: string, windowMs: number, now: number): Promise<{ current: number; previous: number; elapsedMs: number }> {
+    const windowStart = Math.floor(now / windowMs) * windowMs;
+    const r = await this.client.query<{ current: number; previous: number }>(
+      `WITH cur AS (
+         INSERT INTO commerceos.rate_limits (key, window_start, hits) VALUES ($1, $2, 1)
+         ON CONFLICT (key, window_start) DO UPDATE SET hits = commerceos.rate_limits.hits + 1
+         RETURNING hits)
+       SELECT (SELECT hits FROM cur) AS current,
+              coalesce((SELECT hits FROM commerceos.rate_limits WHERE key = $1 AND window_start = $3), 0) AS previous`,
+      [key, windowStart, windowStart - windowMs]
+    );
+    if (now - this.lastRateLimitCleanup > 10 * 60_000) {
+      this.lastRateLimitCleanup = now;
+      await this.client.query("DELETE FROM commerceos.rate_limits WHERE window_start < $1", [now - 24 * 3_600_000]).catch(() => undefined);
+    }
+    return { current: Number(r.rows[0]?.current ?? 1), previous: Number(r.rows[0]?.previous ?? 0), elapsedMs: now - windowStart };
   }
 
   /**

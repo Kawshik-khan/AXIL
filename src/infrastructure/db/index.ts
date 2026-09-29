@@ -134,6 +134,14 @@ export interface InvitationRecord {
   created_at: string;
 }
 
+/** Emergency stop for campaign sends, per workspace or everywhere (id "global"). Stored, so every server honours it. */
+export interface CampaignKillSwitchRecord {
+  id: string;
+  tenant_id: string | null;
+  active: boolean;
+  updated_at: string;
+}
+
 export interface AuditLogRecord {
   id: string;
   tenant_id: string;
@@ -579,6 +587,7 @@ export interface DatabaseSchema {
   platform_announcements: PlatformAnnouncementRecord[];
   platform_api_keys: PlatformApiKeyRecord[];
   impersonation_sessions: ImpersonationSessionRecord[];
+  campaign_kill_switches: CampaignKillSwitchRecord[];
 }
 
 /**
@@ -769,6 +778,10 @@ export class CommerceDatabase {
     }
     this.readyPromise = Promise.resolve();
     const persistent = this.persistenceEnabled;
+    if (persistent && process.env.NODE_ENV === "production") {
+      // The JSON file is for development and offline use: one server, whole-file saves. Production uses DATA_BACKEND=pg.
+      logger.warn("db.json_store_in_production", { reason: "single server only; set DATA_BACKEND=pg (ADR-108/109)" });
+    }
     if (persistent) {
       try {
         fs.mkdirSync(this.dataDir, { recursive: true });
@@ -1250,6 +1263,7 @@ export class CommerceDatabase {
       platform_announcements: parsed.platform_announcements || [],
       platform_api_keys: parsed.platform_api_keys || [],
       impersonation_sessions: parsed.impersonation_sessions || [],
+      campaign_kill_switches: parsed.campaign_kill_switches || [],
     };
   }
 
@@ -1511,6 +1525,7 @@ export class CommerceDatabase {
       platform_announcements: [],
       platform_api_keys: [],
       impersonation_sessions: [],
+      campaign_kill_switches: [],
     };
   }
 
@@ -1780,6 +1795,13 @@ export class CommerceDatabase {
       logger.error("db.sync_failed", { error: (err as Error).message });
       throw new AppError("STORE_UNAVAILABLE", "The database can't be reached right now. Try again shortly.", 503);
     }
+  }
+
+  /** A hit on a rate limit shared by every server; null without Postgres persistence (the caller counts locally). */
+  public async rateLimitHit(key: string, windowMs: number, now: number): Promise<{ current: number; previous: number; elapsedMs: number } | null> {
+    const pg = this.pg;
+    if (!pg || !this._data || !this.persistenceEnabled || this.isTestInstance) return null;
+    return pg.rateLimitHit(key, windowMs, now);
   }
 
   /** Other servers' changes, now (waits for a running unit). For tests and scripts. */
@@ -8621,6 +8643,20 @@ export class CommerceDatabase {
     return updated;
   }
 
+  /** The campaign kill switch for a workspace, or the global one (tenantId null). Stored, so it survives restarts. */
+  public setCampaignKillSwitch(tenantId: string | null, active: boolean): void {
+    const id = tenantId ?? "global";
+    const record: CampaignKillSwitchRecord = { id, tenant_id: tenantId, active, updated_at: new Date().toISOString() };
+    const index = this.data.campaign_kill_switches.findIndex((k) => k.id === id);
+    if (index >= 0) this.data.campaign_kill_switches[index] = record;
+    else this.data.campaign_kill_switches.push(record);
+    this.persist(["campaign_kill_switches"]);
+  }
+
+  public isCampaignKillSwitchActive(tenantId: string): boolean {
+    return this.data.campaign_kill_switches.some((k) => k.active && (k.id === "global" || k.id === tenantId));
+  }
+
   // For clean test suite execution
   public clearAllForTesting(): void {
     // An explicitly persistent store (the Postgres test mode) keeps saving, so the clear itself is exercised.
@@ -8854,6 +8890,7 @@ export class CommerceDatabase {
       platform_announcements: [],
       platform_api_keys: [],
       impersonation_sessions: [],
+      campaign_kill_switches: [],
     };
     this.ensureDefaultSeed();
   }

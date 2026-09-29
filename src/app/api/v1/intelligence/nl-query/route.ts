@@ -9,7 +9,7 @@ async function handlePOST(request: Request) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.ANALYTICS_READ);
-    enforceRateLimit(`ai:user:${context.user.id}`, 30, MINUTE); // costly model calls (FX-14)
+    await enforceRateLimit(`ai:user:${context.user.id}`, 30, MINUTE); // costly model calls (FX-14)
     const body = await request.json();
 
     if (!body.query || typeof body.query !== "string") {

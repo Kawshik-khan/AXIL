@@ -24,7 +24,7 @@ const Body = z
 async function handlePOST(request: Request) {
   try {
     const context = await extractPlatformContext(request); // unauthenticated callers get 401
-    enforceRateLimit(`mfa:step-up:${context.platformUser.id}`, 5, 15 * MINUTE);
+    await enforceRateLimit(`mfa:step-up:${context.platformUser.id}`, 5, 15 * MINUTE);
     if (!PlatformMfaService.isEnrolled(context.platformUser.id)) {
       throw new AppError("MFA_NOT_ENROLLED", "Set up an authenticator app before using step-up.", 409);
     }
