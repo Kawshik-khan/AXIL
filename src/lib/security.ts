@@ -41,6 +41,24 @@ function requireSecret(name: SecretName): string {
   );
 }
 
+/**
+ * What is wrong with the configured secrets, without throwing and without revealing values. Checked at server start
+ * (src/instrumentation-node.ts) so a missing secret is reported there, not only as a 500 at the first sign-in.
+ */
+export function secretProblems(): string[] {
+  const problems: string[] = [];
+  for (const name of ["JWT_SECRET", "CREDENTIALS_ENCRYPTION_KEY"] as const) {
+    const value = process.env[name];
+    if (!value || value.length < 32 || value.startsWith(PUBLISHED_DEFAULT_SECRET_PREFIX)) {
+      problems.push(`${name} is missing, shorter than 32 characters, or set to a published default`);
+    }
+  }
+  if (process.env.JWT_SECRET && process.env.JWT_SECRET === process.env.CREDENTIALS_ENCRYPTION_KEY) {
+    problems.push("JWT_SECRET and CREDENTIALS_ENCRYPTION_KEY must be different values");
+  }
+  return problems;
+}
+
 let jwtKeyCache: Uint8Array | null = null;
 function jwtKey(): Uint8Array {
   if (!jwtKeyCache) {
