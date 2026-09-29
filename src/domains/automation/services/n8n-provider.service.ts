@@ -16,6 +16,9 @@ import {
 import { ProviderCircuitBreakerService } from "./provider-circuit-breaker.service";
 import { AutomationSafetyService } from "./automation-safety.service";
 import { RetryQueueService } from "./retry-queue.service";
+import { OutboundBlockedError, OutboundTimeoutError, outboundRequest } from "@/lib/outbound-http";
+import { signOutbound } from "@/lib/outbound-signing";
+import { logger } from "@/lib/logger";
 
 export interface N8nInvokeParams {
   tenantId: string;
@@ -39,8 +42,22 @@ export interface N8nInvokeResult {
   error?: string;
 }
 
+/** An n8n call that answered with an error status (the tenant sees only the status). */
+class N8nHttpError extends Error {
+  constructor(readonly status: number) {
+    super(`n8n responded with HTTP ${status}`);
+  }
+}
+
 export class N8nProviderService {
   private static readonly REQUEST_TIMEOUT_MS = 10000;
+  private static warnedUnsigned = false;
+
+  /** The deployment's own instance (from N8N_HOST): its URL is platform configuration, not tenant data. */
+  private static isEnvironmentInstance(instance: N8nInstance): boolean {
+    const envUrl = process.env.N8N_HOST || process.env.COMMERCEOS_N8N_BASE_URL;
+    return instance.id.startsWith("n8n_env_") && !!envUrl && instance.base_url === envUrl;
+  }
 
   /**
    * Resolves target n8n instance for tenant
@@ -226,10 +243,22 @@ export class N8nProviderService {
     try {
       if (!instance) throw new Error("No n8n instance is configured");
       const targetUrl = `${instance.base_url.replace(/\/$/, "")}/webhook/${params.webhookPath.replace(/^\//, "")}`;
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), this.REQUEST_TIMEOUT_MS);
+      const body = JSON.stringify({
+        event: params.event,
+        correlation_id: params.correlationId,
+        causation_id: params.causationId,
+        idempotency_key: params.idempotencyKey,
+        timestamp: new Date().toISOString(),
+      });
+      // Signed so the n8n Webhook node can refuse forged calls (FX-55); see n8n/deployment/import.md
+      const secret = process.env.COMMERCEOS_N8N_WEBHOOK_SECRET;
+      if (!secret && !this.warnedUnsigned) {
+        this.warnedUnsigned = true;
+        logger.warn("n8n.calls_unsigned", { reason: "COMMERCEOS_N8N_WEBHOOK_SECRET is not set" });
+      }
 
-      const res = await fetch(targetUrl, {
+      // The deployment's own n8n (N8N_HOST) may be a local server; a stored instance URL gets the full SSRF guard (M17)
+      const res = await outboundRequest(targetUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -238,24 +267,22 @@ export class N8nProviderService {
           "X-Causation-ID": params.causationId || "",
           "Idempotency-Key": params.idempotencyKey,
           "X-Execution-Mode": executionMode,
+          ...(secret ? signOutbound(secret, body) : {}),
         },
-        body: JSON.stringify({
-          event: params.event,
-          correlation_id: params.correlationId,
-          causation_id: params.causationId,
-          idempotency_key: params.idempotencyKey,
-          timestamp: new Date().toISOString(),
-        }),
-        signal: controller.signal,
+        body,
+        timeoutMs: this.REQUEST_TIMEOUT_MS,
+        platformConfigured: this.isEnvironmentInstance(instance),
       });
 
-      clearTimeout(timeoutId);
+      if (res.status < 200 || res.status >= 300) throw new N8nHttpError(res.status);
 
-      if (!res.ok) {
-        throw new Error(`n8n responded with HTTP ${res.status}: ${res.statusText}`);
+      let responseBody: Record<string, unknown> = {};
+      try {
+        const parsed: unknown = JSON.parse(res.body);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) responseBody = parsed as Record<string, unknown>;
+      } catch {
+        // not JSON: an empty result
       }
-
-      const responseBody = (await res.json().catch(() => ({}))) as Record<string, unknown>;
 
       const duration = Date.now() - startTime;
       ProviderCircuitBreakerService.recordSuccess(params.tenantId, "N8N");
@@ -282,9 +309,15 @@ export class N8nProviderService {
       };
     } catch (err) {
       const duration = Date.now() - startTime;
-      // Tenants see a generic reason: fetch errors name internal hosts and ports (Phase 3 security review F3)
-      const detail = err instanceof Error ? err.message : "";
-      const errorMsg = /^n8n responded with HTTP \d+/.test(detail) ? detail.split(":")[0] : "n8n could not be reached";
+      // Tenants see a generic reason: network errors name internal hosts and ports (Phase 3 security review F3)
+      const errorMsg =
+        err instanceof N8nHttpError
+          ? err.message
+          : err instanceof OutboundBlockedError
+            ? "the n8n address is not allowed"
+            : err instanceof OutboundTimeoutError
+              ? "n8n did not answer in time"
+              : "n8n could not be reached";
       ProviderCircuitBreakerService.recordFailure(params.tenantId, "N8N");
 
       db.updateAutomationExecutionStep(triggerStep.id, {

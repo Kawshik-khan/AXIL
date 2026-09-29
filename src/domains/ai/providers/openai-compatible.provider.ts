@@ -4,6 +4,7 @@
  * model router; nothing here is tenant-controlled, so the base URL isn't user input.
  */
 import { AppError } from "@/lib/errors";
+import { outboundRequest } from "@/lib/outbound-http";
 import type {
   LLMMessage,
   LLMProvider,
@@ -75,17 +76,24 @@ export class OpenAICompatibleProvider implements LLMProvider {
   }
 
   private async post(path: string, body: unknown, timeoutMs = this.cfg.timeoutMs ?? 30_000): Promise<WireResponse> {
-    const res = await fetch(`${this.cfg.baseUrl.replace(/\/$/, "")}${path}`, {
+    // The base URL is platform configuration (LLM_BASE_URL), so a local Ollama/vLLM works; limits still apply
+    const res = await outboundRequest(`${this.cfg.baseUrl.replace(/\/$/, "")}${path}`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(this.cfg.apiKey ? { Authorization: `Bearer ${this.cfg.apiKey}` } : {}) },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(timeoutMs),
+      timeoutMs,
+      maxResponseBytes: 16 * 1024 * 1024,
+      platformConfigured: true,
     });
-    if (!res.ok) {
+    if (res.status < 200 || res.status >= 300) {
       // The provider's own error text can include account details; keep it short and out of tenant-facing messages
       throw new AppError("LLM_PROVIDER_ERROR", `AI provider ${this.providerName} answered HTTP ${res.status}.`, 502, { status: res.status });
     }
-    return (await res.json()) as WireResponse;
+    try {
+      return JSON.parse(res.body) as WireResponse;
+    } catch {
+      throw new AppError("LLM_PROVIDER_ERROR", `AI provider ${this.providerName} answered with something that isn't JSON.`, 502);
+    }
   }
 
   public async chat(messages: LLMMessage[], tools?: LLMToolDefinition[], options?: LLMProviderOptions): Promise<LLMResponse> {

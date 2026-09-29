@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { resolveOrganizationId } from "@/domains/enterprise/organization-access";
 import { PERMISSIONS } from "@/lib/permissions";
 import { RbacService } from "@/domains/rbac/service";
@@ -24,16 +25,26 @@ async function handleGET(request: Request) {
   }
 }
 
+const SubscribeBody = z
+  .object({
+    url: z.string().min(1).max(2048),
+    events: z.array(z.string().min(1).max(100)).min(1).max(50).default(["order.created"]),
+    application_id: z.string().min(1).max(100).optional(),
+    organization_id: z.string().min(1).max(100).optional(),
+  })
+  .strict();
+
 async function handlePOST(request: Request) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.DEVELOPER_MANAGE);
-    const body = await request.json();
+    const body = SubscribeBody.parse(await request.json());
     const orgId = resolveOrganizationId(context, body.organization_id);
 
-    const subscription = webhookPlatformService.subscribe(orgId, {
+    // https only, and never a private, loopback or link-local address (SSRF guard, FX-54)
+    const subscription = await webhookPlatformService.subscribe(orgId, {
       targetUrl: body.url,
-      eventTypes: body.events || ["order.created", "inventory.low_stock"],
+      eventTypes: body.events,
       applicationId: body.application_id,
     });
 

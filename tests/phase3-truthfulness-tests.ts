@@ -48,6 +48,7 @@ import { CalculateCheckoutTool } from "@/domains/ai/tools/implementations/checko
 import { toolRegistry } from "@/domains/ai/tools/tool-registry";
 import { ContextBuilder } from "@/domains/ai/context/context-builder";
 import { PricingService } from "@/domains/pricing/pricing.service";
+import { setOutboundLookupForTesting, setOutboundTransportForTesting } from "@/lib/outbound-http";
 
 const ANSI_GREEN = "\x1b[32m";
 const ANSI_RED = "\x1b[31m";
@@ -325,47 +326,49 @@ async function main() {
     assert.ok(JSON.stringify(toolOut).length > 20 && !JSON.stringify(toolOut).includes("credentials_encrypted"));
   });
 
-  await runTest("enterprise webhooks: the secret is shown once at creation, never in the list; dispatch is NOT_SENT", async () => {
+  await runTest("enterprise webhooks: the secret is shown once at creation, never in the list; dispatch queues, never claims delivery", async () => {
+    setOutboundLookupForTesting(async () => [{ address: "93.184.216.34", family: 4 }]); // no DNS in tests
     const created = await call("POST", "enterprise/webhooks", owner.token, { body: { url: "https://hooks.example.org/in", events: ["order.created"] } });
     assert.strictEqual(created.status, 201);
     assert.ok(String(created.json.data?.secret).startsWith("whsec_"));
     const list = await call("GET", "enterprise/webhooks", owner.token);
     assert.ok(!JSON.stringify(list.json).includes("whsec_"));
     const deliveries = await webhookPlatformService.dispatchEvent({ organizationId: orgId, eventType: "order.created", payload: { id: 1 } });
-    assert.ok(deliveries.length >= 1 && deliveries.every((d) => d.status === "NOT_SENT" && d.http_status === undefined && d.duration_ms === null));
+    assert.ok(deliveries.length >= 1 && deliveries.every((d) => d.status === "PENDING" && d.http_status === undefined && d.duration_ms === null));
+    setOutboundLookupForTesting(null);
   });
 
   await runTest("connector tests without a live check are NOT_VERIFIED with no latency", async () => {
     const ctx = await AuthService.resolveRequestContext(owner.token);
     assert.ok(ctx);
     const redis = await ConnectorService.testConnection(ctx, {
-      provider_id: "upstash_redis",
-      credentials: { rest_url: "https://p3-demo.upstash.io", rest_token: "p3-token-value" },
+      provider_id: "redis_cloud",
+      credentials: { connection_uri: "rediss://default:p3-token-value@p3-demo.redis-cloud.com:6379" },
     });
     assert.strictEqual(redis.status, "NOT_VERIFIED");
     assert.strictEqual(redis.success, false);
     assert.strictEqual(redis.latency_ms, null);
   });
 
-  await runTest("connector test route: settings.update only, no fetch to custom endpoints, rate limited", async () => {
-    const realFetch = globalThis.fetch;
+  await runTest("connector test route: settings.update only, no request to internal endpoints, rate limited", async () => {
     const calls: string[] = [];
-    globalThis.fetch = (async (url: string | URL | Request) => {
-      calls.push(String(url));
-      return new Response("{}", { status: 200 });
-    }) as typeof fetch;
+    setOutboundTransportForTesting(async (url) => {
+      calls.push(url.toString());
+      return { status: 200, headers: {}, body: "{}", truncated: false, durationMs: 1 };
+    });
     try {
       const body = { provider_id: "groq", endpoint_url: "http://10.0.0.5:8080/v1", credentials: { api_key: "gsk_p3_value_0000" } };
       assert.strictEqual((await call("POST", "connectors/test", manager.token, { body })).status, 403, "MANAGER can read settings but not change them");
       const custom = await call("POST", "connectors/test", owner.token, { body });
       assert.strictEqual(custom.status, 200);
-      assert.strictEqual(custom.json.data?.status, "NOT_VERIFIED");
-      assert.deepStrictEqual(calls, [], "an internal endpoint is never fetched");
+      assert.strictEqual(custom.json.data?.status, "FAILED");
+      assert.strictEqual(custom.json.data?.details?.reason, "BLOCKED_URL");
+      assert.deepStrictEqual(calls, [], "an internal endpoint is never contacted");
       let last = 0;
       for (let i = 0; i < 10; i++) last = (await call("POST", "connectors/test", owner.token, { body })).status;
       assert.strictEqual(last, 429);
     } finally {
-      globalThis.fetch = realFetch;
+      setOutboundTransportForTesting(null);
     }
   });
 
@@ -380,12 +383,11 @@ async function main() {
     const saved = { host: process.env.N8N_HOST, base: process.env.COMMERCEOS_N8N_BASE_URL };
     delete process.env.N8N_HOST;
     delete process.env.COMMERCEOS_N8N_BASE_URL;
-    const realFetch = globalThis.fetch;
     const calls: string[] = [];
-    globalThis.fetch = (async (url: string | URL | Request) => {
-      calls.push(String(url));
-      return new Response("{}", { status: 200 });
-    }) as typeof fetch;
+    setOutboundTransportForTesting(async (url) => {
+      calls.push(url.toString());
+      return { status: 200, headers: {}, body: "{}", truncated: false, durationMs: 1 };
+    });
     try {
       const result = await invokeN8n();
       assert.strictEqual(calls.length, 0);
@@ -393,7 +395,7 @@ async function main() {
       assert.strictEqual(result.statusCode, 424);
       assert.strictEqual(result.execution.error_code, "N8N_NOT_CONFIGURED");
     } finally {
-      globalThis.fetch = realFetch;
+      setOutboundTransportForTesting(null);
       if (saved.host !== undefined) process.env.N8N_HOST = saved.host;
       if (saved.base !== undefined) process.env.COMMERCEOS_N8N_BASE_URL = saved.base;
     }
@@ -402,12 +404,11 @@ async function main() {
   await runTest("n8n: an unreachable configured instance fails, and the tenant sees no internal host", async () => {
     const saved = process.env.N8N_HOST;
     process.env.N8N_HOST = "http://n8n.internal.p3:5678";
-    const realFetch = globalThis.fetch;
     const calls: string[] = [];
-    globalThis.fetch = (async (url: string | URL | Request) => {
-      calls.push(String(url));
+    setOutboundTransportForTesting(async (url) => {
+      calls.push(url.toString());
       throw new Error("connect ECONNREFUSED n8n.internal.p3:5678");
-    }) as typeof fetch;
+    });
     try {
       const result = await invokeN8n();
       assert.strictEqual(calls.length, 1, "a real request was attempted");
@@ -415,7 +416,7 @@ async function main() {
       assert.strictEqual(result.execution.status, "FAILED");
       assert.ok(!JSON.stringify(result).includes("n8n.internal.p3"), "no internal host in the result");
     } finally {
-      globalThis.fetch = realFetch;
+      setOutboundTransportForTesting(null);
       if (saved === undefined) delete process.env.N8N_HOST;
       else process.env.N8N_HOST = saved;
     }
@@ -978,22 +979,20 @@ async function main() {
 
   await runTest("FX-32: a configured OpenAI-compatible provider is called for real, tool calls round-trip, usage is priced", async () => {
     const router = ModelRouter.getInstance();
-    const realFetch = globalThis.fetch;
     const requests: Array<{ url: string; auth: string | null; body: Record<string, unknown> }> = [];
     let turn = 0;
-    globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
-      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
-      requests.push({ url: String(url), auth: new Headers(init?.headers).get("authorization"), body });
-      if (String(url).endsWith("/embeddings")) {
-        return new Response(JSON.stringify({ data: [{ embedding: [0.1, 0.2, 0.3] }] }), { status: 200 });
-      }
+    const reply = (status: number, body: unknown) => ({ status, headers: {}, body: typeof body === "string" ? body : JSON.stringify(body), truncated: false, durationMs: 5 });
+    setOutboundTransportForTesting(async (url, options) => {
+      const body = JSON.parse(String(options.body ?? "{}")) as Record<string, unknown>;
+      requests.push({ url: url.toString(), auth: options.headers?.Authorization ?? null, body });
+      if (url.pathname.endsWith("/embeddings")) return reply(200, { data: [{ embedding: [0.1, 0.2, 0.3] }] });
       turn++;
       const message =
         turn === 1
           ? { content: null, tool_calls: [{ id: "call_1", type: "function", function: { name: "get_shipping_estimate", arguments: "{\"delivery_zone\":\"INSIDE_DHAKA\"}" } }] }
           : { content: "ঢাকার ভেতরে ডেলিভারি চার্জ" };
-      return new Response(JSON.stringify({ model: "m-fast", choices: [{ message }], usage: { prompt_tokens: 1000, completion_tokens: 500, total_tokens: 1500 } }), { status: 200 });
-    }) as typeof fetch;
+      return reply(200, { model: "m-fast", choices: [{ message }], usage: { prompt_tokens: 1000, completion_tokens: 500, total_tokens: 1500 } });
+    });
     try {
       router.configure({ LLM_BASE_URL: "https://llm.example.test/v1", LLM_API_KEY: "sk-p3-test", LLM_MODEL_FAST: "m-fast", LLM_EMBEDDING_MODEL: "m-embed" } as NodeJS.ProcessEnv);
       assert.strictEqual(router.getMode(), "LIVE");
@@ -1021,10 +1020,10 @@ async function main() {
       assert.strictEqual(requests[2].body.model, "m-embed");
 
       // A failing provider with no fallback configured fails; the mock never answers instead
-      globalThis.fetch = (async () => new Response("down", { status: 500 })) as typeof fetch;
+      setOutboundTransportForTesting(async () => reply(500, "down"));
       await assert.rejects(router.chatWithRouting("TIER_1_FAST", [{ role: "user", content: "x" }]), (e: Error & { code?: string }) => e.code === "LLM_PROVIDER_ERROR");
     } finally {
-      globalThis.fetch = realFetch;
+      setOutboundTransportForTesting(null);
       router.configure({ AI_DEMO_MODE: "1" } as NodeJS.ProcessEnv);
     }
   });

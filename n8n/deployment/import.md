@@ -124,6 +124,43 @@ Once verification passes:
 
 ---
 
+## Calls from CommerceOS to n8n are signed (Phase 5, FX-55)
+
+When `COMMERCEOS_N8N_WEBHOOK_SECRET` is set on the CommerceOS server, every call to an n8n webhook carries:
+
+| Header | Value |
+|---|---|
+| `X-CommerceOS-Timestamp` | Unix time in seconds |
+| `X-CommerceOS-Signature` | `v1=` + hex HMAC-SHA256 of `<timestamp>.<raw body>`, keyed with `COMMERCEOS_N8N_WEBHOOK_SECRET` |
+
+Put the same secret into the n8n environment (for example `COMMERCEOS_N8N_WEBHOOK_SECRET` in
+`n8n/deployment/environment.example`), set the Webhook node to receive the **raw body**, and check it in a Code node
+right after the trigger:
+
+```js
+// Needs NODE_FUNCTION_ALLOW_BUILTIN=crypto on the n8n container.
+const crypto = require('crypto');
+const headers = $json.headers;
+const raw = $json.rawBody ?? JSON.stringify($json.body);
+const ts = headers['x-commerceos-timestamp'];
+const expected = 'v1=' + crypto.createHmac('sha256', $env.COMMERCEOS_N8N_WEBHOOK_SECRET).update(`${ts}.${raw}`).digest('hex');
+const given = headers['x-commerceos-signature'] || '';
+const fresh = Math.abs(Date.now() / 1000 - Number(ts)) <= 300;
+if (!fresh || given.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(given), Buffer.from(expected))) {
+  throw new Error('Unsigned or forged call');
+}
+return $input.all();
+```
+
+Without the secret, CommerceOS still calls n8n but logs `n8n.calls_unsigned` once at start; anyone who can reach the
+n8n webhook URL could then trigger the workflows.
+
+**Where n8n runs.** `N8N_HOST` is platform configuration, so a local Docker n8n (`http://localhost:5678`) works as is.
+An n8n instance stored in the app (not only the environment) must be a public https URL, or be listed in
+`OUTBOUND_ALLOWED_PRIVATE_HOSTS` (SSRF guard, audit M17).
+
+---
+
 ## Courier and payment callbacks into CommerceOS (changed in Phase 0)
 
 `commerceos-courier-status-sync.json` and `commerceos-payment-verification.json` relay provider callbacks to
