@@ -785,7 +785,9 @@ export class CommerceDatabase {
     logger.error("db.refusing_to_start", { code: this.blockedCode, reason: this.persistenceBlocked });
     process.stderr.write(
       `CommerceOS refused to start: ${why} (${this.blockedCode}). ${this.persistenceBlocked}\n` +
-        "Stop the other process first. Two writers lose each other's changes.\n"
+        (this.blockedCode?.startsWith("LOCK_")
+          ? "Stop the other process first. Two writers lose each other's changes.\n"
+          : "Nothing unsaved was acknowledged. Check the database, then start again.\n")
     );
     process.exit(1);
   }
@@ -1629,13 +1631,15 @@ export class CommerceDatabase {
     }
     this.leaseHeld = true;
     this.leaseConfirmedAt = Date.now();
+    // Renew from now on: loading a large store over the network can take longer than the lease (found in the Neon
+    // rehearsal: 56k records), and an unrenewed lease would both expire and trip this store's own fencing.
+    this.startLeaseHeartbeat(pg);
     const loaded = await pg.load();
     this._data = CommerceDatabase.fromParsed(loaded as Partial<DatabaseSchema>);
     this.persistenceBlocked = null;
     this.blockedCode = null;
     if (this.options.seed !== false) this.ensureDefaultSeed();
     this.startReservationSweeper();
-    this.startLeaseHeartbeat(pg);
     logger.info("db.pg_ready", {
       tenants: this._data.tenants.length,
       orders: this._data.orders.length,
@@ -1652,6 +1656,7 @@ export class CommerceDatabase {
   }
 
   private startLeaseHeartbeat(pg: PgStorePersistence): void {
+    if (this.leaseTimer) return; // a retried start-up keeps the one timer
     const renew = async () => {
       if (!this.leaseHeld) return;
       try {

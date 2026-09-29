@@ -379,6 +379,26 @@ async function main() {
     await qClient.close();
   });
 
+  await runTest("the lease is renewed while a large store loads (Neon rehearsal: a 56k-record load outlived the lease)", async () => {
+    const slowClient = await migratedClient();
+    let renewingDuringLoad: boolean | null = null;
+    let probe: CommerceDatabase | null = null;
+    const watching: SqlClient = {
+      ...slowClient,
+      query: (text, params) => {
+        if (text.includes("FROM commerceos.documents ORDER BY") && probe) {
+          renewingDuringLoad = (probe as unknown as { leaseTimer: unknown }).leaseTimer !== null;
+        }
+        return slowClient.query(text, params);
+      },
+    };
+    probe = new CommerceDatabase({ backend: "pg", client: watching, persist: true });
+    await probe.ready();
+    assert.strictEqual(renewingDuringLoad, true, "the renewal timer runs before the load starts");
+    await probe.shutdown();
+    await slowClient.close();
+  });
+
   await runTest("the readiness ping runs one query at a time and at most every 5 s (review M2)", async () => {
     const pingClient = await migratedClient();
     let pings = 0;
