@@ -11,8 +11,9 @@
  *   - adds 1 unit of stock to the shared product (retrying on 409) — every 200 is an acknowledged increment;
  *   - places an order for 1 unit (reserves stock) — every 201 is an acknowledged reservation;
  *   - reads orders and inventory.
- * At the end: stock on hand must equal the acknowledged increments and reserved stock the acknowledged orders, on both
- * servers; the order count must match. Prints PASS/FAIL (exit code 0/1). Never prints credentials.
+ * At the end, within SOAK_CONVERGE_MS (35 s, the read staleness limit): stock on hand must equal the acknowledged
+ * increments and reserved stock the acknowledged orders, on both servers; the order count must match. Retried 409 / 503
+ * responses (the store saved nothing) are counted, never failures. Prints PASS/FAIL (exit code 0/1). Never prints credentials.
  */
 import crypto from "crypto";
 
@@ -24,7 +25,8 @@ if (!A || !B) {
 }
 const minutes = Number(process.env.SOAK_MINUTES || 10);
 const workers = Number(process.env.SOAK_WORKERS || 8);
-const syncWaitMs = Number(process.env.SOAK_SYNC_WAIT_MS || 3000);
+/** Both servers must show every acknowledged write within this long (ADR-109: reads may lag up to STORE_MAX_STALENESS_MS). */
+const convergeMs = Number(process.env.SOAK_CONVERGE_MS || 35_000);
 const out = (line) => process.stdout.write(`${line}\n`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 /** Uniform in [0, 1): picks operations and retry jitter (not ids or secrets). */
@@ -135,18 +137,28 @@ async function inventoryOf(base, cookie, variantId) {
   const ticker = setInterval(() => out(`  ${new Date().toISOString()} adjust=${stats.adjust_ok} orders=${stats.order_ok} reads=${stats.read_ok} 409=${stats.conflict_409} busy=${stats.busy_503} errors=${JSON.stringify(stats.errors)}`), 60_000);
   await Promise.all(Array.from({ length: workers }, (_, w) => worker(w)));
   clearInterval(ticker);
-  await sleep(syncWaitMs);
+  const ended = Date.now();
 
+  // Each server must converge on the acknowledged totals within the staleness limit (it may be behind at first)
   const checks = [];
   for (const [name, base] of [["A", A], ["B", B]]) {
-    const inv = await inventoryOf(base, cookie, variant.id);
-    const orders = await call(base, "GET", "/api/v1/orders?limit=1", { cookie });
-    const listed = typeof orders.json?.meta?.total === "number" ? orders.json.meta.total : null;
-    const onHand = inv ? inv.quantity_on_hand - start.quantity_on_hand : null;
-    const reserved = inv ? inv.quantity_reserved - start.quantity_reserved : null;
-    checks.push([`${name}: stock on hand = acknowledged increments (${stats.adjust_ok})`, onHand === stats.adjust_ok, onHand]);
-    checks.push([`${name}: reserved stock = acknowledged orders (${stats.order_ok})`, reserved === stats.order_ok, reserved]);
-    checks.push([`${name}: orders listed = acknowledged orders (${stats.order_ok})`, listed === stats.order_ok, listed ?? "?"]);
+    let snapshot;
+    do {
+      const inv = await inventoryOf(base, cookie, variant.id);
+      const orders = await call(base, "GET", "/api/v1/orders?limit=1", { cookie });
+      snapshot = {
+        onHand: inv ? inv.quantity_on_hand - start.quantity_on_hand : null,
+        reserved: inv ? inv.quantity_reserved - start.quantity_reserved : null,
+        listed: typeof orders.json?.meta?.total === "number" ? orders.json.meta.total : null,
+      };
+      if (snapshot.onHand === stats.adjust_ok && snapshot.reserved === stats.order_ok && snapshot.listed === stats.order_ok) break;
+      await sleep(1000);
+    } while (Date.now() - ended < convergeMs);
+    out(`  ${name} checked ${Math.round((Date.now() - ended) / 100) / 10} s after the load ended`);
+    checks.push([`${name}: stock on hand = acknowledged increments (${stats.adjust_ok})`, snapshot.onHand === stats.adjust_ok, snapshot.onHand]);
+    checks.push([`${name}: reserved stock = acknowledged orders (${stats.order_ok})`, snapshot.reserved === stats.order_ok, snapshot.reserved]);
+    checks.push([`${name}: orders listed = acknowledged orders (${stats.order_ok})`, snapshot.listed === stats.order_ok, snapshot.listed ?? "?"]);
+    // Nothing more than acknowledged either: an unacknowledged write (a request that got an error) must not appear
   }
   checks.push(["no requests failed with 5xx", !Object.keys(stats.errors).some((k) => /_5\d\d$/.test(k)), JSON.stringify(stats.errors)]);
   out("");
