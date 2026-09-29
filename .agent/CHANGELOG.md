@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [Unreleased] - Phase 4, first stage: Postgres as the system of record (2026-09-29, branch `phase-4-postgres`)
+See [ADR-108](DECISIONS.md#adr-108-postgres-as-the-system-of-record-behind-the-existing-store-api-phase-4-first-stage).
+
+### Added
+- `DATA_BACKEND=pg`: the store loads from and writes to Postgres (Neon) — one transaction per flush, a single-writer lease with fencing, refused rows set aside and reported instead of blocking every write. The JSON file stays the default until the cutover.
+- Migration 006 (schema `commerceos`): core tables with constraints and tenant-scoped foreign keys, JSONB documents for the other collections.
+- A migration runner that applies each file whole in one transaction.
+- `npm run db:backfill` (dry run on in-memory Postgres, then `--apply`), `npm run db:verify-migration`, `scripts/export-pg-to-json.ts` (rollback).
+- `npm run test:pg`: every suite on in-memory Postgres (PGlite), reloaded and compared; `tests/phase4-postgres-tests.ts`.
+- `/health/ready` pings Postgres and reports unsaved rows.
+
+### Fixed
+- 55 record ids were built from the clock alone and collided within a millisecond (audit logs, stock movements, events, consent preferences, model deployments, …).
+- A stock adjustment could create a row for another workspace's variant or warehouse (with that workspace's row id).
+- The seed gave the super-admin a membership in a workspace that may not exist.
+- `withTransaction` re-ran a failed transaction over HTTP after the rollback (M8); `execute()` reported returned rows instead of changed rows.
+
+### Changed (action required)
+- Migrations 001–005 moved to `migrations/legacy/` and no longer run.
+- Scripts that change the store now open it through `scripts/lib/store-session.ts` (works for both backends; Postgres backups are JSON exports).
+- To cut over, follow ADR-108 (migrate → backfill dry run → apply → verify → `DATA_BACKEND=pg`). Run against Neon only when you decide to.
+
 ## [Unreleased] - Phase 3 completion: safety controls, order lifecycle, AI provider (2026-09-29, branch `phase-3-truthful-data`)
 See [ADR-107](DECISIONS.md#adr-107-enforced-safety-controls-one-order-writer-and-a-real-ai-provider-phase-3-completion).
 

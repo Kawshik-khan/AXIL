@@ -17,12 +17,14 @@ Next.js 14 App Router · React 18 · TypeScript (strict) · Zod · jose/bcryptjs
 |---|---|---|
 | Dev server | `npm run dev` | http://localhost:3000. Needs `JWT_SECRET` and `CREDENTIALS_ENCRYPTION_KEY` in `.env.local`: two different random values, 32+ chars each. AI needs `LLM_BASE_URL` (+ `LLM_API_KEY`) or `AI_DEMO_MODE=1`. `DEV_AUTH_BYPASS=1` is an opt-in for token-less local browsing and is logged. |
 | Type-check | `npm run type-check` | 0 errors since FX-38; keep it at 0. `next build` also passes. |
-| All tests | `npm test` | 26 custom suites via `tests/ts-runner.cjs`; the security, RBAC-matrix, Phase 1 integrity, Phase 2 persistence / analytics / read-only and Phase 3 truthfulness suites run first; suites use the demo AI unless `TEST_LLM_LIVE=1`. `&&` stops at the first failing suite, so run a suite on its own to see everything |
+| All tests | `npm test` | 27 custom suites via `tests/ts-runner.cjs`; the security, RBAC-matrix, Phase 1 integrity, Phase 2 persistence / analytics / read-only, Phase 3 truthfulness and Phase 4 Postgres suites run first; suites use the demo AI unless `TEST_LLM_LIVE=1`. `&&` stops at the first failing suite, so run a suite on its own to see everything |
 | One suite | `node tests/ts-runner.cjs ./tests/<name>-tests.ts` | e.g. `security-regression-tests.ts`, `commerce-tests.ts` |
+| Suites on Postgres | `npm run test:pg` | Every suite with the store persisted to in-memory PGlite (no server, no network), then reloaded and compared record by record. One suite: `COMMERCEOS_TEST_PG=1 node tests/ts-runner.cjs ./tests/<name>-tests.ts`. Run it after changing the store, a record shape, ids or migrations |
 | Proxy config | `TRUST_PROXY=1`, `TRUST_PROXY_HOPS=<n>` | Only behind your own reverse proxy; enables per-client rate limits |
 | Exploit replay | `BASE_URL=http://localhost:3000 node scripts/smoke-security.mjs` | Against a running server started without `DEV_AUTH_BYPASS`; run after touching auth, webhooks or platform routes |
 | DB integration tests | `npm run test:db` | Hits real Neon/Pinecone/Upstash — ask before running |
-| Migrations / seeds | `npm run db:migrate`, `npm run db:seed:*` | Hits real Neon — ask before running |
+| Migrations / seeds | `npm run db:migrate`, `npm run db:seed:*` | Hits real Neon — ask before running. Rehearse with `node tests/ts-runner.cjs ./src/infrastructure/db/migrate.ts --pglite <dir>` |
+| Backfill / verify | `npm run db:backfill`, `npm run db:verify-migration` | Dry run by default (in-memory PGlite). `--apply` and the verify hit real Neon — ask before running. See ADR-108 for the cutover |
 | Lint | `npm run lint` | **No ESLint config yet** — don't rely on it |
 
 There is no `test:eval`, `test:unit`, `test:e2e` or Dockerfile yet. The project is a local git repository with no remote (see STATUS §2).
@@ -46,7 +48,11 @@ src/lib/permissions.ts               PERMISSIONS, RoleName, ROLE_PERMISSIONS
 src/domains/rbac/service.ts          RbacService.assertCan (tenant)
 src/domains/platform/services/       PlatformAuthorizationService, entitlements, flags, audit, support
 src/domains/ai/                      agents, policy, tools/tool-registry.ts, prompts, rag, eval
-src/infrastructure/db/index.ts       JSON store (~9k lines — grep it, never read whole); getAll* for analytics, paged getters need a limit
+src/infrastructure/db/index.ts       The store (~9.8k lines — grep it, never read whole); getAll* for analytics, paged getters need a limit.
+                                     DATA_BACKEND=pg: Postgres is the system of record (await db.ready() in scripts)
+src/infrastructure/store/            Postgres persistence: pg-store.ts (load, diff, one-transaction writes, lease), store-schema.ts
+                                     (collection → table), migrations.ts (runner), backfill.ts (backfill + verify)
+src/infrastructure/db/migrations/    006_align_domain_model.sql (schema `commerceos`); legacy/ = old 001-005, never run
 src/domains/intelligence/services/intelligence-snapshot.service.ts  GET reads (never write) vs recompute writes (ADR-105)
 src/styles/tokens.css                Design tokens (canonical)
 n8n/workflows/*.json                 Exported n8n workflows
