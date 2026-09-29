@@ -10,12 +10,14 @@
 --   - every written row is appended to commerceos.changes under the advisory lock, so change-log positions follow
 --     commit order across servers;
 --   - returns the written rows as [[collection, id, version], ...] (version 0: deleted).
--- Table names are passed by the store from its fixed collection → table map and quoted with %I. Servers without this
--- function (not yet migrated) keep writing statement by statement.
+-- Table names are passed by the store from its fixed collection → table map; the function accepts only those tables
+-- (the list below; a test keeps it equal to CORE_TABLES) and quotes them with %I. search_path is pinned and EXECUTE is
+-- not granted to PUBLIC. Servers without this function (not yet migrated) keep writing statement by statement.
 
 CREATE OR REPLACE FUNCTION commerceos.apply_changes(p_changes jsonb, p_writer text)
 RETURNS jsonb
 LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp
 AS $fn$
 DECLARE
   op jsonb;
@@ -27,11 +29,23 @@ DECLARE
   conflicts jsonb := '[]'::jsonb;
   r jsonb;
   v bigint;
+  -- The store's core tables (store-schema.ts CORE_TABLES); anything else is refused
+  core_tables CONSTANT text[] := ARRAY[
+    'tenants', 'users', 'memberships', 'invitations', 'audit_logs', 'service_tokens',
+    'platform_memberships', 'impersonation_sessions', 'products', 'product_variants', 'categories', 'brands',
+    'warehouses', 'inventory_items', 'stock_movements', 'inventory_reservations', 'customers', 'customer_addresses',
+    'orders', 'order_items', 'payments', 'shipments', 'returns', 'refunds',
+    'coupons', 'events', 'connected_channels', 'customer_identities', 'conversations', 'messages',
+    'leads', 'automation_workflows', 'automation_executions'
+  ];
 BEGIN
   -- Deletes, children first (the store sends them in that order)
   FOR op IN SELECT e FROM jsonb_array_elements(coalesce(p_changes->'deletes', '[]'::jsonb)) AS e LOOP
     coll := op->>'collection';
     tbl := op->>'table';
+    IF tbl IS NOT NULL AND NOT (tbl = ANY (core_tables)) THEN
+      RAISE EXCEPTION 'apply_changes: % is not a store table', tbl USING ERRCODE = '42501';
+    END IF;
     IF tbl IS NOT NULL THEN
       EXECUTE format(
         'WITH d AS (DELETE FROM commerceos.%I t USING jsonb_to_recordset($1) AS u(id text, version bigint)
@@ -53,6 +67,9 @@ BEGIN
   FOR op IN SELECT e FROM jsonb_array_elements(coalesce(p_changes->'upserts', '[]'::jsonb)) AS e LOOP
     coll := op->>'collection';
     tbl := op->>'table';
+    IF tbl IS NOT NULL AND NOT (tbl = ANY (core_tables)) THEN
+      RAISE EXCEPTION 'apply_changes: % is not a store table', tbl USING ERRCODE = '42501';
+    END IF;
     IF jsonb_array_length(coalesce(op->'updates', '[]'::jsonb)) > 0 THEN
       IF tbl IS NOT NULL THEN
         EXECUTE format(
@@ -154,3 +171,5 @@ BEGIN
   RETURN written;
 END
 $fn$;
+
+REVOKE ALL ON FUNCTION commerceos.apply_changes(jsonb, text) FROM PUBLIC;

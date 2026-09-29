@@ -26,6 +26,8 @@ import {
 } from "./store-schema";
 
 const BATCH_ROWS = 500;
+/** Writes with more rows than this skip the one-statement path (one huge jsonb parameter) for the batched transaction. */
+const ONE_STATEMENT_MAX_ROWS = 2_000;
 /** More foreign changes than this since the last sync: reload everything instead of fetching row by row. */
 const SYNC_MAX_ROWS = 20_000;
 /** Change-log entries older than this are pruned (a server further behind reloads). */
@@ -388,11 +390,19 @@ export class PgStorePersistence {
    * constraint); in both cases nothing was written and the baseline is unchanged.
    */
   async write(changes: ChangeSet, options: { replaceAll?: boolean } = {}): Promise<{ written: number }> {
-    if (this.fastWrites && !options.replaceAll) {
-      const versions = await this.applyInOneStatement(changes);
-      this.commit(changes, versions);
-      await this.maybePrune(this.client).catch((err: unknown) => logger.warn("db.change_log_prune_failed", { error: (err as Error).message }));
-      return { written: changes.rowCount };
+    // One statement for request-sized writes; very large ones (a sweep, an import) keep the batched transaction path
+    if (this.fastWrites && !options.replaceAll && changes.rowCount <= ONE_STATEMENT_MAX_ROWS) {
+      try {
+        const versions = await this.applyInOneStatement(changes);
+        this.commit(changes, versions);
+        await this.maybePrune(this.client).catch((err: unknown) => logger.warn("db.change_log_prune_failed", { error: (err as Error).message }));
+        return { written: changes.rowCount };
+      } catch (err) {
+        // The function is gone (008 rolled back while this server runs): nothing was written; use the old path from now on
+        if (pgErrorFields(err).code !== "42883") throw err;
+        this.fastWrites = false;
+        logger.warn("db.one_statement_writes_unavailable", { reason: "commerceos.apply_changes is missing; writing statement by statement" });
+      }
     }
     const versions = await this.client.transaction(async (tx) => {
       if (options.replaceAll) {

@@ -54,7 +54,7 @@ src/infrastructure/db/index.ts       The store (~9.8k lines — grep it, never r
                                      DATA_BACKEND=pg: Postgres is the system of record (await db.ready() in scripts)
 src/infrastructure/store/            Postgres persistence: pg-store.ts (load, diff, version-checked writes, change-log sync), store-schema.ts
                                      (collection → table), migrations.ts (runner), backfill.ts (backfill + verify)
-src/infrastructure/db/migrations/    006_align_domain_model.sql (schema `commerceos`), 007_multi_writer.sql; legacy/ = old 001-005, never run
+src/infrastructure/db/migrations/    006_align_domain_model.sql (schema `commerceos`), 007_multi_writer.sql, 008_apply_changes.sql; legacy/ = old 001-005, never run
 src/domains/intelligence/services/intelligence-snapshot.service.ts  GET reads (never write) vs recompute writes (ADR-105)
 src/styles/tokens.css                Design tokens (canonical)
 n8n/workflows/*.json                 Exported n8n workflows

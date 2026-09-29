@@ -14,6 +14,7 @@ import { backfillStore, verifyStore } from "@/infrastructure/store/backfill";
 import { diffStores } from "@/infrastructure/store/canonical";
 import { runMigrations } from "@/infrastructure/store/migrations";
 import { LEASE_TTL_MS, PgStorePersistence, StoreConflictError } from "@/infrastructure/store/pg-store";
+import { CORE_TABLES } from "@/infrastructure/store/store-schema";
 import { createPgliteClient } from "@/infrastructure/store/pglite-client";
 import type { SqlClient } from "@/infrastructure/store/sql-client";
 import { envNumber } from "@/lib/env-number";
@@ -552,6 +553,82 @@ async function main() {
     assert.deepStrictEqual(err.rows, [{ collection: "tenants", id: "ten_fast_c" }]);
     const row = await client.query<{ name: string }>("SELECT data->>'name' AS name FROM commerceos.tenants WHERE id = 'ten_fast_c'");
     assert.strictEqual(row.rows[0].name, "first");
+  });
+
+  await runTest("one-statement writes keep every guard: no tenant move, no overwrite of another server's insert, all or nothing", async () => {
+    const client = await migratedClient();
+    const seedStore = await openStore(client);
+    await seedStore.unit(async () => {
+      seedStore.createTenant(tenant("ten_g_a"));
+      seedStore.createTenant(tenant("ten_g_b"));
+      seedStore.recordPlatformSecurityEvent({ id: "sec_g", event_type: "SUSPICIOUS_SESSION", severity: "LOW", description: "g", created_at: new Date().toISOString() });
+      seedStore.data.growth_insights.push({ id: "gi_g", tenant_id: "ten_g_a", count: 0 } as never);
+      seedStore.markDirty();
+      return true;
+    }, commitAll);
+    await seedStore.shutdown();
+    const changeLogCount = async () => Number((await client.query<{ n: string }>("SELECT count(*)::text AS n FROM commerceos.changes")).rows[0].n);
+
+    // A row may not move to another tenant (core table and documents)
+    const p = new PgStorePersistence(client);
+    const d = await p.load();
+    const before = await changeLogCount();
+    (d.growth_insights as Array<{ id: string; tenant_id: string }>).find((x) => x.id === "gi_g")!.tenant_id = "ten_g_b";
+    const moved = await p.write(p.computeChanges(d, new Set(["growth_insights"]))).then(() => null, (e: unknown) => e);
+    assert.ok(moved instanceof StoreConflictError);
+    assert.deepStrictEqual(moved.rows, [{ collection: "growth_insights", id: "gi_g" }]);
+    const kept = await client.query<{ t: string }>("SELECT tenant_id AS t FROM commerceos.documents WHERE collection = 'growth_insights' AND id = 'gi_g'");
+    assert.strictEqual(kept.rows[0].t, "ten_g_a");
+    assert.strictEqual(await changeLogCount(), before, "no change-log entry for a refused write");
+
+    // Two servers insert the same id: the second is refused, the first row stays as written
+    const p1 = new PgStorePersistence(client);
+    const p2 = new PgStorePersistence(client);
+    const d1 = await p1.load();
+    const d2 = await p2.load();
+    (d1.products as unknown[]).push({ ...catalog("ten_g_a").product, id: "prod_same" });
+    (d2.products as unknown[]).push({ ...catalog("ten_g_b").product, id: "prod_same", name: "second" });
+    await p1.write(p1.computeChanges(d1, new Set(["products"])));
+    const dup = await p2.write(p2.computeChanges(d2, new Set(["products"]))).then(() => null, (e: unknown) => e);
+    assert.ok(dup instanceof StoreConflictError);
+    const same = await client.query<{ t: string }>("SELECT tenant_id AS t FROM commerceos.products WHERE id = 'prod_same'");
+    assert.strictEqual(same.rows[0].t, "ten_g_a");
+
+    // One conflict among valid changes: nothing of the write is saved
+    const p3 = new PgStorePersistence(client);
+    const d3 = await p3.load();
+    (d3.tenants as TenantRecord[]).push(tenant("ten_g_new"));
+    (d3.products as Array<{ id: string; tenant_id: string }>).find((x) => x.id === "prod_same")!.tenant_id = "ten_g_b";
+    const mixedBefore = await changeLogCount();
+    const mixed = await p3.write(p3.computeChanges(d3)).then(() => null, (e: unknown) => e);
+    assert.ok(mixed instanceof StoreConflictError);
+    assert.strictEqual((await client.query("SELECT 1 FROM commerceos.tenants WHERE id = 'ten_g_new'")).rows.length, 0);
+    assert.strictEqual(await changeLogCount(), mixedBefore);
+  });
+
+  await runTest("apply_changes accepts only the store's tables, and its list matches CORE_TABLES", async () => {
+    const sql = fs.readFileSync(path.join(ROOT, "src/infrastructure/db/migrations/008_apply_changes.sql"), "utf8");
+    const listed = [...(sql.match(/core_tables CONSTANT text\[\] := ARRAY\[([\s\S]*?)\]/)?.[1] ?? "").matchAll(/'([a-z_]+)'/g)].map((m) => m[1]).sort();
+    const expected = Object.values(CORE_TABLES).map((t) => (t as { table: string }).table).sort();
+    assert.deepStrictEqual(listed, expected);
+    const client = await migratedClient();
+    const payload = JSON.stringify({ upserts: [{ collection: "x", table: "changes", updates: [], inserts: [{ id: "1", tenant_id: null, created_at: null, data: {} }] }] });
+    const refused = await client.query("SELECT commerceos.apply_changes($1::jsonb, 'w')", [payload]).then(() => null, (e: unknown) => e);
+    assert.ok(refused, "a table outside the store is refused");
+    assert.match(String((refused as Error).message), /not a store table/);
+  });
+
+  await runTest("migration 008 removed while a server runs: its next write falls back to the transaction path instead of failing", async () => {
+    const client = await migratedClient();
+    const S = await openStore(client);
+    await client.exec("DROP FUNCTION commerceos.apply_changes(jsonb, text)");
+    await S.unit(async () => {
+      S.createTenant(tenant("ten_after_drop"));
+      return true;
+    }, commitAll);
+    assert.strictEqual((S as unknown as { pg: PgStorePersistence }).pg.oneStatementWrites, false);
+    assert.strictEqual((await client.query("SELECT 1 FROM commerceos.tenants WHERE id = 'ten_after_drop'")).rows.length, 1);
+    await S.shutdown();
   });
 
   await runTest("without migration 008 (a server started before it's applied) writes still work, statement by statement", async () => {
