@@ -1,3 +1,15 @@
+/**
+ * Marks AppErrors across bundle copies: Next compiles instrumentation (which creates the store) separately from the
+ * routes, so an error the store throws is an AppError from another copy of this module and `instanceof` misses it
+ * (a 409 conflict answered as a 500). `Symbol.for` is shared by every copy.
+ */
+const APP_ERROR = Symbol.for("commerceos.AppError");
+
+/** True for an AppError from any copy of this module. */
+export function isAppError(error: unknown): error is AppError {
+  return typeof error === "object" && error !== null && (error as Record<symbol, unknown>)[APP_ERROR] === true;
+}
+
 export class AppError extends Error {
   code: string;
   statusCode: number;
@@ -14,6 +26,7 @@ export class AppError extends Error {
     this.statusCode = statusCode;
     this.details = details;
     this.name = this.constructor.name;
+    Object.defineProperty(this, APP_ERROR, { value: true });
     Object.setPrototypeOf(this, new.target.prototype);
   }
 }

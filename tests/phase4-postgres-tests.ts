@@ -18,6 +18,7 @@ import { createPgliteClient } from "@/infrastructure/store/pglite-client";
 import type { SqlClient } from "@/infrastructure/store/sql-client";
 import { envNumber } from "@/lib/env-number";
 import { AppError } from "@/lib/errors";
+import { apiError } from "@/lib/api-response";
 import { withStore } from "@/lib/store-unit";
 import type { Order, OrderItem, Product, ProductVariant, Warehouse, InventoryItem } from "@/types/commerce";
 import type { PlatformAuditLogRecord } from "@/types/platform";
@@ -625,6 +626,16 @@ async function main() {
       if (previous === undefined) delete process.env.STORE_LOCK_WAIT_MS;
       else process.env.STORE_LOCK_WAIT_MS = previous;
     }
+  });
+
+  await runTest("an AppError from another copy of the errors module (the store is built with instrumentation) keeps its status", async () => {
+    // What the soak test found: the store's 409 / 503 reached clients as 500 because `instanceof` failed across copies
+    const foreign = Object.assign(new Error("Someone else changed this record at the same time."), { code: "STORE_CONFLICT", statusCode: 409 });
+    Object.defineProperty(foreign, Symbol.for("commerceos.AppError"), { value: true });
+    const res = apiError(foreign);
+    assert.strictEqual(res.status, 409);
+    assert.strictEqual(((await res.json()) as { error: { code: string } }).error.code, "STORE_CONFLICT");
+    assert.strictEqual(apiError(Object.assign(new Error("plain"), { code: "X", statusCode: 409 })).status, 500, "an unbranded error stays a generic 500");
   });
 
   await runTest("withStore receives the body before queueing, and refuses one that is declared too large (413)", async () => {

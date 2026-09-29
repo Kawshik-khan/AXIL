@@ -3,7 +3,7 @@ import { resolveImpersonationContext } from "@/lib/impersonation";
 import { randomSuffix } from "@/lib/ids";
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
-import { AppError, PlatformAuthRequiredError, PlatformScopeRequiredError, PlatformPermissionDeniedError, ForbiddenError, FeatureNotEntitledError } from "@/lib/errors";
+import { AppError, isAppError, PlatformAuthRequiredError, PlatformScopeRequiredError, PlatformPermissionDeniedError, ForbiddenError, FeatureNotEntitledError } from "@/lib/errors";
 import {
   AUTH_COOKIE_NAME,
   PLATFORM_AUTH_COOKIE_NAME,
@@ -45,7 +45,7 @@ export function apiError(error: unknown, requestId?: string) {
   }
   const reqId = requestId || `req_${randomSuffix()}`;
 
-  if (error instanceof AppError) {
+  if (isAppError(error)) {
     const retryAfter = error.details?.retry_after_sec;
     return NextResponse.json(
       {

@@ -30,7 +30,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 /** Uniform in [0, 1): picks operations and retry jitter (not ids or secrets). */
 const chance = () => crypto.randomInt(0, 1_000_000) / 1_000_000;
 
-const stats = { adjust_ok: 0, order_ok: 0, read_ok: 0, conflict_409: 0, retries_exhausted: 0, errors: {} };
+const stats = { adjust_ok: 0, order_ok: 0, read_ok: 0, conflict_409: 0, busy_503: 0, retries_exhausted: 0, errors: {} };
 const bump = (code) => (stats.errors[code] = (stats.errors[code] || 0) + 1);
 
 async function call(base, method, route, { cookie, body } = {}) {
@@ -48,12 +48,18 @@ async function call(base, method, route, { cookie, body } = {}) {
   return { status: res.status, json, cookies: res.headers.getSetCookie?.() ?? [] };
 }
 
+/** Retries what the store asks clients to retry: 409 STORE_CONFLICT and 503 STORE_BUSY (both saved nothing). */
 async function withRetry(fn) {
   for (let attempt = 0; attempt < 20; attempt++) {
     const r = await fn();
-    if (r.status !== 409) return r;
-    stats.conflict_409++;
-    await sleep(20 + chance() * 80);
+    const code = r.json?.error?.code;
+    if (r.status === 409 && code === "STORE_CONFLICT") {
+      stats.conflict_409++;
+      await sleep(20 + chance() * 80);
+    } else if (r.status === 503 && code === "STORE_BUSY") {
+      stats.busy_503++;
+      await sleep(500 + chance() * 1500);
+    } else return r;
   }
   stats.retries_exhausted++;
   return { status: 409 };
@@ -61,7 +67,7 @@ async function withRetry(fn) {
 
 async function inventoryOf(base, cookie, variantId) {
   const r = await call(base, "GET", "/api/v1/inventory", { cookie });
-  const list = r.json?.data?.items ?? r.json?.data ?? [];
+  const list = r.json?.data?.inventory ?? [];
   return (Array.isArray(list) ? list : []).find((i) => i.product_variant_id === variantId);
 }
 
@@ -74,8 +80,12 @@ async function inventoryOf(base, cookie, variantId) {
   if (reg.status !== 201 || !cookie) throw new Error(`register failed: HTTP ${reg.status}`);
   const prod = await call(A, "POST", "/api/v1/products", { cookie, body: { name: "Soak Kurta", sku: `SOAK-${tag}`, base_price: 1000, initial_stock: 0 } });
   if (prod.status !== 201) throw new Error(`product failed: HTTP ${prod.status}`);
-  const products = await call(A, "GET", "/api/v1/products?limit=10", { cookie });
-  const variant = (products.json?.data || []).flatMap((p) => p.variants || []).find((v) => v.id);
+  const created = prod.json?.data?.product;
+  const products = await call(A, "GET", "/api/v1/products?limit=100", { cookie });
+  const variant =
+    created?.variants?.[0] ??
+    (products.json?.data || []).filter((p) => p.id === created?.id).flatMap((p) => p.variants || [])[0];
+  if (!variant?.id) throw new Error("the new product has no variant");
   const start = await inventoryOf(A, cookie, variant.id);
   if (!start) throw new Error("no stock row for the product");
   out(`workspace ready (tenant ${reg.json?.data?.tenant?.id}); ${workers} workers for ${minutes} min on 2 servers`);
@@ -122,7 +132,7 @@ async function inventoryOf(base, cookie, variantId) {
       }
     }
   };
-  const ticker = setInterval(() => out(`  ${new Date().toISOString()} adjust=${stats.adjust_ok} orders=${stats.order_ok} reads=${stats.read_ok} 409=${stats.conflict_409} errors=${JSON.stringify(stats.errors)}`), 60_000);
+  const ticker = setInterval(() => out(`  ${new Date().toISOString()} adjust=${stats.adjust_ok} orders=${stats.order_ok} reads=${stats.read_ok} 409=${stats.conflict_409} busy=${stats.busy_503} errors=${JSON.stringify(stats.errors)}`), 60_000);
   await Promise.all(Array.from({ length: workers }, (_, w) => worker(w)));
   clearInterval(ticker);
   await sleep(syncWaitMs);
@@ -130,13 +140,13 @@ async function inventoryOf(base, cookie, variantId) {
   const checks = [];
   for (const [name, base] of [["A", A], ["B", B]]) {
     const inv = await inventoryOf(base, cookie, variant.id);
-    const orders = await call(base, "GET", "/api/v1/orders?limit=100000", { cookie });
-    const list = orders.json?.data ?? [];
+    const orders = await call(base, "GET", "/api/v1/orders?limit=1", { cookie });
+    const listed = typeof orders.json?.meta?.total === "number" ? orders.json.meta.total : null;
     const onHand = inv ? inv.quantity_on_hand - start.quantity_on_hand : null;
     const reserved = inv ? inv.quantity_reserved - start.quantity_reserved : null;
     checks.push([`${name}: stock on hand = acknowledged increments (${stats.adjust_ok})`, onHand === stats.adjust_ok, onHand]);
     checks.push([`${name}: reserved stock = acknowledged orders (${stats.order_ok})`, reserved === stats.order_ok, reserved]);
-    checks.push([`${name}: orders listed = acknowledged orders (${stats.order_ok})`, Array.isArray(list) && list.length === stats.order_ok, Array.isArray(list) ? list.length : "?"]);
+    checks.push([`${name}: orders listed = acknowledged orders (${stats.order_ok})`, listed === stats.order_ok, listed ?? "?"]);
   }
   checks.push(["no requests failed with 5xx", !Object.keys(stats.errors).some((k) => /_5\d\d$/.test(k)), JSON.stringify(stats.errors)]);
   out("");

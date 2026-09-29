@@ -683,7 +683,7 @@ class StoreLock {
       let gaveUp = false;
       const timer = setTimeout(() => {
         gaveUp = true;
-        reject(new AppError("STORE_BUSY", "The server is busy. Nothing was saved; try again shortly.", 503));
+        reject(new AppError("STORE_BUSY", "The server is busy. Nothing was saved; try again shortly.", 503, { retry_after_sec: 2 }));
       }, waitMs);
       void previous.then(() => {
         clearTimeout(timer);
