@@ -24,7 +24,8 @@ Next.js 14 App Router · React 18 · TypeScript (strict) · Zod · jose/bcryptjs
 | Exploit replay | `BASE_URL=http://localhost:3000 node scripts/smoke-security.mjs` | Against a running server started without `DEV_AUTH_BYPASS`; run after touching auth, webhooks or platform routes |
 | DB integration tests | `npm run test:db` | Hits real Neon/Pinecone/Upstash — ask before running |
 | Migrations / seeds | `npm run db:migrate`, `npm run db:seed:*` | `db:migrate` hits real Neon — ask before running. `db:seed:*` write demo data into the JSON store file (and legacy SQL files); they refuse with `DATA_BACKEND=pg`. Rehearse with `node tests/ts-runner.cjs ./src/infrastructure/db/migrate.ts --pglite <dir>` |
-| Backfill / verify | `npm run db:backfill`, `npm run db:verify-migration` | Dry run by default (in-memory PGlite). `--apply` and the verify hit real Neon — ask before running. See ADR-108 for the cutover |
+| Backfill / verify | `npm run db:backfill`, `npm run db:verify-migration` | Dry run by default (in-memory PGlite). `--apply` and the verify hit real Neon — ask before running. See ADR-108 for the cutover. The backfill refuses while an app server is writing |
+| Two-server soak | `SOAK_URL_A=… SOAK_URL_B=… node scripts/soak-two-servers.mjs` | Two `next start` servers on one Postgres (a Neon branch, never production — ask before creating one), same `JWT_SECRET`; checks no acknowledged write is lost (ADR-109) |
 | Lint | `npm run lint` | **No ESLint config yet** — don't rely on it |
 
 There is no `test:eval`, `test:unit`, `test:e2e` or Dockerfile yet. The project is a local git repository with no remote (see STATUS §2).
@@ -38,7 +39,8 @@ src/domains/<domain>/                *.service.ts (logic), *.repository.ts (Neon
 src/lib/api-response.ts              extractRequestContext, extractPlatformContext, apiSuccess, apiError
 src/lib/security.ts                  JWTs (issuer + per-purpose audience), bcrypt, credential encryption (ADR-103)
 src/lib/validation.ts                parseOrThrow / readJson for strict Zod bodies (ADR-104)
-src/lib/rate-limit.ts                enforceRateLimit / checkRateLimit (in-memory, single replica)
+src/lib/rate-limit.ts                await enforceRateLimit / checkRateLimit (shared in Postgres; in-memory without it)
+src/lib/store-unit.ts                withStore: wraps every route handler; a write request is one unit of work (ADR-109)
 src/lib/safety-gate.ts               assertNotKilled, assertWithinLimit, isFeatureEnabled (enforced platform controls)
 src/lib/impersonation.ts             read-only support sessions (cookie + operator session)
 src/domains/orders/order-lifecycle.service.ts  the only writer of order status
@@ -50,9 +52,9 @@ src/domains/platform/services/       PlatformAuthorizationService, entitlements,
 src/domains/ai/                      agents, policy, tools/tool-registry.ts, prompts, rag, eval
 src/infrastructure/db/index.ts       The store (~9.8k lines — grep it, never read whole); getAll* for analytics, paged getters need a limit.
                                      DATA_BACKEND=pg: Postgres is the system of record (await db.ready() in scripts)
-src/infrastructure/store/            Postgres persistence: pg-store.ts (load, diff, one-transaction writes, lease), store-schema.ts
+src/infrastructure/store/            Postgres persistence: pg-store.ts (load, diff, version-checked writes, change-log sync), store-schema.ts
                                      (collection → table), migrations.ts (runner), backfill.ts (backfill + verify)
-src/infrastructure/db/migrations/    006_align_domain_model.sql (schema `commerceos`); legacy/ = old 001-005, never run
+src/infrastructure/db/migrations/    006_align_domain_model.sql (schema `commerceos`), 007_multi_writer.sql; legacy/ = old 001-005, never run
 src/domains/intelligence/services/intelligence-snapshot.service.ts  GET reads (never write) vs recompute writes (ADR-105)
 src/styles/tokens.css                Design tokens (canonical)
 n8n/workflows/*.json                 Exported n8n workflows
@@ -68,10 +70,11 @@ import { z } from "zod";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { RbacService } from "@/domains/rbac/service";
 import { PERMISSIONS } from "@/lib/permissions";
+import { withStore } from "@/lib/store-unit";
 
 const Body = z.object({ name: z.string().min(1) }).strict(); // never spread raw body into records
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     const ctx = await extractRequestContext(request);          // tenant from session only
     RbacService.assertCan(ctx, PERMISSIONS.PRODUCTS_WRITE);     // every mutation
@@ -81,7 +84,11 @@ export async function POST(request: Request) {
     return apiError(err);
   }
 }
+export const POST = withStore("POST", handlePOST); // every handler, GET included (tests enforce it)
 ```
+
+In a write request, a store change is saved only if the response is a success; to keep a row when the request fails
+(a security event, the audit of a denied attempt), call `db.keepEvenIfRequestFails(collection, id)`.
 
 ## 5. Non-negotiables (full list: GOVERNANCE.md §2)
 

@@ -567,6 +567,21 @@ export class PgStorePersistence {
     for (const m of changes.meta.deletes) this.committedMeta.delete(m.key);
   }
 
+  /** Only the upserts of the given rows (collection → ids): what a failed request must still save. */
+  static onlyRows(changes: ChangeSet, rows: ReadonlyMap<string, ReadonlySet<string>>): ChangeSet {
+    const collections = changes.collections
+      .map((c) => ({ ...c, upserts: c.upserts.filter((u) => rows.get(c.collection)?.has(u.id)), deletes: [] }))
+      .filter((c) => c.upserts.length);
+    return {
+      collections,
+      sequences: { upserts: [], deletes: [] },
+      meta: { upserts: [], deletes: [] },
+      unwritable: [],
+      rowCount: collections.reduce((n, c) => n + c.upserts.length, 0),
+      sanitizedRows: 0,
+    };
+  }
+
   // ---- Rollback ----------------------------------------------------------------------------------------------------
 
   /**

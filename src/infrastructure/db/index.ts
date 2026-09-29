@@ -649,14 +649,28 @@ class StoreLock {
   get busy(): boolean {
     return this.waiting > 0;
   }
-  run<T>(fn: () => Promise<T>): Promise<T> {
+  /** Runs `fn` when the lock is free. With `waitMs`, gives up (503 STORE_BUSY, `fn` never runs) after waiting that long. */
+  run<T>(fn: () => Promise<T>, waitMs = 0): Promise<T> {
     const previous = this.tail;
     let release!: () => void;
     this.tail = new Promise<void>((resolve) => (release = resolve));
     this.waiting++;
-    return previous.then(fn).finally(() => {
+    const done = () => {
       this.waiting--;
       release();
+    };
+    if (!waitMs) return previous.then(fn).finally(done);
+    return new Promise<T>((resolve, reject) => {
+      let gaveUp = false;
+      const timer = setTimeout(() => {
+        gaveUp = true;
+        reject(new AppError("STORE_BUSY", "The server is busy. Nothing was saved; try again shortly.", 503));
+      }, waitMs);
+      void previous.then(() => {
+        clearTimeout(timer);
+        if (gaveUp) return done();
+        fn().then(resolve, reject).finally(done);
+      });
     });
   }
 }
@@ -665,6 +679,10 @@ class StoreLock {
 const SYNC_INTERVAL_MS = envNumber("STORE_SYNC_INTERVAL_MS", 1_000, 0);
 /** Changes made outside any unit of work (no store method reported them) are found and committed at least this often. */
 const SWEEP_UNTRACKED_MS = 30_000;
+/** A request waits at most this long for this server's store lock, then gets 503 STORE_BUSY. */
+const lockWaitMs = () => envNumber("STORE_LOCK_WAIT_MS", 15_000, 1);
+/** Reads refuse (503) when this server couldn't sync for this long: revocations elsewhere must not stay unseen. */
+const maxStalenessMs = () => envNumber("STORE_MAX_STALENESS_MS", 30_000, 1);
 
 export interface PersistenceHealth {
   ok: boolean;
@@ -704,6 +722,8 @@ export class CommerceDatabase {
   /** True while a unit of work runs: persist() records the collections for that unit's commit. */
   private unitActive = false;
   private unitTouched: Set<string> | "all" = new Set();
+  /** Rows this unit saves even when its request fails (security events, audits of denied attempts). */
+  private unitKeep = new Map<string, Set<string>>();
   private loopTimer: ReturnType<typeof setInterval> | null = null;
   private lastSyncAt = 0;
   private lastSweepAt = 0;
@@ -1688,34 +1708,63 @@ export class CommerceDatabase {
     const pg = this.pg;
     if (this.backend !== "pg" || !pg || !this.persistenceEnabled || this.isTestInstance || !this._data) return work();
     return this.lock.run(async () => {
-      await this.commitAllLocked(pg, "background"); // changes made outside any unit belong to nobody's rollback
+      // Changes made outside any unit belong to nobody's rollback: commit them first (only when there are some, or
+      // when the periodic look for untracked ones is due, so a stream of requests that change nothing stays cheap).
+      if (this.dirty || Date.now() - this.lastSweepAt > SWEEP_UNTRACKED_MS) await this.commitAllLocked(pg, "background");
       await this.syncLocked(pg);
       this.unitActive = true;
       this.unitTouched = new Set();
+      this.unitKeep = new Map();
       let result: T;
       try {
         result = await work();
       } catch (err) {
         this.unitActive = false;
-        this.undoLocked(pg);
+        await this.failLocked(pg);
         throw err;
       }
       this.unitActive = false;
       if (!commitWhen(result)) {
-        this.undoLocked(pg);
+        await this.failLocked(pg);
         return result;
       }
       const touched = this.unitTouched as Set<string> | "all"; // persist() may have widened it to "all" during the work
       await this.commitLocked(pg, touched === "all" ? undefined : touched, "unit");
       return result;
-    });
+    }, lockWaitMs());
   }
 
-  /** Puts back the last committed version of what the unit changed (everything reported, or everything if unreported). */
-  private undoLocked(pg: PgStorePersistence): void {
-    const touched = this.unitTouched;
+  /**
+   * Inside a unit of work: this row is saved even if the request then fails (a failed sign-in's security event, the
+   * audit of a denied support-session request). Outside one it is saved like any other change.
+   */
+  public keepEvenIfRequestFails(collection: string, id: string): void {
+    if (!this.unitActive) return;
+    const ids = this.unitKeep.get(collection) ?? new Set<string>();
+    ids.add(id);
+    this.unitKeep.set(collection, ids);
+  }
+
+  /**
+   * A failed unit: rows marked to keep are committed (a failure there is logged, never masks the request's own error),
+   * then everything else it changed is put back to the last committed version. A unit that reported any change is
+   * compared in full, so a change a service forgot to report is undone too instead of being saved by the next sweep.
+   */
+  private async failLocked(pg: PgStorePersistence): Promise<void> {
     const data = this._data as unknown as Record<string, unknown>;
-    const changes = pg.computeChanges(data, touched === "all" ? undefined : touched);
+    if (this.unitKeep.size) {
+      const keep = PgStorePersistence.onlyRows(pg.computeChanges(data, new Set(this.unitKeep.keys())), this.unitKeep);
+      if (keep.rowCount) {
+        try {
+          await pg.write(keep);
+        } catch (err) {
+          logger.error("db.keep_on_failure_failed", { error: (err as Error).message, collections: [...this.unitKeep.keys()] });
+        }
+      }
+    }
+    const touched = this.unitTouched as Set<string> | "all";
+    if (touched !== "all" && touched.size === 0) return;
+    const changes = pg.computeChanges(data);
     if (changes.rowCount) pg.restore(data, changes);
   }
 
@@ -1743,17 +1792,13 @@ export class CommerceDatabase {
           rows: err.rows.slice(0, 10).map((r) => `${r.collection}/${r.id}`),
         });
         await this.syncLocked(pg).catch(() => undefined);
-        throw new AppError("STORE_CONFLICT", "Someone else changed this record at the same time. Nothing was saved; reload and try again.", 409, {
-          collections: [...new Set(err.rows.map((r) => r.collection))],
-        });
+        throw new AppError("STORE_CONFLICT", "Someone else changed this record at the same time. Nothing was saved; reload and try again.", 409);
       }
       if (isDataRejected(err)) {
         pg.restore(data, changes);
         const f = pgErrorFields(err);
         logger.warn("db.write_rejected", { kind, code: f.code, constraint: f.constraint, table: f.table });
-        throw new AppError("CONSTRAINT_VIOLATION", `This change breaks a data rule (${f.constraint ?? f.code ?? "constraint"}). Nothing was saved.`, 409, {
-          constraint: f.constraint ?? null,
-        });
+        throw new AppError("CONSTRAINT_VIOLATION", "This change conflicts with an existing record (for example a repeated SKU or number). Nothing was saved.", 409);
       }
       this.lastPersistError = { at: new Date().toISOString(), message: (err as Error).message };
       logger.error("db.persist_failed", { backend: "pg", kind, error: (err as Error).message });
@@ -1813,13 +1858,20 @@ export class CommerceDatabase {
 
   /**
    * For read requests: other servers' changes, if the last sync is older than STORE_SYNC_INTERVAL_MS and no unit is
-   * running here (a running unit syncs anyway). A failed sync serves what this server has.
+   * running here (a running unit syncs anyway). A failed sync serves what this server has, but never for longer than
+   * STORE_MAX_STALENESS_MS: past that the read waits for a sync and gets 503 if there is none (a session revoked or a
+   * member removed on another server must not keep reading here).
    */
   public async syncIfDue(): Promise<void> {
     const pg = this.pg;
     if (!pg || !this._data || !this.persistenceEnabled || this.isTestInstance) return;
-    if (Date.now() - this.lastSyncAt < SYNC_INTERVAL_MS || this.lock.busy) return;
-    await this.lock.run(() => this.syncLocked(pg)).catch(() => undefined);
+    const age = Date.now() - this.lastSyncAt;
+    if (age < SYNC_INTERVAL_MS) return;
+    if (age < maxStalenessMs()) {
+      if (!this.lock.busy) await this.lock.run(() => this.syncLocked(pg)).catch(() => undefined);
+      return;
+    }
+    await this.lock.run(() => this.syncLocked(pg), lockWaitMs());
   }
 
   /** Every second: sync from other servers, commit background changes, and now and then look for untracked changes. */

@@ -17,6 +17,8 @@ import { LEASE_TTL_MS, PgStorePersistence } from "@/infrastructure/store/pg-stor
 import { createPgliteClient } from "@/infrastructure/store/pglite-client";
 import type { SqlClient } from "@/infrastructure/store/sql-client";
 import { envNumber } from "@/lib/env-number";
+import { AppError } from "@/lib/errors";
+import { withStore } from "@/lib/store-unit";
 import type { Order, OrderItem, Product, ProductVariant, Warehouse, InventoryItem } from "@/types/commerce";
 import type { PlatformAuditLogRecord } from "@/types/platform";
 
@@ -481,6 +483,100 @@ async function main() {
     assert.ok(!A.data.tenants.some((x) => x.id === "ten_mw_thrown" || x.id === "ten_mw_400"));
     const rows = await mwClient.query("SELECT 1 FROM commerceos.tenants WHERE id IN ('ten_mw_thrown', 'ten_mw_400')");
     assert.strictEqual(rows.rows.length, 0);
+  });
+
+  await runTest("a failed request still saves the rows it marked (a failed sign-in's security event), and nothing else", async () => {
+    const answered = await A.unit(async () => {
+      A.recordPlatformSecurityEvent({ id: "sec_mw_fail", event_type: "FAILED_LOGIN", severity: "HIGH", description: "Failed platform login attempt", created_at: new Date().toISOString() });
+      A.keepEvenIfRequestFails("platform_security_events", "sec_mw_fail");
+      A.recordPlatformSecurityEvent({ id: "sec_mw_other", event_type: "SUSPICIOUS_SESSION", severity: "LOW", description: "not marked", created_at: new Date().toISOString() });
+      A.createTenant(tenant("ten_mw_401"));
+      return { status: 401 };
+    }, (res) => res.status < 400);
+    assert.strictEqual(answered.status, 401);
+    const kept = await mwClient.query<{ id: string }>("SELECT id FROM commerceos.documents WHERE collection = 'platform_security_events' AND id IN ('sec_mw_fail', 'sec_mw_other')");
+    assert.deepStrictEqual(kept.rows.map((r) => r.id), ["sec_mw_fail"]);
+    assert.ok(A.data.platform_security_events.some((e) => e.id === "sec_mw_fail"), "kept in memory too");
+    assert.ok(!A.data.platform_security_events.some((e) => e.id === "sec_mw_other"));
+    assert.ok(!A.data.tenants.some((x) => x.id === "ten_mw_401"));
+    await B.syncNow();
+    assert.ok(B.data.platform_security_events.some((e) => e.id === "sec_mw_fail"), "the other server sees it");
+  });
+
+  await runTest("a failed request's change a service forgot to report is undone too, not saved by the next sweep", async () => {
+    const before = A.data.orders.find((x) => x.id === "ord_mw_1")?.notes;
+    await A.unit(async () => {
+      A.createTenant(tenant("ten_mw_unreported")); // reports "tenants" only
+      const o = A.data.orders.find((x) => x.id === "ord_mw_1");
+      assert.ok(o);
+      o.notes = "changed without markDirty";
+      return { status: 422 };
+    }, (res) => res.status < 400);
+    assert.strictEqual(A.data.orders.find((x) => x.id === "ord_mw_1")?.notes, before);
+    await A.flush();
+    const saved = await mwClient.query<{ notes: string | null }>("SELECT data->>'notes' AS notes FROM commerceos.orders WHERE id = 'ord_mw_1'");
+    assert.strictEqual(saved.rows[0].notes ?? undefined, before);
+  });
+
+  await runTest("store refusals carry no internal names (collections, constraints) to the client", async () => {
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => (open = resolve));
+    const second = B.unit(async () => {
+      await gate;
+      const o = B.data.orders.find((x) => x.id === "ord_mw_1");
+      assert.ok(o);
+      o.notes = "B again";
+      B.markDirty();
+      return true;
+    }, commitAll);
+    await new Promise((r) => setTimeout(r, 50));
+    await A.unit(async () => {
+      const o = A.data.orders.find((x) => x.id === "ord_mw_1");
+      assert.ok(o);
+      o.notes = "A again";
+      A.markDirty();
+      return true;
+    }, commitAll);
+    open();
+    const err = await second.then(() => null, (e: AppError) => e);
+    assert.ok(err && err.code === "STORE_CONFLICT");
+    assert.strictEqual(err.details, undefined);
+    assert.ok(!/orders|commerceos/.test(err.message));
+  });
+
+  await runTest("a request that waits too long for this server's store lock gets 503 STORE_BUSY; so does a read that can't sync", async () => {
+    const previous = process.env.STORE_LOCK_WAIT_MS;
+    process.env.STORE_LOCK_WAIT_MS = "100";
+    try {
+      let open!: () => void;
+      const gate = new Promise<void>((resolve) => (open = resolve));
+      const slow = A.unit(async () => {
+        await gate; // e.g. a slow outbound call inside a request
+        return true;
+      }, commitAll);
+      await new Promise((r) => setTimeout(r, 20));
+      const waited = await A.unit(async () => true, commitAll).then(() => null, (e: AppError) => e);
+      assert.ok(waited && waited.code === "STORE_BUSY" && waited.statusCode === 503, "a queued write gives up");
+      await A.syncIfDue(); // recently synced: the read is served without waiting
+      (A as unknown as { lastSyncAt: number }).lastSyncAt = 0; // no sync for longer than STORE_MAX_STALENESS_MS
+      const stale = await A.syncIfDue().then(() => null, (e: AppError) => e);
+      assert.ok(stale && stale.statusCode === 503, "a read too far behind other servers refuses");
+      open();
+      await slow;
+      await A.syncIfDue(); // the lock is free again: it syncs and serves
+      assert.ok(Date.now() - (A as unknown as { lastSyncAt: number }).lastSyncAt < 5_000);
+    } finally {
+      if (previous === undefined) delete process.env.STORE_LOCK_WAIT_MS;
+      else process.env.STORE_LOCK_WAIT_MS = previous;
+    }
+  });
+
+  await runTest("withStore receives the body before queueing, and refuses one that is declared too large (413)", async () => {
+    const echo = withStore("POST", async (request: Request) => new Response(JSON.stringify(await request.json()), { status: 200 }));
+    const ok = await echo(new Request("http://x/api", { method: "POST", body: JSON.stringify({ a: 1 }), headers: { "content-type": "application/json" } }));
+    assert.deepStrictEqual(await ok.json(), { a: 1 }, "the handler still reads the body");
+    const big = await echo(new Request("http://x/api", { method: "POST", body: "{}", headers: { "content-length": String(1024 * 1024 * 1024) } }));
+    assert.strictEqual(big.status, 413);
   });
 
   await runTest("changes made outside a request are committed in the background and reach the other server", async () => {

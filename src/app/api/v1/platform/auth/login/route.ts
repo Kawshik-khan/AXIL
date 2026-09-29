@@ -41,14 +41,16 @@ async function handlePOST(request: Request) {
     const passwordOk = await verifyPassword(password, user?.password_hash ?? DUMMY_BCRYPT_HASH);
     if (!user || !passwordOk) {
       if (user) {
+        const eventId = `sec_fail_${crypto.randomUUID()}`;
         db.recordPlatformSecurityEvent({
-          id: `sec_fail_${crypto.randomUUID()}`,
+          id: eventId,
           event_type: "FAILED_LOGIN",
           severity: "HIGH",
           actor_id: user.id,
           description: "Failed platform login attempt",
           created_at: new Date().toISOString(),
         });
+        db.keepEvenIfRequestFails("platform_security_events", eventId); // the request answers 401
       }
       throw invalidCredentials();
     }
