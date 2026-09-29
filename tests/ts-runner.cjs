@@ -89,9 +89,6 @@ require.extensions[".tsx"] = require.extensions[".ts"];
 
 const testFile = process.argv[2] || "./tests/commerce-tests.ts";
 if (process.env.COMMERCEOS_TEST_PG === "1" && process.env.NODE_ENV === "test") {
-  // Suites block the event loop for long stretches (spawnSync of scripts, big synchronous sweeps), which would stop
-  // lease renewals and trip the store's self-fencing. The fences have their own tests (phase4-postgres-tests.ts).
-  if (!process.env.STORE_LEASE_TTL_MS) process.env.STORE_LEASE_TTL_MS = "600000";
   require("./support/pg-test-store.ts")
     .installPostgresTestStore()
     .then(() => require(path.resolve(process.cwd(), testFile)))
