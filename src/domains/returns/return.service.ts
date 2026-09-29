@@ -52,7 +52,7 @@ export class ReturnService {
     OrderLifecycleService.advance(context.tenant.id, order.id, "RETURN_REQUESTED", { type: "USER", id: context.user.id }, payload.reason);
 
     db.recordEvent({
-      id: `evt_${Date.now()}_return_created`,
+      id: `evt_${Date.now()}_return_created_${randomSuffix()}`,
       type: "return.created",
       version: "1.0",
       tenant_id: context.tenant.id,
@@ -141,7 +141,7 @@ export class ReturnService {
     }
 
     db.recordEvent({
-      id: `evt_${Date.now()}_refund_completed`,
+      id: `evt_${Date.now()}_refund_completed_${randomSuffix()}`,
       type: "refund.completed",
       version: "1.0",
       tenant_id: context.tenant.id,

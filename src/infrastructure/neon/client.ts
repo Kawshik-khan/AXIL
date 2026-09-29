@@ -107,8 +107,10 @@ export async function execute(
   text: string,
   params: unknown[] = []
 ): Promise<{ rowCount: number }> {
-  const rows = await query(text, params);
-  return { rowCount: rows.length };
+  // The rows changed, as the server reports them (FX-42 step 1): counting returned rows gave 0 for any UPDATE or
+  // DELETE without RETURNING.
+  const result = await getPool().query(text, params as unknown[]);
+  return { rowCount: result.rowCount ?? 0 };
 }
 
 /**
@@ -127,33 +129,24 @@ export async function withTransaction<T>(
     query: (text: string, params?: unknown[]) => Promise<{ rows: Record<string, unknown>[]; rowCount: number }>;
   }) => Promise<T>
 ): Promise<T> {
+  // FX-42 step 1 (audit M8): errors propagate. This used to catch every error, including a failed statement inside
+  // the transaction, and run the whole callback again over HTTP without a transaction, after the rollback.
+  const client = await getPool().connect();
   try {
-    const pool = getPool();
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      const result = await fn(client);
-      await client.query('COMMIT');
-      return result;
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
-  } catch (poolErr) {
-    // If WebSocket Pool is unavailable (e.g., non-101 WebSocket status), fall back to HTTP query execution
-    const sql = getSql();
-    const fallbackClient = {
+    await client.query('BEGIN');
+    const result = await fn({
       query: async (text: string, params?: unknown[]) => {
-        const rows = await sql.query(text, (params || []) as any[]);
-        return {
-          rows: (rows as Record<string, unknown>[]) || [],
-          rowCount: Array.isArray(rows) ? rows.length : 0,
-        };
+        const res = await client.query(text, params as unknown[]);
+        return { rows: res.rows as Record<string, unknown>[], rowCount: res.rowCount ?? 0 };
       },
-    };
-    return fn(fallbackClient);
+    });
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
   }
 }
 

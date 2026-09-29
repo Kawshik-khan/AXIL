@@ -6,6 +6,7 @@ import { AppError } from "@/lib/errors";
 
 import { db } from "@/infrastructure/db";
 import { SLODefinition, ErrorBudget } from "@/types/autonomous";
+import { randomSuffix } from "@/lib/ids";
 
 export class SLOEngineService {
   getSLOs(tenantId: string): SLODefinition[] {
@@ -51,7 +52,7 @@ export class SLOEngineService {
     const burnRate = consumed / 30;
 
     const budget: ErrorBudget = {
-      id: `eb_${sloId}_${Date.now()}`,
+      id: `eb_${sloId}_${Date.now()}_${randomSuffix()}`,
       slo_id: sloId,
       tenant_id: tenantId,
       total_budget_minutes: Math.round(budgetMinutes),

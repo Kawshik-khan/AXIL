@@ -10,6 +10,7 @@ import {
   AbandonedCartRecoveryItem,
 } from "@/types/growth";
 import { consentService, frequencyCappingService } from "./consent.service";
+import { randomSuffix } from "@/lib/ids";
 
 export class ProductRecommendationService {
   /**
@@ -178,7 +179,7 @@ export class ProductRecommendationService {
     const total = cartItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
 
     const recoveryItem: AbandonedCartRecoveryItem = {
-      id: `acr_${Date.now()}_${customerId}`,
+      id: `acr_${Date.now()}_${customerId}_${randomSuffix()}`,
       tenant_id: tenantId,
       customer_id: customerId,
       cart_items: cartItems,

@@ -7,6 +7,7 @@ import { AppError } from "@/lib/errors";
 
 import { db } from "@/infrastructure/db";
 import { BulkOperationSafeguard } from "@/types/operations";
+import { randomSuffix } from "@/lib/ids";
 
 export class BulkSafeguardService {
   /**
@@ -28,7 +29,7 @@ export class BulkSafeguardService {
       : { verified_sample_count: sampleItems.length, projected_total: totalCount };
 
     const safeguard: BulkOperationSafeguard = {
-      id: `bulk_${params.actionType.toLowerCase()}_${Date.now()}`,
+      id: `bulk_${params.actionType.toLowerCase()}_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       action_type: params.actionType,
       target_entity_type: params.targetEntityType,

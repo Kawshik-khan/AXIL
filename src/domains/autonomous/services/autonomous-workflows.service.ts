@@ -8,6 +8,7 @@ import { AppError } from "@/lib/errors";
 import { db } from "@/infrastructure/db";
 import { AutonomousWorkflowRun, AutonomousWorkflowType } from "@/types/autonomous";
 import { AgentType } from "@/types/ai";
+import { randomSuffix } from "@/lib/ids";
 
 export class AutonomousWorkflowsService {
   /** Start a cross-domain autonomous workflow. */
@@ -22,7 +23,7 @@ export class AutonomousWorkflowsService {
   ): AutonomousWorkflowRun {
     db.markDirty(); // persists direct changes to db.data (FX-20)
     const run: AutonomousWorkflowRun = {
-      id: `awf_${workflowType.toLowerCase()}_${Date.now()}`,
+      id: `awf_${workflowType.toLowerCase()}_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       workflow_type: workflowType,
       objective_id: objectiveId,

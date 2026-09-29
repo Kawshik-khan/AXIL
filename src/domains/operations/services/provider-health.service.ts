@@ -7,6 +7,7 @@
 import { db } from "@/infrastructure/db";
 import { ProviderHealth, ProviderIncident, ProviderStatus, ProviderType } from "@/types/operations";
 import { CourierProviderName, PaymentMethod } from "@/types/commerce";
+import { randomSuffix } from "@/lib/ids";
 
 export class ProviderHealthService {
   /**
@@ -45,7 +46,7 @@ export class ProviderHealthService {
 
     if (!ph) {
       ph = {
-        id: `ph_${providerId}`,
+        id: `ph_${tenantId}_${providerId}`, // one row per workspace and provider; the id was shared across tenants
         tenant_id: tenantId,
         provider_id: providerId,
         provider_name: providerId.toUpperCase(),
@@ -106,7 +107,7 @@ export class ProviderHealthService {
 
     const ph = db.getProviderHealth(tenantId, providerId);
     const incident: ProviderIncident = {
-      id: `inc_${providerId}_${Date.now()}`,
+      id: `inc_${providerId}_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       provider_id: providerId,
       provider_name: ph?.provider_name || providerId,

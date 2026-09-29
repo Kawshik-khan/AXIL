@@ -55,7 +55,7 @@ export class FinanceOperationsService {
       }
 
       const item: ReconciliationItem = {
-        id: `ri_${order.id}_${Date.now()}`,
+        id: `ri_${order.id}_${Date.now()}_${randomSuffix()}`,
         run_id: runId,
         tenant_id: tenantId,
         order_id: order.id,
@@ -72,7 +72,7 @@ export class FinanceOperationsService {
 
       if (isDiscrepancy) {
         const finExc: FinancialException = {
-          id: `fexc_${order.id}_${Date.now()}`,
+          id: `fexc_${order.id}_${Date.now()}_${randomSuffix()}`,
           tenant_id: tenantId,
           category: "COD_DISCREPANCY",
           amount_bdt: variance,

@@ -11,6 +11,7 @@ import { autonomyPolicyService } from "@/domains/ai/orchestration/autonomy/auton
 import { workflowEngine } from "@/domains/ai/orchestration/engine/workflow-engine";
 import { recommendationService } from "./recommendation.service";
 import { intelligenceSnapshots } from "./intelligence-snapshot.service";
+import { randomSuffix } from "@/lib/ids";
 
 export class DecisionService {
   /**
@@ -44,7 +45,7 @@ export class DecisionService {
       riskLevel
     );
 
-    const decisionId = `dec_${Date.now()}_${tenantId}`;
+    const decisionId = `dec_${Date.now()}_${tenantId}_${randomSuffix()}`;
 
     // 2. Build candidate actions
     const candidateActions = [
@@ -63,7 +64,7 @@ export class DecisionService {
     if (requiresApproval) {
       // Create Phase 5 Approval Request
       const approvalReq = db.insertApprovalRequest({
-        id: `appr_dec_${Date.now()}_${tenantId}`,
+        id: `appr_dec_${Date.now()}_${tenantId}_${randomSuffix()}`,
         tenant_id: tenantId,
         workflow_id: `wf_pending_${decisionId}`,
         task_id: `task_dec_${decisionId}`,

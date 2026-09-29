@@ -7,6 +7,7 @@ import { AppError } from "@/lib/errors";
 
 import { db } from "@/infrastructure/db";
 import { AIModel, ModelLifecycleStatus, ModelEvaluation, ModelDeployment } from "@/types/autonomous";
+import { randomSuffix } from "@/lib/ids";
 
 export class ModelGovernanceService {
   getModels(tenantId: string): AIModel[] {
@@ -54,7 +55,7 @@ export class ModelGovernanceService {
     const model = this.findById(tenantId, modelId);
     if (!model) throw new AppError("NOT_FOUND", `Model not found: ${modelId}`, 404);
     const deployment: ModelDeployment = {
-      id: `mdep_${modelId}_${Date.now()}`,
+      id: `mdep_${modelId}_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       model_id: modelId,
       version: model.version,

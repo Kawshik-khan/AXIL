@@ -5,6 +5,7 @@
 
 import { db } from "@/infrastructure/db";
 import { IntegrationConflict, ConflictStrategy } from "@/types/enterprise";
+import { randomSuffix } from "@/lib/ids";
 
 export interface ConflictEvaluationResult {
   hasConflict: boolean;
@@ -75,7 +76,7 @@ export class ConflictResolutionService {
     }
 
     const conflict: IntegrationConflict = {
-      id: `cnf_${params.entityType.toLowerCase()}_${Date.now()}`,
+      id: `cnf_${params.entityType.toLowerCase()}_${Date.now()}_${randomSuffix()}`,
       organization_id: params.organizationId,
       integration_id: params.integrationId,
       entity_type: params.entityType,

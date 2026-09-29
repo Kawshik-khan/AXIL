@@ -31,7 +31,7 @@ export class CourierOperationsService {
 
       if (!alreadyLogged && hoursInTransit > 36) {
         const exc: ShipmentException = {
-          id: `se_${shipment.id}_${Date.now()}`,
+          id: `se_${shipment.id}_${Date.now()}_${randomSuffix()}`,
           tenant_id: tenantId,
           shipment_id: shipment.id,
           order_id: shipment.order_id,

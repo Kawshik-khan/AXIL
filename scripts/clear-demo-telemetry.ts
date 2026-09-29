@@ -8,46 +8,40 @@
  *   2. Dry run:   node tests/ts-runner.cjs ./scripts/clear-demo-telemetry.ts
  *   3. Apply:     node tests/ts-runner.cjs ./scripts/clear-demo-telemetry.ts --apply   (backs up first)
  */
-import fs from "fs";
 import path from "path";
 import { db } from "@/infrastructure/db";
 import { cleanDemoTelemetry } from "@/infrastructure/db/demo-telemetry-cleanup";
-import { assertNoOtherStoreWriter } from "./lib/store-guard";
+import { backupStore, exitStore, openStore, saveStore } from "./lib/store-session";
 
-assertNoOtherStoreWriter();
-
-const out = (line: string) => process.stdout.write(`${line}\n`);
-const apply = process.argv.includes("--apply");
-
-const preview = cleanDemoTelemetry(db.data, { apply: false });
-for (const [key, count] of Object.entries(preview)) out(`${key.padEnd(30)} ${count}`);
-const total = Object.values(preview).reduce((a, b) => a + b, 0);
-
-if (!apply) {
-  out(total ? "Dry run only. Re-run with --apply to change these (a backup is taken first)." : "Nothing to change.");
-  process.exit(0);
-}
-if (total === 0) {
-  out("Nothing to change.");
-  process.exit(0);
-}
-
-const dataFile = path.join(db.getPersistenceHealth().data_dir, "commerceos.json");
-const backupDir = path.join(path.dirname(path.dirname(dataFile)), ".backups");
-fs.mkdirSync(backupDir, { recursive: true });
-const backupFile = path.join(backupDir, `commerceos.json.before-demo-telemetry-cleanup.${Date.now()}.bak`);
-fs.copyFileSync(dataFile, backupFile);
-out(`Backup written: ${path.relative(process.cwd(), backupFile)}`);
-
-cleanDemoTelemetry(db.data, { apply: true });
-db.markDirty(); // direct changes to db.data (FX-20)
 void (async () => {
-  await db.flush();
-  const health = db.getPersistenceHealth();
-  if (!health.ok) {
-    process.stderr.write(`Not saved: ${health.blocked_reason ?? health.last_persist_error?.message ?? "the store is not writable"}.\n`);
-    process.exit(1);
+  await openStore();
+
+  const out = (line: string) => process.stdout.write(`${line}\n`);
+  const apply = process.argv.includes("--apply");
+
+  const preview = cleanDemoTelemetry(db.data, { apply: false });
+  for (const [key, count] of Object.entries(preview)) out(`${key.padEnd(30)} ${count}`);
+  const total = Object.values(preview).reduce((a, b) => a + b, 0);
+
+  if (!apply) {
+    out(total ? "Dry run only. Re-run with --apply to change these (a backup is taken first)." : "Nothing to change.");
+    return exitStore(0);
+  }
+  if (total === 0) {
+    out("Nothing to change.");
+    return exitStore(0);
+  }
+
+  const backupFile = backupStore("before-demo-telemetry-cleanup");
+  out(`Backup written: ${path.relative(process.cwd(), backupFile)}`);
+
+  cleanDemoTelemetry(db.data, { apply: true });
+  db.markDirty(); // direct changes to db.data (FX-20)
+  const saved = await saveStore();
+  if (!saved.ok) {
+    process.stderr.write(`Not saved: ${saved.reason}.\n`);
+    return exitStore(1);
   }
   out(`Applied: ${total} change(s).`);
-  process.exit(0);
+  return exitStore(0);
 })();

@@ -68,7 +68,7 @@ export class JourneyEngineService {
     }
 
     const enrollment: JourneyEnrollment = {
-      id: `enr_${Date.now()}_${customerId}`,
+      id: `enr_${Date.now()}_${customerId}_${randomSuffix()}`,
       tenant_id: tenantId,
       journey_id: journeyId,
       customer_id: customerId,
@@ -155,7 +155,7 @@ export class JourneyEngineService {
 
     // Record execution audit log
     const execRecord: JourneyExecutionRecord = {
-      id: `jex_${Date.now()}_${enrollmentId}`,
+      id: `jex_${Date.now()}_${enrollmentId}_${randomSuffix()}`,
       tenant_id: tenantId,
       journey_id: journey.id,
       enrollment_id: enrollmentId,

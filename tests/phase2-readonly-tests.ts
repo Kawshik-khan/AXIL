@@ -108,6 +108,10 @@ function changedCollections(before: Map<string, string>, after: Map<string, stri
 function seedCommerce(tenantId: string) {
   const now = Date.now();
   const iso = new Date(now).toISOString();
+  db.data.warehouses.push({
+    id: "wh_ro", tenant_id: tenantId, name: "Reader Warehouse", code: "RO", address: "", city: "Dhaka", district: "Dhaka",
+    status: "ACTIVE", created_at: iso, updated_at: iso,
+  });
   for (let v = 0; v < 3; v++) {
     db.data.products.push({
       id: `prod_ro_${v}`, tenant_id: tenantId, name: `Reader Product ${v}`, slug: `reader-${v}`, description: "", sku: `RO-P${v}`,
@@ -435,6 +439,8 @@ async function main() {
     db.data.cohort_records.push({ cohort_month: "2020-01", initial_size: 1, periods: [] } as never); // pre-Phase-2 row without tenant
     assert.strictEqual(db.getCohortRecords(other).length, 0);
     assert.strictEqual(db.getCohortRecords(tenantId).length, cohorts, "legacy rows without a tenant are never returned");
+    // A row without an id can't be stored in Postgres (ADR-108); the backfill reports such rows. Remove the probe.
+    db.data.cohort_records = db.data.cohort_records.filter((c) => c.id);
 
     const iso = new Date().toISOString();
     db.data.conversations.push({ id: "conv_ro_1", tenant_id: tenantId, customer_id: "cus_ro_0", channel_id: "ch", channel_type: "WHATSAPP",

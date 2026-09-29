@@ -44,7 +44,7 @@ export class PaymentOperationsService {
       // Timeout if pending > 2 hours without confirmation
       if (!alreadyReported && ageHours > 2) {
         const exc: PaymentException = {
-          id: `pe_${payment.id}_${Date.now()}`,
+          id: `pe_${payment.id}_${Date.now()}_${randomSuffix()}`,
           tenant_id: tenantId,
           payment_id: payment.id,
           order_id: payment.order_id,

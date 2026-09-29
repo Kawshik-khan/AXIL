@@ -14,6 +14,7 @@ import {
   SaveConnectorSchema,
   TestConnectionSchema,
 } from "@/types/connector";
+import { randomSuffix } from "@/lib/ids";
 
 /** Providers whose API exposes an OpenAI-compatible GET /models that accepts a Bearer key. */
 const OPENAI_COMPATIBLE_PROVIDERS = new Set(["openai", "deepseek", "groq", "openrouter"]);
@@ -1378,7 +1379,7 @@ export class ConnectorService {
     const now = new Date().toISOString();
 
     const record: ConnectorConfigRecord = {
-      id: existing ? existing.id : `conn_${provider.id}_${Date.now()}`,
+      id: existing ? existing.id : `conn_${provider.id}_${Date.now()}_${randomSuffix()}`,
       tenant_id: context.tenant.id,
       provider_id: provider.id,
       category: provider.category,
@@ -1424,7 +1425,7 @@ export class ConnectorService {
           });
         } else {
           db.createIntegrationInstallation({
-            id: `inst_${provider.id.replace("prov_", "")}_${Date.now()}`,
+            id: `inst_${provider.id.replace("prov_", "")}_${Date.now()}_${randomSuffix()}`,
             organization_id: context.tenant.id,
             provider_id: provider.id,
             provider_name: provider.name,
@@ -1454,7 +1455,7 @@ export class ConnectorService {
 
     // Record audit log
     db.createAuditLog({
-      id: `aud_${Date.now()}_connector_saved`,
+      id: `aud_${Date.now()}_connector_saved_${randomSuffix()}`,
       tenant_id: context.tenant.id,
       actor_user_id: context.user.id,
       action: existing ? "CONNECTOR_UPDATED" : "CONNECTOR_CREATED",
@@ -1687,7 +1688,7 @@ export class ConnectorService {
     }
 
     db.createAuditLog({
-      id: `aud_${Date.now()}_connector_deleted`,
+      id: `aud_${Date.now()}_connector_deleted_${randomSuffix()}`,
       tenant_id: context.tenant.id,
       actor_user_id: context.user.id,
       action: "CONNECTOR_DELETED",

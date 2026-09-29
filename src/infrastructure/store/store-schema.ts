@@ -89,7 +89,7 @@ export function recordId(collection: string, record: Record<string, unknown>): s
 export const ORDER_SEQUENCES_KEY = "order_sequences";
 
 export function coreTableFor(collection: string): CoreTable | undefined {
-  return (CORE_TABLES as Record<string, CoreTable | undefined>)[collection];
+  return Object.hasOwn(CORE_TABLES, collection) ? (CORE_TABLES as Record<string, CoreTable>)[collection] : undefined;
 }
 
 export function qualified(table: string): string {

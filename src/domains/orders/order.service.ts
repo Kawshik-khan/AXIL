@@ -220,7 +220,7 @@ export class OrderService {
 
     // 8. Create canonical domain event
     db.recordEvent({
-      id: `evt_${Date.now()}_order_created`,
+      id: `evt_${Date.now()}_order_created_${randomSuffix()}`,
       type: "order.created",
       version: "1.0",
       tenant_id: context.tenant.id,

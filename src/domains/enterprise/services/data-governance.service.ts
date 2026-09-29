@@ -5,6 +5,7 @@
 
 import { db } from "@/infrastructure/db";
 import { DataAsset, DataClassification } from "@/types/enterprise";
+import { randomSuffix } from "@/lib/ids";
 
 export class DataGovernanceService {
   /**
@@ -23,7 +24,7 @@ export class DataGovernanceService {
     }
   ): DataAsset {
     const asset: DataAsset = {
-      id: `asset_${params.domain.toLowerCase()}_${Date.now()}`,
+      id: `asset_${params.domain.toLowerCase()}_${Date.now()}_${randomSuffix()}`,
       organization_id: orgId,
       name: params.name,
       domain: params.domain,

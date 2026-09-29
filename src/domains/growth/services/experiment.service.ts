@@ -94,7 +94,7 @@ export class ExperimentService {
     }
 
     const assignment: ExperimentAssignment = {
-      id: `asg_${Date.now()}_${customerId}`,
+      id: `asg_${Date.now()}_${customerId}_${randomSuffix()}`,
       tenant_id: tenantId,
       experiment_id: experimentId,
       customer_id: customerId,

@@ -6,6 +6,7 @@
 import { db } from "@/infrastructure/db";
 import { IntegrationSyncRecord } from "@/types/enterprise";
 import { integrationHubService } from "./integration-hub.service";
+import { randomSuffix } from "@/lib/ids";
 
 export class SyncEngineService {
   /**
@@ -21,7 +22,7 @@ export class SyncEngineService {
     processItemFn: (item: Record<string, unknown>) => Promise<{ success: boolean; conflict?: boolean }>;
   }): Promise<IntegrationSyncRecord> {
     const startTime = Date.now();
-    const syncId = `sync_${params.entityType.toLowerCase()}_${Date.now()}`;
+    const syncId = `sync_${params.entityType.toLowerCase()}_${Date.now()}_${randomSuffix()}`;
 
     let succeeded = 0;
     let failed = 0;

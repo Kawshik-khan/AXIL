@@ -68,7 +68,7 @@ export class PaymentService {
     const created = db.createPayment(payment);
 
     db.recordEvent({
-      id: `evt_${Date.now()}_payment_created`,
+      id: `evt_${Date.now()}_payment_created_${randomSuffix()}`,
       type: "payment.created",
       version: "1.0",
       tenant_id: context.tenant.id,
@@ -165,7 +165,7 @@ export class PaymentService {
     const transactionIdForRecords = trx;
 
     db.recordEvent({
-      id: `evt_${Date.now()}_payment_completed`,
+      id: `evt_${Date.now()}_payment_completed_${randomSuffix()}`,
       type: "payment.completed",
       version: "1.0",
       tenant_id: context.tenant.id,

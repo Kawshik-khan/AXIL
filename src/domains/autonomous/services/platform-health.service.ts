@@ -5,6 +5,7 @@
 
 import { db } from "@/infrastructure/db";
 import { PlatformHealth, HealthStatus, HealthDimension, DomainHealthRecord, AutonomousQualityScorecard } from "@/types/autonomous";
+import { randomSuffix } from "@/lib/ids";
 
 export class PlatformHealthService {
   getSystemHealth(tenantId: string): PlatformHealth | undefined {
@@ -30,7 +31,7 @@ export class PlatformHealthService {
     const objectives = db.data.business_objectives.filter((o) => o.tenant_id === tenantId && o.status === "ACTIVE");
 
     return {
-      id: `qs_${tenantId}_${period}_${Date.now()}`,
+      id: `qs_${tenantId}_${period}_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       period,
       period_start: periodStart.toISOString(),

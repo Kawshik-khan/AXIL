@@ -8,6 +8,7 @@ import { AppError } from "@/lib/errors";
 import { db } from "@/infrastructure/db";
 import { AutonomyRecommendation, AutonomyRecommendationType } from "@/types/autonomous";
 import { AutonomyLevel } from "@/types/orchestration";
+import { randomSuffix } from "@/lib/ids";
 
 export class AutonomyAdaptationService {
   getRecommendations(tenantId: string): AutonomyRecommendation[] {
@@ -36,7 +37,7 @@ export class AutonomyAdaptationService {
     }
 
     const recommendation: AutonomyRecommendation = {
-      id: `arec_${domain}_${Date.now()}`,
+      id: `arec_${domain}_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       domain,
       recommendation_type: recommendationType,

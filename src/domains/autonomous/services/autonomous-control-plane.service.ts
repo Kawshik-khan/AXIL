@@ -16,6 +16,7 @@ import {
   AUTONOMOUS_SAFETY_BOUNDARIES,
   AutonomousSafetyBoundary,
 } from "@/types/autonomous";
+import { randomSuffix } from "@/lib/ids";
 
 export class AutonomousControlPlaneService {
   /**
@@ -77,7 +78,7 @@ export class AutonomousControlPlaneService {
     let health = db.data.platform_health_records.find((h) => h.tenant_id === tenantId);
     if (!health) {
       health = {
-        id: `ph_${tenantId}_${Date.now()}`,
+        id: `ph_${tenantId}_${Date.now()}_${randomSuffix()}`,
         tenant_id: tenantId,
         overall_status: "HEALTHY",
         autonomous_mode: "SEMI_AUTONOMOUS",

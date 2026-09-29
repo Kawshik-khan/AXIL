@@ -135,7 +135,7 @@ export class ShippingService {
     db.updateOrderFulfillmentStatus(context.tenant.id, order.id, "FULFILLED");
 
     db.recordEvent({
-      id: `evt_${Date.now()}_shipment_created`,
+      id: `evt_${Date.now()}_shipment_created_${randomSuffix()}`,
       type: "shipment.created",
       version: "1.0",
       tenant_id: context.tenant.id,
@@ -196,7 +196,7 @@ export class ShippingService {
     }
 
     db.recordEvent({
-      id: `evt_${Date.now()}_shipment_updated`,
+      id: `evt_${Date.now()}_shipment_updated_${randomSuffix()}`,
       type: "shipment.updated",
       version: "1.0",
       tenant_id: context.tenant.id,

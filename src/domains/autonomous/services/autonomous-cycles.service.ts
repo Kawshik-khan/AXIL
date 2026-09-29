@@ -7,6 +7,7 @@ import { AppError } from "@/lib/errors";
 import { db } from "@/infrastructure/db";
 import { AutonomousWorkflowRun } from "@/types/autonomous";
 import { AutonomousControlPlaneService } from "./autonomous-control-plane.service";
+import { randomSuffix } from "@/lib/ids";
 
 // Stateless (reads the store); a local instance avoids importing the services index, which imports this module
 const controlPlane = new AutonomousControlPlaneService();
@@ -65,7 +66,7 @@ export class AutonomousCyclesService {
     controlPlane.assertNotHalted(tenantId); // the emergency halt applies (FX-34)
     db.markDirty(); // persists direct changes to db.data (FX-20)
     const run: AutonomousWorkflowRun = {
-      id: `awf_${cycleType.toLowerCase()}_${Date.now()}`,
+      id: `awf_${cycleType.toLowerCase()}_${Date.now()}_${randomSuffix()}`,
       tenant_id: tenantId,
       workflow_type: cycleType,
       trigger,

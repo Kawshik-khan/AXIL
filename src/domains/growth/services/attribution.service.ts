@@ -9,6 +9,7 @@ import {
   AttributionTouch,
   CampaignAttribution,
 } from "@/types/growth";
+import { randomSuffix } from "@/lib/ids";
 
 export class AttributionService {
   /**
@@ -79,7 +80,7 @@ export class AttributionService {
 
 
     const attribution: CampaignAttribution = {
-      id: `att_${Date.now()}_${orderId}`,
+      id: `att_${Date.now()}_${orderId}_${randomSuffix()}`,
       tenant_id: tenantId,
       order_id: orderId,
       customer_id: customerId,

@@ -50,7 +50,7 @@ export class ProcurementService {
       const estCost = orderQty * chosenSP.cost_price;
 
       const rec: ProcurementRecommendation = {
-        id: `prec_${risk.variant_id}_${Date.now()}`,
+        id: `prec_${risk.variant_id}_${Date.now()}_${randomSuffix()}`,
         tenant_id: tenantId,
         product_variant_id: risk.variant_id,
         sku: risk.sku,

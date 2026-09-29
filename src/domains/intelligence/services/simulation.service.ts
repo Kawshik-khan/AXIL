@@ -11,6 +11,7 @@ import {
   SimulationScenarioType,
   SimulationMetricDelta,
 } from "@/types/intelligence";
+import { randomSuffix } from "@/lib/ids";
 
 export class SimulationService {
   /**
@@ -99,7 +100,7 @@ export class SimulationService {
     const roi = Number((simulatedMargin - baselineMargin).toFixed(2));
 
     const result: SimulationResult = {
-      id: `sim_${Date.now()}_${tenantId}`,
+      id: `sim_${Date.now()}_${tenantId}_${randomSuffix()}`,
       tenant_id: tenantId,
       scenario_name: scenarioName,
       scenario_type: scenarioType,

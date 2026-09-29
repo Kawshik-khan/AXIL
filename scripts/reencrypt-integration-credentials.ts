@@ -12,68 +12,61 @@
  *
  * Credentials in neither format are cleared and the installation is marked DISCONNECTED, to be reconnected.
  */
-import fs from "fs";
 import path from "path";
 import { db } from "@/infrastructure/db";
 import { encryptCredential } from "@/lib/security";
 import { planCredentialMigration, type CredentialMigrationResult } from "@/domains/enterprise/services/credential-migration";
-import { assertNoOtherStoreWriter } from "./lib/store-guard";
+import { backupStore, exitStore, openStore, saveStore } from "./lib/store-session";
 
-// Refuse to write the JSON store while the app (or another script) owns it (FX-24).
-assertNoOtherStoreWriter();
-
-const out = (line: string) => process.stdout.write(`${line}\n`);
-const apply = process.argv.includes("--apply");
-
-try {
-  encryptCredential({ probe: true }); // fails early if CREDENTIALS_ENCRYPTION_KEY is missing or a default
-} catch (err) {
-  process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
-  process.exit(1);
-}
-
-const counts: Record<CredentialMigrationResult, number> = { already_encrypted: 0, reencrypted: 0, empty: 0, unreadable: 0 };
-const plans = (db.data.integration_installations || []).map(planCredentialMigration);
-for (const plan of plans) {
-  counts[plan.result]++;
-  out(`integration  ${plan.installation_id} (${plan.organization_id}): ${plan.result}`);
-}
-const changes = plans.filter((p) => p.update);
-
-out("");
-out(
-  `re-encrypted: ${counts.reencrypted}   already encrypted: ${counts.already_encrypted}   empty: ${counts.empty}   ` +
-    `unreadable (will be cleared): ${counts.unreadable}`
-);
-
-if (!apply) {
-  out("Dry run only. Re-run with --apply to write these changes (a backup is taken first).");
-  process.exit(0);
-}
-if (changes.length === 0) {
-  out("Nothing to change.");
-  process.exit(0);
-}
-
-const dataFile = path.join(db.getPersistenceHealth().data_dir, "commerceos.json"); // honours COMMERCEOS_DATA_DIR
-const backupDir = path.join(path.dirname(path.dirname(dataFile)), ".backups"); // beside the data dir (default ./.backups)
-fs.mkdirSync(backupDir, { recursive: true });
-const backupFile = path.join(backupDir, `commerceos.json.before-integration-reencrypt.${Date.now()}.bak`);
-fs.copyFileSync(dataFile, backupFile);
-out(`Backup written: ${path.relative(process.cwd(), backupFile)}`);
-
-for (const plan of changes) {
-  db.updateIntegrationInstallation(plan.organization_id, plan.installation_id, plan.update ?? {});
-}
-// Writes are flushed asynchronously (FX-20): confirm they reached disk before reporting success.
 void (async () => {
-  await db.flush();
-  const health = db.getPersistenceHealth();
-  if (!health.ok) {
-    process.stderr.write(`Not saved: ${health.blocked_reason ?? health.last_persist_error?.message ?? "the store is not writable"}.\n`);
-    process.exit(1);
+  await openStore();
+
+  const out = (line: string) => process.stdout.write(`${line}\n`);
+  const apply = process.argv.includes("--apply");
+
+  try {
+    encryptCredential({ probe: true }); // fails early if CREDENTIALS_ENCRYPTION_KEY is missing or a default
+  } catch (err) {
+    process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+    return exitStore(1);
+  }
+
+  const counts: Record<CredentialMigrationResult, number> = { already_encrypted: 0, reencrypted: 0, empty: 0, unreadable: 0 };
+  const plans = (db.data.integration_installations || []).map(planCredentialMigration);
+  for (const plan of plans) {
+    counts[plan.result]++;
+    out(`integration  ${plan.installation_id} (${plan.organization_id}): ${plan.result}`);
+  }
+  const changes = plans.filter((p) => p.update);
+
+  out("");
+  out(
+    `re-encrypted: ${counts.reencrypted}   already encrypted: ${counts.already_encrypted}   empty: ${counts.empty}   ` +
+      `unreadable (will be cleared): ${counts.unreadable}`
+  );
+
+  if (!apply) {
+    out("Dry run only. Re-run with --apply to write these changes (a backup is taken first).");
+    return exitStore(0);
+  }
+  if (changes.length === 0) {
+    out("Nothing to change.");
+    return exitStore(0);
+  }
+
+  const backupFile = backupStore("before-integration-reencrypt");
+  out(`Backup written: ${path.relative(process.cwd(), backupFile)}`);
+
+  for (const plan of changes) {
+    db.updateIntegrationInstallation(plan.organization_id, plan.installation_id, plan.update ?? {});
+  }
+  // Writes are flushed asynchronously (FX-20): confirm they reached disk before reporting success.
+  const saved = await saveStore();
+  if (!saved.ok) {
+    process.stderr.write(`Not saved: ${saved.reason}.\n`);
+    return exitStore(1);
   }
   out(`Applied ${changes.length} change(s).`);
   out("The backup holds the old base64 credentials, i.e. plaintext: delete it once the app works, and rotate those keys.");
-  process.exit(0);
+  return exitStore(0);
 })();

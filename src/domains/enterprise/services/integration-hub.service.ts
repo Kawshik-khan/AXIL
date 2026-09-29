@@ -11,6 +11,7 @@ import {
   IntegrationInstallation,
   IntegrationStatus,
 } from "@/types/enterprise";
+import { randomSuffix } from "@/lib/ids";
 
 /** An installation without its stored credentials, for API responses. */
 export type PublicIntegrationInstallation = Omit<IntegrationInstallation, "credentials_encrypted">;
@@ -117,7 +118,7 @@ export class IntegrationHubService {
     if (!provider) throw new AppError("NOT_FOUND", `Integration provider not found: ${params.providerId}`, 404);
 
     const installation: IntegrationInstallation = {
-      id: `inst_${params.providerId.replace("prov_", "")}_${Date.now()}`,
+      id: `inst_${params.providerId.replace("prov_", "")}_${Date.now()}_${randomSuffix()}`,
       organization_id: orgId,
       provider_id: provider.id,
       provider_name: provider.name,

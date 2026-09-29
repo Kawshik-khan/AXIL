@@ -78,6 +78,19 @@ export async function runIntelligenceTests() {
   };
   db.data.product_variants.push(variant);
 
+  db.data.warehouses.push({
+    id: "wh_dhaka_central",
+    tenant_id: tenantId,
+    name: "Dhaka Central",
+    code: "DHK-C",
+    address: "",
+    city: "Dhaka",
+    district: "Dhaka",
+    status: "ACTIVE",
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  });
+
   db.data.inventory_items.push({
     id: "inv_shirt_blue_m",
     tenant_id: tenantId,
@@ -254,7 +267,7 @@ export async function runIntelligenceTests() {
       db.data.payments.push({
         id: `pay_failed_${f}`,
         tenant_id: tenantId,
-        order_id: `order_failed_${f}`,
+        order_id: `order_hist_${f + 1}`, // a real order: Postgres refuses a payment for an order that doesn't exist
         amount: 1500,
         currency: "BDT",
         provider: "BKASH",

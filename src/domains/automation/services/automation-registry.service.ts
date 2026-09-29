@@ -110,7 +110,7 @@ export class AutomationRegistryService {
     }
 
     const now = new Date().toISOString();
-    const workflowId = `wf_${template.code.toLowerCase().replace(/[^a-z0-9]/g, "_")}_${Date.now()}`;
+    const workflowId = `wf_${template.code.toLowerCase().replace(/[^a-z0-9]/g, "_")}_${Date.now()}_${randomSuffix()}`;
     const versionId = `ver_${workflowId}_v1`;
 
     // 1. Create Workflow Definition

@@ -5,6 +5,7 @@ import { RequestContext } from "../src/types";
 import { ROLE_PERMISSIONS, PERMISSIONS } from "../src/lib/permissions";
 
 async function verifyAnalytics() {
+  await db.ready(); // Postgres backend: take the lease and load first (ADR-108)
   console.log("=================================================");
   console.log("   COMMERCEOS ANALYTICS & VOLUME VERIFICATION   ");
   console.log("=================================================\n");

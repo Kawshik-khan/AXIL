@@ -42,7 +42,7 @@ export class PricingOperationsService {
 
         if (newMargin >= minMarginPercent) {
           recommendations.push({
-            id: `prec_${v.id}_clearance_${Date.now()}`,
+            id: `prec_${v.id}_clearance_${Date.now()}_${randomSuffix()}`,
             tenant_id: tenantId,
             product_variant_id: v.id,
             sku: v.sku,
@@ -64,7 +64,7 @@ export class PricingOperationsService {
       if (currentMargin < minMarginPercent) {
         const safePrice = Math.ceil(cost / (1 - minMarginPercent / 100));
         recommendations.push({
-          id: `prec_${v.id}_defense_${Date.now()}`,
+          id: `prec_${v.id}_defense_${Date.now()}_${randomSuffix()}`,
           tenant_id: tenantId,
           product_variant_id: v.id,
           sku: v.sku,

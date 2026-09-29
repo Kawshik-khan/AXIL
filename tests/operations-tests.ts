@@ -105,6 +105,8 @@ export async function runOperationsTests() {
 
   // Seed Warehouses. This suite supplies its own, so drop the "Main warehouse" every new workspace now gets (FX-36 M11)
   db.data.warehouses = db.data.warehouses.filter((w) => w.tenant_id !== tenantId);
+  // ...and the stock rows createProduct put in it (Postgres refuses stock in a warehouse that doesn't exist)
+  db.data.inventory_items = db.data.inventory_items.filter((i) => i.tenant_id !== tenantId);
   const wh1 = db.createWarehouse({
     id: "wh_ops_dhaka",
     tenant_id: tenantId,

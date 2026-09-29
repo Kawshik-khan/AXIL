@@ -11,6 +11,7 @@ import {
   ForecastRun,
   ForecastEvaluation,
 } from "@/types/intelligence";
+import { randomSuffix } from "@/lib/ids";
 
 export interface GenerateForecastParams {
   tenantId: string;
@@ -60,7 +61,7 @@ export class ForecastingService {
     // 3. Check for Insufficient Data (Rule: Minimum 5 points required)
     if (historicalValues.length < 5) {
       const insufficientRun: ForecastRun = {
-        id: `fc_${Date.now()}_${tenantId}`,
+        id: `fc_${Date.now()}_${tenantId}_${randomSuffix()}`,
         tenant_id: tenantId,
         target_type: targetType,
         entity_id: entityId,
@@ -127,7 +128,7 @@ export class ForecastingService {
     };
 
     const run: ForecastRun = {
-      id: `fc_${Date.now()}_${tenantId}`,
+      id: `fc_${Date.now()}_${tenantId}_${randomSuffix()}`,
       tenant_id: tenantId,
       target_type: targetType,
       entity_id: entityId,

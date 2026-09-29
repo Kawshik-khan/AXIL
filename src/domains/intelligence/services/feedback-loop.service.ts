@@ -5,6 +5,7 @@
 
 import { db } from "@/infrastructure/db";
 import { DecisionOutcome } from "@/types/intelligence";
+import { randomSuffix } from "@/lib/ids";
 
 export interface RecordOutcomeParams {
   tenantId: string;
@@ -49,7 +50,7 @@ export class DecisionFeedbackLoopService {
     else if (avgDelta < -15.0) evaluation = "UNDERPERFORMED";
 
     const outcome: DecisionOutcome = {
-      id: `out_${Date.now()}_${tenantId}`,
+      id: `out_${Date.now()}_${tenantId}_${randomSuffix()}`,
       tenant_id: tenantId,
       decision_id: decisionId,
       recommendation_id: params.recommendationId,

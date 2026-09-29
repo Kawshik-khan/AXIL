@@ -1,114 +1,41 @@
 /**
- * CommerceOS — Database Migration Runner
- * Executes SQL migration files against Neon PostgreSQL in order.
- * 
- * Usage:
- *   npx tsx src/infrastructure/db/migrate.ts
- *   
- * Or via npm script:
- *   npm run db:migrate
+ * CommerceOS — database migration command (FIX_IMPLEMENTATION_PLAN FX-41 step 4, ADR-108).
+ *
+ *   npm run db:migrate                                   Neon, from DATABASE_URL (asks nothing, applies pending files)
+ *   node tests/ts-runner.cjs ./src/infrastructure/db/migrate.ts --pglite <dir>   a local PGlite database (rehearsal)
+ *
+ * Each file in migrations/ runs as one batch in one transaction with its _migrations row (see store/migrations.ts).
+ * migrations/legacy/ (the drifted 001-005 schema and its seed data) is not run.
  */
+import { runMigrations } from "@/infrastructure/store/migrations";
+import { createNeonSqlClient, type SqlClient } from "@/infrastructure/store/sql-client";
 
-import fs from 'fs';
-import path from 'path';
-import { neon } from '@neondatabase/serverless';
+const out = (line: string) => process.stdout.write(`${line}\n`);
 
-async function runMigrations() {
-  const DATABASE_URL = process.env.DATABASE_URL;
-  
-  if (!DATABASE_URL) {
-    console.error('❌ DATABASE_URL environment variable is not set.');
-    console.error('   Set it in .env.local or export it before running migrations.');
-    process.exit(1);
-  }
-
-  const sql = neon(DATABASE_URL);
-  const migrationsDir = path.join(__dirname, 'migrations');
-
-  console.log('🚀 CommerceOS Database Migration Runner');
-  console.log('━'.repeat(50));
-  console.log(`📁 Migrations directory: ${migrationsDir}`);
-
-  // Ensure migrations table exists
-  await sql`
-    CREATE TABLE IF NOT EXISTS _migrations (
-      id SERIAL PRIMARY KEY,
-      name VARCHAR(255) NOT NULL UNIQUE,
-      applied_at TIMESTAMPTZ DEFAULT clock_timestamp()
-    )
-  `;
-
-  // Get already applied migrations
-  const applied = await sql`SELECT name FROM _migrations ORDER BY id`;
-  const appliedNames = new Set(applied.map((r: any) => r.name));
-
-  // Read migration files
-  const files = fs.readdirSync(migrationsDir)
-    .filter((f) => f.endsWith('.sql'))
-    .sort();
-
-  if (files.length === 0) {
-    console.log('⚠️  No migration files found.');
-    return;
-  }
-
-  let migrationsRun = 0;
-
-  for (const file of files) {
-    const migrationName = file.replace('.sql', '');
-    
-    if (appliedNames.has(migrationName)) {
-      console.log(`  ✅ ${file} (already applied)`);
-      continue;
-    }
-
-    const filePath = path.join(migrationsDir, file);
-    const sqlContent = fs.readFileSync(filePath, 'utf-8');
-
-    console.log(`  🔄 Applying ${file}...`);
-    
-    let currentStatement = '';
-    try {
-      // Execute the migration SQL
-      // Strip pure comment lines first so header comments do not discard the first statement
-      const cleanSql = sqlContent
-        .replace(/\r\n/g, '\n')
-        .split('\n')
-        .filter((line) => !line.trim().startsWith('--'))
-        .join('\n');
-
-      const statements = cleanSql
-        .split(/;\s*$/m)
-        .map((s) => s.trim())
-        .filter((s) => s.length > 0);
-
-      for (const statement of statements) {
-        currentStatement = statement;
-        await sql.query(statement);
-      }
-
-      await sql`INSERT INTO _migrations (name) VALUES (${migrationName}) ON CONFLICT (name) DO NOTHING`;
-
-      console.log(`  ✅ ${file} applied successfully.`);
-      migrationsRun++;
-    } catch (error: any) {
-      console.error(`  ❌ Failed to apply ${file}:`);
-      console.error(`     ${error.message}`);
-      console.error(`     Failing statement snippet: ${currentStatement.slice(0, 200)}`);
-      process.exit(1);
-    }
-  }
-
-  console.log('━'.repeat(50));
-  if (migrationsRun === 0) {
-    console.log('✅ Database is up to date. No new migrations to apply.');
+async function main(): Promise<void> {
+  const pgliteIndex = process.argv.indexOf("--pglite");
+  let client: SqlClient;
+  if (pgliteIndex !== -1) {
+    const dir = process.argv[pgliteIndex + 1];
+    if (!dir) throw new Error("--pglite needs a directory.");
+    const { createPgliteClient } = await import("@/infrastructure/store/pglite-client");
+    client = createPgliteClient(dir);
+    out(`Target: PGlite at ${dir}`);
   } else {
-    console.log(`✅ Successfully applied ${migrationsRun} migration(s).`);
+    const url = process.env.DATABASE_URL;
+    if (!url) throw new Error("DATABASE_URL is not set (put it in .env.local or export it).");
+    client = createNeonSqlClient(url);
+    out("Target: DATABASE_URL");
+  }
+  try {
+    const result = await runMigrations(client, undefined, (line) => out(`  ${line}`));
+    out(result.applied.length ? `Applied ${result.applied.length} migration(s).` : "Database is up to date.");
+  } finally {
+    await client.close();
   }
 }
 
-// Run if executed directly
-runMigrations().catch((err) => {
-  console.error('❌ Migration failed:', err);
+main().catch((err: unknown) => {
+  process.stderr.write(`Migration failed: ${err instanceof Error ? err.message : String(err)}\n`);
   process.exit(1);
 });

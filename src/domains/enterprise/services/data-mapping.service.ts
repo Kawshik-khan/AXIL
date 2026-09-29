@@ -5,6 +5,7 @@
 
 import { db } from "@/infrastructure/db";
 import { IntegrationMapping, MappingField } from "@/types/enterprise";
+import { randomSuffix } from "@/lib/ids";
 
 export class DataMappingService {
   /**
@@ -17,7 +18,7 @@ export class DataMappingService {
     fields: MappingField[]
   ): IntegrationMapping {
     const mapping: IntegrationMapping = {
-      id: `map_${entityType.toLowerCase()}_${Date.now()}`,
+      id: `map_${entityType.toLowerCase()}_${Date.now()}_${randomSuffix()}`,
       organization_id: orgId,
       integration_id: integrationId,
       entity_type: entityType,

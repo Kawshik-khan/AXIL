@@ -10,6 +10,7 @@ import {
   EnterpriseUserRecord,
 } from "@/types/enterprise";
 import { enterpriseDataAccessService } from "./enterprise-data-access.service";
+import { randomSuffix } from "@/lib/ids";
 
 /**
  * Orders carry no store or brand, so nothing can be compared per entity yet. These used to rank stores by invented
@@ -29,7 +30,7 @@ export class EnterpriseBenchmarkingService {
   ): EnterpriseBenchmark {
     const stores = enterpriseDataAccessService.getAuthorizedStores(caller);
     const benchmark = this.unmeasured(orgId, metricKey, "STORE", stores, {
-      id: `bench_store_${metricKey}_${Date.now()}`,
+      id: `bench_store_${metricKey}_${Date.now()}_${randomSuffix()}`,
       title: `Store Benchmark: ${metricKey.replace(/_/g, " ").toUpperCase()}`,
       benchmark_type: "STORE_VS_STORE",
     });
@@ -47,7 +48,7 @@ export class EnterpriseBenchmarkingService {
   ): EnterpriseBenchmark {
     const brands = enterpriseDataAccessService.getAuthorizedBrands(caller);
     const benchmark = this.unmeasured(orgId, metricKey, "BRAND", brands, {
-      id: `bench_brand_${metricKey}_${Date.now()}`,
+      id: `bench_brand_${metricKey}_${Date.now()}_${randomSuffix()}`,
       title: `Brand Benchmark: ${metricKey.replace(/_/g, " ").toUpperCase()}`,
       benchmark_type: "BRAND_VS_BRAND",
     });

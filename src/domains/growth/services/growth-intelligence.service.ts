@@ -45,7 +45,7 @@ export class GrowthIntelligenceService {
         title: `${highValueDormant.length} High-Value Customers Entering Dormancy`,
         summary: `Identified ${highValueDormant.length} VIP customers with >৳10,000 historical spend who have not ordered in over 45 days.`,
         evidence: highValueDormant.slice(0, 10).map((c, i) => ({
-          id: `evi_dormant_${i}_${Date.now()}`,
+          id: `evi_dormant_${i}_${Date.now()}_${randomSuffix()}`,
           source_type: "CUSTOMER" as const,
           source_id: c.customer_id,
           metric: "historical_spend",

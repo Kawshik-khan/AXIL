@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import { logger } from "@/lib/logger";
+import { envNumber } from "@/lib/env-number";
 import { AppError } from "@/lib/errors";
 import { mergeComputedRow } from "@/lib/computed-rows";
 import { channelOfOrder, SALES_CHANNEL_NAMES } from "@/lib/sales-channel";
@@ -613,6 +614,8 @@ export interface StoreOptions {
   persist?: boolean;
   /** The process-wide store of a server or script: retries an unreachable database and exits when it can't own the store. */
   serverMode?: boolean;
+  /** Default true. False: the data exactly as stored, without the default seed (the backfill's read-only source). */
+  seed?: boolean;
 }
 
 /** Thrown by `db.data` before a Postgres-backed store has loaded; routes answer 503. */
@@ -625,6 +628,10 @@ export class StoreNotReadyError extends AppError {
 class StartupRefusal extends Error {}
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** Writes stop after half the lease TTL without confirmation; reads after 80% (before another process may take over). */
+const LEASE_WRITE_FENCE = 0.5;
+const LEASE_READ_FENCE = 0.8;
 
 export interface PersistenceHealth {
   ok: boolean;
@@ -649,6 +656,10 @@ export class CommerceDatabase {
   /** The working set. A Postgres-backed store throws 503 STORE_NOT_READY here until ready() has loaded it. */
   public get data(): DatabaseSchema {
     if (!this._data) throw new StoreNotReadyError();
+    if (this.fenced || (this.pg && this.leaseStale(LEASE_READ_FENCE))) {
+      // Another process may own the store by now: memory could be stale (a revoked membership, a changed price).
+      throw new AppError("STORE_UNAVAILABLE", "The data store is unavailable right now. Try again shortly.", 503);
+    }
     return this._data;
   }
   public set data(value: DatabaseSchema) {
@@ -662,6 +673,12 @@ export class CommerceDatabase {
   private readyPromise: Promise<void> | null = null;
   private leaseHeld = false;
   private leaseTimer: ReturnType<typeof setInterval> | null = null;
+  /** When this process last proved it holds the lease (acquire, renewal, or a committed write). */
+  private leaseConfirmedAt = 0;
+  /** Set when the lease was lost (tests and scripts; a server exits instead). */
+  private fenced = false;
+  private pingCache: { at: number; ok: boolean } | null = null;
+  private pingInFlight: Promise<boolean> | null = null;
   private reportedUnwritable = 0;
   private reportedSanitized = 0;
   private filePath: string;
@@ -705,7 +722,7 @@ export class CommerceDatabase {
   private blockedCode: PersistenceBlockedCode | null = null;
   /** Every persist/markDirty call, counted even in tests: lets tests prove a request asked for no write (FX-21). */
   private writeSignals = 0;
-  private readonly debounceMs = Number(process.env.PERSIST_DEBOUNCE_MS ?? 250);
+  private readonly debounceMs = envNumber("PERSIST_DEBOUNCE_MS", 250, 0);
   private lockPath: string;
   private lockHeld = false;
   /** The lock content this process wrote; flush() checks the file still says so (review N-2). */
@@ -724,7 +741,7 @@ export class CommerceDatabase {
       // processes) the store is in memory, as the JSON backend is under NODE_ENV=test.
       if (!this.persistenceEnabled) {
         this._data = CommerceDatabase.emptySchema();
-        this.ensureDefaultSeed();
+        if (options.seed !== false) this.ensureDefaultSeed();
         this.readyPromise = Promise.resolve();
       }
       return;
@@ -744,7 +761,7 @@ export class CommerceDatabase {
     if (persistent && !this.persistenceBlocked) this.quarantineStaleTempFiles();
     if (persistent && this.persistenceBlocked) this.refuseToStart();
     // While blocked the store serves reads only; seeding would be a write that can never be saved (review L-2).
-    if (!this.persistenceBlocked) this.ensureDefaultSeed();
+    if (!this.persistenceBlocked && options.seed !== false) this.ensureDefaultSeed();
   }
 
   /**
@@ -758,7 +775,9 @@ export class CommerceDatabase {
         ? "the data store is in use by another process"
         : this.blockedCode === "LOCK_HELD_ON_OTHER_HOST"
           ? "the data store is in use by another host"
-          : this.blockedCode === "SCHEMA_MISSING"
+          : this.blockedCode === "LOCK_LOST"
+            ? "another process took over the data store"
+            : this.blockedCode === "SCHEMA_MISSING"
             ? "the database has no CommerceOS schema yet (run `npm run db:migrate`)"
             : this.blockedCode === "DATABASE_NOT_CONFIGURED"
               ? "DATA_BACKEND=pg is set but DATABASE_URL is not"
@@ -1474,6 +1493,11 @@ export class CommerceDatabase {
   private persist(): void {
     this.writeSignals++;
     if (this.isTestInstance || !this.persistenceEnabled) return;
+    if (this.pg && this.leaseStale(LEASE_WRITE_FENCE)) {
+      // Postgres hasn't confirmed our lease for a while (unreachable, or a paused process): don't acknowledge writes
+      // that may never be saved (security review M1). Writes resume as soon as a renewal succeeds.
+      throw new AppError("STORE_UNAVAILABLE", "The database can't be reached, so nothing can be saved right now. Nothing was saved.", 503);
+    }
     if (this.persistenceBlocked) {
       // Never acknowledge a change that can't be saved (review L-2). The in-memory change is discarded with the process.
       throw new AppError("STORE_UNAVAILABLE", "The data store can't save changes right now. Nothing was saved.", 503);
@@ -1598,11 +1622,12 @@ export class CommerceDatabase {
       await sleep(2_000);
     }
     this.leaseHeld = true;
+    this.leaseConfirmedAt = Date.now();
     const loaded = await pg.load();
     this._data = CommerceDatabase.fromParsed(loaded as Partial<DatabaseSchema>);
     this.persistenceBlocked = null;
     this.blockedCode = null;
-    this.ensureDefaultSeed();
+    if (this.options.seed !== false) this.ensureDefaultSeed();
     this.startReservationSweeper();
     this.startLeaseHeartbeat(pg);
     logger.info("db.pg_ready", {
@@ -1624,7 +1649,8 @@ export class CommerceDatabase {
     const renew = async () => {
       if (!this.leaseHeld) return;
       try {
-        if (!(await pg.renewLease())) this.leaseLost();
+        if (await pg.renewLease()) this.leaseConfirmedAt = Date.now();
+        else this.leaseLost();
       } catch (err) {
         // A dropped connection: the next write's fencing check decides; nothing is written without the lease.
         logger.warn("db.pg_lease_renew_failed", { error: (err as Error).message });
@@ -1634,11 +1660,22 @@ export class CommerceDatabase {
     this.leaseTimer.unref();
   }
 
+  /** True when the lease hasn't been confirmed for longer than this share of its TTL. */
+  private leaseStale(share: number): boolean {
+    return this.leaseHeld && this.leaseConfirmedAt > 0 && Date.now() - this.leaseConfirmedAt > LEASE_TTL_MS * share;
+  }
+
+  /**
+   * Another process owns the store now. A server exits (its memory may be stale: revoked members, changed prices) and
+   * is restarted by its supervisor; tests and scripts get 503 for every read and write (security review M1).
+   */
   private leaseLost(): void {
     this.leaseHeld = false;
+    this.fenced = true;
     if (this.leaseTimer) clearInterval(this.leaseTimer);
     this.block("LOCK_LOST", "Another process took over the store writer lease; writes stopped.");
-    logger.error("db.pg_lease_lost", {});
+    logger.error("db.pg_lease_lost", { unsaved_changes: this.dirty });
+    if (this.serverMode) this.refuseToStart();
   }
 
   private async flushPostgres(): Promise<void> {
@@ -1653,6 +1690,7 @@ export class CommerceDatabase {
         this.reportUnwritable(changes.unwritable, changes.sanitizedRows);
         if (changes.rowCount > 0) {
           const report = await pg.write(changes);
+          this.leaseConfirmedAt = Date.now(); // the write's fencing check renewed the lease
           if (report.rejected.length) {
             logger.error("db.pg_rows_not_saved", { rejected: report.rejected.length, written: report.written });
           }
@@ -1719,12 +1757,26 @@ export class CommerceDatabase {
 
   /** Postgres reachable within the timeout (always true for the JSON file). */
   public async pingDatabase(timeoutMs = 2_000): Promise<boolean> {
-    return this.pg ? this.pg.ping(timeoutMs) : true;
+    const pg = this.pg;
+    if (!pg) return true;
+    // The readiness probe is unauthenticated: one query at a time, and at most one every 5 s (security review M2).
+    if (this.pingCache && Date.now() - this.pingCache.at < 5_000) return this.pingCache.ok;
+    this.pingInFlight ??= pg
+      .ping(timeoutMs)
+      .then((ok) => {
+        this.pingCache = { at: Date.now(), ok };
+        return ok;
+      })
+      .finally(() => {
+        this.pingInFlight = null;
+      });
+    return this.pingInFlight;
   }
 
   /** Flush, then give up the writer lease (Postgres) so the next process doesn't wait for it to expire. */
   public async shutdown(): Promise<void> {
     await this.flush();
+    if (this.dirty) logger.error("db.shutdown_with_unsaved_changes", { backend: this.backend, blocked: this.blockedCode });
     if (this.leaseTimer) clearInterval(this.leaseTimer);
     if (this.pg && this.leaseHeld) {
       await this.pg.releaseLease().catch(() => undefined);
@@ -1851,8 +1903,12 @@ export class CommerceDatabase {
       hasMigrated = true;
     }
 
-    // Ensure Super Admin also has a default tenant workspace membership so they can inspect tenant dashboards
-    if (!this.data.memberships.some((m) => m.user_id === saUser!.id && m.tenant_id === tenantId)) {
+    // Ensure Super Admin also has a default tenant workspace membership so they can inspect tenant dashboards.
+    // Only when that workspace exists: a membership in a missing workspace is refused by Postgres (ADR-108).
+    if (
+      this.data.tenants.some((t) => t.id === tenantId) &&
+      !this.data.memberships.some((m) => m.user_id === saUser!.id && m.tenant_id === tenantId)
+    ) {
       this.data.memberships.push({
         id: "mem_superadmin_default",
         tenant_id: tenantId,
@@ -4450,7 +4506,8 @@ export class CommerceDatabase {
     this.data.tenants.push(tenant);
     // Automatically seed a default warehouse for new tenants
     this.data.warehouses.push({
-      id: `wh_${tenant.id.replace(/[^a-zA-Z0-9]/g, "").slice(0, 8)}_01`,
+      // Random, like ensureDefaultWarehouse: the first 8 characters of the tenant id collided between tenants (review M3)
+      id: `wh_${randomSuffix()}`,
       tenant_id: tenant.id,
       name: `${tenant.name} Central Warehouse`,
       code: "WH-01",
@@ -4764,7 +4821,7 @@ export class CommerceDatabase {
         });
         if (initialStock > 0) {
           this.data.stock_movements.push({
-            id: `sm_${Date.now()}_init`,
+            id: `sm_${Date.now()}_init_${randomSuffix()}`,
             tenant_id: product.tenant_id,
             warehouse_id: defaultWarehouse.id,
             product_variant_id: defaultVariant.id,
@@ -5133,7 +5190,7 @@ export class CommerceDatabase {
       item.updated_at = new Date().toISOString();
 
       this.data.stock_movements.push({
-        id: `sm_${Date.now()}_sale`,
+        id: `sm_${Date.now()}_sale_${randomSuffix()}`,
         tenant_id: tenantId,
         warehouse_id: res.warehouse_id,
         product_variant_id: res.product_variant_id,

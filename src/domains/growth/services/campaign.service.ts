@@ -251,7 +251,7 @@ export class CampaignService {
     }
 
     const approval = db.insertApprovalRequest({
-      id: `appr_cmp_${Date.now()}_${campaignId}`,
+      id: `appr_cmp_${Date.now()}_${campaignId}_${randomSuffix()}`,
       tenant_id: tenantId,
       workflow_id: `wf_${campaignId}`,
       task_id: campaignId,
@@ -414,7 +414,7 @@ export class CampaignService {
     const errors: string[] = [];
 
     const execRecord: CampaignExecutionRecord = {
-      id: `cex_${Date.now()}_${campaignId}`,
+      id: `cex_${Date.now()}_${campaignId}_${randomSuffix()}`,
       tenant_id: tenantId,
       campaign_id: campaignId,
       total_recipients: customerIds.length,

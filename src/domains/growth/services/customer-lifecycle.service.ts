@@ -134,7 +134,7 @@ export class CustomerLifecycleService {
     const predictedLtv = Math.round(totalSpend * (orderCount > 2 ? 1.8 : 1.3));
 
     const record: CustomerLifecycleRecord = {
-      id: existing?.id || `cl_${Date.now()}_${customerId}`,
+      id: existing?.id || `cl_${Date.now()}_${customerId}_${randomSuffix()}`,
       tenant_id: tenantId,
       customer_id: customerId,
       stage: newStage,

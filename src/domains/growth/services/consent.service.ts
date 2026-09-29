@@ -10,6 +10,7 @@ import {
   MarketingChannelType,
   FrequencyCapPolicy,
 } from "@/types/growth";
+import { randomSuffix } from "@/lib/ids";
 
 export class ConsentService {
   /**
@@ -31,7 +32,7 @@ export class ConsentService {
 
     const now = new Date().toISOString();
     const pref: CustomerCommunicationPreference = {
-      id: existing?.id || `pref_${Date.now()}_${customerId}`,
+      id: existing?.id || `pref_${Date.now()}_${customerId}_${randomSuffix()}`,
       tenant_id: tenantId,
       customer_id: customerId,
       channel,
@@ -48,7 +49,7 @@ export class ConsentService {
     // If opted out of marketing, add to suppression list
     if (status === "OPTED_OUT" && purpose === "MARKETING") {
       db.insertSuppressionEntry({
-        id: `sup_${Date.now()}_${customerId}`,
+        id: `sup_${Date.now()}_${customerId}_${randomSuffix()}`,
         tenant_id: tenantId,
         customer_id: customerId,
         channel,
@@ -93,7 +94,7 @@ export class ConsentService {
     suppressedUntil?: string
   ): SuppressionEntry {
     const entry: SuppressionEntry = {
-      id: `sup_${Date.now()}_${customerId}`,
+      id: `sup_${Date.now()}_${customerId}_${randomSuffix()}`,
       tenant_id: tenantId,
       customer_id: customerId,
       channel,

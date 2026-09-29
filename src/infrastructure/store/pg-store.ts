@@ -17,6 +17,7 @@
 import crypto from "crypto";
 import os from "os";
 import { logger } from "@/lib/logger";
+import { envNumber } from "@/lib/env-number";
 import { isDataRejected, pgErrorFields, type SqlClient, type SqlExecutor } from "./sql-client";
 import {
   CORE_TABLES,
@@ -30,7 +31,7 @@ import {
 } from "./store-schema";
 
 /** A writer that stops renewing its lease for this long can be replaced by another process. */
-export const LEASE_TTL_MS = Math.max(5_000, Number(process.env.STORE_LEASE_TTL_MS ?? 30_000));
+export const LEASE_TTL_MS = envNumber("STORE_LEASE_TTL_MS", 30_000, 5_000);
 const BATCH_ROWS = 500;
 
 export interface LeaseHolder {
@@ -43,6 +44,12 @@ export interface LeaseHolder {
 
 export class LeaseLostError extends Error {
   readonly code = "LEASE_LOST";
+}
+
+/** A write that would give an existing row another tenant_id. Class 23, so it is handled like a constraint violation. */
+class TenantChangeRefused extends Error {
+  readonly code = "23000";
+  readonly constraint = "tenant_id_unchanged";
 }
 
 interface PendingRow {
@@ -312,7 +319,11 @@ export class PgStorePersistence {
         continue;
       }
       if (serialized.sanitized) changes.sanitizedRows++;
-      if (committed.get(id) === serialized.json) continue;
+      if (committed.get(id) === serialized.json) {
+        // Back to what Postgres holds (e.g. a refused change was undone): nothing is unsaved any more.
+        this.rejected.delete(rowKey(collection, id));
+        continue;
+      }
       const refused = this.rejected.get(rowKey(collection, id));
       if (refused && refused.row.op === "upsert" && refused.json === serialized.json) continue;
       out.upserts.push({ id, tenantId: tenantOf(core, row, id), createdAt: rowTime(row), json: serialized.json });
@@ -323,6 +334,9 @@ export class PgStorePersistence {
       if (refused && refused.row.op === "delete") continue;
       out.deletes.push(id);
     }
+    // Newest-first collections hold new records at the front: insert them oldest first, so the row sequence always grows
+    // with recency and load() (which reads these collections by descending sequence) restores the order.
+    if (NEWEST_FIRST_COLLECTIONS.has(collection)) out.upserts.reverse();
     // A refused record that no longer exists in memory has nothing left to retry.
     for (const [key, entry] of this.rejected) {
       if (entry.row.collection === collection && entry.row.op === "upsert" && !seen.has(entry.row.id)) this.rejected.delete(key);
@@ -430,32 +444,39 @@ export class PgStorePersistence {
     return { mode: "row-by-row", written: changes.rowCount - rejected.length, rejected };
   }
 
+  /**
+   * Inserts or updates rows. An existing row never moves to another tenant (review L5): the update is skipped for a
+   * different tenant_id, and a skipped row fails the write like a constraint would (then it is refused on its own).
+   */
   private async upsertRows(tx: SqlExecutor, c: CollectionChanges, rows: PendingRow[]): Promise<void> {
     const ids = rows.map((r) => r.id);
     const tenants = rows.map((r) => r.tenantId);
     const times = rows.map((r) => r.createdAt);
     const data = rows.map((r) => r.json);
-    if (c.core) {
-      await tx.query(
-        `INSERT INTO ${qualified(c.core.table)} (id, tenant_id, created_at, data)
-         SELECT u.id, u.tenant_id, u.created_at, u.data
-           FROM unnest($1::text[], $2::text[], $3::timestamptz[], $4::jsonb[]) WITH ORDINALITY AS u(id, tenant_id, created_at, data, ord)
-          ORDER BY u.ord
-         ON CONFLICT (id) DO UPDATE SET tenant_id = EXCLUDED.tenant_id, created_at = EXCLUDED.created_at,
-                                        data = EXCLUDED.data, row_updated_at = now()`,
-        [ids, tenants, times, data]
-      );
-      return;
+    const result = c.core
+      ? await tx.query<{ id: string }>(
+          `INSERT INTO ${qualified(c.core.table)} AS t (id, tenant_id, created_at, data)
+           SELECT u.id, u.tenant_id, u.created_at, u.data
+             FROM unnest($1::text[], $2::text[], $3::timestamptz[], $4::jsonb[]) WITH ORDINALITY AS u(id, tenant_id, created_at, data, ord)
+            ORDER BY u.ord
+           ON CONFLICT (id) DO UPDATE SET created_at = EXCLUDED.created_at, data = EXCLUDED.data, row_updated_at = now()
+            WHERE t.tenant_id IS NOT DISTINCT FROM EXCLUDED.tenant_id
+           RETURNING t.id`,
+          [ids, tenants, times, data]
+        )
+      : await tx.query<{ id: string }>(
+          `INSERT INTO commerceos.documents AS t (collection, id, tenant_id, created_at, data)
+           SELECT $5, u.id, u.tenant_id, u.created_at, u.data
+             FROM unnest($1::text[], $2::text[], $3::timestamptz[], $4::jsonb[]) WITH ORDINALITY AS u(id, tenant_id, created_at, data, ord)
+            ORDER BY u.ord
+           ON CONFLICT (collection, id) DO UPDATE SET created_at = EXCLUDED.created_at, data = EXCLUDED.data, row_updated_at = now()
+            WHERE t.tenant_id IS NOT DISTINCT FROM EXCLUDED.tenant_id
+           RETURNING t.id`,
+          [ids, tenants, times, data, c.collection]
+        );
+    if (result.rows.length !== rows.length) {
+      throw new TenantChangeRefused(`${rows.length - result.rows.length} row(s) of ${c.collection} would move to another tenant.`);
     }
-    await tx.query(
-      `INSERT INTO commerceos.documents (collection, id, tenant_id, created_at, data)
-       SELECT $5, u.id, u.tenant_id, u.created_at, u.data
-         FROM unnest($1::text[], $2::text[], $3::timestamptz[], $4::jsonb[]) WITH ORDINALITY AS u(id, tenant_id, created_at, data, ord)
-        ORDER BY u.ord
-       ON CONFLICT (collection, id) DO UPDATE SET tenant_id = EXCLUDED.tenant_id, created_at = EXCLUDED.created_at,
-                                                  data = EXCLUDED.data, row_updated_at = now()`,
-      [ids, tenants, times, data, c.collection]
-    );
   }
 
   private async deleteRows(tx: SqlExecutor, c: CollectionChanges, ids: string[]): Promise<void> {

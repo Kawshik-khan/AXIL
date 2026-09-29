@@ -14,68 +14,61 @@
  * Pass --keep-staff to give the staff accounts the same password instead.
  */
 import bcrypt from "bcryptjs";
-import fs from "fs";
 import path from "path";
 import { db } from "@/infrastructure/db";
-import { assertNoOtherStoreWriter } from "./lib/store-guard";
+import { backupStore, exitStore, openStore, saveStore } from "./lib/store-session";
 
-// Refuse to write the JSON store while the app (or another script) owns it (FX-24).
-assertNoOtherStoreWriter();
-
-const out = (line: string) => process.stdout.write(`${line}\n`);
-
-const OWNER_ACCOUNTS = ["admin@commerceos.io", "superadmin@commerceos.io"];
-const STAFF_ACCOUNTS = ["support@commerceos.io", "ops@commerceos.io", "analyst@commerceos.io", "security@commerceos.io"];
-
-const apply = process.argv.includes("--apply");
-const deactivateStaff = !process.argv.includes("--keep-staff");
-const seedPassword = process.env.SEED_ADMIN_PASSWORD;
-if (!seedPassword || seedPassword.length < 14) {
-  process.stderr.write("SEED_ADMIN_PASSWORD (at least 14 characters) must be set in .env.local.\n");
-  process.exit(1);
-}
-
-const planned: Array<{ email: string; action: string; run: () => void }> = [];
-const hash = bcrypt.hashSync(seedPassword, 12);
-
-for (const email of [...OWNER_ACCOUNTS, ...STAFF_ACCOUNTS]) {
-  const user = db.findUserByEmail(email);
-  if (!user) {
-    out(`skip   ${email} (not found)`);
-    continue;
-  }
-  if (deactivateStaff && STAFF_ACCOUNTS.includes(email)) {
-    planned.push({ email, action: "deactivate", run: () => db.updateUser(user.id, { status: "DEACTIVATED" }) });
-  } else {
-    planned.push({ email, action: "set password", run: () => db.updateUser(user.id, { password_hash: hash }) });
-  }
-}
-
-for (const p of planned) out(`${apply ? "apply " : "plan  "} ${p.email}: ${p.action}`);
-
-if (!apply) {
-  out("Dry run only. Re-run with --apply to write these changes (a backup is taken first).");
-  process.exit(0);
-}
-
-const dataFile = path.join(db.getPersistenceHealth().data_dir, "commerceos.json"); // honours COMMERCEOS_DATA_DIR
-const backupDir = path.join(process.cwd(), ".backups");
-fs.mkdirSync(backupDir, { recursive: true });
-const backupFile = path.join(backupDir, `commerceos.json.before-seed-reset.${Date.now()}.bak`);
-fs.copyFileSync(dataFile, backupFile);
-out(`Backup written: ${path.relative(process.cwd(), backupFile)}`);
-
-for (const p of planned) p.run();
-// Writes are flushed asynchronously (FX-20): confirm they reached disk before telling the operator anything.
 void (async () => {
-  await db.flush();
-  const health = db.getPersistenceHealth();
-  if (!health.ok) {
+  await openStore();
+
+  const out = (line: string) => process.stdout.write(`${line}\n`);
+
+  const OWNER_ACCOUNTS = ["admin@commerceos.io", "superadmin@commerceos.io"];
+  const STAFF_ACCOUNTS = ["support@commerceos.io", "ops@commerceos.io", "analyst@commerceos.io", "security@commerceos.io"];
+
+  const apply = process.argv.includes("--apply");
+  const deactivateStaff = !process.argv.includes("--keep-staff");
+  const seedPassword = process.env.SEED_ADMIN_PASSWORD;
+  if (!seedPassword || seedPassword.length < 14) {
+    process.stderr.write("SEED_ADMIN_PASSWORD (at least 14 characters) must be set in .env.local.\n");
+    return exitStore(1);
+  }
+
+  const planned: Array<{ email: string; action: string; run: () => void }> = [];
+  const hash = bcrypt.hashSync(seedPassword, 12);
+
+  for (const email of [...OWNER_ACCOUNTS, ...STAFF_ACCOUNTS]) {
+    const user = db.findUserByEmail(email);
+    if (!user) {
+      out(`skip   ${email} (not found)`);
+      continue;
+    }
+    if (deactivateStaff && STAFF_ACCOUNTS.includes(email)) {
+      planned.push({ email, action: "deactivate", run: () => db.updateUser(user.id, { status: "DEACTIVATED" }) });
+    } else {
+      planned.push({ email, action: "set password", run: () => db.updateUser(user.id, { password_hash: hash }) });
+    }
+  }
+
+  for (const p of planned) out(`${apply ? "apply " : "plan  "} ${p.email}: ${p.action}`);
+
+  if (!apply) {
+    out("Dry run only. Re-run with --apply to write these changes (a backup is taken first).");
+    return exitStore(0);
+  }
+
+  const backupFile = backupStore("before-seed-reset");
+  out(`Backup written: ${path.relative(process.cwd(), backupFile)}`);
+
+  for (const p of planned) p.run();
+  // Writes are flushed asynchronously (FX-20): confirm they reached disk before telling the operator anything.
+  const saved = await saveStore();
+  if (!saved.ok) {
     process.stderr.write(
-      `Not saved: ${health.blocked_reason ?? health.last_persist_error?.message ?? "the store is not writable"}. No password was changed.\n`
+      `Not saved: ${saved.reason}. No password was changed.\n`
     );
-    process.exit(1);
+    return exitStore(1);
   }
   out(`Done: ${planned.length} account(s) updated. Existing sessions for these users stay valid until they expire.`);
-  process.exit(0);
+  return exitStore(0);
 })();
