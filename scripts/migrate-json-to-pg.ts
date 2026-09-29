@@ -12,6 +12,7 @@
  * --replace            overwrite a target that already holds store rows (the final backfill after a rehearsal)
  * --skip-unstorable    leave out records without a usable id (listed by the dry run) instead of stopping
  *
+ * Needs the dev dependencies (the rehearsal runs on PGlite): run it from a development checkout.
  * The JSON file is only read (never locked or written). After the cutover (DATA_BACKEND=pg), keep it for 7 days as the rollback source.
  */
 import "./lib/read-json-store";
@@ -39,6 +40,7 @@ void (async () => {
   await runMigrations(rehearsal);
   const trial = await backfillStore(source, rehearsal, { replace: true, onRejected: "row-by-row" });
   out(`  ${trial.rows} records in ${trial.collections} collections loaded in ${trial.ms} ms (${trial.report.mode})`);
+  if (trial.sanitized) out(`  ${trial.sanitized} record(s) had text Postgres can't hold (NUL characters, half an emoji); it is cleaned when written.`);
   printRows("Records Postgres refuses", trial.report.rejected);
   printRows("Records without a usable id (can't be stored)", trial.unwritable);
   const trialReport = await verifyStore(source, rehearsal);

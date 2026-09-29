@@ -1494,8 +1494,14 @@ export class CommerceDatabase {
     this.writeSignals++;
     if (this.isTestInstance || !this.persistenceEnabled) return;
     if (this.pg && this.leaseStale(LEASE_WRITE_FENCE)) {
-      // Postgres hasn't confirmed our lease for a while (unreachable, or a paused process): don't acknowledge writes
-      // that may never be saved (security review M1). Writes resume as soon as a renewal succeeds.
+      // Postgres hasn't confirmed our lease for a while (unreachable, or a paused process). Requests are refused before
+      // they change anything (assertWritable, in the request context); a change that reached this point anyway is
+      // already in memory, so this process stops for good: it would otherwise save the change later, after telling the
+      // caller it wasn't saved, and a retry would duplicate it (done-check, Phase 4). A server exits and restarts.
+      this.block("DATABASE_UNAVAILABLE", "Postgres did not confirm the store lease in time; this process stopped writing.");
+      this.fenced = true;
+      logger.error("db.pg_write_fenced", { unsaved_changes: this.dirty });
+      if (this.serverMode) this.refuseToStart();
       throw new AppError("STORE_UNAVAILABLE", "The database can't be reached, so nothing can be saved right now. Nothing was saved.", 503);
     }
     if (this.persistenceBlocked) {
@@ -1660,6 +1666,17 @@ export class CommerceDatabase {
     this.leaseTimer.unref();
   }
 
+  /**
+   * For mutating requests, before they change anything: 503 when this store can't save right now (Postgres hasn't
+   * confirmed the lease, or writing is blocked). No-op for the JSON store and for stores without persistence.
+   */
+  public assertWritable(): void {
+    if (this.backend !== "pg" || !this.persistenceEnabled || this.isTestInstance) return;
+    if (this.persistenceBlocked || this.fenced || !this._data || this.leaseStale(LEASE_WRITE_FENCE)) {
+      throw new AppError("STORE_UNAVAILABLE", "The database can't be reached, so nothing can be saved right now. Nothing was saved.", 503);
+    }
+  }
+
   /** True when the lease hasn't been confirmed for longer than this share of its TTL. */
   private leaseStale(share: number): boolean {
     return this.leaseHeld && this.leaseConfirmedAt > 0 && Date.now() - this.leaseConfirmedAt > LEASE_TTL_MS * share;
@@ -1691,6 +1708,16 @@ export class CommerceDatabase {
         if (changes.rowCount > 0) {
           const report = await pg.write(changes);
           this.leaseConfirmedAt = Date.now(); // the write's fencing check renewed the lease
+          if (pg.hasRetryableRejections()) {
+            // Something committed that may unblock a refused row (its parent, say): try those rows once more.
+            this.dirty = true;
+            if (!this.flushTimer) {
+              this.flushTimer = setTimeout(() => {
+                this.flushTimer = null;
+                void this.flush();
+              }, this.debounceMs);
+            }
+          }
           if (report.rejected.length) {
             logger.error("db.pg_rows_not_saved", { rejected: report.rejected.length, written: report.written });
           }
@@ -1777,6 +1804,14 @@ export class CommerceDatabase {
   public async shutdown(): Promise<void> {
     await this.flush();
     if (this.dirty) logger.error("db.shutdown_with_unsaved_changes", { backend: this.backend, blocked: this.blockedCode });
+    const refused = this.getUnsavedRows();
+    if (refused.length) {
+      logger.error("db.shutdown_with_refused_rows", {
+        count: refused.length,
+        sample: refused.slice(0, 10).map((r) => ({ collection: r.collection, id: r.id, reason: r.reason })),
+        kept_in: "commerceos.refused_rows",
+      });
+    }
     if (this.leaseTimer) clearInterval(this.leaseTimer);
     if (this.pg && this.leaseHeld) {
       await this.pg.releaseLease().catch(() => undefined);
@@ -5048,6 +5083,7 @@ export class CommerceDatabase {
     }
   ): InventoryItem {
     let item = this.findInventoryItem(tenantId, params.warehouse_id, params.product_variant_id);
+    let isNewItem = false;
 
     if (!item) {
       // A new stock row needs this workspace's own variant and warehouse. Any id used to be accepted, so another
@@ -5069,7 +5105,7 @@ export class CommerceDatabase {
         reorder_point: 5,
         updated_at: new Date().toISOString(),
       };
-      this.data.inventory_items.push(item);
+      isNewItem = true;
     }
 
     const newOnHand = item.quantity_on_hand + params.quantity_delta;
@@ -5082,6 +5118,8 @@ export class CommerceDatabase {
         )}.`
       );
     }
+    // Only now: a refused adjustment used to leave an empty stock row behind.
+    if (isNewItem) this.data.inventory_items.push(item);
 
     item.quantity_on_hand = newOnHand;
     item.quantity_available = newAvailable;
@@ -9922,7 +9960,10 @@ export class CommerceDatabase {
 const globalStore = globalThis as typeof globalThis & {
   __commerceosDb?: CommerceDatabase;
   __commerceosDbShutdownHooked?: boolean;
-  /** Set only by the test runner's Postgres mode (tests/support/pg-test-store.ts) before this module loads. */
+  /**
+   * Set before this module loads by in-process code only: the test runner's Postgres mode (tests/support/pg-test-store.ts)
+   * and the backfill scripts' read-only JSON source (scripts/lib/read-json-store.ts). No request can reach it.
+   */
   __commerceosDbFactory?: (store: typeof CommerceDatabase) => CommerceDatabase;
 };
 export const db: CommerceDatabase =

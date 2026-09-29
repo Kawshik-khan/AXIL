@@ -5,6 +5,7 @@
  */
 import { Pool } from "@neondatabase/serverless";
 import { envNumber } from "@/lib/env-number";
+import { logger } from "@/lib/logger";
 
 export interface SqlResult<Row> {
   rows: Row[];
@@ -56,6 +57,8 @@ export function storeConnectionString(): string | null {
 
 export function createNeonSqlClient(connectionString: string): SqlClient {
   const pool = new Pool({ connectionString, max: envNumber("STORE_POOL_MAX", 5, 1) });
+  // An idle connection that drops emits 'error' on the pool; unhandled, that would crash the server (Neon README).
+  pool.on("error", (err: Error) => logger.warn("db.pg_pool_error", { error: err.message }));
   const run = async <Row>(q: (text: string, params?: unknown[]) => Promise<{ rows: unknown[]; rowCount: number | null }>, text: string, params?: unknown[]) => {
     const result = await q(text, params);
     return { rows: result.rows as Row[], rowCount: result.rowCount ?? result.rows.length };

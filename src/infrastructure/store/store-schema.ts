@@ -99,5 +99,5 @@ export function qualified(table: string): string {
 /** Every table that holds store data, children before parents (for TRUNCATE and deletes). */
 export function storeTablesChildrenFirst(): string[] {
   const core = Object.values(CORE_TABLES).map((t) => (t as CoreTable).table);
-  return ["documents", "store_meta", "order_sequences", ...core.reverse()];
+  return ["refused_rows", "documents", "store_meta", "order_sequences", ...core.reverse()];
 }

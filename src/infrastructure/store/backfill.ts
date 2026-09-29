@@ -16,6 +16,8 @@ export interface BackfillResult {
   collections: number;
   /** Records that can't be stored (no id, repeated id): never sent. */
   unwritable: RejectedRow[];
+  /** Records whose text Postgres can't hold (NUL, half an emoji) and that were cleaned; verification compares cleaned text. */
+  sanitized: number;
   report: WriteReport;
   ms: number;
 }
@@ -56,7 +58,7 @@ export async function backfillStore(
     const changes = pg.computeChanges(source);
     const report = await pg.write(changes, { replaceAll: true, onRejected: options.onRejected });
     const { rows, collections } = countRecords(source);
-    return { rows, collections, unwritable: changes.unwritable, report, ms: Date.now() - started };
+    return { rows, collections, unwritable: changes.unwritable, sanitized: changes.sanitizedRows, report, ms: Date.now() - started };
   } finally {
     await pg.releaseLease().catch(() => undefined);
   }

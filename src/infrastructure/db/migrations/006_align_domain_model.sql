@@ -515,6 +515,20 @@ CREATE TABLE IF NOT EXISTS commerceos.documents (
 CREATE INDEX IF NOT EXISTS documents_tenant_idx ON commerceos.documents (tenant_id, collection, row_updated_at DESC);
 CREATE INDEX IF NOT EXISTS documents_collection_seq_idx ON commerceos.documents (collection, seq);
 
+-- Records Postgres refused (a constraint, a malformed value), kept here in the same transaction so they survive a
+-- restart and stay reported until they are saved or an operator resolves them. `data` is NULL for a refused delete.
+CREATE TABLE IF NOT EXISTS commerceos.refused_rows (
+    collection      text        NOT NULL,
+    id              text        NOT NULL,
+    tenant_id       text,
+    op              text        NOT NULL CHECK (op IN ('upsert', 'delete')),
+    reason          text        NOT NULL,
+    constraint_name text,
+    data            jsonb,
+    refused_at      timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (collection, id)
+);
+
 -- Store-level values that are not collections of records.
 CREATE TABLE IF NOT EXISTS commerceos.store_meta (
     key             text        PRIMARY KEY,

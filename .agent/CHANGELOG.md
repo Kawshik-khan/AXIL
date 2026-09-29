@@ -10,7 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 See [ADR-108](DECISIONS.md#adr-108-postgres-as-the-system-of-record-behind-the-existing-store-api-phase-4-first-stage).
 
 ### Added
-- `DATA_BACKEND=pg`: the store loads from and writes to Postgres (Neon) — one transaction per flush, a single-writer lease with fencing, refused rows set aside and reported instead of blocking every write. The JSON file stays the default until the cutover.
+- `DATA_BACKEND=pg`: the store loads from and writes to Postgres (Neon) — one transaction per flush, a single-writer lease with fencing, refused rows set aside, kept in `commerceos.refused_rows` and reported instead of blocking every write. The JSON file stays the default until the cutover.
 - Migration 006 (schema `commerceos`): core tables with constraints and tenant-scoped foreign keys, JSONB documents for the other collections.
 - A migration runner that applies each file whole in one transaction.
 - `npm run db:backfill` (dry run on in-memory Postgres, then `--apply`), `npm run db:verify-migration`, `scripts/export-pg-to-json.ts` (rollback).
@@ -25,7 +25,7 @@ See [ADR-108](DECISIONS.md#adr-108-postgres-as-the-system-of-record-behind-the-e
 
 ### Changed (action required)
 - Migrations 001–005 moved to `migrations/legacy/` and no longer run.
-- Scripts that change the store now open it through `scripts/lib/store-session.ts` (works for both backends; Postgres backups are JSON exports).
+- The six maintenance scripts that change the store (credential rotation and re-encryption, seed-password reset, the three Phase 3 data fixes) open it through `scripts/lib/store-session.ts` and work on both backends (Postgres backups are JSON exports). The seed scripts (`db:seed:*`) still write the JSON file directly and refuse to run with `DATA_BACKEND=pg`.
 - To cut over, follow ADR-108 (migrate → backfill dry run → apply → verify → `DATA_BACKEND=pg`). Run against Neon only when you decide to.
 
 ## [Unreleased] - Phase 3 completion: safety controls, order lifecycle, AI provider (2026-09-29, branch `phase-3-truthful-data`)

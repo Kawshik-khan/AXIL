@@ -23,7 +23,7 @@ Next.js 14 App Router · React 18 · TypeScript (strict) · Zod · jose/bcryptjs
 | Proxy config | `TRUST_PROXY=1`, `TRUST_PROXY_HOPS=<n>` | Only behind your own reverse proxy; enables per-client rate limits |
 | Exploit replay | `BASE_URL=http://localhost:3000 node scripts/smoke-security.mjs` | Against a running server started without `DEV_AUTH_BYPASS`; run after touching auth, webhooks or platform routes |
 | DB integration tests | `npm run test:db` | Hits real Neon/Pinecone/Upstash — ask before running |
-| Migrations / seeds | `npm run db:migrate`, `npm run db:seed:*` | Hits real Neon — ask before running. Rehearse with `node tests/ts-runner.cjs ./src/infrastructure/db/migrate.ts --pglite <dir>` |
+| Migrations / seeds | `npm run db:migrate`, `npm run db:seed:*` | `db:migrate` hits real Neon — ask before running. `db:seed:*` write demo data into the JSON store file (and legacy SQL files); they refuse with `DATA_BACKEND=pg`. Rehearse with `node tests/ts-runner.cjs ./src/infrastructure/db/migrate.ts --pglite <dir>` |
 | Backfill / verify | `npm run db:backfill`, `npm run db:verify-migration` | Dry run by default (in-memory PGlite). `--apply` and the verify hit real Neon — ask before running. See ADR-108 for the cutover |
 | Lint | `npm run lint` | **No ESLint config yet** — don't rely on it |
 

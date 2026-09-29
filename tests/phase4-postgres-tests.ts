@@ -309,20 +309,74 @@ async function main() {
     assert.strictEqual(store.getUnsavedRows().length, 0);
   });
 
-  await runTest("without a confirmed lease the store stops acknowledging writes, then reads; a renewal resumes both (review M1)", () => {
-    const internals = store as unknown as { leaseConfirmedAt: number };
-    const confirmed = internals.leaseConfirmedAt;
+  await runTest("without a confirmed lease: requests are refused before any change; a change that slips through is never saved (review M1, done-check)", async () => {
+    const fencedClient = await migratedClient();
+    const fencedStore = await openStore(fencedClient);
+    const internals = fencedStore as unknown as { leaseConfirmedAt: number };
+    const tenantsBefore = fencedStore.data.tenants.length;
     internals.leaseConfirmedAt = Date.now() - LEASE_TTL_MS * 0.55; // Postgres unreachable for more than half the lease
-    try {
-      assert.throws(() => store.createTenant(tenant("ten_p4_unconfirmed")), (e: Error & { code?: string; statusCode?: number }) => e.code === "STORE_UNAVAILABLE" && e.statusCode === 503);
-      assert.ok(store.data.tenants.length > 0, "reads still work before another process could take over");
-      internals.leaseConfirmedAt = Date.now() - LEASE_TTL_MS * 0.85; // past 80%: another process may own the store soon
-      assert.throws(() => store.data.tenants, (e: Error & { statusCode?: number }) => e.statusCode === 503);
-    } finally {
-      internals.leaseConfirmedAt = confirmed > 0 ? Date.now() : confirmed;
-      store.data.tenants = store.data.tenants.filter((x) => x.id !== "ten_p4_unconfirmed");
-    }
-    assert.ok(store.data.tenants.length > 0);
+    // The request context refuses a mutating request before it touches anything.
+    assert.throws(() => fencedStore.assertWritable(), (e: Error & { code?: string; statusCode?: number }) => e.code === "STORE_UNAVAILABLE" && e.statusCode === 503);
+    assert.strictEqual(fencedStore.data.tenants.length, tenantsBefore, "nothing changed; reads still work");
+    internals.leaseConfirmedAt = Date.now() - LEASE_TTL_MS * 0.85; // past 80%: another process may own the store soon
+    assert.throws(() => fencedStore.data.tenants, (e: Error & { statusCode?: number }) => e.statusCode === 503);
+    // A change that bypassed the request context: refused, and this store never saves anything again.
+    internals.leaseConfirmedAt = Date.now() - LEASE_TTL_MS * 0.55;
+    assert.throws(() => fencedStore.createTenant(tenant("ten_p4_fenced")), (e: Error & { statusCode?: number }) => e.statusCode === 503);
+    internals.leaseConfirmedAt = Date.now(); // Postgres answers again
+    await fencedStore.flush();
+    const saved = await fencedClient.query("SELECT 1 FROM commerceos.tenants WHERE id = 'ten_p4_fenced'");
+    assert.strictEqual(saved.rows.length, 0, "the refused change is never saved later (a retry can't duplicate it)");
+    assert.strictEqual(fencedStore.getPersistenceHealth().blocked_code, "DATABASE_UNAVAILABLE");
+    assert.throws(() => fencedStore.data.tenants, (e: Error & { statusCode?: number }) => e.statusCode === 503);
+    await fencedStore.shutdown();
+    await fencedClient.close();
+  });
+
+  await runTest("a child refused because of its parent is retried once the parent saves (done-check)", async () => {
+    store.createOrder(order(t, "ord_p4_parent", "P4-1001"), [item(t, "oi_p4_child", "ord_p4_parent", 2)]); // duplicate number
+    await store.flush();
+    assert.deepStrictEqual(
+      store.getUnsavedRows().map((r) => `${r.id}:${r.constraint}`).sort(),
+      ["oi_p4_child:order_items_order_fkey", "ord_p4_parent:orders_tenant_order_number_key"]
+    );
+    const parent = store.data.orders.find((x) => x.id === "ord_p4_parent");
+    assert.ok(parent);
+    parent.order_number = "P4-1101";
+    store.markDirty();
+    await store.flush(); // the order saves; that commit schedules a retry of the waiting item
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    await store.flush();
+    assert.strictEqual(store.getUnsavedRows().length, 0, JSON.stringify(store.getUnsavedRows()));
+    const child = await client.query("SELECT 1 FROM commerceos.order_items WHERE id = 'oi_p4_child'");
+    assert.strictEqual(child.rows.length, 1);
+    const quarantine = await client.query("SELECT 1 FROM commerceos.refused_rows");
+    assert.strictEqual(quarantine.rows.length, 0, "saved rows leave the quarantine");
+  });
+
+  await runTest("refused rows survive a restart in commerceos.refused_rows and stay reported until saved (done-check)", async () => {
+    const qClient = await migratedClient();
+    const first = await openStore(qClient);
+    first.createTenant(tenant("ten_q"));
+    first.createOrder(order("ten_q", "ord_q_1", "Q-1"), []);
+    first.createOrder(order("ten_q", "ord_q_2", "Q-1"), []); // refused: duplicate order number
+    await first.flush();
+    assert.deepStrictEqual(first.getUnsavedRows().map((r) => r.id), ["ord_q_2"]);
+    await first.shutdown();
+    const kept = await qClient.query<{ id: string; constraint_name: string; data: { order_number: string } }>(
+      "SELECT id, constraint_name, data FROM commerceos.refused_rows"
+    );
+    assert.deepStrictEqual(kept.rows.map((r) => [r.id, r.constraint_name, r.data.order_number]), [["ord_q_2", "orders_tenant_order_number_key", "Q-1"]]);
+    const second = await openStore(qClient); // a restart: the refused order is not in memory any more
+    assert.ok(!second.data.orders.some((o) => o.id === "ord_q_2"));
+    assert.deepStrictEqual(second.getUnsavedRows().map((r) => r.id), ["ord_q_2"], "still reported after the restart");
+    assert.strictEqual(second.getPersistenceHealth().ok, false);
+    second.createOrder(order("ten_q", "ord_q_2", "Q-2"), []); // re-entered correctly
+    await second.flush();
+    assert.strictEqual(second.getUnsavedRows().length, 0);
+    assert.strictEqual((await qClient.query("SELECT 1 FROM commerceos.refused_rows")).rows.length, 0);
+    await second.shutdown();
+    await qClient.close();
   });
 
   await runTest("the readiness ping runs one query at a time and at most every 5 s (review M2)", async () => {
@@ -496,6 +550,9 @@ async function main() {
     assert.throws(() => adjust("ten_adj_b", b.warehouse.id, a.variant.id), (e: Error & { statusCode?: number }) => e.statusCode === 404);
     assert.throws(() => adjust("ten_adj_a", b.warehouse.id, a.variant.id), (e: Error & { statusCode?: number }) => e.statusCode === 404);
     assert.strictEqual(db.data.inventory_items.filter((i) => i.tenant_id.startsWith("ten_adj_")).length, 0, "no row was created");
+    assert.throws(() => db.adjustStock("ten_adj_a", { warehouse_id: a.warehouse.id, product_variant_id: a.variant.id, quantity_delta: -3,
+      type: "ADJUSTMENT" as never, reason: "p4", actor_user_id: "u" }), /Insufficient stock/);
+    assert.strictEqual(db.data.inventory_items.filter((i) => i.tenant_id === "ten_adj_a").length, 0, "a refused adjustment leaves no empty row");
     assert.strictEqual(adjust("ten_adj_a", a.warehouse.id, a.variant.id).quantity_on_hand, 5);
   });
 

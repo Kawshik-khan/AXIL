@@ -8,6 +8,14 @@ import path from "path";
  * writes (and the app overwrites the script's), so scripts refuse to start until the app is stopped.
  */
 export function assertNoOtherStoreWriter(): void {
+  if (process.env.DATA_BACKEND === "pg") {
+    // The seed scripts write the JSON file directly; with Postgres as the store the app would never see it (ADR-108).
+    process.stderr.write(
+      "This script writes the JSON store file, but DATA_BACKEND=pg: the app reads Postgres. Run it before the cutover " +
+        "(then backfill), or unset DATA_BACKEND for a local JSON store.\n"
+    );
+    process.exit(1);
+  }
   const dataDir = process.env.COMMERCEOS_DATA_DIR ? path.resolve(process.env.COMMERCEOS_DATA_DIR) : path.join(process.cwd(), ".data");
   const lockPath = path.join(dataDir, "commerceos.lock");
   let owner: { pid?: number; host?: string; started_at?: string } | null = null;

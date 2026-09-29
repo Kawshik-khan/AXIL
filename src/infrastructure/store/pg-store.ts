@@ -81,6 +81,8 @@ export interface ChangeSet {
   meta: { upserts: Array<[string, string]>; deletes: string[] };
   /** Records that can't be stored at all (no id, a repeated id): reported, never sent. */
   unwritable: RejectedRow[];
+  /** Refused records removed from memory in this run: their commerceos.refused_rows entries are dropped. */
+  quarantineDrops: Array<[string, string]>;
   rowCount: number;
   sanitizedRows: number;
 }
@@ -143,8 +145,15 @@ export class PgStorePersistence {
   private readonly committed = new Map<string, Map<string, string>>();
   private readonly committedSequences = new Map<string, number>();
   private readonly committedMeta = new Map<string, string>();
-  /** Rows the database refused, with the exact JSON refused: retried only once the record changes. */
-  private readonly rejected = new Map<string, { json: string; row: RejectedRow }>();
+  /**
+   * Rows the database refused, with the exact JSON refused and the commit generation at the time. A refused row is
+   * retried when it changes or after any later commit (its parent may have been saved meanwhile), not on every flush.
+   */
+  private readonly rejected = new Map<string, { json: string; row: RejectedRow; generation: number }>();
+  /** Refused rows recorded in commerceos.refused_rows (they survive a restart until saved or resolved). */
+  private readonly quarantined = new Map<string, RejectedRow>();
+  /** Incremented by every write that committed at least one record. */
+  private commitGeneration = 0;
   private lastUnwritable: RejectedRow[] = [];
 
   constructor(readonly client: SqlClient) {}
@@ -205,6 +214,19 @@ export class PgStorePersistence {
     this.committedSequences.clear();
     this.committedMeta.clear();
     this.rejected.clear();
+    this.quarantined.clear();
+    const refusedRows = await this.client.query<{ collection: string; id: string; op: RejectedRow["op"]; reason: string; constraint_name: string | null }>(
+      "SELECT collection, id, op, reason, constraint_name FROM commerceos.refused_rows"
+    );
+    for (const r of refusedRows.rows) {
+      this.quarantined.set(rowKey(r.collection, r.id), {
+        collection: r.collection,
+        id: r.id,
+        op: r.op,
+        reason: r.reason,
+        constraint: r.constraint_name ?? undefined,
+      });
+    }
     const out: Record<string, unknown> = {};
     for (const [collection, core] of Object.entries(CORE_TABLES) as Array<[string, CoreTable]>) {
       const order = NEWEST_FIRST_COLLECTIONS.has(collection) ? "DESC" : "ASC";
@@ -268,6 +290,7 @@ export class PgStorePersistence {
       sequences: { upserts: [], deletes: [] },
       meta: { upserts: [], deletes: [] },
       unwritable: [],
+      quarantineDrops: [],
       rowCount: 0,
       sanitizedRows: 0,
     };
@@ -287,7 +310,8 @@ export class PgStorePersistence {
       changes.sequences.upserts.length +
       changes.sequences.deletes.length +
       changes.meta.upserts.length +
-      changes.meta.deletes.length;
+      changes.meta.deletes.length +
+      changes.quarantineDrops.length;
     return changes;
   }
 
@@ -320,18 +344,26 @@ export class PgStorePersistence {
       }
       if (serialized.sanitized) changes.sanitizedRows++;
       if (committed.get(id) === serialized.json) {
-        // Back to what Postgres holds (e.g. a refused change was undone): nothing is unsaved any more.
-        this.rejected.delete(rowKey(collection, id));
+        const key = rowKey(collection, id);
+        // Back to what Postgres holds after a refusal in this run (the refused change was undone): nothing is unsaved
+        // any more. Rewriting the row clears its quarantine entry. (After a restart, memory holds the old version and
+        // the refused one exists only in commerceos.refused_rows, so that entry stays reported.)
+        if (this.rejected.has(key)) {
+          this.rejected.delete(key);
+          if (this.quarantined.has(key)) {
+            out.upserts.push({ id, tenantId: tenantOf(core, row, id), createdAt: rowTime(row), json: serialized.json });
+          }
+        }
         continue;
       }
       const refused = this.rejected.get(rowKey(collection, id));
-      if (refused && refused.row.op === "upsert" && refused.json === serialized.json) continue;
+      if (refused && refused.row.op === "upsert" && refused.json === serialized.json && refused.generation === this.commitGeneration) continue;
       out.upserts.push({ id, tenantId: tenantOf(core, row, id), createdAt: rowTime(row), json: serialized.json });
     }
     for (const id of committed.keys()) {
       if (seen.has(id)) continue;
       const refused = this.rejected.get(rowKey(collection, id));
-      if (refused && refused.row.op === "delete") continue;
+      if (refused && refused.row.op === "delete" && refused.generation === this.commitGeneration) continue;
       out.deletes.push(id);
     }
     // Newest-first collections hold new records at the front: insert them oldest first, so the row sequence always grows
@@ -339,7 +371,10 @@ export class PgStorePersistence {
     if (NEWEST_FIRST_COLLECTIONS.has(collection)) out.upserts.reverse();
     // A refused record that no longer exists in memory has nothing left to retry.
     for (const [key, entry] of this.rejected) {
-      if (entry.row.collection === collection && entry.row.op === "upsert" && !seen.has(entry.row.id)) this.rejected.delete(key);
+      if (entry.row.collection === collection && entry.row.op === "upsert" && !seen.has(entry.row.id)) {
+        this.rejected.delete(key);
+        if (this.quarantined.has(key)) changes.quarantineDrops.push([collection, entry.row.id]);
+      }
     }
     if (out.upserts.length || out.deletes.length) changes.collections.push(out);
   }
@@ -379,6 +414,7 @@ export class PgStorePersistence {
         await this.fence(tx);
         if (options.replaceAll) await tx.exec(`TRUNCATE ${storeTablesChildrenFirst().map(qualified).join(", ")}`);
         await this.writeBatched(tx, changes);
+        await this.resolveQuarantine(tx, changes, new Set());
       });
     } catch (err) {
       if (!isDataRejected(err) || options.onRejected === "throw") throw err;
@@ -425,16 +461,24 @@ export class PgStorePersistence {
         for (const row of c.upserts) await attempt(c.collection, row.id, "upsert", () => this.upsertRows(tx, c, [row]));
       }
       await this.writeSequencesAndMeta(tx, changes);
+      await this.resolveQuarantine(tx, changes, new Set(refused.keys()));
+      await this.recordRefusals(tx, changes, refused);
     });
     this.commit(changes, new Set(refused.keys()));
     for (const c of changes.collections) {
       for (const row of c.upserts) {
         const r = refused.get(rowKey(c.collection, row.id));
-        if (r && r.op === "upsert") this.rejected.set(rowKey(c.collection, row.id), { json: row.json, row: r });
+        if (r && r.op === "upsert") {
+          this.rejected.set(rowKey(c.collection, row.id), { json: row.json, row: r, generation: this.commitGeneration });
+          this.quarantined.set(rowKey(c.collection, row.id), r);
+        }
       }
       for (const id of c.deletes) {
         const r = refused.get(rowKey(c.collection, id));
-        if (r && r.op === "delete") this.rejected.set(rowKey(c.collection, id), { json: "", row: r });
+        if (r && r.op === "delete") {
+          this.rejected.set(rowKey(c.collection, id), { json: "", row: r, generation: this.commitGeneration });
+          this.quarantined.set(rowKey(c.collection, id), r);
+        }
       }
     }
     const rejected = [...refused.values()];
@@ -511,8 +555,61 @@ export class PgStorePersistence {
     }
   }
 
+  /** Refused rows go to commerceos.refused_rows (same transaction), so a restart can't silently drop them. */
+  private async recordRefusals(tx: SqlExecutor, changes: ChangeSet, refused: Map<string, RejectedRow>): Promise<void> {
+    if (refused.size === 0) return;
+    const rows: Array<{ r: RejectedRow; tenant: string | null; data: string | null }> = [];
+    for (const c of changes.collections) {
+      for (const row of c.upserts) {
+        const r = refused.get(rowKey(c.collection, row.id));
+        if (r) rows.push({ r, tenant: row.tenantId, data: row.json });
+      }
+      for (const id of c.deletes) {
+        const r = refused.get(rowKey(c.collection, id));
+        if (r) rows.push({ r, tenant: null, data: null });
+      }
+    }
+    await tx.query(
+      `INSERT INTO commerceos.refused_rows (collection, id, tenant_id, op, reason, constraint_name, data)
+       SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::jsonb[])
+       ON CONFLICT (collection, id) DO UPDATE SET tenant_id = EXCLUDED.tenant_id, op = EXCLUDED.op, reason = EXCLUDED.reason,
+         constraint_name = EXCLUDED.constraint_name, data = EXCLUDED.data, refused_at = now()`,
+      [
+        rows.map((x) => x.r.collection),
+        rows.map((x) => x.r.id),
+        rows.map((x) => x.tenant),
+        rows.map((x) => x.r.op),
+        rows.map((x) => x.r.reason),
+        rows.map((x) => x.r.constraint ?? null),
+        rows.map((x) => x.data),
+      ]
+    );
+  }
+
+  /** Quarantined rows written successfully now are removed from commerceos.refused_rows (same transaction). */
+  private async resolveQuarantine(tx: SqlExecutor, changes: ChangeSet, refused: Set<string>): Promise<void> {
+    if (this.quarantined.size === 0) return;
+    const collections: string[] = changes.quarantineDrops.map(([c]) => c);
+    const ids: string[] = changes.quarantineDrops.map(([, id]) => id);
+    for (const c of changes.collections) {
+      for (const id of [...c.upserts.map((u) => u.id), ...c.deletes]) {
+        const key = rowKey(c.collection, id);
+        if (this.quarantined.has(key) && !refused.has(key)) {
+          collections.push(c.collection);
+          ids.push(id);
+        }
+      }
+    }
+    if (!ids.length) return;
+    await tx.query(
+      "DELETE FROM commerceos.refused_rows r USING unnest($1::text[], $2::text[]) AS u(collection, id) WHERE r.collection = u.collection AND r.id = u.id",
+      [collections, ids]
+    );
+  }
+
   /** After COMMIT: the written rows become the new baseline; refused rows keep the previous one. */
   private commit(changes: ChangeSet, refused: Set<string>): void {
+    let written = 0;
     for (const c of changes.collections) {
       const committed = this.committed.get(c.collection) ?? new Map<string, string>();
       for (const row of c.upserts) {
@@ -520,26 +617,43 @@ export class PgStorePersistence {
         if (refused.has(key)) continue;
         committed.set(row.id, row.json);
         this.rejected.delete(key);
+        this.quarantined.delete(key);
+        written++;
       }
       for (const id of c.deletes) {
         const key = rowKey(c.collection, id);
         if (refused.has(key)) continue;
         committed.delete(id);
         this.rejected.delete(key);
+        this.quarantined.delete(key);
+        written++;
       }
       this.committed.set(c.collection, committed);
     }
+    if (written > 0) this.commitGeneration++;
     for (const [tenantId, value] of changes.sequences.upserts) this.committedSequences.set(tenantId, value);
     for (const tenantId of changes.sequences.deletes) this.committedSequences.delete(tenantId);
     for (const [key, json] of changes.meta.upserts) this.committedMeta.set(key, json);
     for (const key of changes.meta.deletes) this.committedMeta.delete(key);
+    for (const [collection, id] of changes.quarantineDrops) this.quarantined.delete(rowKey(collection, id));
+  }
+
+  /** Refused rows that a later commit may have unblocked (e.g. their parent row was saved since). */
+  hasRetryableRejections(): boolean {
+    for (const entry of this.rejected.values()) if (entry.generation !== this.commitGeneration) return true;
+    return false;
   }
 
   // ---- Reporting ---------------------------------------------------------------------------------------------------
 
-  /** Records that aren't in Postgres as they are in memory: refused by the database, or impossible to store. */
+  /**
+   * Records that aren't in Postgres as they are in memory: refused by the database (this run, or recorded in
+   * commerceos.refused_rows by an earlier one), or impossible to store.
+   */
   unsavedRows(): RejectedRow[] {
-    return [...[...this.rejected.values()].map((r) => r.row), ...this.lastUnwritable];
+    const current = [...this.rejected.values()].map((r) => r.row);
+    const earlier = [...this.quarantined.entries()].filter(([key]) => !this.rejected.has(key)).map(([, r]) => r);
+    return [...current, ...earlier, ...this.lastUnwritable];
   }
 
   async ping(timeoutMs: number): Promise<boolean> {
