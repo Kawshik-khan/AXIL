@@ -6,13 +6,14 @@
  *   - computeChanges():  compares records with what this server last committed or saw, and collects changed and removed rows;
  *   - write():           writes them in ONE transaction; each row is written only if it still has the version this
  *                        server last saw, so two servers never overwrite each other (StoreConflictError instead);
- *                        every written row is appended to commerceos.changes, in commit order;
- *   - sync():            reads the other servers' entries from commerceos.changes and fetches those rows;
+ *                        every written row is appended to commerceos.changes, in commit order. With migration 008 the
+ *                        whole write is one statement (commerceos.apply_changes): one round trip instead of 8–12;
+ *   - sync():            reads the other servers' entries from commerceos.changes and those rows, in one statement;
  *   - restore():         puts memory back to the last committed version of the given rows (a request that failed).
  */
 import crypto from "crypto";
 import { logger } from "@/lib/logger";
-import { type SqlClient, type SqlExecutor } from "./sql-client";
+import { pgErrorFields, type SqlClient, type SqlExecutor } from "./sql-client";
 import {
   CORE_TABLES,
   NEWEST_FIRST_COLLECTIONS,
@@ -135,6 +136,35 @@ interface Committed {
   version: number;
 }
 
+let syncSql: string | null = null;
+/**
+ * sync() as one statement ($1: this server's position, $2: its writer id): a "state" row (epoch, prune mark, newest
+ * position), an "entry" row per row other servers changed since the position, and a "row" row with the current version
+ * of each of those rows that still exists. Table and collection names come from the fixed store schema.
+ */
+function syncStatement(): string {
+  if (syncSql) return syncSql;
+  const lit = (name: string) => {
+    if (!/^[a-z_]+$/.test(name)) throw new Error(`Unexpected store name: ${name}`);
+    return `'${name}'`;
+  };
+  const core = (Object.entries(CORE_TABLES) as Array<[string, CoreTable]>).map(
+    ([collection, t]) =>
+      `SELECT 'row', ${lit(collection)}, t.id, t.version::text, t.data::text FROM ${qualified(t.table)} t JOIN c ON c.collection = ${lit(collection)} AND c.id = t.id`
+  );
+  syncSql = `WITH s AS (SELECT epoch, pruned_through FROM commerceos.store_state WHERE id = 1),
+     m AS (SELECT coalesce(max(seq), 0) AS max_seq FROM commerceos.changes),
+     c AS (SELECT DISTINCT ch.collection, ch.id FROM commerceos.changes ch, m
+            WHERE ch.seq > $1 AND ch.seq <= m.max_seq AND ch.writer <> $2 LIMIT ${SYNC_MAX_ROWS + 1})
+SELECT 'state' AS kind, s.epoch AS collection, s.pruned_through::text AS id, m.max_seq::text AS version, NULL::text AS data FROM s, m
+UNION ALL SELECT 'entry', c.collection, c.id, NULL, NULL FROM c
+${core.map((q) => `UNION ALL ${q}`).join("\n")}
+UNION ALL SELECT 'row', d.collection, d.id, d.version::text, d.data::text FROM commerceos.documents d JOIN c ON c.collection = d.collection AND c.id = d.id
+UNION ALL SELECT 'row', ${lit(ORDER_SEQUENCES_KEY)}, o.tenant_id, o.version::text, o.value::text FROM commerceos.order_sequences o JOIN c ON c.collection = ${lit(ORDER_SEQUENCES_KEY)} AND c.id = o.tenant_id
+UNION ALL SELECT 'row', 'store_meta', k.key, k.version::text, k.value::text FROM commerceos.store_meta k JOIN c ON c.collection = 'store_meta' AND c.id = k.key`;
+  return syncSql;
+}
+
 export class PgStorePersistence {
   /** Identifies this server in commerceos.changes (its own entries are skipped by sync). */
   readonly writerId = crypto.randomUUID();
@@ -147,6 +177,8 @@ export class PgStorePersistence {
   private lastPruneAt = 0;
   private lastRateLimitCleanup = 0;
   private lastUnwritable: RejectedRow[] = [];
+  /** commerceos.apply_changes exists (migration 008): a write is one statement. Checked at every load. */
+  private fastWrites = false;
 
   constructor(readonly client: SqlClient) {}
 
@@ -166,6 +198,11 @@ export class PgStorePersistence {
     return Number(r.rows[0]?.n ?? 0);
   }
 
+  /** Whether writes are one statement (migration 008 applied). */
+  get oneStatementWrites(): boolean {
+    return this.fastWrites;
+  }
+
   get position(): { epoch: string | null; seq: number } {
     return { epoch: this.epoch, seq: this.lastSeq };
   }
@@ -183,6 +220,8 @@ export class PgStorePersistence {
       this.epoch = state.rows[0]?.epoch ?? null;
       const seq = await tx.query<{ seq: string }>("SELECT coalesce(max(seq), 0)::text AS seq FROM commerceos.changes");
       this.lastSeq = Number(seq.rows[0]?.seq ?? 0);
+      const fn = await tx.query<{ ok: boolean }>("SELECT to_regprocedure('commerceos.apply_changes(jsonb,text)') IS NOT NULL AS ok");
+      this.fastWrites = fn.rows[0]?.ok === true;
       const out: Record<string, unknown> = {};
       for (const [collection, core] of Object.entries(CORE_TABLES) as Array<[string, CoreTable]>) {
         const order = NEWEST_FIRST_COLLECTIONS.has(collection) ? "DESC" : "ASC";
@@ -349,6 +388,12 @@ export class PgStorePersistence {
    * constraint); in both cases nothing was written and the baseline is unchanged.
    */
   async write(changes: ChangeSet, options: { replaceAll?: boolean } = {}): Promise<{ written: number }> {
+    if (this.fastWrites && !options.replaceAll) {
+      const versions = await this.applyInOneStatement(changes);
+      this.commit(changes, versions);
+      await this.maybePrune(this.client).catch((err: unknown) => logger.warn("db.change_log_prune_failed", { error: (err as Error).message }));
+      return { written: changes.rowCount };
+    }
     const versions = await this.client.transaction(async (tx) => {
       if (options.replaceAll) {
         await tx.exec(`TRUNCATE ${storeTablesChildrenFirst().map(qualified).join(", ")}, commerceos.changes`);
@@ -399,6 +444,59 @@ export class PgStorePersistence {
     });
     this.commit(changes, versions);
     return { written: changes.rowCount };
+  }
+
+  /**
+   * The whole write as one statement (migration 008): the same version checks, tenant guard, conflict rule and change
+   * log as the statement-by-statement path, inside the database. Rows are sent as their already-serialized JSON.
+   */
+  private async applyInOneStatement(changes: ChangeSet): Promise<Map<string, Map<string, number>>> {
+    const str = (v: string | null) => (v === null ? "null" : JSON.stringify(v));
+    const row = (r: PendingRow, withVersion: boolean) =>
+      `{"id":${str(r.id)},${withVersion ? `"version":${r.expected},` : ""}"tenant_id":${str(r.tenantId)},"created_at":${str(r.createdAt)},"data":${r.json}}`;
+    const table = (c: CollectionChanges) => (c.core ? str(c.core.table) : "null");
+    const deletes = [...changes.collections]
+      .reverse()
+      .filter((c) => c.deletes.length)
+      .map((c) => `{"collection":${str(c.collection)},"table":${table(c)},"rows":${JSON.stringify(c.deletes.map((d) => ({ id: d.id, version: d.expected })))}}`);
+    const upserts = changes.collections
+      .filter((c) => c.upserts.length)
+      .map((c) => {
+        const updates = c.upserts.filter((u) => u.expected !== null).map((u) => row(u, true));
+        const inserts = c.upserts.filter((u) => u.expected === null).map((u) => row(u, false));
+        return `{"collection":${str(c.collection)},"table":${table(c)},"updates":[${updates.join(",")}],"inserts":[${inserts.join(",")}]}`;
+      });
+    const payload =
+      `{"sequence_collection":${str(ORDER_SEQUENCES_KEY)},"deletes":[${deletes.join(",")}],"upserts":[${upserts.join(",")}],` +
+      `"sequence_deletes":${JSON.stringify(changes.sequences.deletes.map((d) => ({ id: d.tenantId, expected: d.expected })))},` +
+      `"sequence_upserts":${JSON.stringify(changes.sequences.upserts.map((u) => ({ id: u.tenantId, value: u.value, expected: u.expected })))},` +
+      `"meta_deletes":${JSON.stringify(changes.meta.deletes.map((d) => ({ id: d.key, expected: d.expected })))},` +
+      `"meta_upserts":[${changes.meta.upserts.map((u) => `{"id":${str(u.key)},"expected":${u.expected === null ? "null" : u.expected},"value":${u.json}}`).join(",")}]}`;
+    let result;
+    try {
+      result = await this.client.query<{ written: unknown }>("SELECT commerceos.apply_changes($1::jsonb, $2) AS written", [payload, this.writerId]);
+    } catch (err) {
+      const f = pgErrorFields(err);
+      if (f.code === "P0409") {
+        let rows: Array<{ collection: string; id: string }> = [];
+        try {
+          rows = (JSON.parse(f.detail ?? "[]") as Array<[string, string]>).map(([collection, id]) => ({ collection, id }));
+        } catch {
+          rows = [{ collection: "?", id: "?" }];
+        }
+        throw new StoreConflictError(rows);
+      }
+      throw err;
+    }
+    const raw = result.rows[0]?.written;
+    const written = (typeof raw === "string" ? JSON.parse(raw) : raw) as Array<[string, string, number]>;
+    const versions = new Map<string, Map<string, number>>();
+    for (const [collection, id, version] of written) {
+      const m = versions.get(collection) ?? new Map<string, number>();
+      m.set(id, Number(version));
+      versions.set(collection, m);
+    }
+    return versions;
   }
 
   private async deleteRows(tx: SqlExecutor, c: CollectionChanges, rows: Array<{ id: string; expected: number }>, force: boolean): Promise<Set<string>> {
@@ -542,12 +640,12 @@ export class PgStorePersistence {
   private async maybePrune(tx: SqlExecutor): Promise<void> {
     if (Date.now() - this.lastPruneAt < PRUNE_EVERY_MS) return;
     this.lastPruneAt = Date.now();
-    const r = await tx.query<{ seq: string | null }>(
+    // One statement, so no reader ever sees entries gone without the prune mark that tells it to reload
+    await tx.query(
       `WITH gone AS (DELETE FROM commerceos.changes WHERE at < now() - interval '${CHANGE_LOG_RETENTION}' RETURNING seq)
-       SELECT max(seq)::text AS seq FROM gone`
+       UPDATE commerceos.store_state SET pruned_through = greatest(pruned_through, (SELECT max(seq) FROM gone))
+        WHERE id = 1 AND EXISTS (SELECT 1 FROM gone)`
     );
-    const through = r.rows[0]?.seq;
-    if (through) await tx.query("UPDATE commerceos.store_state SET pruned_through = greatest(pruned_through, $1) WHERE id = 1", [Number(through)]);
   }
 
   /** After COMMIT: the written rows (with their new versions) become the baseline. */
@@ -636,74 +734,51 @@ export class PgStorePersistence {
    * match; the caller applies the rows to memory (applySync).
    */
   async sync(): Promise<SyncResult> {
-    const state = await this.client.query<{ epoch: string; pruned_through: string; max_seq: string }>(
-      `SELECT s.epoch, s.pruned_through::text AS pruned_through,
-              (SELECT coalesce(max(seq), 0) FROM commerceos.changes)::text AS max_seq
-         FROM commerceos.store_state s WHERE s.id = 1`
+    // One statement, one snapshot: the state, the new entries and the current version of each entry's row
+    const result = await this.client.query<{ kind: string; collection: string; id: string; version: string | null; data: string | null }>(
+      syncStatement(),
+      [this.lastSeq, this.writerId]
     );
-    const row = state.rows[0];
-    if (!row) return { reload: true, rows: [] };
-    if (row.epoch !== this.epoch || Number(row.pruned_through) > this.lastSeq) return { reload: true, rows: [] };
-    const maxSeq = Number(row.max_seq);
+    const state = result.rows.find((r) => r.kind === "state");
+    if (!state) return { reload: true, rows: [] };
+    if (state.collection !== this.epoch || Number(state.id) > this.lastSeq) return { reload: true, rows: [] };
+    const maxSeq = Number(state.version);
     if (maxSeq <= this.lastSeq) return { reload: false, rows: [] };
-    const entries = await this.client.query<{ collection: string; id: string }>(
-      `SELECT DISTINCT collection, id FROM commerceos.changes
-        WHERE seq > $1 AND seq <= $2 AND writer <> $3
-        LIMIT ${SYNC_MAX_ROWS + 1}`,
-      [this.lastSeq, maxSeq, this.writerId]
-    );
-    if (entries.rows.length > SYNC_MAX_ROWS) return { reload: true, rows: [] };
+    const entries = result.rows.filter((r) => r.kind === "entry");
+    if (entries.length > SYNC_MAX_ROWS) return { reload: true, rows: [] };
+    const current = new Map<string, { version: string; data: string }>();
+    for (const r of result.rows) if (r.kind === "row") current.set(`${r.collection}\u0000${r.id}`, { version: r.version ?? "0", data: r.data ?? "null" });
     const byCollection = new Map<string, string[]>();
-    for (const e of entries.rows) {
+    for (const e of entries) {
       const list = byCollection.get(e.collection) ?? [];
       list.push(e.id);
       byCollection.set(e.collection, list);
     }
     const rows: SyncedRow[] = [];
     for (const [collection, ids] of byCollection) {
+      const found = (id: string) => current.get(`${collection}\u0000${id}`);
       if (collection === ORDER_SEQUENCES_KEY) {
-        const r = await this.client.query<{ tenant_id: string; value: string; version: string }>(
-          "SELECT tenant_id, value::text AS value, version::text AS version FROM commerceos.order_sequences WHERE tenant_id = ANY($1::text[])",
-          [ids]
-        );
-        const found = new Map(r.rows.map((x) => [x.tenant_id, x]));
         for (const id of ids) {
-          const x = found.get(id);
-          if (x) this.committedSequences.set(id, { value: Number(x.value), version: Number(x.version) });
+          const x = found(id);
+          if (x) this.committedSequences.set(id, { value: Number(x.data), version: Number(x.version) });
           else this.committedSequences.delete(id);
-          rows.push({ collection, id, record: x ? Number(x.value) : null });
+          rows.push({ collection, id, record: x ? Number(x.data) : null });
         }
         continue;
       }
       if (collection === "store_meta") {
-        const r = await this.client.query<{ key: string; value: string; version: string }>(
-          "SELECT key, value::text AS value, version::text AS version FROM commerceos.store_meta WHERE key = ANY($1::text[])",
-          [ids]
-        );
-        const found = new Map(r.rows.map((x) => [x.key, x]));
         for (const id of ids) {
-          const x = found.get(id);
-          const value: unknown = x ? JSON.parse(x.value) : null;
+          const x = found(id);
+          const value: unknown = x ? JSON.parse(x.data) : null;
           if (x) this.committedMeta.set(id, { json: JSON.stringify(value), version: Number(x.version) });
           else this.committedMeta.delete(id);
           rows.push({ collection: "store_meta", id, record: value });
         }
         continue;
       }
-      const core = coreTableFor(collection);
-      const r = core
-        ? await this.client.query<{ id: string; version: string; data: string }>(
-            `SELECT id, version::text AS version, data::text AS data FROM ${qualified(core.table)} WHERE id = ANY($1::text[])`,
-            [ids]
-          )
-        : await this.client.query<{ id: string; version: string; data: string }>(
-            "SELECT id, version::text AS version, data::text AS data FROM commerceos.documents WHERE collection = $1 AND id = ANY($2::text[])",
-            [collection, ids]
-          );
-      const found = new Map(r.rows.map((x) => [x.id, x]));
       const committed = this.committed.get(collection) ?? new Map<string, Committed>();
       for (const id of ids) {
-        const x = found.get(id);
+        const x = found(id);
         if (!x) {
           committed.delete(id);
           rows.push({ collection, id, record: null });

@@ -13,7 +13,7 @@ import { CommerceDatabase, db, type DatabaseSchema, type TenantRecord } from "@/
 import { backfillStore, verifyStore } from "@/infrastructure/store/backfill";
 import { diffStores } from "@/infrastructure/store/canonical";
 import { runMigrations } from "@/infrastructure/store/migrations";
-import { LEASE_TTL_MS, PgStorePersistence } from "@/infrastructure/store/pg-store";
+import { LEASE_TTL_MS, PgStorePersistence, StoreConflictError } from "@/infrastructure/store/pg-store";
 import { createPgliteClient } from "@/infrastructure/store/pglite-client";
 import type { SqlClient } from "@/infrastructure/store/sql-client";
 import { envNumber } from "@/lib/env-number";
@@ -81,6 +81,24 @@ async function migratedClient(): Promise<SqlClient> {
   const client = createPgliteClient();
   await runMigrations(client);
   return client;
+}
+
+/** The client, recording the start of every statement sent through it (a transaction counts as "BEGIN"). */
+function counting(client: SqlClient): { client: SqlClient; log: string[] } {
+  const log: string[] = [];
+  const wrapped = new Proxy(client, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver) as unknown;
+      if ((prop === "query" || prop === "exec" || prop === "transaction") && typeof value === "function") {
+        return (...args: unknown[]) => {
+          log.push(prop === "transaction" ? "BEGIN" : String(args[0]).replace(/\s+/g, " ").trim().slice(0, 80));
+          return (value as (...a: unknown[]) => unknown).apply(target, args);
+        };
+      }
+      return value;
+    },
+  });
+  return { client: wrapped, log };
 }
 
 async function openStore(client: SqlClient): Promise<CommerceDatabase> {
@@ -484,6 +502,73 @@ async function main() {
     assert.ok(!A.data.tenants.some((x) => x.id === "ten_mw_thrown" || x.id === "ten_mw_400"));
     const rows = await mwClient.query("SELECT 1 FROM commerceos.tenants WHERE id IN ('ten_mw_thrown', 'ten_mw_400')");
     assert.strictEqual(rows.rows.length, 0);
+  });
+
+  await runTest("with migration 008 a write is one statement: no transaction round trips, one apply_changes call", async () => {
+    const { client, log } = counting(await migratedClient());
+    const S = await openStore(client);
+    assert.strictEqual((S as unknown as { pg: PgStorePersistence }).pg.oneStatementWrites, true);
+    await S.unit(async () => {
+      S.createTenant(tenant("ten_fast_1")); // the first write also prunes the change log (every 5 min)
+      return true;
+    }, commitAll);
+    log.length = 0;
+    await S.unit(async () => {
+      S.createTenant(tenant("ten_fast_2"));
+      S.recordPlatformSecurityEvent({ id: "sec_fast", event_type: "SUSPICIOUS_SESSION", severity: "LOW", description: "fast", created_at: new Date().toISOString() });
+      return true;
+    }, commitAll);
+    const writes = log.filter((q) => !q.startsWith("WITH s AS")); // syncs (the unit's, and the background loop's)
+    assert.deepStrictEqual(writes.map((q) => (q.includes("apply_changes") ? "apply_changes" : q)), ["apply_changes"], `statements: ${log.join(" | ")}`);
+    const saved = await client.query<{ n: string }>(
+      "SELECT (SELECT count(*) FROM commerceos.tenants WHERE id = 'ten_fast_2') + (SELECT count(*) FROM commerceos.documents WHERE id = 'sec_fast') + (SELECT count(*) FROM commerceos.changes WHERE id IN ('ten_fast_2', 'sec_fast')) AS n"
+    );
+    assert.strictEqual(Number(saved.rows[0].n), 4, "both rows and both change-log entries");
+    await S.shutdown();
+  });
+
+  await runTest("one-statement writes report conflicts with the rows involved (and write nothing)", async () => {
+    const client = await migratedClient();
+    const seedStore = await openStore(client);
+    await seedStore.unit(async () => {
+      seedStore.createTenant(tenant("ten_fast_c"));
+      return true;
+    }, commitAll);
+    await seedStore.shutdown();
+    const p1 = new PgStorePersistence(client);
+    const p2 = new PgStorePersistence(client);
+    const d1 = await p1.load();
+    const d2 = await p2.load();
+    const rename = (data: Record<string, unknown>, name: string) => {
+      const t = (data.tenants as TenantRecord[]).find((x) => x.id === "ten_fast_c");
+      assert.ok(t);
+      t.name = name;
+    };
+    rename(d1, "first");
+    await p1.write(p1.computeChanges(d1, new Set(["tenants"])));
+    rename(d2, "second");
+    const err = await p2.write(p2.computeChanges(d2, new Set(["tenants"]))).then(() => null, (e: unknown) => e);
+    assert.ok(err instanceof StoreConflictError, `got ${String(err)}`);
+    assert.deepStrictEqual(err.rows, [{ collection: "tenants", id: "ten_fast_c" }]);
+    const row = await client.query<{ name: string }>("SELECT data->>'name' AS name FROM commerceos.tenants WHERE id = 'ten_fast_c'");
+    assert.strictEqual(row.rows[0].name, "first");
+  });
+
+  await runTest("without migration 008 (a server started before it's applied) writes still work, statement by statement", async () => {
+    const base = await migratedClient();
+    await base.exec("DROP FUNCTION commerceos.apply_changes(jsonb, text)");
+    const { client, log } = counting(base);
+    const S = await openStore(client);
+    assert.strictEqual((S as unknown as { pg: PgStorePersistence }).pg.oneStatementWrites, false);
+    log.length = 0;
+    await S.unit(async () => {
+      S.createTenant(tenant("ten_slow"));
+      return true;
+    }, commitAll);
+    assert.ok(log.includes("BEGIN"), "the transaction path");
+    const saved = await client.query("SELECT 1 FROM commerceos.changes WHERE id = 'ten_slow'");
+    assert.strictEqual(saved.rows.length, 1);
+    await S.shutdown();
   });
 
   await runTest("a failed request still saves the rows it marked (a failed sign-in's security event), and nothing else", async () => {
