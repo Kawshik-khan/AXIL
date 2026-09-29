@@ -13,7 +13,7 @@
  * Dual targets:
  * 1. Active local engine: .data/commerceos.json
  * 2. Dedicated seed snapshot: src/infrastructure/db/seeds/orders-5000.json
- * 3. PostgreSQL migration: src/infrastructure/db/migrations/005_seed_5000_orders.sql
+ * 3. PostgreSQL migration: src/infrastructure/db/migrations/legacy/005_seed_5000_orders.sql
  */
 
 import fs from 'fs';
@@ -421,7 +421,7 @@ export function generateOrders(count: number = 5000) {
 
   // 3. Generate PostgreSQL Migration (005_seed_5000_orders.sql)
   console.log('\n[4/4] Generating Neon PostgreSQL migration (005_seed_orders.sql)...');
-  const migrationPath = path.resolve(__dirname, `../src/infrastructure/db/migrations/005_seed_${count}_orders.sql`);
+  const migrationPath = path.resolve(__dirname, `../src/infrastructure/db/migrations/legacy/005_seed_${count}_orders.sql`);
 
   let sql = `-- ============================================================\n`;
   sql += `-- CommerceOS Migration 005: Seed ${count.toLocaleString()} Orders & Commerce Telemetry\n`;

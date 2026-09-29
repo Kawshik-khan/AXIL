@@ -11,7 +11,7 @@
  * 
  * Seeds into:
  * 1. Local storage engine (.data/commerceos.json via db.persist())
- * 2. SQL migration file (src/infrastructure/db/migrations/004_seed_1000_customers.sql)
+ * 2. SQL migration file (src/infrastructure/db/migrations/legacy/004_seed_1000_customers.sql)
  */
 
 import fs from 'fs';
@@ -319,7 +319,7 @@ export function runSeed() {
 
   // 2. Generate SQL Migration File for Neon PostgreSQL
   console.log('\n[2/3] Generating SQL migration for Neon PostgreSQL...');
-  const migrationPath = path.resolve(__dirname, `../src/infrastructure/db/migrations/004_seed_${count}_customers.sql`);
+  const migrationPath = path.resolve(__dirname, `../src/infrastructure/db/migrations/legacy/004_seed_${count}_customers.sql`);
 
   let sqlContent = `-- ============================================================\n`;
   sqlContent += `-- CommerceOS Migration 004: Seed ${count.toLocaleString()} Bangladeshi Customers\n`;

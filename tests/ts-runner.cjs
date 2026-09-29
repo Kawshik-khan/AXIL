@@ -40,6 +40,12 @@ if (process.env.NODE_ENV === "test" && process.env.TEST_LLM_LIVE !== "1") {
   process.env.AI_DEMO_MODE = "1";
 }
 
+// Suites never write to a real database, even when the local env selects Postgres (ADR-108). The Postgres test mode
+// (COMMERCEOS_TEST_PG=1) uses an in-memory PGlite database instead.
+if (process.env.NODE_ENV === "test") {
+  delete process.env.DATA_BACKEND;
+}
+
 // Handle module resolution for @/*
 const originalResolveFilename = require("module")._resolveFilename;
 require("module")._resolveFilename = function (request, parent, isMain) {
@@ -81,4 +87,14 @@ require.extensions[".ts"] = function (module, filename) {
 require.extensions[".tsx"] = require.extensions[".ts"];
 
 const testFile = process.argv[2] || "./tests/commerce-tests.ts";
-require(path.resolve(process.cwd(), testFile));
+if (process.env.COMMERCEOS_TEST_PG === "1" && process.env.NODE_ENV === "test") {
+  require("./support/pg-test-store.ts")
+    .installPostgresTestStore()
+    .then(() => require(path.resolve(process.cwd(), testFile)))
+    .catch((err) => {
+      process.stderr.write(`[postgres] test store failed to start: ${err && err.stack ? err.stack : err}\n`);
+      process.exit(1);
+    });
+} else {
+  require(path.resolve(process.cwd(), testFile));
+}

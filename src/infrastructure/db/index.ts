@@ -10,6 +10,8 @@ import type { SalesChannel as OrderSalesChannel } from "@/types/analytics";
 import bcrypt from "bcryptjs";
 import { RoleName } from "@/lib/permissions";
 import { DISABLED_PASSWORD_HASH } from "@/lib/security";
+import { LEASE_TTL_MS, LeaseLostError, PgStorePersistence, type RejectedRow } from "@/infrastructure/store/pg-store";
+import { createNeonSqlClient, storeConnectionString, type SqlClient } from "@/infrastructure/store/sql-client";
 import { ConnectorConfigRecord } from "@/types/connector";
 import {
   Product,
@@ -594,10 +596,41 @@ export type PersistenceBlockedCode =
   | "LOCK_HELD_ON_OTHER_HOST"
   | "DATA_FILE_UNREADABLE"
   | "DATA_FILE_CORRUPT"
-  | "LOCK_LOST";
+  | "LOCK_LOST"
+  | "DATABASE_NOT_CONFIGURED"
+  | "DATABASE_UNAVAILABLE"
+  | "SCHEMA_MISSING";
+
+/** Where the store is persisted (ADR-108): the JSON file (default until cutover) or Postgres. */
+export type StoreBackend = "json" | "pg";
+
+export interface StoreOptions {
+  /** Default: DATA_BACKEND ("pg" selects Postgres; anything else the JSON file). */
+  backend?: StoreBackend;
+  /** Postgres client; default Neon via DATABASE_URL_POOLED / DATABASE_URL. Tests and rehearsals pass PGlite. */
+  client?: SqlClient;
+  /** Persistence on/off. Default: on, except under NODE_ENV=test and in Next.js helper processes. */
+  persist?: boolean;
+  /** The process-wide store of a server or script: retries an unreachable database and exits when it can't own the store. */
+  serverMode?: boolean;
+}
+
+/** Thrown by `db.data` before a Postgres-backed store has loaded; routes answer 503. */
+export class StoreNotReadyError extends AppError {
+  constructor() {
+    super("STORE_NOT_READY", "The data store is still loading. Try again shortly.", 503);
+  }
+}
+
+class StartupRefusal extends Error {}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 export interface PersistenceHealth {
   ok: boolean;
+  backend: StoreBackend;
+  /** False until a Postgres-backed store has loaded its data. */
+  ready: boolean;
   data_dir: string;
   dirty: boolean;
   last_persist_at: string | null;
@@ -607,10 +640,30 @@ export interface PersistenceHealth {
   blocked_code: PersistenceBlockedCode | null;
   lock: { held: boolean; path: string; owner?: { pid: number; host: string; started_at: string } };
   debounce_ms: number;
+  /** Records not saved as they are in memory: refused by Postgres, or without a usable id. Health is not ok while > 0. */
+  unsaved_rows: number;
 }
 
-class CommerceDatabase {
-  public data: DatabaseSchema;
+export class CommerceDatabase {
+  private _data: DatabaseSchema | null = null;
+  /** The working set. A Postgres-backed store throws 503 STORE_NOT_READY here until ready() has loaded it. */
+  public get data(): DatabaseSchema {
+    if (!this._data) throw new StoreNotReadyError();
+    return this._data;
+  }
+  public set data(value: DatabaseSchema) {
+    this._data = value;
+  }
+  public readonly backend: StoreBackend;
+  private readonly options: StoreOptions;
+  private readonly persistenceEnabled: boolean;
+  private readonly serverMode: boolean;
+  private pg: PgStorePersistence | null = null;
+  private readyPromise: Promise<void> | null = null;
+  private leaseHeld = false;
+  private leaseTimer: ReturnType<typeof setInterval> | null = null;
+  private reportedUnwritable = 0;
+  private reportedSanitized = 0;
   private filePath: string;
   private dataDir: string;
   private isTestInstance = false;
@@ -658,11 +711,26 @@ class CommerceDatabase {
   /** The lock content this process wrote; flush() checks the file still says so (review N-2). */
   private lockOwner: { pid: number; host: string; started_at: string } | null = null;
 
-  constructor() {
+  constructor(options: StoreOptions = {}) {
+    this.options = options;
+    this.backend = options.backend ?? (process.env.DATA_BACKEND === "pg" ? "pg" : "json");
+    this.persistenceEnabled = options.persist ?? (process.env.NODE_ENV !== "test" && !this.helperProcess);
+    this.serverMode = options.serverMode ?? false;
     this.dataDir = process.env.COMMERCEOS_DATA_DIR ? path.resolve(process.env.COMMERCEOS_DATA_DIR) : path.join(process.cwd(), ".data");
     this.filePath = path.join(this.dataDir, "commerceos.json");
     this.lockPath = path.join(this.dataDir, "commerceos.lock");
-    const persistent = process.env.NODE_ENV !== "test" && !this.helperProcess;
+    if (this.backend === "pg") {
+      // Postgres (ADR-108): ready() takes the writer lease and loads the data. Without persistence (tests, Next.js helper
+      // processes) the store is in memory, as the JSON backend is under NODE_ENV=test.
+      if (!this.persistenceEnabled) {
+        this._data = CommerceDatabase.emptySchema();
+        this.ensureDefaultSeed();
+        this.readyPromise = Promise.resolve();
+      }
+      return;
+    }
+    this.readyPromise = Promise.resolve();
+    const persistent = this.persistenceEnabled;
     if (persistent) {
       try {
         fs.mkdirSync(this.dataDir, { recursive: true });
@@ -690,7 +758,11 @@ class CommerceDatabase {
         ? "the data store is in use by another process"
         : this.blockedCode === "LOCK_HELD_ON_OTHER_HOST"
           ? "the data store is in use by another host"
-          : "the data store can't be written";
+          : this.blockedCode === "SCHEMA_MISSING"
+            ? "the database has no CommerceOS schema yet (run `npm run db:migrate`)"
+            : this.blockedCode === "DATABASE_NOT_CONFIGURED"
+              ? "DATA_BACKEND=pg is set but DATABASE_URL is not"
+              : "the data store can't be written";
     logger.error("db.refusing_to_start", { code: this.blockedCode, reason: this.persistenceBlocked });
     process.stderr.write(
       `CommerceOS refused to start: ${why} (${this.blockedCode}). ${this.persistenceBlocked}\n` +
@@ -879,9 +951,13 @@ class CommerceDatabase {
   }
 
   public getPersistenceHealth(): PersistenceHealth {
+    if (this.backend === "pg") return this.postgresHealth();
     const owner = this.lockHeld ? undefined : CommerceDatabase.readLockOwner(this.lockPath) ?? undefined;
     return {
       ok: !this.persistenceBlocked && !this.lastPersistError && (this.lockHeld || this.isTestInstance || process.env.NODE_ENV === "test"),
+      backend: "json",
+      ready: true,
+      unsaved_rows: 0,
       data_dir: this.dataDir,
       dirty: this.dirty,
       last_persist_at: this.lastPersistAt,
@@ -891,6 +967,250 @@ class CommerceDatabase {
       lock: { held: this.lockHeld, path: this.lockPath, ...(owner ? { owner } : {}) },
       debounce_ms: this.debounceMs,
     };
+  }
+
+  /** A complete store from parsed data (the JSON file or Postgres): every collection present, legacy values normalized. */
+  public static fromParsed(parsed: Partial<DatabaseSchema>): DatabaseSchema {
+    return {
+      tenants: parsed.tenants || [],
+      users: parsed.users || [],
+      memberships: parsed.memberships || [],
+      invitations: parsed.invitations || [],
+      audit_logs: parsed.audit_logs || [],
+      products: parsed.products || [],
+      product_variants: parsed.product_variants || [],
+      categories: parsed.categories || [],
+      brands: parsed.brands || [],
+      warehouses: parsed.warehouses || [],
+      inventory_items: parsed.inventory_items || [],
+      stock_movements: parsed.stock_movements || [],
+      inventory_reservations: parsed.inventory_reservations || [],
+      order_sequences: parsed.order_sequences || {},
+      customers: parsed.customers || [],
+      customer_addresses: parsed.customer_addresses || [],
+      orders: parsed.orders || [],
+      order_items: parsed.order_items || [],
+      payments: parsed.payments || [],
+      shipments: parsed.shipments || [],
+      returns: parsed.returns || [],
+      refunds: parsed.refunds || [],
+      coupons: parsed.coupons || [],
+      events: parsed.events || [],
+      webhooks: parsed.webhooks || [],
+      connected_channels: parsed.connected_channels || [],
+      customer_identities: parsed.customer_identities || [],
+      conversations: parsed.conversations || [],
+      messages: parsed.messages || [],
+      conversation_assignments: parsed.conversation_assignments || [],
+      conversation_tags: parsed.conversation_tags || [],
+      leads: parsed.leads || [],
+      attachments: parsed.attachments || [],
+      quick_replies: parsed.quick_replies || [],
+      business_hours: parsed.business_hours || [],
+      chat_sessions: parsed.chat_sessions || [],
+      outbound_webhook_deliveries: parsed.outbound_webhook_deliveries || [],
+      agents: parsed.agents || [],
+      agent_policies: parsed.agent_policies || [],
+      agent_runs: parsed.agent_runs || [],
+      agent_tool_calls: parsed.agent_tool_calls || [],
+      agent_prompts: parsed.agent_prompts || [],
+      prompt_versions: parsed.prompt_versions || [],
+      conversation_summaries: parsed.conversation_summaries || [],
+      customer_memories: parsed.customer_memories || [],
+      knowledge_documents: parsed.knowledge_documents || [],
+      knowledge_chunks: parsed.knowledge_chunks || [],
+      ai_traces: parsed.ai_traces || [],
+      ai_usage: parsed.ai_usage || [],
+      ai_feedback: parsed.ai_feedback || [],
+      // Phase 5 Collections
+      workflows: parsed.workflows || [],
+      tasks: parsed.tasks || [],
+      agent_messages: parsed.agent_messages || [],
+      workflow_contexts: parsed.workflow_contexts || [],
+      workflow_artifacts: parsed.workflow_artifacts || [],
+      workflow_checkpoints: parsed.workflow_checkpoints || [],
+      agent_delegations: parsed.agent_delegations || [],
+      agent_verifications: parsed.agent_verifications || [],
+      approval_requests: parsed.approval_requests || [],
+      autonomy_policies: parsed.autonomy_policies || [],
+      workflow_templates: parsed.workflow_templates || [],
+      trigger_rules: parsed.trigger_rules || [],
+      action_receipts: parsed.action_receipts || [],
+      agent_schedules: parsed.agent_schedules || [],
+      // Phase 6 Collections
+      analytics_events: parsed.analytics_events || [],
+      metric_definitions: parsed.metric_definitions || [],
+      metric_snapshots: parsed.metric_snapshots || [],
+      insights: parsed.insights || [],
+      anomalies: parsed.anomalies || [],
+      opportunities: parsed.opportunities || [],
+      risks: parsed.risks || [],
+      recommendations: parsed.recommendations || [],
+      forecast_runs: parsed.forecast_runs || [],
+      simulations: parsed.simulations || [],
+      decision_requests: parsed.decision_requests || [],
+      decision_outcomes: parsed.decision_outcomes || [],
+      customer_intelligence: parsed.customer_intelligence || [],
+      product_performance: parsed.product_performance || [],
+      inventory_intelligence: parsed.inventory_intelligence || [],
+      cohort_records: parsed.cohort_records || [],
+      intelligence_runs: parsed.intelligence_runs || [],
+      model_registry: parsed.model_registry || [],
+      data_quality_reports: parsed.data_quality_reports || [],
+      // Phase 7 Collections
+      audiences: parsed.audiences || [],
+      audience_members: parsed.audience_members || [],
+      audience_snapshots: parsed.audience_snapshots || [],
+      customer_lifecycles: parsed.customer_lifecycles || [],
+      customer_lifecycle_transitions: parsed.customer_lifecycle_transitions || [],
+      journeys: parsed.journeys || [],
+      journey_enrollments: parsed.journey_enrollments || [],
+      journey_executions: parsed.journey_executions || [],
+      campaigns: parsed.campaigns || [],
+      campaign_executions: parsed.campaign_executions || [],
+      content_assets: parsed.content_assets || [],
+      content_templates: parsed.content_templates || [],
+      offers: parsed.offers || [],
+      offer_usages: parsed.offer_usages || [],
+      experiments: parsed.experiments || [],
+      experiment_assignments: parsed.experiment_assignments || [],
+      communication_preferences: parsed.communication_preferences || [],
+      suppression_list: parsed.suppression_list || [],
+      campaign_attributions: parsed.campaign_attributions || [],
+      growth_insights: parsed.growth_insights || [],
+      growth_recommendations: parsed.growth_recommendations || [],
+      abandoned_carts: parsed.abandoned_carts || [],
+      executive_digests: parsed.executive_digests || [],
+      // Phase 8 Collections
+      suppliers: parsed.suppliers || [],
+      supplier_products: parsed.supplier_products || [],
+      purchase_orders: parsed.purchase_orders || [],
+      procurement_recommendations: parsed.procurement_recommendations || [],
+      supplier_performances: parsed.supplier_performances || [],
+      pricing_rules: parsed.pricing_rules || [],
+      pricing_recommendations: parsed.pricing_recommendations || [],
+      price_change_requests: parsed.price_change_requests || [],
+      price_change_executions: parsed.price_change_executions || [],
+      shipment_exceptions: parsed.shipment_exceptions || [],
+      courier_performances: parsed.courier_performances || [],
+      fulfillment_plans: parsed.fulfillment_plans || [],
+      payment_operations: parsed.payment_operations || [],
+      payment_exceptions: parsed.payment_exceptions || [],
+      reconciliation_runs: parsed.reconciliation_runs || [],
+      reconciliation_items: parsed.reconciliation_items || [],
+      financial_exceptions: parsed.financial_exceptions || [],
+      settlement_records: parsed.settlement_records || [],
+      support_tickets: parsed.support_tickets || [],
+      operational_exceptions: parsed.operational_exceptions || [],
+      exception_policies: parsed.exception_policies || [],
+      provider_health: parsed.provider_health || [],
+      provider_incidents: parsed.provider_incidents || [],
+      sla_policies: parsed.sla_policies || [],
+      sla_breaches: parsed.sla_breaches || [],
+      autonomy_budgets: parsed.autonomy_budgets || [],
+      bulk_safeguards: parsed.bulk_safeguards || [],
+      // Phase 9 Collections
+      // Legacy: every workspace used to share "org_default"; it belongs to the demo workspace now (FX-13).
+      organizations: (parsed.organizations || []).map((o: Organization) =>
+        o.id === "org_default" && !o.tenant_id ? { ...o, tenant_id: "ten_default_dhaka" } : o
+      ),
+      business_units: parsed.business_units || [],
+      brand_groups: parsed.brand_groups || [],
+      enterprise_brands: parsed.enterprise_brands || [],
+      enterprise_stores: parsed.enterprise_stores || [],
+      sales_channels: parsed.sales_channels || [],
+      regions: parsed.regions || [],
+      entity_memberships: parsed.entity_memberships || [],
+      enterprise_users: parsed.enterprise_users || [],
+      semantic_metrics: parsed.semantic_metrics || [],
+      enterprise_benchmarks: parsed.enterprise_benchmarks || [],
+      report_definitions: parsed.report_definitions || [],
+      report_executions: parsed.report_executions || [],
+      integration_providers: parsed.integration_providers || [],
+      integration_installations: parsed.integration_installations || [],
+      integration_mappings: parsed.integration_mappings || [],
+      integration_conflicts: parsed.integration_conflicts || [],
+      integration_syncs: parsed.integration_syncs || [],
+      developer_applications: parsed.developer_applications || [],
+      api_keys: parsed.api_keys || [],
+      enterprise_webhooks: parsed.enterprise_webhooks || [],
+      webhook_deliveries: parsed.webhook_deliveries || [],
+      data_assets: parsed.data_assets || [],
+      data_lineage: parsed.data_lineage || [],
+      data_quality_rules: parsed.data_quality_rules || [],
+      data_quality_issues: parsed.data_quality_issues || [],
+      enterprise_customer_identities: parsed.enterprise_customer_identities || [],
+      enterprise_incidents: parsed.enterprise_incidents || [],
+      enterprise_ai_budgets: parsed.enterprise_ai_budgets || [],
+      ai_usage_records: parsed.ai_usage_records || [],
+      // Phase 10 Collections
+      business_objectives: parsed.business_objectives || [],
+      objective_runs: parsed.objective_runs || [],
+      objective_outcomes: parsed.objective_outcomes || [],
+      strategies: parsed.strategies || [],
+      global_decisions: parsed.global_decisions || [],
+      cross_domain_messages: parsed.cross_domain_messages || [],
+      agent_proposals: parsed.agent_proposals || [],
+      agent_conflicts: parsed.agent_conflicts || [],
+      learning_candidates: parsed.learning_candidates || [],
+      ai_models: parsed.ai_models || [],
+      model_deployments: parsed.model_deployments || [],
+      ai_providers: parsed.ai_providers || [],
+      autonomy_recommendations: parsed.autonomy_recommendations || [],
+      platform_health_records: parsed.platform_health_records || [],
+      slo_definitions: parsed.slo_definitions || [],
+      error_budgets: parsed.error_budgets || [],
+      data_residency_policies: parsed.data_residency_policies || [],
+      global_events: parsed.global_events || [],
+      extensions: parsed.extensions || [],
+      plugins: parsed.plugins || [],
+      platform_cost_records: parsed.platform_cost_records || [],
+      autonomous_quality_scores: parsed.autonomous_quality_scores || [],
+      autonomous_workflow_runs: parsed.autonomous_workflow_runs || [],
+      chaos_test_scenarios: parsed.chaos_test_scenarios || [],
+      load_test_scenarios: parsed.load_test_scenarios || [],
+      rollback_actions: parsed.rollback_actions || [],
+      automations: parsed.automations || [],
+      automation_workflows: parsed.automation_workflows || [],
+      automation_workflow_versions: parsed.automation_workflow_versions || [],
+      n8n_instances: parsed.n8n_instances || [],
+      automation_triggers: parsed.automation_triggers || [],
+      automation_executions: parsed.automation_executions || [],
+      automation_execution_steps: parsed.automation_execution_steps || [],
+      idempotency_records: parsed.idempotency_records || [],
+      automation_retries: parsed.automation_retries || [],
+      automation_dead_letters: parsed.automation_dead_letters || [],
+      automation_webhooks: parsed.automation_webhooks || [],
+      automation_webhook_deliveries: parsed.automation_webhook_deliveries || [],
+      automation_audit_logs: parsed.automation_audit_logs || [],
+      connector_configurations: parsed.connector_configurations || [],
+      service_tokens: parsed.service_tokens || [],
+      // MFA was recorded as enabled without any factor existing (STATUS N4); only an enrolled secret counts.
+      platform_memberships: (parsed.platform_memberships || []).map((m: PlatformMembershipRecord) =>
+        m.mfa_enabled && !m.mfa_secret_encrypted ? { ...m, mfa_enabled: false } : m
+      ),
+      plans: parsed.plans || [],
+      plan_versions: parsed.plan_versions || [],
+      subscriptions: parsed.subscriptions || [],
+      entitlements: parsed.entitlements || [],
+      tenant_entitlements: parsed.tenant_entitlements || [],
+      usage_records: parsed.usage_records || [],
+      platform_feature_flags: parsed.platform_feature_flags || [],
+      platform_settings: parsed.platform_settings || [],
+      platform_setting_versions: parsed.platform_setting_versions || [],
+      platform_incidents: parsed.platform_incidents || [],
+      platform_maintenance_windows: parsed.platform_maintenance_windows || [],
+      platform_audit_logs: parsed.platform_audit_logs || [],
+      platform_kill_switches: parsed.platform_kill_switches || [],
+      platform_security_events: parsed.platform_security_events || [],
+      platform_announcements: parsed.platform_announcements || [],
+      platform_api_keys: parsed.platform_api_keys || [],
+      impersonation_sessions: parsed.impersonation_sessions || [],
+    };
+  }
+
+  public static emptySchema(): DatabaseSchema {
+    return CommerceDatabase.fromParsed({});
   }
 
   private loadData(): DatabaseSchema {
@@ -904,243 +1224,7 @@ class CommerceDatabase {
     }
     try {
       if (raw !== null) {
-        const parsed = JSON.parse(raw);
-        return {
-          tenants: parsed.tenants || [],
-          users: parsed.users || [],
-          memberships: parsed.memberships || [],
-          invitations: parsed.invitations || [],
-          audit_logs: parsed.audit_logs || [],
-          products: parsed.products || [],
-          product_variants: parsed.product_variants || [],
-          categories: parsed.categories || [],
-          brands: parsed.brands || [],
-          warehouses: parsed.warehouses || [],
-          inventory_items: parsed.inventory_items || [],
-          stock_movements: parsed.stock_movements || [],
-          inventory_reservations: parsed.inventory_reservations || [],
-          order_sequences: parsed.order_sequences || {},
-          customers: parsed.customers || [],
-          customer_addresses: parsed.customer_addresses || [],
-          orders: parsed.orders || [],
-          order_items: parsed.order_items || [],
-          payments: parsed.payments || [],
-          shipments: parsed.shipments || [],
-          returns: parsed.returns || [],
-          refunds: parsed.refunds || [],
-          coupons: parsed.coupons || [],
-          events: parsed.events || [],
-          webhooks: parsed.webhooks || [],
-          connected_channels: parsed.connected_channels || [],
-          customer_identities: parsed.customer_identities || [],
-          conversations: parsed.conversations || [],
-          messages: parsed.messages || [],
-          conversation_assignments: parsed.conversation_assignments || [],
-          conversation_tags: parsed.conversation_tags || [],
-          leads: parsed.leads || [],
-          attachments: parsed.attachments || [],
-          quick_replies: parsed.quick_replies || [],
-          business_hours: parsed.business_hours || [],
-          chat_sessions: parsed.chat_sessions || [],
-          outbound_webhook_deliveries: parsed.outbound_webhook_deliveries || [],
-          agents: parsed.agents || [],
-          agent_policies: parsed.agent_policies || [],
-          agent_runs: parsed.agent_runs || [],
-          agent_tool_calls: parsed.agent_tool_calls || [],
-          agent_prompts: parsed.agent_prompts || [],
-          prompt_versions: parsed.prompt_versions || [],
-          conversation_summaries: parsed.conversation_summaries || [],
-          customer_memories: parsed.customer_memories || [],
-          knowledge_documents: parsed.knowledge_documents || [],
-          knowledge_chunks: parsed.knowledge_chunks || [],
-          ai_traces: parsed.ai_traces || [],
-          ai_usage: parsed.ai_usage || [],
-          ai_feedback: parsed.ai_feedback || [],
-          // Phase 5 Collections
-          workflows: parsed.workflows || [],
-          tasks: parsed.tasks || [],
-          agent_messages: parsed.agent_messages || [],
-          workflow_contexts: parsed.workflow_contexts || [],
-          workflow_artifacts: parsed.workflow_artifacts || [],
-          workflow_checkpoints: parsed.workflow_checkpoints || [],
-          agent_delegations: parsed.agent_delegations || [],
-          agent_verifications: parsed.agent_verifications || [],
-          approval_requests: parsed.approval_requests || [],
-          autonomy_policies: parsed.autonomy_policies || [],
-          workflow_templates: parsed.workflow_templates || [],
-          trigger_rules: parsed.trigger_rules || [],
-          action_receipts: parsed.action_receipts || [],
-          agent_schedules: parsed.agent_schedules || [],
-          // Phase 6 Collections
-          analytics_events: parsed.analytics_events || [],
-          metric_definitions: parsed.metric_definitions || [],
-          metric_snapshots: parsed.metric_snapshots || [],
-          insights: parsed.insights || [],
-          anomalies: parsed.anomalies || [],
-          opportunities: parsed.opportunities || [],
-          risks: parsed.risks || [],
-          recommendations: parsed.recommendations || [],
-          forecast_runs: parsed.forecast_runs || [],
-          simulations: parsed.simulations || [],
-          decision_requests: parsed.decision_requests || [],
-          decision_outcomes: parsed.decision_outcomes || [],
-          customer_intelligence: parsed.customer_intelligence || [],
-          product_performance: parsed.product_performance || [],
-          inventory_intelligence: parsed.inventory_intelligence || [],
-          cohort_records: parsed.cohort_records || [],
-          intelligence_runs: parsed.intelligence_runs || [],
-          model_registry: parsed.model_registry || [],
-          data_quality_reports: parsed.data_quality_reports || [],
-          // Phase 7 Collections
-          audiences: parsed.audiences || [],
-          audience_members: parsed.audience_members || [],
-          audience_snapshots: parsed.audience_snapshots || [],
-          customer_lifecycles: parsed.customer_lifecycles || [],
-          customer_lifecycle_transitions: parsed.customer_lifecycle_transitions || [],
-          journeys: parsed.journeys || [],
-          journey_enrollments: parsed.journey_enrollments || [],
-          journey_executions: parsed.journey_executions || [],
-          campaigns: parsed.campaigns || [],
-          campaign_executions: parsed.campaign_executions || [],
-          content_assets: parsed.content_assets || [],
-          content_templates: parsed.content_templates || [],
-          offers: parsed.offers || [],
-          offer_usages: parsed.offer_usages || [],
-          experiments: parsed.experiments || [],
-          experiment_assignments: parsed.experiment_assignments || [],
-          communication_preferences: parsed.communication_preferences || [],
-          suppression_list: parsed.suppression_list || [],
-          campaign_attributions: parsed.campaign_attributions || [],
-          growth_insights: parsed.growth_insights || [],
-          growth_recommendations: parsed.growth_recommendations || [],
-          abandoned_carts: parsed.abandoned_carts || [],
-          executive_digests: parsed.executive_digests || [],
-          // Phase 8 Collections
-          suppliers: parsed.suppliers || [],
-          supplier_products: parsed.supplier_products || [],
-          purchase_orders: parsed.purchase_orders || [],
-          procurement_recommendations: parsed.procurement_recommendations || [],
-          supplier_performances: parsed.supplier_performances || [],
-          pricing_rules: parsed.pricing_rules || [],
-          pricing_recommendations: parsed.pricing_recommendations || [],
-          price_change_requests: parsed.price_change_requests || [],
-          price_change_executions: parsed.price_change_executions || [],
-          shipment_exceptions: parsed.shipment_exceptions || [],
-          courier_performances: parsed.courier_performances || [],
-          fulfillment_plans: parsed.fulfillment_plans || [],
-          payment_operations: parsed.payment_operations || [],
-          payment_exceptions: parsed.payment_exceptions || [],
-          reconciliation_runs: parsed.reconciliation_runs || [],
-          reconciliation_items: parsed.reconciliation_items || [],
-          financial_exceptions: parsed.financial_exceptions || [],
-          settlement_records: parsed.settlement_records || [],
-          support_tickets: parsed.support_tickets || [],
-          operational_exceptions: parsed.operational_exceptions || [],
-          exception_policies: parsed.exception_policies || [],
-          provider_health: parsed.provider_health || [],
-          provider_incidents: parsed.provider_incidents || [],
-          sla_policies: parsed.sla_policies || [],
-          sla_breaches: parsed.sla_breaches || [],
-          autonomy_budgets: parsed.autonomy_budgets || [],
-          bulk_safeguards: parsed.bulk_safeguards || [],
-          // Phase 9 Collections
-          // Legacy: every workspace used to share "org_default"; it belongs to the demo workspace now (FX-13).
-          organizations: (parsed.organizations || []).map((o: Organization) =>
-            o.id === "org_default" && !o.tenant_id ? { ...o, tenant_id: "ten_default_dhaka" } : o
-          ),
-          business_units: parsed.business_units || [],
-          brand_groups: parsed.brand_groups || [],
-          enterprise_brands: parsed.enterprise_brands || [],
-          enterprise_stores: parsed.enterprise_stores || [],
-          sales_channels: parsed.sales_channels || [],
-          regions: parsed.regions || [],
-          entity_memberships: parsed.entity_memberships || [],
-          enterprise_users: parsed.enterprise_users || [],
-          semantic_metrics: parsed.semantic_metrics || [],
-          enterprise_benchmarks: parsed.enterprise_benchmarks || [],
-          report_definitions: parsed.report_definitions || [],
-          report_executions: parsed.report_executions || [],
-          integration_providers: parsed.integration_providers || [],
-          integration_installations: parsed.integration_installations || [],
-          integration_mappings: parsed.integration_mappings || [],
-          integration_conflicts: parsed.integration_conflicts || [],
-          integration_syncs: parsed.integration_syncs || [],
-          developer_applications: parsed.developer_applications || [],
-          api_keys: parsed.api_keys || [],
-          enterprise_webhooks: parsed.enterprise_webhooks || [],
-          webhook_deliveries: parsed.webhook_deliveries || [],
-          data_assets: parsed.data_assets || [],
-          data_lineage: parsed.data_lineage || [],
-          data_quality_rules: parsed.data_quality_rules || [],
-          data_quality_issues: parsed.data_quality_issues || [],
-          enterprise_customer_identities: parsed.enterprise_customer_identities || [],
-          enterprise_incidents: parsed.enterprise_incidents || [],
-          enterprise_ai_budgets: parsed.enterprise_ai_budgets || [],
-          ai_usage_records: parsed.ai_usage_records || [],
-          // Phase 10 Collections
-          business_objectives: parsed.business_objectives || [],
-          objective_runs: parsed.objective_runs || [],
-          objective_outcomes: parsed.objective_outcomes || [],
-          strategies: parsed.strategies || [],
-          global_decisions: parsed.global_decisions || [],
-          cross_domain_messages: parsed.cross_domain_messages || [],
-          agent_proposals: parsed.agent_proposals || [],
-          agent_conflicts: parsed.agent_conflicts || [],
-          learning_candidates: parsed.learning_candidates || [],
-          ai_models: parsed.ai_models || [],
-          model_deployments: parsed.model_deployments || [],
-          ai_providers: parsed.ai_providers || [],
-          autonomy_recommendations: parsed.autonomy_recommendations || [],
-          platform_health_records: parsed.platform_health_records || [],
-          slo_definitions: parsed.slo_definitions || [],
-          error_budgets: parsed.error_budgets || [],
-          data_residency_policies: parsed.data_residency_policies || [],
-          global_events: parsed.global_events || [],
-          extensions: parsed.extensions || [],
-          plugins: parsed.plugins || [],
-          platform_cost_records: parsed.platform_cost_records || [],
-          autonomous_quality_scores: parsed.autonomous_quality_scores || [],
-          autonomous_workflow_runs: parsed.autonomous_workflow_runs || [],
-          chaos_test_scenarios: parsed.chaos_test_scenarios || [],
-          load_test_scenarios: parsed.load_test_scenarios || [],
-          rollback_actions: parsed.rollback_actions || [],
-          automations: parsed.automations || [],
-          automation_workflows: parsed.automation_workflows || [],
-          automation_workflow_versions: parsed.automation_workflow_versions || [],
-          n8n_instances: parsed.n8n_instances || [],
-          automation_triggers: parsed.automation_triggers || [],
-          automation_executions: parsed.automation_executions || [],
-          automation_execution_steps: parsed.automation_execution_steps || [],
-          idempotency_records: parsed.idempotency_records || [],
-          automation_retries: parsed.automation_retries || [],
-          automation_dead_letters: parsed.automation_dead_letters || [],
-          automation_webhooks: parsed.automation_webhooks || [],
-          automation_webhook_deliveries: parsed.automation_webhook_deliveries || [],
-          automation_audit_logs: parsed.automation_audit_logs || [],
-          connector_configurations: parsed.connector_configurations || [],
-          service_tokens: parsed.service_tokens || [],
-          // MFA was recorded as enabled without any factor existing (STATUS N4); only an enrolled secret counts.
-          platform_memberships: (parsed.platform_memberships || []).map((m: PlatformMembershipRecord) =>
-            m.mfa_enabled && !m.mfa_secret_encrypted ? { ...m, mfa_enabled: false } : m
-          ),
-          plans: parsed.plans || [],
-          plan_versions: parsed.plan_versions || [],
-          subscriptions: parsed.subscriptions || [],
-          entitlements: parsed.entitlements || [],
-          tenant_entitlements: parsed.tenant_entitlements || [],
-          usage_records: parsed.usage_records || [],
-          platform_feature_flags: parsed.platform_feature_flags || [],
-          platform_settings: parsed.platform_settings || [],
-          platform_setting_versions: parsed.platform_setting_versions || [],
-          platform_incidents: parsed.platform_incidents || [],
-          platform_maintenance_windows: parsed.platform_maintenance_windows || [],
-          platform_audit_logs: parsed.platform_audit_logs || [],
-          platform_kill_switches: parsed.platform_kill_switches || [],
-          platform_security_events: parsed.platform_security_events || [],
-          platform_announcements: parsed.platform_announcements || [],
-          platform_api_keys: parsed.platform_api_keys || [],
-          impersonation_sessions: parsed.impersonation_sessions || [],
-        };
+        return CommerceDatabase.fromParsed(JSON.parse(raw) as Partial<DatabaseSchema>);
       }
     } catch (err) {
       // Corrupt JSON: keep it aside (never delete) so it can be inspected or repaired, then start from seeds.
@@ -1389,7 +1473,7 @@ class CommerceDatabase {
   /** Called by every mutating method: marks the store dirty and schedules one coalesced flush. */
   private persist(): void {
     this.writeSignals++;
-    if (this.isTestInstance || process.env.NODE_ENV === "test" || this.helperProcess) return;
+    if (this.isTestInstance || !this.persistenceEnabled) return;
     if (this.persistenceBlocked) {
       // Never acknowledge a change that can't be saved (review L-2). The in-memory change is discarded with the process.
       throw new AppError("STORE_UNAVAILABLE", "The data store can't save changes right now. Nothing was saved.", 503);
@@ -1415,8 +1499,9 @@ class CommerceDatabase {
 
   /** Writes the current snapshot if anything changed. Safe to call concurrently; also used on shutdown. */
   public async flush(): Promise<void> {
+    if (this.backend === "pg") return this.flushPostgres();
     if (this.flushing) await this.flushing;
-    if (!this.dirty || this.persistenceBlocked || this.isTestInstance || process.env.NODE_ENV === "test") return;
+    if (!this.dirty || this.persistenceBlocked || this.isTestInstance || !this.persistenceEnabled) return;
     if (!this.stillOwnsLock()) {
       // Someone else holds the lock now (a takeover race, or a host whose pid we couldn't check). Writing would
       // overwrite their data: stop writing, keep our changes unsaved, and report not ready (review N-2/N-4).
@@ -1447,6 +1532,204 @@ class CommerceDatabase {
       }
     })();
     await this.flushing;
+  }
+
+  // ---- Postgres backend (FIX_IMPLEMENTATION_PLAN FX-42/FX-43, ADR-108) ----
+  // The same working set and synchronous API; Postgres is the system of record. ready() takes the single-writer lease
+  // (commerceos.store_writer) and loads every table; each coalesced flush writes the changed rows in one transaction.
+
+  /** Resolves once the store has its data: immediately for the JSON file, after lease + load for Postgres. */
+  public ready(): Promise<void> {
+    if (!this.readyPromise) this.readyPromise = this.initializePostgres();
+    return this.readyPromise;
+  }
+
+  public isReady(): boolean {
+    return this._data !== null;
+  }
+
+  private async initializePostgres(): Promise<void> {
+    let client = this.options.client ?? null;
+    if (!client) {
+      const url = storeConnectionString();
+      if (!url) {
+        this.block("DATABASE_NOT_CONFIGURED", "DATA_BACKEND=pg needs DATABASE_URL (or DATABASE_URL_POOLED).");
+        return this.failStartup();
+      }
+      client = createNeonSqlClient(url);
+    }
+    const pg = new PgStorePersistence(client);
+    this.pg = pg;
+    let delay = 1_000;
+    for (;;) {
+      try {
+        await this.openPostgres(pg);
+        return;
+      } catch (err) {
+        if (err instanceof StartupRefusal) return this.failStartup();
+        this.block("DATABASE_UNAVAILABLE", `Postgres is unreachable: ${(err as Error).message}`);
+        logger.error("db.pg_unavailable", { error: (err as Error).message, retry_in_ms: this.serverMode ? delay : null });
+        if (!this.serverMode) throw err;
+        await sleep(delay);
+        delay = Math.min(delay * 2, 30_000);
+      }
+    }
+  }
+
+  private async openPostgres(pg: PgStorePersistence): Promise<void> {
+    if (!(await pg.schemaPresent())) {
+      this.block("SCHEMA_MISSING", "The commerceos schema is missing: run `npm run db:migrate` (migration 006).");
+      throw new StartupRefusal();
+    }
+    // A writer that stopped without releasing the lease is replaced once its lease expires.
+    const deadline = Date.now() + LEASE_TTL_MS + 5_000;
+    for (;;) {
+      const lease = await pg.acquireLease();
+      if (lease.acquired) break;
+      const holder = lease.holder;
+      if (Date.now() > deadline) {
+        this.block(
+          "LOCK_HELD_BY_OTHER_PROCESS",
+          `Another process (${holder?.host ?? "unknown host"}, pid ${holder?.pid ?? "?"}, since ${holder?.started_at ?? "?"}) owns the data store. Only one writer is allowed.`
+        );
+        throw new StartupRefusal();
+      }
+      logger.warn("db.pg_lease_wait", { owner_host: holder?.host, owner_pid: holder?.pid, heartbeat_at: holder?.heartbeat_at });
+      await sleep(2_000);
+    }
+    this.leaseHeld = true;
+    const loaded = await pg.load();
+    this._data = CommerceDatabase.fromParsed(loaded as Partial<DatabaseSchema>);
+    this.persistenceBlocked = null;
+    this.blockedCode = null;
+    this.ensureDefaultSeed();
+    this.startReservationSweeper();
+    this.startLeaseHeartbeat(pg);
+    logger.info("db.pg_ready", {
+      tenants: this._data.tenants.length,
+      orders: this._data.orders.length,
+      customers: this._data.customers.length,
+    });
+  }
+
+  /** Server: log and exit, as with the JSON lock (FX-24). Tests and scripts: reject ready(). */
+  private failStartup(): never {
+    if (this.serverMode) {
+      this.refuseToStart();
+    }
+    throw new Error(`The data store can't start (${this.blockedCode}): ${this.persistenceBlocked}`);
+  }
+
+  private startLeaseHeartbeat(pg: PgStorePersistence): void {
+    const renew = async () => {
+      if (!this.leaseHeld) return;
+      try {
+        if (!(await pg.renewLease())) this.leaseLost();
+      } catch (err) {
+        // A dropped connection: the next write's fencing check decides; nothing is written without the lease.
+        logger.warn("db.pg_lease_renew_failed", { error: (err as Error).message });
+      }
+    };
+    this.leaseTimer = setInterval(() => void renew(), Math.max(1_000, Math.floor(LEASE_TTL_MS / 3)));
+    this.leaseTimer.unref();
+  }
+
+  private leaseLost(): void {
+    this.leaseHeld = false;
+    if (this.leaseTimer) clearInterval(this.leaseTimer);
+    this.block("LOCK_LOST", "Another process took over the store writer lease; writes stopped.");
+    logger.error("db.pg_lease_lost", {});
+  }
+
+  private async flushPostgres(): Promise<void> {
+    if (this.flushing) await this.flushing;
+    const pg = this.pg;
+    const data = this._data;
+    if (!this.dirty || this.persistenceBlocked || this.isTestInstance || !this.persistenceEnabled || !pg || !data) return;
+    this.dirty = false;
+    this.flushing = (async () => {
+      try {
+        const changes = pg.computeChanges(data as unknown as Record<string, unknown>);
+        this.reportUnwritable(changes.unwritable, changes.sanitizedRows);
+        if (changes.rowCount > 0) {
+          const report = await pg.write(changes);
+          if (report.rejected.length) {
+            logger.error("db.pg_rows_not_saved", { rejected: report.rejected.length, written: report.written });
+          }
+        }
+        this.lastPersistError = null;
+        this.lastPersistAt = new Date().toISOString();
+      } catch (err) {
+        this.dirty = true; // retried, never silently dropped
+        if (err instanceof LeaseLostError) {
+          this.leaseLost();
+          return;
+        }
+        this.lastPersistError = { at: new Date().toISOString(), message: (err as Error).message };
+        logger.error("db.persist_failed", { backend: "pg", error: (err as Error).message });
+        setTimeout(() => void this.flush(), 1_000).unref();
+      } finally {
+        this.flushing = null;
+      }
+    })();
+    await this.flushing;
+  }
+
+  /** Logged when the numbers change, not on every flush. */
+  private reportUnwritable(unwritable: RejectedRow[], sanitized: number): void {
+    if (unwritable.length !== this.reportedUnwritable) {
+      this.reportedUnwritable = unwritable.length;
+      if (unwritable.length) {
+        logger.error("db.pg_rows_unwritable", {
+          count: unwritable.length,
+          sample: unwritable.slice(0, 10).map((r) => ({ collection: r.collection, id: r.id, reason: r.reason })),
+        });
+      }
+    }
+    if (sanitized !== this.reportedSanitized) {
+      this.reportedSanitized = sanitized;
+      if (sanitized) logger.warn("db.pg_rows_sanitized", { count: sanitized });
+    }
+  }
+
+  private postgresHealth(): PersistenceHealth {
+    const unsaved = this.pg ? this.pg.unsavedRows().length : 0;
+    const ready = this._data !== null;
+    const writerOk = this.leaseHeld || this.isTestInstance || !this.persistenceEnabled;
+    return {
+      ok: ready && !this.persistenceBlocked && !this.lastPersistError && writerOk && unsaved === 0,
+      backend: "pg",
+      ready,
+      data_dir: this.dataDir,
+      dirty: this.dirty,
+      last_persist_at: this.lastPersistAt,
+      last_persist_error: this.lastPersistError,
+      blocked_reason: this.persistenceBlocked,
+      blocked_code: this.blockedCode,
+      lock: { held: this.leaseHeld, path: "postgres:commerceos.store_writer" },
+      debounce_ms: this.debounceMs,
+      unsaved_rows: unsaved,
+    };
+  }
+
+  /** The records that aren't saved as they are in memory (Postgres backend), for logs and tests. */
+  public getUnsavedRows(): RejectedRow[] {
+    return this.pg ? this.pg.unsavedRows() : [];
+  }
+
+  /** Postgres reachable within the timeout (always true for the JSON file). */
+  public async pingDatabase(timeoutMs = 2_000): Promise<boolean> {
+    return this.pg ? this.pg.ping(timeoutMs) : true;
+  }
+
+  /** Flush, then give up the writer lease (Postgres) so the next process doesn't wait for it to expire. */
+  public async shutdown(): Promise<void> {
+    await this.flush();
+    if (this.leaseTimer) clearInterval(this.leaseTimer);
+    if (this.pg && this.leaseHeld) {
+      await this.pg.releaseLease().catch(() => undefined);
+      this.leaseHeld = false;
+    }
   }
 
   private seedPasswordHashCache: string | null = null;
@@ -4710,7 +4993,14 @@ class CommerceDatabase {
     let item = this.findInventoryItem(tenantId, params.warehouse_id, params.product_variant_id);
 
     if (!item) {
-      // Initialize item if doesn't exist yet
+      // A new stock row needs this workspace's own variant and warehouse. Any id used to be accepted, so another
+      // workspace's ids created a phantom row (with the same id as that workspace's row), and Postgres refuses such a
+      // row by its foreign keys (ADR-108).
+      const variantOwned = this.data.product_variants.some((v) => v.id === params.product_variant_id && v.tenant_id === tenantId);
+      const warehouseOwned = this.data.warehouses.some((w) => w.id === params.warehouse_id && w.tenant_id === tenantId);
+      if (!variantOwned || !warehouseOwned) {
+        throw new AppError("NOT_FOUND", !variantOwned ? "Product variant not found." : "Warehouse not found.", 404);
+      }
       item = {
         id: `inv_${params.product_variant_id}_${params.warehouse_id}`,
         tenant_id: tenantId,
@@ -8181,7 +8471,8 @@ class CommerceDatabase {
 
   // For clean test suite execution
   public clearAllForTesting(): void {
-    this.isTestInstance = true;
+    // An explicitly persistent store (the Postgres test mode) keeps saving, so the clear itself is exercised.
+    if (this.options.persist !== true) this.isTestInstance = true;
     this.data = {
       tenants: [],
       users: [],
@@ -9571,14 +9862,21 @@ class CommerceDatabase {
  * One store per process (FX-24): Next.js can evaluate this module more than once (dev reloads, separate route bundles).
  * Two instances would each hold their own copy of the data and overwrite each other's writes.
  */
-const globalStore = globalThis as typeof globalThis & { __commerceosDb?: CommerceDatabase; __commerceosDbShutdownHooked?: boolean };
-export const db: CommerceDatabase = globalStore.__commerceosDb ?? (globalStore.__commerceosDb = new CommerceDatabase());
+const globalStore = globalThis as typeof globalThis & {
+  __commerceosDb?: CommerceDatabase;
+  __commerceosDbShutdownHooked?: boolean;
+  /** Set only by the test runner's Postgres mode (tests/support/pg-test-store.ts) before this module loads. */
+  __commerceosDbFactory?: (store: typeof CommerceDatabase) => CommerceDatabase;
+};
+export const db: CommerceDatabase =
+  globalStore.__commerceosDb ??
+  (globalStore.__commerceosDb = globalStore.__commerceosDbFactory?.(CommerceDatabase) ?? new CommerceDatabase({ serverMode: true }));
 
 if (!globalStore.__commerceosDbShutdownHooked && process.env.NODE_ENV !== "test") {
   globalStore.__commerceosDbShutdownHooked = true;
   for (const signal of ["SIGTERM", "SIGINT"] as const) {
     process.once(signal, () => {
-      void db.flush().finally(() => process.exit(0));
+      void db.shutdown().finally(() => process.exit(0));
     });
   }
 }

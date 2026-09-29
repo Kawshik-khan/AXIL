@@ -23,6 +23,6 @@ src/infrastructure/db/seeds/customers-10000.json
 src/infrastructure/db/seeds/customers-1000.json
 src/infrastructure/db/seeds/orders-5000.json
 src/infrastructure/db/seeds/growth-data.json
-src/infrastructure/db/migrations/004_seed_10000_customers.sql
-src/infrastructure/db/migrations/004_seed_1000_customers.sql
-src/infrastructure/db/migrations/005_seed_5000_orders.sql
+src/infrastructure/db/migrations/legacy/004_seed_10000_customers.sql
+src/infrastructure/db/migrations/legacy/004_seed_1000_customers.sql
+src/infrastructure/db/migrations/legacy/005_seed_5000_orders.sql
