@@ -3,8 +3,9 @@ import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { globalDecisionEngineService } from "@/domains/autonomous/services";
 import { DecisionStatus } from "@/types/autonomous";
+import { withStore } from "@/lib/store-unit";
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.DECISIONS_READ);
@@ -20,3 +21,5 @@ export async function GET(request: Request) {
     return apiError(err);
   }
 }
+
+export const GET = withStore("GET", handleGET);

@@ -1,8 +1,9 @@
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { ServiceTokenService } from "@/domains/automation/services/service-token.service";
+import { withStore } from "@/lib/store-unit";
 
 /** Revokes a service token immediately. */
-export async function DELETE(request: Request, { params }: { params: { id: string } }) {
+async function handleDELETE(request: Request, { params }: { params: { id: string } }) {
   try {
     const context = await extractRequestContext(request);
     return apiSuccess({ service_token: ServiceTokenService.revoke(context, params.id) });
@@ -10,3 +11,5 @@ export async function DELETE(request: Request, { params }: { params: { id: strin
     return apiError(err);
   }
 }
+
+export const DELETE = withStore("DELETE", handleDELETE);

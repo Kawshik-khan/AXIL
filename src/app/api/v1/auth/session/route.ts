@@ -1,9 +1,10 @@
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { db } from "@/infrastructure/db";
+import { withStore } from "@/lib/store-unit";
 
 export const dynamic = "force-dynamic";
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     const context = await extractRequestContext(request);
     const platformMembership = db.findPlatformMembershipByUserId(context.user.id);
@@ -25,3 +26,5 @@ export async function GET(request: Request) {
     return errRes;
   }
 }
+
+export const GET = withStore("GET", handleGET);

@@ -3,8 +3,9 @@ import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { metricRegistryService } from "@/domains/intelligence/services/metric-registry.service";
 import { MetricCategory } from "@/types/intelligence";
+import { withStore } from "@/lib/store-unit";
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.ANALYTICS_READ);
@@ -26,3 +27,5 @@ export async function GET(request: Request) {
     return apiError(err);
   }
 }
+
+export const GET = withStore("GET", handleGET);

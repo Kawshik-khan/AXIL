@@ -5,6 +5,7 @@ import { RbacService } from "@/domains/rbac/service";
 import { PERMISSIONS } from "@/lib/permissions";
 import { AutomationRegistryService } from "@/domains/automation/services/automation-registry.service";
 import { NotFoundError } from "@/lib/errors";
+import { withStore } from "@/lib/store-unit";
 
 // FX-12: workflow bindings, ownership and tenant can't be changed through this route.
 const AutomationPatch = z
@@ -17,7 +18,7 @@ const AutomationPatch = z
   .partial()
   .strict();
 
-export async function GET(
+async function handleGET(
   request: Request,
   { params }: { params: { id: string } }
 ) {
@@ -40,7 +41,7 @@ export async function GET(
   }
 }
 
-export async function PATCH(
+async function handlePATCH(
   request: Request,
   { params }: { params: { id: string } }
 ) {
@@ -61,3 +62,6 @@ export async function PATCH(
     return apiError(err);
   }
 }
+
+export const GET = withStore("GET", handleGET);
+export const PATCH = withStore("PATCH", handlePATCH);

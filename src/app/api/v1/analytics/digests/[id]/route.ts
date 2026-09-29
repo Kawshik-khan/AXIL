@@ -1,8 +1,9 @@
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { analyticsService } from "@/domains/analytics/analytics.service";
 import { NotFoundError } from "@/lib/errors";
+import { withStore } from "@/lib/store-unit";
 
-export async function GET(
+async function handleGET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -20,3 +21,5 @@ export async function GET(
     return apiError(err);
   }
 }
+
+export const GET = withStore("GET", handleGET);

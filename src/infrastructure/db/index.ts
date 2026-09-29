@@ -11,8 +11,8 @@ import type { SalesChannel as OrderSalesChannel } from "@/types/analytics";
 import bcrypt from "bcryptjs";
 import { RoleName } from "@/lib/permissions";
 import { DISABLED_PASSWORD_HASH } from "@/lib/security";
-import { LEASE_TTL_MS, LeaseLostError, PgStorePersistence, type RejectedRow } from "@/infrastructure/store/pg-store";
-import { createNeonSqlClient, storeConnectionString, type SqlClient } from "@/infrastructure/store/sql-client";
+import { PgStorePersistence, StoreConflictError, logUnwritable, type RejectedRow } from "@/infrastructure/store/pg-store";
+import { createNeonSqlClient, isDataRejected, pgErrorFields, storeConnectionString, type SqlClient } from "@/infrastructure/store/sql-client";
 import { ConnectorConfigRecord } from "@/types/connector";
 import {
   Product,
@@ -629,9 +629,33 @@ class StartupRefusal extends Error {}
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-/** Writes stop after half the lease TTL without confirmation; reads after 80% (before another process may take over). */
-const LEASE_WRITE_FENCE = 0.5;
-const LEASE_READ_FENCE = 0.8;
+/**
+ * One writer at a time within this server: a unit of work (an API request that may change data), a background commit,
+ * a sync from other servers and the reservation sweep each hold it while they run (ADR-109).
+ */
+class StoreLock {
+  private tail: Promise<void> = Promise.resolve();
+  private waiting = 0;
+  /** Held or queued. */
+  get busy(): boolean {
+    return this.waiting > 0;
+  }
+  run<T>(fn: () => Promise<T>): Promise<T> {
+    const previous = this.tail;
+    let release!: () => void;
+    this.tail = new Promise<void>((resolve) => (release = resolve));
+    this.waiting++;
+    return previous.then(fn).finally(() => {
+      this.waiting--;
+      release();
+    });
+  }
+}
+
+/** Reads see other servers' changes at most this late (0: sync before every read request). */
+const SYNC_INTERVAL_MS = envNumber("STORE_SYNC_INTERVAL_MS", 1_000, 0);
+/** Changes made outside any unit of work (no store method reported them) are found and committed at least this often. */
+const SWEEP_UNTRACKED_MS = 30_000;
 
 export interface PersistenceHealth {
   ok: boolean;
@@ -656,10 +680,6 @@ export class CommerceDatabase {
   /** The working set. A Postgres-backed store throws 503 STORE_NOT_READY here until ready() has loaded it. */
   public get data(): DatabaseSchema {
     if (!this._data) throw new StoreNotReadyError();
-    if (this.fenced || (this.pg && this.leaseStale(LEASE_READ_FENCE))) {
-      // Another process may own the store by now: memory could be stale (a revoked membership, a changed price).
-      throw new AppError("STORE_UNAVAILABLE", "The data store is unavailable right now. Try again shortly.", 503);
-    }
     return this._data;
   }
   public set data(value: DatabaseSchema) {
@@ -671,16 +691,17 @@ export class CommerceDatabase {
   private readonly serverMode: boolean;
   private pg: PgStorePersistence | null = null;
   private readyPromise: Promise<void> | null = null;
-  private leaseHeld = false;
-  private leaseTimer: ReturnType<typeof setInterval> | null = null;
-  /** When this process last proved it holds the lease (acquire, renewal, or a committed write). */
-  private leaseConfirmedAt = 0;
-  /** Set when the lease was lost (tests and scripts; a server exits instead). */
-  private fenced = false;
+  private readonly lock = new StoreLock();
+  /** True while a unit of work runs: persist() records the collections for that unit's commit. */
+  private unitActive = false;
+  private unitTouched: Set<string> | "all" = new Set();
+  private loopTimer: ReturnType<typeof setInterval> | null = null;
+  private lastSyncAt = 0;
+  private lastSweepAt = 0;
+  private syncError: { at: string; message: string } | null = null;
+  private readonly reported = { unwritable: 0, sanitized: 0 };
   private pingCache: { at: number; ok: boolean } | null = null;
   private pingInFlight: Promise<boolean> | null = null;
-  private reportedUnwritable = 0;
-  private reportedSanitized = 0;
   private filePath: string;
   private dataDir: string;
   private isTestInstance = false;
@@ -737,8 +758,8 @@ export class CommerceDatabase {
     this.filePath = path.join(this.dataDir, "commerceos.json");
     this.lockPath = path.join(this.dataDir, "commerceos.lock");
     if (this.backend === "pg") {
-      // Postgres (ADR-108): ready() takes the writer lease and loads the data. Without persistence (tests, Next.js helper
-      // processes) the store is in memory, as the JSON backend is under NODE_ENV=test.
+      // Postgres (ADR-108/109): ready() loads the data. Without persistence (tests, Next.js helper processes) the store
+      // is in memory, as the JSON backend is under NODE_ENV=test.
       if (!this.persistenceEnabled) {
         this._data = CommerceDatabase.emptySchema();
         if (options.seed !== false) this.ensureDefaultSeed();
@@ -794,7 +815,7 @@ export class CommerceDatabase {
 
   /** Releases lapsed holds at boot and every 5 minutes, in the store-owning process only (FX-35 step 3). */
   private startReservationSweeper(): void {
-    const sweep = () => {
+    const sweepNow = () => {
       try {
         const released = this.releaseExpiredReservations();
         if (released) logger.info("reservations.expired_released", { released });
@@ -802,6 +823,8 @@ export class CommerceDatabase {
         logger.error("reservations.sweep_failed", { error: err instanceof Error ? err.message : String(err) });
       }
     };
+    // Postgres: under the store lock, so a sweep never lands inside (and is never undone with) a request's unit of work.
+    const sweep = () => (this.backend === "pg" ? void this.lock.run(async () => sweepNow()) : sweepNow());
     setTimeout(sweep, 5_000).unref();
     setInterval(sweep, 5 * 60 * 1000).unref();
   }
@@ -1491,24 +1514,26 @@ export class CommerceDatabase {
     };
   }
 
-  /** Called by every mutating method: marks the store dirty and schedules one coalesced flush. */
-  private persist(): void {
+  /**
+   * Called by every mutating method, with the collections it may have changed. Postgres: inside a unit of work (an API
+   * request) they are committed with that request, before it responds; outside one (background work) the background
+   * loop commits them within a second. JSON file: one coalesced flush.
+   */
+  private persist(collections?: readonly string[]): void {
     this.writeSignals++;
     if (this.isTestInstance || !this.persistenceEnabled) return;
-    if (this.pg && this.leaseStale(LEASE_WRITE_FENCE)) {
-      // Postgres hasn't confirmed our lease for a while (unreachable, or a paused process). Requests are refused before
-      // they change anything (assertWritable, in the request context); a change that reached this point anyway is
-      // already in memory, so this process stops for good: it would otherwise save the change later, after telling the
-      // caller it wasn't saved, and a retry would duplicate it (done-check, Phase 4). A server exits and restarts.
-      this.block("DATABASE_UNAVAILABLE", "Postgres did not confirm the store lease in time; this process stopped writing.");
-      this.fenced = true;
-      logger.error("db.pg_write_fenced", { unsaved_changes: this.dirty });
-      if (this.serverMode) this.refuseToStart();
-      throw new AppError("STORE_UNAVAILABLE", "The database can't be reached, so nothing can be saved right now. Nothing was saved.", 503);
-    }
     if (this.persistenceBlocked) {
       // Never acknowledge a change that can't be saved (review L-2). The in-memory change is discarded with the process.
       throw new AppError("STORE_UNAVAILABLE", "The data store can't save changes right now. Nothing was saved.", 503);
+    }
+    if (this.backend === "pg") {
+      if (this.unitActive) {
+        if (!collections || this.unitTouched === "all") this.unitTouched = "all";
+        else for (const c of collections) this.unitTouched.add(c);
+      } else {
+        this.dirty = true;
+      }
+      return;
     }
     this.dirty = true;
     if (!this.flushTimer) {
@@ -1566,11 +1591,12 @@ export class CommerceDatabase {
     await this.flushing;
   }
 
-  // ---- Postgres backend (FIX_IMPLEMENTATION_PLAN FX-42/FX-43, ADR-108) ----
-  // The same working set and synchronous API; Postgres is the system of record. ready() takes the single-writer lease
-  // (commerceos.store_writer) and loads every table; each coalesced flush writes the changed rows in one transaction.
+  // ---- Postgres backend (FIX_IMPLEMENTATION_PLAN FX-42…FX-45, ADR-108, ADR-109) ----
+  // Every app server keeps this working set and uses Postgres as the system of record. Each API request that may change
+  // data is a unit of work: it starts from the latest committed state, and its changes are committed (with a version
+  // check per row) before it responds. Other servers' changes arrive through commerceos.changes.
 
-  /** Resolves once the store has its data: immediately for the JSON file, after lease + load for Postgres. */
+  /** Resolves once the store has its data: immediately for the JSON file, after the load for Postgres. */
   public ready(): Promise<void> {
     if (!this.readyPromise) this.readyPromise = this.initializePostgres();
     return this.readyPromise;
@@ -1610,36 +1636,18 @@ export class CommerceDatabase {
 
   private async openPostgres(pg: PgStorePersistence): Promise<void> {
     if (!(await pg.schemaPresent())) {
-      this.block("SCHEMA_MISSING", "The commerceos schema is missing: run `npm run db:migrate` (migration 006).");
+      this.block("SCHEMA_MISSING", "The commerceos schema is missing or older than migration 007: run `npm run db:migrate`.");
       throw new StartupRefusal();
     }
-    // A writer that stopped without releasing the lease is replaced once its lease expires.
-    const deadline = Date.now() + LEASE_TTL_MS + 5_000;
-    for (;;) {
-      const lease = await pg.acquireLease();
-      if (lease.acquired) break;
-      const holder = lease.holder;
-      if (Date.now() > deadline) {
-        this.block(
-          "LOCK_HELD_BY_OTHER_PROCESS",
-          `Another process (${holder?.host ?? "unknown host"}, pid ${holder?.pid ?? "?"}, since ${holder?.started_at ?? "?"}) owns the data store. Only one writer is allowed.`
-        );
-        throw new StartupRefusal();
-      }
-      logger.warn("db.pg_lease_wait", { owner_host: holder?.host, owner_pid: holder?.pid, heartbeat_at: holder?.heartbeat_at });
-      await sleep(2_000);
-    }
-    this.leaseHeld = true;
-    this.leaseConfirmedAt = Date.now();
-    // Renew from now on: loading a large store over the network can take longer than the lease (found in the Neon
-    // rehearsal: 56k records), and an unrenewed lease would both expire and trip this store's own fencing.
-    this.startLeaseHeartbeat(pg);
     const loaded = await pg.load();
     this._data = CommerceDatabase.fromParsed(loaded as Partial<DatabaseSchema>);
     this.persistenceBlocked = null;
     this.blockedCode = null;
+    this.lastSyncAt = Date.now();
+    this.lastSweepAt = Date.now();
     if (this.options.seed !== false) this.ensureDefaultSeed();
     this.startReservationSweeper();
+    this.startBackgroundLoop(pg);
     logger.info("db.pg_ready", {
       tenants: this._data.tenants.length,
       orders: this._data.orders.length,
@@ -1647,7 +1655,7 @@ export class CommerceDatabase {
     });
   }
 
-  /** Server: log and exit, as with the JSON lock (FX-24). Tests and scripts: reject ready(). */
+  /** Server: log and exit. Tests and scripts: reject ready(). */
   private failStartup(): never {
     if (this.serverMode) {
       this.refuseToStart();
@@ -1655,134 +1663,189 @@ export class CommerceDatabase {
     throw new Error(`The data store can't start (${this.blockedCode}): ${this.persistenceBlocked}`);
   }
 
-  private startLeaseHeartbeat(pg: PgStorePersistence): void {
-    if (this.leaseTimer) return; // a retried start-up keeps the one timer
-    const renew = async () => {
-      if (!this.leaseHeld) return;
+  /**
+   * Runs `work` as one unit of work (ADR-109): it starts from the latest committed state (other servers' changes
+   * synced, pending local changes committed), and when `commitWhen(result)` holds its changes are committed before this
+   * returns; otherwise, or if `work` throws, they are undone. A write another server made first to the same record
+   * gives 409 STORE_CONFLICT and nothing is saved. Without Postgres persistence it just runs `work`.
+   */
+  public async unit<T>(work: () => Promise<T>, commitWhen: (result: T) => boolean): Promise<T> {
+    const pg = this.pg;
+    if (this.backend !== "pg" || !pg || !this.persistenceEnabled || this.isTestInstance || !this._data) return work();
+    return this.lock.run(async () => {
+      await this.commitAllLocked(pg, "background"); // changes made outside any unit belong to nobody's rollback
+      await this.syncLocked(pg);
+      this.unitActive = true;
+      this.unitTouched = new Set();
+      let result: T;
       try {
-        if (await pg.renewLease()) this.leaseConfirmedAt = Date.now();
-        else this.leaseLost();
+        result = await work();
       } catch (err) {
-        // A dropped connection: the next write's fencing check decides; nothing is written without the lease.
-        logger.warn("db.pg_lease_renew_failed", { error: (err as Error).message });
+        this.unitActive = false;
+        this.undoLocked(pg);
+        throw err;
       }
-    };
-    this.leaseTimer = setInterval(() => void renew(), Math.max(1_000, Math.floor(LEASE_TTL_MS / 3)));
-    this.leaseTimer.unref();
+      this.unitActive = false;
+      if (!commitWhen(result)) {
+        this.undoLocked(pg);
+        return result;
+      }
+      const touched = this.unitTouched as Set<string> | "all"; // persist() may have widened it to "all" during the work
+      await this.commitLocked(pg, touched === "all" ? undefined : touched, "unit");
+      return result;
+    });
+  }
+
+  /** Puts back the last committed version of what the unit changed (everything reported, or everything if unreported). */
+  private undoLocked(pg: PgStorePersistence): void {
+    const touched = this.unitTouched;
+    const data = this._data as unknown as Record<string, unknown>;
+    const changes = pg.computeChanges(data, touched === "all" ? undefined : touched);
+    if (changes.rowCount) pg.restore(data, changes);
   }
 
   /**
-   * For mutating requests, before they change anything: 503 when this store can't save right now (Postgres hasn't
-   * confirmed the lease, or writing is blocked). No-op for the JSON store and for stores without persistence.
+   * Commits the changes in `only` (or everywhere). Refused (a conflict or a data rule): memory is restored and an
+   * AppError thrown (409). Database unreachable: a unit's changes are restored (503); background changes stay for a retry.
    */
-  public assertWritable(): void {
-    if (this.backend !== "pg" || !this.persistenceEnabled || this.isTestInstance) return;
-    if (this.persistenceBlocked || this.fenced || !this._data || this.leaseStale(LEASE_WRITE_FENCE)) {
-      throw new AppError("STORE_UNAVAILABLE", "The database can't be reached, so nothing can be saved right now. Nothing was saved.", 503);
+  private async commitLocked(pg: PgStorePersistence, only: ReadonlySet<string> | undefined, kind: "unit" | "background"): Promise<void> {
+    const data = this._data as unknown as Record<string, unknown>;
+    const changes = pg.computeChanges(data, only);
+    if (!only) logUnwritable(changes.unwritable, changes.sanitizedRows, this.reported);
+    if (changes.rowCount === 0) {
+      if (!only) this.dirty = false;
+      return;
+    }
+    try {
+      await pg.write(changes);
+      if (!only) this.dirty = false;
+      this.lastPersistError = null;
+      this.lastPersistAt = new Date().toISOString();
+    } catch (err) {
+      if (err instanceof StoreConflictError) {
+        pg.restore(data, changes);
+        logger.warn(kind === "unit" ? "db.write_conflict" : "db.background_write_conflict", {
+          rows: err.rows.slice(0, 10).map((r) => `${r.collection}/${r.id}`),
+        });
+        await this.syncLocked(pg).catch(() => undefined);
+        throw new AppError("STORE_CONFLICT", "Someone else changed this record at the same time. Nothing was saved; reload and try again.", 409, {
+          collections: [...new Set(err.rows.map((r) => r.collection))],
+        });
+      }
+      if (isDataRejected(err)) {
+        pg.restore(data, changes);
+        const f = pgErrorFields(err);
+        logger.warn("db.write_rejected", { kind, code: f.code, constraint: f.constraint, table: f.table });
+        throw new AppError("CONSTRAINT_VIOLATION", `This change breaks a data rule (${f.constraint ?? f.code ?? "constraint"}). Nothing was saved.`, 409, {
+          constraint: f.constraint ?? null,
+        });
+      }
+      this.lastPersistError = { at: new Date().toISOString(), message: (err as Error).message };
+      logger.error("db.persist_failed", { backend: "pg", kind, error: (err as Error).message });
+      if (kind === "unit") {
+        pg.restore(data, changes);
+        throw new AppError("STORE_UNAVAILABLE", "The database can't be reached, so nothing was saved. Try again shortly.", 503);
+      }
+      this.dirty = true; // background: kept for the next attempt
+      throw err;
     }
   }
 
-  /** True when the lease hasn't been confirmed for longer than this share of its TTL. */
-  private leaseStale(share: number): boolean {
-    return this.leaseHeld && this.leaseConfirmedAt > 0 && Date.now() - this.leaseConfirmedAt > LEASE_TTL_MS * share;
+  /** Everything not yet committed, whoever changed it; refusals are logged (the change is dropped), not thrown. */
+  private async commitAllLocked(pg: PgStorePersistence, kind: "background"): Promise<void> {
+    try {
+      await this.commitLocked(pg, undefined, kind);
+      this.lastSweepAt = Date.now();
+    } catch (err) {
+      if (err instanceof AppError && err.statusCode === 409) return; // logged; memory restored to the committed state
+      throw err;
+    }
+  }
+
+  /** Other servers' committed changes, applied to memory (a full reload after a backfill or a long absence). */
+  private async syncLocked(pg: PgStorePersistence): Promise<void> {
+    try {
+      const result = await pg.sync();
+      if (result.reload) {
+        const loaded = await pg.load();
+        this._data = CommerceDatabase.fromParsed(loaded as Partial<DatabaseSchema>);
+        logger.warn("db.store_reloaded", { reason: "epoch changed or change log pruned", position: pg.position.seq });
+      } else if (result.rows.length) {
+        pg.applySync(this._data as unknown as Record<string, unknown>, result.rows);
+      }
+      this.lastSyncAt = Date.now();
+      this.syncError = null;
+    } catch (err) {
+      this.syncError = { at: new Date().toISOString(), message: (err as Error).message };
+      logger.error("db.sync_failed", { error: (err as Error).message });
+      throw new AppError("STORE_UNAVAILABLE", "The database can't be reached right now. Try again shortly.", 503);
+    }
+  }
+
+  /** Other servers' changes, now (waits for a running unit). For tests and scripts. */
+  public async syncNow(): Promise<void> {
+    const pg = this.pg;
+    if (!pg || !this._data || !this.persistenceEnabled || this.isTestInstance) return;
+    await this.lock.run(() => this.syncLocked(pg));
   }
 
   /**
-   * Another process owns the store now. A server exits (its memory may be stale: revoked members, changed prices) and
-   * is restarted by its supervisor; tests and scripts get 503 for every read and write (security review M1).
+   * For read requests: other servers' changes, if the last sync is older than STORE_SYNC_INTERVAL_MS and no unit is
+   * running here (a running unit syncs anyway). A failed sync serves what this server has.
    */
-  private leaseLost(): void {
-    this.leaseHeld = false;
-    this.fenced = true;
-    if (this.leaseTimer) clearInterval(this.leaseTimer);
-    this.block("LOCK_LOST", "Another process took over the store writer lease; writes stopped.");
-    logger.error("db.pg_lease_lost", { unsaved_changes: this.dirty });
-    if (this.serverMode) this.refuseToStart();
+  public async syncIfDue(): Promise<void> {
+    const pg = this.pg;
+    if (!pg || !this._data || !this.persistenceEnabled || this.isTestInstance) return;
+    if (Date.now() - this.lastSyncAt < SYNC_INTERVAL_MS || this.lock.busy) return;
+    await this.lock.run(() => this.syncLocked(pg)).catch(() => undefined);
+  }
+
+  /** Every second: sync from other servers, commit background changes, and now and then look for untracked changes. */
+  private startBackgroundLoop(pg: PgStorePersistence): void {
+    if (this.loopTimer || !this.persistenceEnabled) return;
+    const tick = async () => {
+      if (this.lock.busy) return;
+      await this.lock
+        .run(async () => {
+          await this.syncLocked(pg);
+          if (this.dirty || Date.now() - this.lastSweepAt > SWEEP_UNTRACKED_MS) await this.commitAllLocked(pg, "background");
+        })
+        .catch(() => undefined); // logged where it happened; retried on the next tick
+    };
+    this.loopTimer = setInterval(() => void tick(), Math.max(250, SYNC_INTERVAL_MS || 1_000));
+    this.loopTimer.unref();
   }
 
   private async flushPostgres(): Promise<void> {
-    if (this.flushing) await this.flushing;
     const pg = this.pg;
-    const data = this._data;
-    if (!this.dirty || this.persistenceBlocked || this.isTestInstance || !this.persistenceEnabled || !pg || !data) return;
-    this.dirty = false;
-    this.flushing = (async () => {
-      try {
-        const changes = pg.computeChanges(data as unknown as Record<string, unknown>);
-        this.reportUnwritable(changes.unwritable, changes.sanitizedRows);
-        if (changes.rowCount > 0) {
-          const report = await pg.write(changes);
-          this.leaseConfirmedAt = Date.now(); // the write's fencing check renewed the lease
-          if (pg.hasRetryableRejections()) {
-            // Something committed that may unblock a refused row (its parent, say): try those rows once more.
-            this.dirty = true;
-            if (!this.flushTimer) {
-              this.flushTimer = setTimeout(() => {
-                this.flushTimer = null;
-                void this.flush();
-              }, this.debounceMs);
-            }
-          }
-          if (report.rejected.length) {
-            logger.error("db.pg_rows_not_saved", { rejected: report.rejected.length, written: report.written });
-          }
-        }
-        this.lastPersistError = null;
-        this.lastPersistAt = new Date().toISOString();
-      } catch (err) {
-        this.dirty = true; // retried, never silently dropped
-        if (err instanceof LeaseLostError) {
-          this.leaseLost();
-          return;
-        }
-        this.lastPersistError = { at: new Date().toISOString(), message: (err as Error).message };
-        logger.error("db.persist_failed", { backend: "pg", error: (err as Error).message });
-        setTimeout(() => void this.flush(), 1_000).unref();
-      } finally {
-        this.flushing = null;
-      }
-    })();
-    await this.flushing;
-  }
-
-  /** Logged when the numbers change, not on every flush. */
-  private reportUnwritable(unwritable: RejectedRow[], sanitized: number): void {
-    if (unwritable.length !== this.reportedUnwritable) {
-      this.reportedUnwritable = unwritable.length;
-      if (unwritable.length) {
-        logger.error("db.pg_rows_unwritable", {
-          count: unwritable.length,
-          sample: unwritable.slice(0, 10).map((r) => ({ collection: r.collection, id: r.id, reason: r.reason })),
-        });
-      }
-    }
-    if (sanitized !== this.reportedSanitized) {
-      this.reportedSanitized = sanitized;
-      if (sanitized) logger.warn("db.pg_rows_sanitized", { count: sanitized });
-    }
+    if (!pg || !this._data || this.isTestInstance || !this.persistenceEnabled || this.persistenceBlocked) return;
+    await this.lock.run(() => this.commitAllLocked(pg, "background")).catch((err: unknown) => {
+      logger.error("db.flush_failed", { error: (err as Error).message });
+    });
   }
 
   private postgresHealth(): PersistenceHealth {
     const unsaved = this.pg ? this.pg.unsavedRows().length : 0;
     const ready = this._data !== null;
-    const writerOk = this.leaseHeld || this.isTestInstance || !this.persistenceEnabled;
+    const syncOk = !this.persistenceEnabled || this.isTestInstance || (!this.syncError && Date.now() - this.lastSyncAt < 30_000);
     return {
-      ok: ready && !this.persistenceBlocked && !this.lastPersistError && writerOk && unsaved === 0,
+      ok: ready && !this.persistenceBlocked && !this.lastPersistError && syncOk && unsaved === 0,
       backend: "pg",
       ready,
       data_dir: this.dataDir,
       dirty: this.dirty,
       last_persist_at: this.lastPersistAt,
-      last_persist_error: this.lastPersistError,
+      last_persist_error: this.lastPersistError ?? this.syncError,
       blocked_reason: this.persistenceBlocked,
       blocked_code: this.blockedCode,
-      lock: { held: this.leaseHeld, path: "postgres:commerceos.store_writer" },
+      // No single-writer lock any more (ADR-109): every server may write; reported as held so the probe stays simple.
+      lock: { held: true, path: "postgres:row-versions" },
       debounce_ms: this.debounceMs,
       unsaved_rows: unsaved,
     };
   }
 
-  /** The records that aren't saved as they are in memory (Postgres backend), for logs and tests. */
+  /** Records that can't be stored at all (no usable id, a repeated id), for logs and tests. */
   public getUnsavedRows(): RejectedRow[] {
     return this.pg ? this.pg.unsavedRows() : [];
   }
@@ -1805,23 +1868,12 @@ export class CommerceDatabase {
     return this.pingInFlight;
   }
 
-  /** Flush, then give up the writer lease (Postgres) so the next process doesn't wait for it to expire. */
+  /** Commit what is pending and stop the background loop. */
   public async shutdown(): Promise<void> {
     await this.flush();
     if (this.dirty) logger.error("db.shutdown_with_unsaved_changes", { backend: this.backend, blocked: this.blockedCode });
-    const refused = this.getUnsavedRows();
-    if (refused.length) {
-      logger.error("db.shutdown_with_refused_rows", {
-        count: refused.length,
-        sample: refused.slice(0, 10).map((r) => ({ collection: r.collection, id: r.id, reason: r.reason })),
-        kept_in: "commerceos.refused_rows",
-      });
-    }
-    if (this.leaseTimer) clearInterval(this.leaseTimer);
-    if (this.pg && this.leaseHeld) {
-      await this.pg.releaseLease().catch(() => undefined);
-      this.leaseHeld = false;
-    }
+    if (this.loopTimer) clearInterval(this.loopTimer);
+    this.loopTimer = null;
   }
 
   private seedPasswordHashCache: string | null = null;
@@ -1999,7 +2051,7 @@ export class CommerceDatabase {
     }
 
     if (hasMigrated) {
-      this.persist();
+      this.persist(["abandoned_carts", "agent_policies", "agents", "ai_providers", "audience_members", "audiences", "audit_logs", "automation_webhooks", "autonomy_budgets", "brands", "business_objectives", "campaign_attributions", "campaigns", "categories", "connected_channels", "content_templates", "conversations", "coupons", "customer_addresses", "customer_lifecycle_transitions", "customer_lifecycles", "customers", "entitlements", "executive_digests", "experiments", "growth_insights", "growth_recommendations", "inventory_items", "journey_enrollments", "journeys", "memberships", "messages", "metric_definitions", "model_registry", "offers", "operational_exceptions", "order_items", "orders", "payments", "plan_versions", "plans", "platform_feature_flags", "platform_memberships", "platform_settings", "pricing_rules", "product_variants", "products", "purchase_orders", "quick_replies", "shipments", "sla_policies", "subscriptions", "supplier_products", "suppliers", "tenants", "users", "warehouses"]);
     }
 
     // Ensure default warehouse exists for the default tenant
@@ -4526,7 +4578,7 @@ export class CommerceDatabase {
       ];
     }
 
-    this.persist();
+    this.persist(["abandoned_carts", "agent_policies", "agents", "ai_providers", "audience_members", "audiences", "audit_logs", "automation_webhooks", "autonomy_budgets", "brands", "business_objectives", "campaign_attributions", "campaigns", "categories", "connected_channels", "content_templates", "conversations", "coupons", "customer_addresses", "customer_lifecycle_transitions", "customer_lifecycles", "customers", "entitlements", "executive_digests", "experiments", "growth_insights", "growth_recommendations", "inventory_items", "journey_enrollments", "journeys", "memberships", "messages", "metric_definitions", "model_registry", "offers", "operational_exceptions", "order_items", "orders", "payments", "plan_versions", "plans", "platform_feature_flags", "platform_memberships", "platform_settings", "pricing_rules", "product_variants", "products", "purchase_orders", "quick_replies", "shipments", "sla_policies", "subscriptions", "supplier_products", "suppliers", "tenants", "users", "warehouses"]);
   }
 
   // ==================== TENANTS ====================
@@ -4558,7 +4610,7 @@ export class CommerceDatabase {
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     });
-    this.persist();
+    this.persist(["tenants", "warehouses"]);
     return tenant;
   }
 
@@ -4570,7 +4622,7 @@ export class CommerceDatabase {
       ...safePatch(updates),
       updated_at: new Date().toISOString(),
     };
-    this.persist();
+    this.persist(["tenants"]);
     return this.data.tenants[idx];
   }
 
@@ -4586,7 +4638,7 @@ export class CommerceDatabase {
 
   public createUser(user: UserRecord): UserRecord {
     this.data.users.push(user);
-    this.persist();
+    this.persist(["users"]);
     return user;
   }
 
@@ -4604,7 +4656,7 @@ export class CommerceDatabase {
       ...(revokeSessions ? { session_version: (current.session_version ?? 1) + 1 } : {}),
       updated_at: new Date().toISOString(),
     };
-    this.persist();
+    this.persist(["users"]);
     return this.data.users[idx];
   }
 
@@ -4622,7 +4674,7 @@ export class CommerceDatabase {
 
   public createMembership(membership: MembershipRecord): MembershipRecord {
     this.data.memberships.push(membership);
-    this.persist();
+    this.persist(["memberships"]);
     return membership;
   }
 
@@ -4631,7 +4683,7 @@ export class CommerceDatabase {
     if (idx === -1) return undefined;
     this.data.memberships[idx].role = role;
     this.data.memberships[idx].updated_at = new Date().toISOString();
-    this.persist();
+    this.persist(["memberships"]);
     return this.data.memberships[idx];
   }
 
@@ -4641,14 +4693,14 @@ export class CommerceDatabase {
     if (idx === -1) return undefined;
     const next = (this.data.users[idx].session_version ?? 1) + 1;
     this.data.users[idx] = { ...this.data.users[idx], session_version: next, updated_at: new Date().toISOString() };
-    this.persist();
+    this.persist(["users"]);
     return next;
   }
 
   // ==================== SERVICE TOKENS (FX-18) ====================
   public createServiceToken(token: ServiceTokenRecord): ServiceTokenRecord {
     this.data.service_tokens.push(token);
-    this.persist();
+    this.persist(["service_tokens"]);
     return token;
   }
 
@@ -4664,7 +4716,7 @@ export class CommerceDatabase {
     const idx = this.data.service_tokens.findIndex((t) => t.tenant_id === tenantId && t.id === id);
     if (idx === -1) return undefined;
     this.data.service_tokens[idx] = { ...this.data.service_tokens[idx], ...safePatch(patch) };
-    this.persist();
+    this.persist(["service_tokens"]);
     return this.data.service_tokens[idx];
   }
 
@@ -4672,7 +4724,7 @@ export class CommerceDatabase {
     const idx = this.data.memberships.findIndex((m) => m.tenant_id === tenantId && m.user_id === userId);
     if (idx === -1) return undefined;
     this.data.memberships[idx] = { ...this.data.memberships[idx], status, updated_at: new Date().toISOString() };
-    this.persist();
+    this.persist(["memberships"]);
     return this.data.memberships[idx];
   }
 
@@ -4680,14 +4732,14 @@ export class CommerceDatabase {
     const initialLen = this.data.memberships.length;
     this.data.memberships = this.data.memberships.filter((m) => !(m.tenant_id === tenantId && m.user_id === userId));
     const removed = this.data.memberships.length < initialLen;
-    if (removed) this.persist();
+    if (removed) this.persist(["memberships"]);
     return removed;
   }
 
   // ==================== INVITATIONS ====================
   public createInvitation(invitation: InvitationRecord): InvitationRecord {
     this.data.invitations.push(invitation);
-    this.persist();
+    this.persist(["invitations"]);
     return invitation;
   }
 
@@ -4703,7 +4755,7 @@ export class CommerceDatabase {
     const idx = this.data.invitations.findIndex((i) => i.token === token);
     if (idx === -1) return undefined;
     this.data.invitations[idx].status = status;
-    this.persist();
+    this.persist(["invitations"]);
     return this.data.invitations[idx];
   }
 
@@ -4711,14 +4763,14 @@ export class CommerceDatabase {
     const idx = this.data.invitations.findIndex((i) => i.tenant_id === tenantId && i.id === id);
     if (idx === -1) return undefined;
     this.data.invitations[idx] = { ...this.data.invitations[idx], ...safePatch(patch) };
-    this.persist();
+    this.persist(["invitations"]);
     return this.data.invitations[idx];
   }
 
   // ==================== AUDIT LOGS ====================
   public createAuditLog(log: AuditLogRecord): AuditLogRecord {
     this.data.audit_logs.push(log);
-    this.persist();
+    this.persist(["audit_logs"]);
     return log;
   }
 
@@ -4903,7 +4955,7 @@ export class CommerceDatabase {
       }
     }
 
-    this.persist();
+    this.persist(["inventory_items", "product_variants", "products", "stock_movements", "warehouses"]);
     return this.findProductById(product.tenant_id, product.id)!;
   }
 
@@ -4915,7 +4967,7 @@ export class CommerceDatabase {
       ...safePatch(updates),
       updated_at: new Date().toISOString(),
     };
-    this.persist();
+    this.persist(["product_variants", "products"]);
     return this.findProductById(tenantId, id);
   }
 
@@ -4924,7 +4976,7 @@ export class CommerceDatabase {
     if (idx === -1) return false;
     this.data.products[idx].status = "ARCHIVED";
     this.data.products[idx].updated_at = new Date().toISOString();
-    this.persist();
+    this.persist(["products"]);
     return true;
   }
 
@@ -4952,7 +5004,7 @@ export class CommerceDatabase {
       ...this.data.product_variants[idx],
       ...safePatch(updates),
     };
-    this.persist();
+    this.persist(["product_variants"]);
     return this.data.product_variants[idx];
   }
 
@@ -4974,7 +5026,7 @@ export class CommerceDatabase {
       updated_at: new Date().toISOString(),
     };
     this.data.product_variants.push(newVariant);
-    this.persist();
+    this.persist(["product_variants"]);
     return newVariant;
   }
 
@@ -4985,7 +5037,7 @@ export class CommerceDatabase {
 
   public createCategory(category: Category): Category {
     this.data.categories.push(category);
-    this.persist();
+    this.persist(["categories"]);
     return category;
   }
 
@@ -4995,7 +5047,7 @@ export class CommerceDatabase {
 
   public createBrand(brand: Brand): Brand {
     this.data.brands.push(brand);
-    this.persist();
+    this.persist(["brands"]);
     return brand;
   }
 
@@ -5006,7 +5058,7 @@ export class CommerceDatabase {
 
   public createWarehouse(warehouse: Warehouse): Warehouse {
     this.data.warehouses.push(warehouse);
-    this.persist();
+    this.persist(["warehouses"]);
     return warehouse;
   }
 
@@ -5146,7 +5198,7 @@ export class CommerceDatabase {
     };
     this.data.stock_movements.push(movement);
 
-    this.persist();
+    this.persist(["inventory_items", "product_variants", "stock_movements", "warehouses"]);
     return item;
   }
 
@@ -5197,7 +5249,7 @@ export class CommerceDatabase {
     };
     this.data.inventory_reservations.push(reservation);
 
-    this.persist();
+    this.persist(["inventory_items", "inventory_reservations", "tenants"]);
     return reservation;
   }
 
@@ -5215,7 +5267,7 @@ export class CommerceDatabase {
     }
 
     res.status = "RELEASED";
-    this.persist();
+    this.persist(["inventory_items", "inventory_reservations"]);
     return true;
   }
 
@@ -5248,7 +5300,7 @@ export class CommerceDatabase {
     }
 
     res.status = "COMMITTED";
-    this.persist();
+    this.persist(["inventory_items", "inventory_reservations", "stock_movements"]);
     return true;
   }
 
@@ -5329,7 +5381,7 @@ export class CommerceDatabase {
     if (initialAddress) {
       this.data.customer_addresses.push(initialAddress);
     }
-    this.persist();
+    this.persist(["customer_addresses", "customers"]);
     return this.findCustomerById(customer.tenant_id, customer.id)!;
   }
 
@@ -5341,7 +5393,7 @@ export class CommerceDatabase {
       ...safePatch(updates),
       updated_at: new Date().toISOString(),
     };
-    this.persist();
+    this.persist(["customer_addresses", "customers"]);
     return this.findCustomerById(tenantId, id);
   }
 
@@ -5368,7 +5420,7 @@ export class CommerceDatabase {
         changed = true;
       }
     }
-    if (changed) this.persist();
+    if (changed) this.persist(["inventory_reservations"]);
   }
 
   /**
@@ -5390,7 +5442,7 @@ export class CommerceDatabase {
       r.status = "EXPIRED";
       released++;
     }
-    if (released) this.persist();
+    if (released) this.persist(["inventory_items", "inventory_reservations", "orders"]);
     return released;
   }
 
@@ -5413,7 +5465,7 @@ export class CommerceDatabase {
     }
     const next = last + 1;
     this.data.order_sequences[tenantId] = next;
-    this.persist();
+    this.persist(["order_sequences", "orders"]);
     return `ORD-${new Date().getFullYear()}-${next.toString().padStart(6, "0")}`;
   }
 
@@ -5544,7 +5596,7 @@ export class CommerceDatabase {
       cust.updated_at = new Date().toISOString();
     }
 
-    this.persist();
+    this.persist(["customers", "order_items", "orders"]);
     return this.findOrderById(order.tenant_id, order.id)!;
   }
 
@@ -5553,7 +5605,7 @@ export class CommerceDatabase {
     if (idx === -1) return undefined;
     this.data.orders[idx].status = status;
     this.data.orders[idx].updated_at = new Date().toISOString();
-    this.persist();
+    this.persist(["customers", "order_items", "orders"]);
     return this.findOrderById(tenantId, orderId);
   }
 
@@ -5562,7 +5614,7 @@ export class CommerceDatabase {
     if (idx === -1) return undefined;
     this.data.orders[idx].payment_status = status;
     this.data.orders[idx].updated_at = new Date().toISOString();
-    this.persist();
+    this.persist(["customers", "order_items", "orders"]);
     return this.findOrderById(tenantId, orderId);
   }
 
@@ -5571,7 +5623,7 @@ export class CommerceDatabase {
     if (idx === -1) return undefined;
     this.data.orders[idx].fulfillment_status = status;
     this.data.orders[idx].updated_at = new Date().toISOString();
-    this.persist();
+    this.persist(["customers", "order_items", "orders"]);
     return this.findOrderById(tenantId, orderId);
   }
 
@@ -5609,7 +5661,7 @@ export class CommerceDatabase {
       verified_by: verification.verifiedBy,
       verified_at: new Date().toISOString(),
     };
-    this.persist();
+    this.persist(["payments"]);
     return this.data.payments[idx];
   }
 
@@ -5619,7 +5671,7 @@ export class CommerceDatabase {
 
   public createPayment(payment: Payment): Payment {
     this.data.payments.push(payment);
-    this.persist();
+    this.persist(["payments"]);
     return payment;
   }
 
@@ -5628,7 +5680,7 @@ export class CommerceDatabase {
     if (idx === -1) return undefined;
     this.data.payments[idx].status = status;
     if (transactionId) this.data.payments[idx].transaction_id = transactionId;
-    this.persist();
+    this.persist(["payments"]);
     return this.data.payments[idx];
   }
 
@@ -5645,7 +5697,7 @@ export class CommerceDatabase {
 
   public createShipment(shipment: Shipment): Shipment {
     this.data.shipments.push(shipment);
-    this.persist();
+    this.persist(["shipments"]);
     return shipment;
   }
 
@@ -5657,7 +5709,7 @@ export class CommerceDatabase {
       this.data.shipments[idx].delivered_at = new Date().toISOString();
     }
     this.data.shipments[idx].updated_at = new Date().toISOString();
-    this.persist();
+    this.persist(["shipments"]);
     return this.data.shipments[idx];
   }
 
@@ -5668,7 +5720,7 @@ export class CommerceDatabase {
 
   public createReturn(returnRecord: Return): Return {
     this.data.returns.push(returnRecord);
-    this.persist();
+    this.persist(["returns"]);
     return returnRecord;
   }
 
@@ -5677,7 +5729,7 @@ export class CommerceDatabase {
     if (idx === -1) return undefined;
     this.data.returns[idx].status = status;
     this.data.returns[idx].updated_at = new Date().toISOString();
-    this.persist();
+    this.persist(["returns"]);
     return this.data.returns[idx];
   }
 
@@ -5687,7 +5739,7 @@ export class CommerceDatabase {
 
   public createRefund(refund: Refund): Refund {
     this.data.refunds.push(refund);
-    this.persist();
+    this.persist(["refunds"]);
     return refund;
   }
 
@@ -5703,7 +5755,7 @@ export class CommerceDatabase {
 
   public createCoupon(coupon: Coupon): Coupon {
     this.data.coupons.push(coupon);
-    this.persist();
+    this.persist(["coupons"]);
     return coupon;
   }
 
@@ -5711,14 +5763,14 @@ export class CommerceDatabase {
     const c = this.findCouponByCode(tenantId, code);
     if (c) {
       c.usage_count = (c.usage_count || 0) + 1;
-      this.persist();
+      this.persist(["coupons"]);
     }
   }
 
   // ==================== COMMERCE EVENTS ====================
   public recordEvent(event: CommerceEvent): CommerceEvent {
     this.data.events.push(event);
-    this.persist();
+    this.persist(["events"]);
     return event;
   }
 
@@ -5736,7 +5788,7 @@ export class CommerceDatabase {
 
   public createWebhook(webhook: WebhookSubscription): WebhookSubscription {
     this.data.webhooks.push(webhook);
-    this.persist();
+    this.persist(["webhooks"]);
     return webhook;
   }
 
@@ -6001,7 +6053,7 @@ export class CommerceDatabase {
 
   public createConnectedChannel(channel: ConnectedChannel): ConnectedChannel {
     this.data.connected_channels.push(channel);
-    this.persist();
+    this.persist(["connected_channels"]);
     return channel;
   }
 
@@ -6016,7 +6068,7 @@ export class CommerceDatabase {
       updated_at: new Date().toISOString(),
     };
     this.data.connected_channels[idx] = updated;
-    this.persist();
+    this.persist(["connected_channels"]);
     return updated;
   }
 
@@ -6026,7 +6078,7 @@ export class CommerceDatabase {
       (c) => !(c.tenant_id === tenantId && c.id === id)
     );
     const deleted = this.data.connected_channels.length < initialLen;
-    if (deleted) this.persist();
+    if (deleted) this.persist(["connected_channels"]);
     return deleted;
   }
 
@@ -6058,7 +6110,7 @@ export class CommerceDatabase {
       return this.updateCustomerIdentity(identity.tenant_id, existing.id, identity);
     }
     this.data.customer_identities.push(identity);
-    this.persist();
+    this.persist(["customer_identities"]);
     return identity;
   }
 
@@ -6073,7 +6125,7 @@ export class CommerceDatabase {
       last_seen_at: new Date().toISOString(),
     };
     this.data.customer_identities[idx] = updated;
-    this.persist();
+    this.persist(["customer_identities"]);
     return updated;
   }
 
@@ -6165,7 +6217,7 @@ export class CommerceDatabase {
 
   public createConversation(conversation: Conversation): Conversation {
     this.data.conversations.push(conversation);
-    this.persist();
+    this.persist(["conversations"]);
     return conversation;
   }
 
@@ -6180,7 +6232,7 @@ export class CommerceDatabase {
       updated_at: new Date().toISOString(),
     };
     this.data.conversations[idx] = updated;
-    this.persist();
+    this.persist(["conversations"]);
     return updated;
   }
 
@@ -6266,7 +6318,7 @@ export class CommerceDatabase {
     }
 
     this.data.messages.push(message);
-    this.persist();
+    this.persist(["messages"]);
     return message;
   }
 
@@ -6281,14 +6333,14 @@ export class CommerceDatabase {
       updated_at: new Date().toISOString(),
     };
     this.data.messages[idx] = updated;
-    this.persist();
+    this.persist(["messages"]);
     return updated;
   }
 
   // ==================== SOCIAL COMMERCE: ASSIGNMENTS & TAGS ====================
   public createAssignment(assignment: ConversationAssignment): ConversationAssignment {
     this.data.conversation_assignments.push(assignment);
-    this.persist();
+    this.persist(["conversation_assignments"]);
     return assignment;
   }
 
@@ -6308,7 +6360,7 @@ export class CommerceDatabase {
     );
     if (exists) return exists;
     this.data.conversation_tags.push(tag);
-    this.persist();
+    this.persist(["conversation_tags"]);
     return tag;
   }
 
@@ -6348,7 +6400,7 @@ export class CommerceDatabase {
 
   public createLead(lead: Lead): Lead {
     this.data.leads.push(lead);
-    this.persist();
+    this.persist(["leads"]);
     return lead;
   }
 
@@ -6363,7 +6415,7 @@ export class CommerceDatabase {
       updated_at: new Date().toISOString(),
     };
     this.data.leads[idx] = updated;
-    this.persist();
+    this.persist(["leads"]);
     return updated;
   }
 
@@ -6378,7 +6430,7 @@ export class CommerceDatabase {
 
   public createQuickReply(reply: QuickReply): QuickReply {
     this.data.quick_replies.push(reply);
-    this.persist();
+    this.persist(["quick_replies"]);
     return reply;
   }
 
@@ -6388,7 +6440,7 @@ export class CommerceDatabase {
       (qr) => !(qr.tenant_id === tenantId && qr.id === id)
     );
     const deleted = this.data.quick_replies.length < initialLen;
-    if (deleted) this.persist();
+    if (deleted) this.persist(["quick_replies"]);
     return deleted;
   }
 
@@ -6406,14 +6458,14 @@ export class CommerceDatabase {
     } else {
       this.data.business_hours.push(hours);
     }
-    this.persist();
+    this.persist(["business_hours"]);
     return hours;
   }
 
   // ==================== SOCIAL COMMERCE: CHAT SESSIONS ====================
   public createChatSession(session: ChatSession): ChatSession {
     this.data.chat_sessions.push(session);
-    this.persist();
+    this.persist(["chat_sessions"]);
     return session;
   }
 
@@ -6434,14 +6486,14 @@ export class CommerceDatabase {
       last_seen_at: new Date().toISOString(),
     };
     this.data.chat_sessions[idx] = updated;
-    this.persist();
+    this.persist(["chat_sessions"]);
     return updated;
   }
 
   // ==================== OUTBOUND WEBHOOK DELIVERIES ====================
   public recordOutboundDelivery(delivery: OutboundWebhookDelivery): OutboundWebhookDelivery {
     this.data.outbound_webhook_deliveries.push(delivery);
-    this.persist();
+    this.persist(["outbound_webhook_deliveries"]);
     return delivery;
   }
 
@@ -6454,7 +6506,7 @@ export class CommerceDatabase {
         ...this.data.outbound_webhook_deliveries[idx],
         ...safePatch(patch),
       };
-      this.persist();
+      this.persist(["outbound_webhook_deliveries"]);
       return this.data.outbound_webhook_deliveries[idx];
     }
     throw new Error(`Outbound delivery '${id}' not found for tenant '${tenantId}'`);
@@ -6541,7 +6593,7 @@ export class CommerceDatabase {
 
   public createAgent(agent: AgentDefinition): AgentDefinition {
     this.data.agents.push(agent);
-    this.persist();
+    this.persist(["agents"]);
     return agent;
   }
 
@@ -6557,7 +6609,7 @@ export class CommerceDatabase {
       ...safePatch(patch),
       updated_at: new Date().toISOString(),
     };
-    this.persist();
+    this.persist(["agents"]);
     return this.data.agents[idx];
   }
 
@@ -6608,7 +6660,7 @@ export class CommerceDatabase {
         updated_at: new Date().toISOString(),
       };
     }
-    this.persist();
+    this.persist(["agent_policies"]);
     return policy;
   }
 
@@ -6640,7 +6692,7 @@ export class CommerceDatabase {
 
   public createAgentRun(run: AgentRun): AgentRun {
     this.data.agent_runs.push(run);
-    this.persist();
+    this.persist(["agent_runs"]);
     return run;
   }
 
@@ -6655,7 +6707,7 @@ export class CommerceDatabase {
       ...this.data.agent_runs[idx],
       ...safePatch(patch),
     };
-    this.persist();
+    this.persist(["agent_runs"]);
     return this.data.agent_runs[idx];
   }
 
@@ -6668,7 +6720,7 @@ export class CommerceDatabase {
 
   public createAgentToolCall(record: AgentToolCallRecord): AgentToolCallRecord {
     this.data.agent_tool_calls.push(record);
-    this.persist();
+    this.persist(["agent_tool_calls"]);
     return record;
   }
 
@@ -6685,7 +6737,7 @@ export class CommerceDatabase {
 
   public createPrompt(prompt: AgentPrompt): AgentPrompt {
     this.data.agent_prompts.push(prompt);
-    this.persist();
+    this.persist(["agent_prompts"]);
     return prompt;
   }
 
@@ -6711,7 +6763,7 @@ export class CommerceDatabase {
       }
     }
     this.data.prompt_versions.push(version);
-    this.persist();
+    this.persist(["prompt_versions"]);
     return version;
   }
 
@@ -6734,7 +6786,7 @@ export class CommerceDatabase {
     } else {
       this.data.conversation_summaries[idx] = summary;
     }
-    this.persist();
+    this.persist(["conversation_summaries"]);
     return summary;
   }
 
@@ -6754,7 +6806,7 @@ export class CommerceDatabase {
     } else {
       this.data.customer_memories[idx] = memory;
     }
-    this.persist();
+    this.persist(["customer_memories"]);
     return memory;
   }
 
@@ -6779,7 +6831,7 @@ export class CommerceDatabase {
 
   public createKnowledgeDocument(doc: KnowledgeDocument): KnowledgeDocument {
     this.data.knowledge_documents.push(doc);
-    this.persist();
+    this.persist(["knowledge_documents"]);
     return doc;
   }
 
@@ -6797,7 +6849,7 @@ export class CommerceDatabase {
       ...safePatch(patch),
       updated_at: new Date().toISOString(),
     };
-    this.persist();
+    this.persist(["knowledge_documents"]);
     return this.data.knowledge_documents[idx];
   }
 
@@ -6809,7 +6861,7 @@ export class CommerceDatabase {
     this.data.knowledge_chunks = this.data.knowledge_chunks.filter(
       (c) => !(c.tenant_id === tenantId && c.document_id === id)
     );
-    this.persist();
+    this.persist(["knowledge_chunks", "knowledge_documents"]);
     return this.data.knowledge_documents.length < initialLen;
   }
 
@@ -6829,7 +6881,7 @@ export class CommerceDatabase {
       (c) => !(c.tenant_id === tenantId && c.document_id === documentId)
     );
     this.data.knowledge_chunks.push(...chunks);
-    this.persist();
+    this.persist(["knowledge_chunks"]);
     return chunks;
   }
 
@@ -6914,7 +6966,7 @@ export class CommerceDatabase {
 
   public createAITrace(trace: AITrace): AITrace {
     this.data.ai_traces.push(trace);
-    this.persist();
+    this.persist(["ai_traces"]);
     return trace;
   }
 
@@ -6933,7 +6985,7 @@ export class CommerceDatabase {
 
   public recordAIUsage(usage: AIUsageRecord): AIUsageRecord {
     this.data.ai_usage.push(usage);
-    this.persist();
+    this.persist(["ai_usage"]);
     return usage;
   }
 
@@ -6952,7 +7004,7 @@ export class CommerceDatabase {
 
   public createAIFeedback(feedback: AIFeedbackRecord): AIFeedbackRecord {
     this.data.ai_feedback.push(feedback);
-    this.persist();
+    this.persist(["ai_feedback"]);
     return feedback;
   }
 
@@ -7033,7 +7085,7 @@ export class CommerceDatabase {
 
   public insertWorkflow(workflow: AgentWorkflow): AgentWorkflow {
     this.data.workflows.push(workflow);
-    this.persist();
+    this.persist(["workflows"]);
     return workflow;
   }
 
@@ -7046,7 +7098,7 @@ export class CommerceDatabase {
       updated_at: new Date().toISOString(),
     };
     this.data.workflows[idx] = updated;
-    this.persist();
+    this.persist(["workflows"]);
     return updated;
   }
 
@@ -7063,7 +7115,7 @@ export class CommerceDatabase {
 
   public insertTask(task: AgentTask): AgentTask {
     this.data.tasks.push(task);
-    this.persist();
+    this.persist(["tasks"]);
     return task;
   }
 
@@ -7076,7 +7128,7 @@ export class CommerceDatabase {
       updated_at: new Date().toISOString(),
     };
     this.data.tasks[idx] = updated;
-    this.persist();
+    this.persist(["tasks"]);
     return updated;
   }
 
@@ -7089,7 +7141,7 @@ export class CommerceDatabase {
 
   public insertAgentMessage(message: AgentMessage): AgentMessage {
     this.data.agent_messages.push(message);
-    this.persist();
+    this.persist(["agent_messages"]);
     return message;
   }
 
@@ -7109,7 +7161,7 @@ export class CommerceDatabase {
     } else {
       this.data.workflow_contexts.push(context);
     }
-    this.persist();
+    this.persist(["workflow_contexts"]);
     return context;
   }
 
@@ -7120,7 +7172,7 @@ export class CommerceDatabase {
 
   public insertWorkflowArtifact(artifact: WorkflowArtifact): WorkflowArtifact {
     this.data.workflow_artifacts.push(artifact);
-    this.persist();
+    this.persist(["workflow_artifacts"]);
     return artifact;
   }
 
@@ -7133,7 +7185,7 @@ export class CommerceDatabase {
 
   public insertWorkflowCheckpoint(checkpoint: WorkflowCheckpoint): WorkflowCheckpoint {
     this.data.workflow_checkpoints.push(checkpoint);
-    this.persist();
+    this.persist(["workflow_checkpoints"]);
     return checkpoint;
   }
 
@@ -7144,7 +7196,7 @@ export class CommerceDatabase {
 
   public insertAgentDelegation(delegation: AgentDelegation): AgentDelegation {
     this.data.agent_delegations.push(delegation);
-    this.persist();
+    this.persist(["agent_delegations"]);
     return delegation;
   }
 
@@ -7153,7 +7205,7 @@ export class CommerceDatabase {
     if (idx === -1) throw new Error(`Delegation not found: ${id}`);
     const updated = { ...this.data.agent_delegations[idx], ...safePatch(updates) };
     this.data.agent_delegations[idx] = updated;
-    this.persist();
+    this.persist(["agent_delegations"]);
     return updated;
   }
 
@@ -7168,7 +7220,7 @@ export class CommerceDatabase {
 
   public insertAgentVerification(verification: AgentVerification): AgentVerification {
     this.data.agent_verifications.push(verification);
-    this.persist();
+    this.persist(["agent_verifications"]);
     return verification;
   }
 
@@ -7189,7 +7241,7 @@ export class CommerceDatabase {
 
   public insertApprovalRequest(req: ApprovalRequest): ApprovalRequest {
     this.data.approval_requests.push(req);
-    this.persist();
+    this.persist(["approval_requests"]);
     return req;
   }
 
@@ -7198,7 +7250,7 @@ export class CommerceDatabase {
     if (idx === -1) throw new Error(`ApprovalRequest not found: ${id}`);
     const updated = { ...this.data.approval_requests[idx], ...safePatch(updates) };
     this.data.approval_requests[idx] = updated;
-    this.persist();
+    this.persist(["approval_requests"]);
     return updated;
   }
 
@@ -7228,7 +7280,7 @@ export class CommerceDatabase {
     } else {
       this.data.autonomy_policies.push(policy);
     }
-    this.persist();
+    this.persist(["autonomy_policies"]);
     return policy;
   }
 
@@ -7247,7 +7299,7 @@ export class CommerceDatabase {
 
   public insertWorkflowTemplate(template: WorkflowTemplate): WorkflowTemplate {
     this.data.workflow_templates.push(template);
-    this.persist();
+    this.persist(["workflow_templates"]);
     return template;
   }
 
@@ -7260,7 +7312,7 @@ export class CommerceDatabase {
 
   public insertAgentTriggerRule(rule: AgentTriggerRule): AgentTriggerRule {
     this.data.trigger_rules.push(rule);
-    this.persist();
+    this.persist(["trigger_rules"]);
     return rule;
   }
 
@@ -7273,7 +7325,7 @@ export class CommerceDatabase {
       updated_at: new Date().toISOString(),
     };
     this.data.trigger_rules[idx] = updated;
-    this.persist();
+    this.persist(["trigger_rules"]);
     return updated;
   }
 
@@ -7290,7 +7342,7 @@ export class CommerceDatabase {
 
   public insertActionReceipt(receipt: ActionReceipt): ActionReceipt {
     this.data.action_receipts.push(receipt);
-    this.persist();
+    this.persist(["action_receipts"]);
     return receipt;
   }
 
@@ -7301,7 +7353,7 @@ export class CommerceDatabase {
 
   public insertAgentSchedule(schedule: AgentSchedule): AgentSchedule {
     this.data.agent_schedules.push(schedule);
-    this.persist();
+    this.persist(["agent_schedules"]);
     return schedule;
   }
 
@@ -7314,7 +7366,7 @@ export class CommerceDatabase {
       updated_at: new Date().toISOString(),
     };
     this.data.agent_schedules[idx] = updated;
-    this.persist();
+    this.persist(["agent_schedules"]);
     return updated;
   }
 
@@ -7329,7 +7381,7 @@ export class CommerceDatabase {
 
   public insertAnalyticsEvent(event: { id: string; tenant_id: string; event_type: string; payload: Record<string, unknown>; created_at: string }) {
     this.data.analytics_events.push(event);
-    this.persist();
+    this.persist(["analytics_events"]);
     return event;
   }
 
@@ -7349,7 +7401,7 @@ export class CommerceDatabase {
     } else {
       this.data.metric_definitions.push(def);
     }
-    this.persist();
+    this.persist(["metric_definitions"]);
     return def;
   }
 
@@ -7362,7 +7414,7 @@ export class CommerceDatabase {
 
   public insertMetricSnapshot(snapshot: MetricSnapshot): MetricSnapshot {
     this.data.metric_snapshots.push(snapshot);
-    this.persist();
+    this.persist(["metric_snapshots"]);
     return snapshot;
   }
 
@@ -7375,7 +7427,7 @@ export class CommerceDatabase {
 
   public insertInsight(insight: Insight): Insight {
     this.data.insights.push(insight);
-    this.persist();
+    this.persist(["insights"]);
     return insight;
   }
 
@@ -7384,7 +7436,7 @@ export class CommerceDatabase {
     if (idx === -1) throw new Error(`Insight not found: ${id}`);
     const updated = { ...this.data.insights[idx], ...safePatch(updates), updated_at: new Date().toISOString() };
     this.data.insights[idx] = updated;
-    this.persist();
+    this.persist(["insights"]);
     return updated;
   }
 
@@ -7397,7 +7449,7 @@ export class CommerceDatabase {
 
   public insertAnomaly(anomaly: Anomaly): Anomaly {
     this.data.anomalies.push(anomaly);
-    this.persist();
+    this.persist(["anomalies"]);
     return anomaly;
   }
 
@@ -7410,7 +7462,7 @@ export class CommerceDatabase {
 
   public insertOpportunity(opportunity: Opportunity): Opportunity {
     this.data.opportunities.push(opportunity);
-    this.persist();
+    this.persist(["opportunities"]);
     return opportunity;
   }
 
@@ -7419,7 +7471,7 @@ export class CommerceDatabase {
     if (idx === -1) throw new Error(`Opportunity not found: ${id}`);
     const updated = { ...this.data.opportunities[idx], ...safePatch(updates) };
     this.data.opportunities[idx] = updated;
-    this.persist();
+    this.persist(["opportunities"]);
     return updated;
   }
 
@@ -7432,7 +7484,7 @@ export class CommerceDatabase {
 
   public insertRisk(risk: Risk): Risk {
     this.data.risks.push(risk);
-    this.persist();
+    this.persist(["risks"]);
     return risk;
   }
 
@@ -7449,7 +7501,7 @@ export class CommerceDatabase {
 
   public insertRecommendation(rec: Recommendation): Recommendation {
     this.data.recommendations.push(rec);
-    this.persist();
+    this.persist(["recommendations"]);
     return rec;
   }
 
@@ -7458,7 +7510,7 @@ export class CommerceDatabase {
     if (idx === -1) throw new Error(`Recommendation not found: ${id}`);
     const updated = { ...this.data.recommendations[idx], ...safePatch(updates), updated_at: new Date().toISOString() };
     this.data.recommendations[idx] = updated;
-    this.persist();
+    this.persist(["recommendations"]);
     return updated;
   }
 
@@ -7471,7 +7523,7 @@ export class CommerceDatabase {
 
   public insertForecastRun(run: ForecastRun): ForecastRun {
     this.data.forecast_runs.push(run);
-    this.persist();
+    this.persist(["forecast_runs"]);
     return run;
   }
 
@@ -7488,7 +7540,7 @@ export class CommerceDatabase {
 
   public insertSimulation(sim: SimulationResult): SimulationResult {
     this.data.simulations.push(sim);
-    this.persist();
+    this.persist(["simulations"]);
     return sim;
   }
 
@@ -7505,7 +7557,7 @@ export class CommerceDatabase {
 
   public insertDecisionRequest(dec: DecisionRequest): DecisionRequest {
     this.data.decision_requests.push(dec);
-    this.persist();
+    this.persist(["decision_requests"]);
     return dec;
   }
 
@@ -7514,7 +7566,7 @@ export class CommerceDatabase {
     if (idx === -1) throw new Error(`DecisionRequest not found: ${id}`);
     const updated = { ...this.data.decision_requests[idx], ...safePatch(updates), updated_at: new Date().toISOString() };
     this.data.decision_requests[idx] = updated;
-    this.persist();
+    this.persist(["decision_requests"]);
     return updated;
   }
 
@@ -7527,7 +7579,7 @@ export class CommerceDatabase {
 
   public insertDecisionOutcome(outcome: DecisionOutcome): DecisionOutcome {
     this.data.decision_outcomes.push(outcome);
-    this.persist();
+    this.persist(["decision_outcomes"]);
     return outcome;
   }
 
@@ -7545,7 +7597,7 @@ export class CommerceDatabase {
     } else {
       this.data.customer_intelligence.push(record);
     }
-    this.persist();
+    this.persist(["customer_intelligence"]);
     return record;
   }
 
@@ -7565,7 +7617,7 @@ export class CommerceDatabase {
     } else {
       this.data.product_performance.push(record);
     }
-    this.persist();
+    this.persist(["product_performance"]);
     return record;
   }
 
@@ -7583,7 +7635,7 @@ export class CommerceDatabase {
     } else {
       this.data.inventory_intelligence.push(record);
     }
-    this.persist();
+    this.persist(["inventory_intelligence"]);
     return record;
   }
 
@@ -7685,7 +7737,7 @@ export class CommerceDatabase {
     } else {
       this.data.model_registry.push(entry);
     }
-    this.persist();
+    this.persist(["model_registry"]);
     return entry;
   }
 
@@ -7698,7 +7750,7 @@ export class CommerceDatabase {
 
   public insertDataQualityReport(report: DataQualityReport): DataQualityReport {
     this.data.data_quality_reports.push(report);
-    this.persist();
+    this.persist(["data_quality_reports"]);
     return report;
   }
 
@@ -7713,7 +7765,7 @@ export class CommerceDatabase {
 
   public insertAudience(audience: Audience): Audience {
     this.data.audiences.push(audience);
-    this.persist();
+    this.persist(["audiences"]);
     return audience;
   }
 
@@ -7722,7 +7774,7 @@ export class CommerceDatabase {
     if (idx === -1) throw new Error(`Audience not found: ${id}`);
     const updated = { ...this.data.audiences[idx], ...safePatch(updates), updated_at: new Date().toISOString() };
     this.data.audiences[idx] = updated;
-    this.persist();
+    this.persist(["audiences"]);
     return updated;
   }
 
@@ -7732,13 +7784,13 @@ export class CommerceDatabase {
 
   public insertAudienceMember(member: AudienceMember): AudienceMember {
     this.data.audience_members.push(member);
-    this.persist();
+    this.persist(["audience_members"]);
     return member;
   }
 
   public insertAudienceSnapshot(snapshot: AudienceSnapshot): AudienceSnapshot {
     this.data.audience_snapshots.push(snapshot);
-    this.persist();
+    this.persist(["audience_snapshots"]);
     return snapshot;
   }
 
@@ -7766,13 +7818,13 @@ export class CommerceDatabase {
     } else {
       this.data.customer_lifecycles.push(record);
     }
-    this.persist();
+    this.persist(["customer_lifecycles"]);
     return record;
   }
 
   public insertLifecycleTransition(transition: CustomerLifecycleTransition): CustomerLifecycleTransition {
     this.data.customer_lifecycle_transitions.push(transition);
-    this.persist();
+    this.persist(["customer_lifecycle_transitions"]);
     return transition;
   }
 
@@ -7798,12 +7850,12 @@ export class CommerceDatabase {
         this.data.customer_lifecycles.push(r);
       }
     }
-    this.persist();
+    this.persist(["customer_lifecycles"]);
   }
 
   public batchInsertLifecycleTransitions(transitions: CustomerLifecycleTransition[]): void {
     this.data.customer_lifecycle_transitions.push(...transitions);
-    this.persist();
+    this.persist(["customer_lifecycle_transitions"]);
   }
 
   // --- Journeys ---
@@ -7817,7 +7869,7 @@ export class CommerceDatabase {
 
   public insertJourney(journey: CustomerJourney): CustomerJourney {
     this.data.journeys.push(journey);
-    this.persist();
+    this.persist(["journeys"]);
     return journey;
   }
 
@@ -7826,7 +7878,7 @@ export class CommerceDatabase {
     if (idx === -1) throw new Error(`Journey not found: ${id}`);
     const updated = { ...this.data.journeys[idx], ...safePatch(updates), updated_at: new Date().toISOString() };
     this.data.journeys[idx] = updated;
-    this.persist();
+    this.persist(["journeys"]);
     return updated;
   }
 
@@ -7838,7 +7890,7 @@ export class CommerceDatabase {
 
   public insertJourneyEnrollment(enrollment: JourneyEnrollment): JourneyEnrollment {
     this.data.journey_enrollments.push(enrollment);
-    this.persist();
+    this.persist(["journey_enrollments"]);
     return enrollment;
   }
 
@@ -7847,13 +7899,13 @@ export class CommerceDatabase {
     if (idx === -1) throw new Error(`JourneyEnrollment not found: ${id}`);
     const updated = { ...this.data.journey_enrollments[idx], ...safePatch(updates), updated_at: new Date().toISOString() };
     this.data.journey_enrollments[idx] = updated;
-    this.persist();
+    this.persist(["journey_enrollments"]);
     return updated;
   }
 
   public insertJourneyExecution(record: JourneyExecutionRecord): JourneyExecutionRecord {
     this.data.journey_executions.push(record);
-    this.persist();
+    this.persist(["journey_executions"]);
     return record;
   }
 
@@ -7868,7 +7920,7 @@ export class CommerceDatabase {
 
   public insertCampaign(campaign: GrowthCampaign): GrowthCampaign {
     this.data.campaigns.push(campaign);
-    this.persist();
+    this.persist(["campaigns"]);
     return campaign;
   }
 
@@ -7877,7 +7929,7 @@ export class CommerceDatabase {
     if (idx === -1) throw new Error(`Campaign not found: ${id}`);
     const updated = { ...this.data.campaigns[idx], ...safePatch(updates), updated_at: new Date().toISOString() };
     this.data.campaigns[idx] = updated;
-    this.persist();
+    this.persist(["campaigns"]);
     return updated;
   }
 
@@ -7889,7 +7941,7 @@ export class CommerceDatabase {
 
   public insertCampaignExecution(exec: CampaignExecutionRecord): CampaignExecutionRecord {
     this.data.campaign_executions.push(exec);
-    this.persist();
+    this.persist(["campaign_executions"]);
     return exec;
   }
 
@@ -7898,7 +7950,7 @@ export class CommerceDatabase {
     if (idx === -1) throw new Error(`CampaignExecution not found: ${id}`);
     const updated = { ...this.data.campaign_executions[idx], ...safePatch(updates) };
     this.data.campaign_executions[idx] = updated;
-    this.persist();
+    this.persist(["campaign_executions"]);
     return updated;
   }
 
@@ -7913,7 +7965,7 @@ export class CommerceDatabase {
 
   public insertAbandonedCart(cart: AbandonedCartRecoveryItem): AbandonedCartRecoveryItem {
     this.data.abandoned_carts.push(cart);
-    this.persist();
+    this.persist(["abandoned_carts"]);
     return cart;
   }
 
@@ -7922,7 +7974,7 @@ export class CommerceDatabase {
     if (idx === -1) throw new Error(`AbandonedCart not found: ${id}`);
     const updated = { ...this.data.abandoned_carts[idx], ...safePatch(updates) };
     this.data.abandoned_carts[idx] = updated;
-    this.persist();
+    this.persist(["abandoned_carts"]);
     return updated;
   }
 
@@ -7937,7 +7989,7 @@ export class CommerceDatabase {
 
   public insertExecutiveDigest(digest: ExecutiveDigest): ExecutiveDigest {
     this.data.executive_digests.unshift(digest);
-    this.persist();
+    this.persist(["executive_digests"]);
     return digest;
   }
 
@@ -7948,7 +8000,7 @@ export class CommerceDatabase {
 
   public insertContentAsset(asset: ContentAsset): ContentAsset {
     this.data.content_assets.push(asset);
-    this.persist();
+    this.persist(["content_assets"]);
     return asset;
   }
 
@@ -7958,7 +8010,7 @@ export class CommerceDatabase {
 
   public insertContentTemplate(tpl: ContentTemplate): ContentTemplate {
     this.data.content_templates.push(tpl);
-    this.persist();
+    this.persist(["content_templates"]);
     return tpl;
   }
 
@@ -7972,7 +8024,7 @@ export class CommerceDatabase {
 
   public insertOffer(offer: GrowthOffer): GrowthOffer {
     this.data.offers.push(offer);
-    this.persist();
+    this.persist(["offers"]);
     return offer;
   }
 
@@ -7981,7 +8033,7 @@ export class CommerceDatabase {
     if (idx === -1) throw new Error(`Offer not found: ${id}`);
     const updated = { ...this.data.offers[idx], ...safePatch(updates) };
     this.data.offers[idx] = updated;
-    this.persist();
+    this.persist(["offers"]);
     return updated;
   }
 
@@ -7993,7 +8045,7 @@ export class CommerceDatabase {
 
   public insertOfferUsage(usage: OfferUsage): OfferUsage {
     this.data.offer_usages.push(usage);
-    this.persist();
+    this.persist(["offer_usages"]);
     return usage;
   }
 
@@ -8008,7 +8060,7 @@ export class CommerceDatabase {
 
   public insertExperiment(exp: GrowthExperiment): GrowthExperiment {
     this.data.experiments.push(exp);
-    this.persist();
+    this.persist(["experiments"]);
     return exp;
   }
 
@@ -8017,7 +8069,7 @@ export class CommerceDatabase {
     if (idx === -1) throw new Error(`Experiment not found: ${id}`);
     const updated = { ...this.data.experiments[idx], ...safePatch(updates) };
     this.data.experiments[idx] = updated;
-    this.persist();
+    this.persist(["experiments"]);
     return updated;
   }
 
@@ -8029,7 +8081,7 @@ export class CommerceDatabase {
 
   public insertExperimentAssignment(asgn: ExperimentAssignment): ExperimentAssignment {
     this.data.experiment_assignments.push(asgn);
-    this.persist();
+    this.persist(["experiment_assignments"]);
     return asgn;
   }
 
@@ -8049,7 +8101,7 @@ export class CommerceDatabase {
     } else {
       this.data.communication_preferences.push(pref);
     }
-    this.persist();
+    this.persist(["communication_preferences"]);
     return pref;
   }
 
@@ -8061,7 +8113,7 @@ export class CommerceDatabase {
 
   public insertSuppressionEntry(entry: SuppressionEntry): SuppressionEntry {
     this.data.suppression_list.push(entry);
-    this.persist();
+    this.persist(["suppression_list"]);
     return entry;
   }
 
@@ -8076,7 +8128,7 @@ export class CommerceDatabase {
 
   public insertCampaignAttribution(attrib: CampaignAttribution): CampaignAttribution {
     this.data.campaign_attributions.push(attrib);
-    this.persist();
+    this.persist(["campaign_attributions"]);
     return attrib;
   }
 
@@ -8087,7 +8139,7 @@ export class CommerceDatabase {
 
   public insertGrowthInsight(insight: GrowthInsight): GrowthInsight {
     this.data.growth_insights.push(insight);
-    this.persist();
+    this.persist(["growth_insights"]);
     return insight;
   }
 
@@ -8097,7 +8149,7 @@ export class CommerceDatabase {
 
   public insertGrowthRecommendation(rec: GrowthRecommendation): GrowthRecommendation {
     this.data.growth_recommendations.push(rec);
-    this.persist();
+    this.persist(["growth_recommendations"]);
     return rec;
   }
 
@@ -8106,7 +8158,7 @@ export class CommerceDatabase {
     if (idx === -1) throw new Error(`GrowthRecommendation not found: ${id}`);
     const updated = { ...this.data.growth_recommendations[idx], ...safePatch(updates) };
     this.data.growth_recommendations[idx] = updated;
-    this.persist();
+    this.persist(["growth_recommendations"]);
     return updated;
   }
 
@@ -8121,7 +8173,7 @@ export class CommerceDatabase {
 
   public createSupplier(supplier: Supplier): Supplier {
     this.data.suppliers.push(supplier);
-    this.persist();
+    this.persist(["suppliers"]);
     return supplier;
   }
 
@@ -8130,7 +8182,7 @@ export class CommerceDatabase {
     if (idx === -1) throw new Error(`Supplier not found: ${id}`);
     const updated = { ...this.data.suppliers[idx], ...safePatch(updates), updated_at: new Date().toISOString() };
     this.data.suppliers[idx] = updated;
-    this.persist();
+    this.persist(["suppliers"]);
     return updated;
   }
 
@@ -8142,7 +8194,7 @@ export class CommerceDatabase {
 
   public createSupplierProduct(sp: SupplierProduct): SupplierProduct {
     this.data.supplier_products.push(sp);
-    this.persist();
+    this.persist(["supplier_products"]);
     return sp;
   }
 
@@ -8156,7 +8208,7 @@ export class CommerceDatabase {
 
   public createPurchaseOrder(po: PurchaseOrder): PurchaseOrder {
     this.data.purchase_orders.push(po);
-    this.persist();
+    this.persist(["purchase_orders"]);
     return po;
   }
 
@@ -8165,7 +8217,7 @@ export class CommerceDatabase {
     if (idx === -1) throw new Error(`PurchaseOrder not found: ${id}`);
     const updated = { ...this.data.purchase_orders[idx], ...safePatch(updates), updated_at: new Date().toISOString() };
     this.data.purchase_orders[idx] = updated;
-    this.persist();
+    this.persist(["purchase_orders"]);
     return updated;
   }
 
@@ -8175,7 +8227,7 @@ export class CommerceDatabase {
 
   public createProcurementRecommendation(pr: ProcurementRecommendation): ProcurementRecommendation {
     this.data.procurement_recommendations.push(pr);
-    this.persist();
+    this.persist(["procurement_recommendations"]);
     return pr;
   }
 
@@ -8184,7 +8236,7 @@ export class CommerceDatabase {
     if (idx === -1) throw new Error(`ProcurementRecommendation not found: ${id}`);
     const updated = { ...this.data.procurement_recommendations[idx], ...safePatch(updates) };
     this.data.procurement_recommendations[idx] = updated;
-    this.persist();
+    this.persist(["procurement_recommendations"]);
     return updated;
   }
 
@@ -8199,7 +8251,7 @@ export class CommerceDatabase {
     } else {
       this.data.supplier_performances.push(sp);
     }
-    this.persist();
+    this.persist(["supplier_performances"]);
     return sp;
   }
 
@@ -8210,7 +8262,7 @@ export class CommerceDatabase {
 
   public createPricingRule(rule: PricingRule): PricingRule {
     this.data.pricing_rules.push(rule);
-    this.persist();
+    this.persist(["pricing_rules"]);
     return rule;
   }
 
@@ -8219,7 +8271,7 @@ export class CommerceDatabase {
     if (idx === -1) throw new Error(`PricingRule not found: ${id}`);
     const updated = { ...this.data.pricing_rules[idx], ...safePatch(updates), updated_at: new Date().toISOString() };
     this.data.pricing_rules[idx] = updated;
-    this.persist();
+    this.persist(["pricing_rules"]);
     return updated;
   }
 
@@ -8229,7 +8281,7 @@ export class CommerceDatabase {
 
   public createPricingRecommendation(rec: PricingRecommendation): PricingRecommendation {
     this.data.pricing_recommendations.push(rec);
-    this.persist();
+    this.persist(["pricing_recommendations"]);
     return rec;
   }
 
@@ -8238,7 +8290,7 @@ export class CommerceDatabase {
     if (idx === -1) throw new Error(`PricingRecommendation not found: ${id}`);
     const updated = { ...this.data.pricing_recommendations[idx], ...safePatch(updates) };
     this.data.pricing_recommendations[idx] = updated;
-    this.persist();
+    this.persist(["pricing_recommendations"]);
     return updated;
   }
 
@@ -8248,7 +8300,7 @@ export class CommerceDatabase {
 
   public createPriceChangeRequest(req: PriceChangeRequest): PriceChangeRequest {
     this.data.price_change_requests.push(req);
-    this.persist();
+    this.persist(["price_change_requests"]);
     return req;
   }
 
@@ -8257,7 +8309,7 @@ export class CommerceDatabase {
     if (idx === -1) throw new Error(`PriceChangeRequest not found: ${id}`);
     const updated = { ...this.data.price_change_requests[idx], ...safePatch(updates) };
     this.data.price_change_requests[idx] = updated;
-    this.persist();
+    this.persist(["price_change_requests"]);
     return updated;
   }
 
@@ -8267,7 +8319,7 @@ export class CommerceDatabase {
 
   public recordPriceChangeExecution(exec: PriceChangeExecution): PriceChangeExecution {
     this.data.price_change_executions.push(exec);
-    this.persist();
+    this.persist(["price_change_executions"]);
     return exec;
   }
 
@@ -8283,7 +8335,7 @@ export class CommerceDatabase {
     } else {
       this.data.courier_performances.push(cp);
     }
-    this.persist();
+    this.persist(["courier_performances"]);
     return cp;
   }
 
@@ -8293,7 +8345,7 @@ export class CommerceDatabase {
 
   public createShipmentException(se: ShipmentException): ShipmentException {
     this.data.shipment_exceptions.push(se);
-    this.persist();
+    this.persist(["shipment_exceptions"]);
     return se;
   }
 
@@ -8302,7 +8354,7 @@ export class CommerceDatabase {
     if (idx === -1) throw new Error(`ShipmentException not found: ${id}`);
     const updated = { ...this.data.shipment_exceptions[idx], ...safePatch(updates) };
     this.data.shipment_exceptions[idx] = updated;
-    this.persist();
+    this.persist(["shipment_exceptions"]);
     return updated;
   }
 
@@ -8312,7 +8364,7 @@ export class CommerceDatabase {
 
   public createFulfillmentPlan(plan: FulfillmentPlan): FulfillmentPlan {
     this.data.fulfillment_plans.push(plan);
-    this.persist();
+    this.persist(["fulfillment_plans"]);
     return plan;
   }
 
@@ -8323,7 +8375,7 @@ export class CommerceDatabase {
 
   public recordPaymentOperation(op: PaymentOperation): PaymentOperation {
     this.data.payment_operations.push(op);
-    this.persist();
+    this.persist(["payment_operations"]);
     return op;
   }
 
@@ -8333,7 +8385,7 @@ export class CommerceDatabase {
 
   public createPaymentException(pe: PaymentException): PaymentException {
     this.data.payment_exceptions.push(pe);
-    this.persist();
+    this.persist(["payment_exceptions"]);
     return pe;
   }
 
@@ -8342,7 +8394,7 @@ export class CommerceDatabase {
     if (idx === -1) throw new Error(`PaymentException not found: ${id}`);
     const updated = { ...this.data.payment_exceptions[idx], ...safePatch(updates) };
     this.data.payment_exceptions[idx] = updated;
-    this.persist();
+    this.persist(["payment_exceptions"]);
     return updated;
   }
 
@@ -8352,7 +8404,7 @@ export class CommerceDatabase {
 
   public createReconciliationRun(run: ReconciliationRun): ReconciliationRun {
     this.data.reconciliation_runs.push(run);
-    this.persist();
+    this.persist(["reconciliation_runs"]);
     return run;
   }
 
@@ -8364,7 +8416,7 @@ export class CommerceDatabase {
 
   public createReconciliationItem(item: ReconciliationItem): ReconciliationItem {
     this.data.reconciliation_items.push(item);
-    this.persist();
+    this.persist(["reconciliation_items"]);
     return item;
   }
 
@@ -8374,7 +8426,7 @@ export class CommerceDatabase {
 
   public createFinancialException(fe: FinancialException): FinancialException {
     this.data.financial_exceptions.push(fe);
-    this.persist();
+    this.persist(["financial_exceptions"]);
     return fe;
   }
 
@@ -8383,7 +8435,7 @@ export class CommerceDatabase {
     if (idx === -1) throw new Error(`FinancialException not found: ${id}`);
     const updated = { ...this.data.financial_exceptions[idx], ...safePatch(updates) };
     this.data.financial_exceptions[idx] = updated;
-    this.persist();
+    this.persist(["financial_exceptions"]);
     return updated;
   }
 
@@ -8393,7 +8445,7 @@ export class CommerceDatabase {
 
   public createSettlementRecord(sr: SettlementRecord): SettlementRecord {
     this.data.settlement_records.push(sr);
-    this.persist();
+    this.persist(["settlement_records"]);
     return sr;
   }
 
@@ -8408,7 +8460,7 @@ export class CommerceDatabase {
 
   public createSupportTicket(ticket: SupportTicket): SupportTicket {
     this.data.support_tickets.push(ticket);
-    this.persist();
+    this.persist(["support_tickets"]);
     return ticket;
   }
 
@@ -8417,7 +8469,7 @@ export class CommerceDatabase {
     if (idx === -1) throw new Error(`SupportTicket not found: ${id}`);
     const updated = { ...this.data.support_tickets[idx], ...safePatch(updates), updated_at: new Date().toISOString() };
     this.data.support_tickets[idx] = updated;
-    this.persist();
+    this.persist(["support_tickets"]);
     return updated;
   }
 
@@ -8432,7 +8484,7 @@ export class CommerceDatabase {
 
   public createOperationalException(oe: OperationalException): OperationalException {
     this.data.operational_exceptions.push(oe);
-    this.persist();
+    this.persist(["operational_exceptions"]);
     return oe;
   }
 
@@ -8441,7 +8493,7 @@ export class CommerceDatabase {
     if (idx === -1) throw new Error(`OperationalException not found: ${id}`);
     const updated = { ...this.data.operational_exceptions[idx], ...safePatch(updates), updated_at: new Date().toISOString() };
     this.data.operational_exceptions[idx] = updated;
-    this.persist();
+    this.persist(["operational_exceptions"]);
     return updated;
   }
 
@@ -8456,7 +8508,7 @@ export class CommerceDatabase {
     } else {
       this.data.exception_policies.push(ep);
     }
-    this.persist();
+    this.persist(["exception_policies"]);
     return ep;
   }
 
@@ -8476,7 +8528,7 @@ export class CommerceDatabase {
     } else {
       this.data.provider_health.push(ph);
     }
-    this.persist();
+    this.persist(["provider_health"]);
     return ph;
   }
 
@@ -8486,7 +8538,7 @@ export class CommerceDatabase {
 
   public createProviderIncident(incident: ProviderIncident): ProviderIncident {
     this.data.provider_incidents.push(incident);
-    this.persist();
+    this.persist(["provider_incidents"]);
     return incident;
   }
 
@@ -8495,7 +8547,7 @@ export class CommerceDatabase {
     if (idx === -1) throw new Error(`ProviderIncident not found: ${id}`);
     const updated = { ...this.data.provider_incidents[idx], ...safePatch(updates) };
     this.data.provider_incidents[idx] = updated;
-    this.persist();
+    this.persist(["provider_incidents"]);
     return updated;
   }
 
@@ -8511,7 +8563,7 @@ export class CommerceDatabase {
     } else {
       this.data.sla_policies.push(sp);
     }
-    this.persist();
+    this.persist(["sla_policies"]);
     return sp;
   }
 
@@ -8521,7 +8573,7 @@ export class CommerceDatabase {
 
   public createSLABreach(sb: SLABreach): SLABreach {
     this.data.sla_breaches.push(sb);
-    this.persist();
+    this.persist(["sla_breaches"]);
     return sb;
   }
 
@@ -8530,7 +8582,7 @@ export class CommerceDatabase {
     if (idx === -1) throw new Error(`SLABreach not found: ${id}`);
     const updated = { ...this.data.sla_breaches[idx], ...safePatch(updates) };
     this.data.sla_breaches[idx] = updated;
-    this.persist();
+    this.persist(["sla_breaches"]);
     return updated;
   }
 
@@ -8546,7 +8598,7 @@ export class CommerceDatabase {
     } else {
       this.data.autonomy_budgets.push(budget);
     }
-    this.persist();
+    this.persist(["autonomy_budgets"]);
     return budget;
   }
 
@@ -8556,7 +8608,7 @@ export class CommerceDatabase {
 
   public createBulkSafeguard(bs: BulkOperationSafeguard): BulkOperationSafeguard {
     this.data.bulk_safeguards.push(bs);
-    this.persist();
+    this.persist(["bulk_safeguards"]);
     return bs;
   }
 
@@ -8565,7 +8617,7 @@ export class CommerceDatabase {
     if (idx === -1) throw new Error(`BulkOperationSafeguard not found: ${id}`);
     const updated = { ...this.data.bulk_safeguards[idx], ...safePatch(updates) };
     this.data.bulk_safeguards[idx] = updated;
-    this.persist();
+    this.persist(["bulk_safeguards"]);
     return updated;
   }
 
@@ -8820,7 +8872,7 @@ export class CommerceDatabase {
 
   public createOrganization(org: Organization): Organization {
     this.data.organizations.push(org);
-    this.persist();
+    this.persist(["organizations"]);
     return org;
   }
 
@@ -8832,7 +8884,7 @@ export class CommerceDatabase {
       ...safePatch(updates),
       updated_at: new Date().toISOString(),
     };
-    this.persist();
+    this.persist(["organizations"]);
     return this.data.organizations[idx];
   }
 
@@ -8842,7 +8894,7 @@ export class CommerceDatabase {
 
   public createBusinessUnit(bu: BusinessUnit): BusinessUnit {
     this.data.business_units.push(bu);
-    this.persist();
+    this.persist(["business_units"]);
     return bu;
   }
 
@@ -8852,7 +8904,7 @@ export class CommerceDatabase {
 
   public createEnterpriseBrand(brand: EnterpriseBrand): EnterpriseBrand {
     this.data.enterprise_brands.push(brand);
-    this.persist();
+    this.persist(["enterprise_brands"]);
     return brand;
   }
 
@@ -8862,7 +8914,7 @@ export class CommerceDatabase {
 
   public createEnterpriseStore(store: EnterpriseStore): EnterpriseStore {
     this.data.enterprise_stores.push(store);
-    this.persist();
+    this.persist(["enterprise_stores"]);
     return store;
   }
 
@@ -8876,7 +8928,7 @@ export class CommerceDatabase {
 
   public createEntityMembership(m: EntityMembership): EntityMembership {
     this.data.entity_memberships.push(m);
-    this.persist();
+    this.persist(["entity_memberships"]);
     return m;
   }
 
@@ -8886,7 +8938,7 @@ export class CommerceDatabase {
 
   public createEnterpriseUser(u: EnterpriseUserRecord): EnterpriseUserRecord {
     this.data.enterprise_users.push(u);
-    this.persist();
+    this.persist(["enterprise_users"]);
     return u;
   }
 
@@ -8896,7 +8948,7 @@ export class CommerceDatabase {
 
   public createSemanticMetric(m: EnterpriseMetricDefinition): EnterpriseMetricDefinition {
     this.data.semantic_metrics.push(m);
-    this.persist();
+    this.persist(["semantic_metrics"]);
     return m;
   }
 
@@ -8910,7 +8962,7 @@ export class CommerceDatabase {
 
   public createEnterpriseBenchmark(b: EnterpriseBenchmark): EnterpriseBenchmark {
     this.data.enterprise_benchmarks.push(b);
-    this.persist();
+    this.persist(["enterprise_benchmarks"]);
     return b;
   }
 
@@ -8920,7 +8972,7 @@ export class CommerceDatabase {
 
   public createReportDefinition(r: ReportDefinition): ReportDefinition {
     this.data.report_definitions.push(r);
-    this.persist();
+    this.persist(["report_definitions"]);
     return r;
   }
 
@@ -8930,7 +8982,7 @@ export class CommerceDatabase {
 
   public createReportExecution(e: ReportExecution): ReportExecution {
     this.data.report_executions.push(e);
-    this.persist();
+    this.persist(["report_executions"]);
     return e;
   }
 
@@ -8944,7 +8996,7 @@ export class CommerceDatabase {
 
   public createIntegrationInstallation(i: IntegrationInstallation): IntegrationInstallation {
     this.data.integration_installations.push(i);
-    this.persist();
+    this.persist(["integration_installations"]);
     return i;
   }
 
@@ -8956,7 +9008,7 @@ export class CommerceDatabase {
       ...safePatch(updates),
       updated_at: new Date().toISOString(),
     };
-    this.persist();
+    this.persist(["integration_installations"]);
     return this.data.integration_installations[idx];
   }
 
@@ -8968,7 +9020,7 @@ export class CommerceDatabase {
 
   public createIntegrationMapping(m: IntegrationMapping): IntegrationMapping {
     this.data.integration_mappings.push(m);
-    this.persist();
+    this.persist(["integration_mappings"]);
     return m;
   }
 
@@ -8978,7 +9030,7 @@ export class CommerceDatabase {
 
   public createIntegrationConflict(c: IntegrationConflict): IntegrationConflict {
     this.data.integration_conflicts.push(c);
-    this.persist();
+    this.persist(["integration_conflicts"]);
     return c;
   }
 
@@ -8996,7 +9048,7 @@ export class CommerceDatabase {
       resolved_by: resolvedBy,
       resolved_at: new Date().toISOString(),
     };
-    this.persist();
+    this.persist(["integration_conflicts"]);
     return this.data.integration_conflicts[idx];
   }
 
@@ -9006,7 +9058,7 @@ export class CommerceDatabase {
 
   public createIntegrationSync(s: IntegrationSyncRecord): IntegrationSyncRecord {
     this.data.integration_syncs.push(s);
-    this.persist();
+    this.persist(["integration_syncs"]);
     return s;
   }
 
@@ -9016,7 +9068,7 @@ export class CommerceDatabase {
 
   public createDeveloperApplication(a: DeveloperApplication): DeveloperApplication {
     this.data.developer_applications.push(a);
-    this.persist();
+    this.persist(["developer_applications"]);
     return a;
   }
 
@@ -9026,7 +9078,7 @@ export class CommerceDatabase {
 
   public createAPIKey(k: APIKeyRecord): APIKeyRecord {
     this.data.api_keys.push(k);
-    this.persist();
+    this.persist(["api_keys"]);
     return k;
   }
 
@@ -9040,7 +9092,7 @@ export class CommerceDatabase {
 
   public createEnterpriseWebhook(w: EnterpriseWebhookSubscription): EnterpriseWebhookSubscription {
     this.data.enterprise_webhooks.push(w);
-    this.persist();
+    this.persist(["enterprise_webhooks"]);
     return w;
   }
 
@@ -9050,7 +9102,7 @@ export class CommerceDatabase {
 
   public createWebhookDelivery(d: WebhookDeliveryRecord): WebhookDeliveryRecord {
     this.data.webhook_deliveries.push(d);
-    this.persist();
+    this.persist(["webhook_deliveries"]);
     return d;
   }
 
@@ -9060,7 +9112,7 @@ export class CommerceDatabase {
 
   public createDataAsset(a: DataAsset): DataAsset {
     this.data.data_assets.push(a);
-    this.persist();
+    this.persist(["data_assets"]);
     return a;
   }
 
@@ -9070,7 +9122,7 @@ export class CommerceDatabase {
 
   public createDataLineage(l: DataLineageTrace): DataLineageTrace {
     this.data.data_lineage.push(l);
-    this.persist();
+    this.persist(["data_lineage"]);
     return l;
   }
 
@@ -9084,7 +9136,7 @@ export class CommerceDatabase {
 
   public createDataQualityIssue(i: DataQualityIssue): DataQualityIssue {
     this.data.data_quality_issues.push(i);
-    this.persist();
+    this.persist(["data_quality_issues"]);
     return i;
   }
 
@@ -9097,7 +9149,7 @@ export class CommerceDatabase {
       resolution_notes: notes,
       resolved_at: new Date().toISOString(),
     };
-    this.persist();
+    this.persist(["data_quality_issues"]);
     return this.data.data_quality_issues[idx];
   }
 
@@ -9107,7 +9159,7 @@ export class CommerceDatabase {
 
   public createEnterpriseCustomerIdentity(c: EnterpriseCustomerIdentity): EnterpriseCustomerIdentity {
     this.data.enterprise_customer_identities.push(c);
-    this.persist();
+    this.persist(["enterprise_customer_identities"]);
     return c;
   }
 
@@ -9122,7 +9174,7 @@ export class CommerceDatabase {
       ...safePatch(updates),
       updated_at: new Date().toISOString(),
     };
-    this.persist();
+    this.persist(["enterprise_customer_identities"]);
     return this.data.enterprise_customer_identities[idx];
   }
 
@@ -9132,7 +9184,7 @@ export class CommerceDatabase {
 
   public createEnterpriseIncident(i: EnterpriseIncident): EnterpriseIncident {
     this.data.enterprise_incidents.push(i);
-    this.persist();
+    this.persist(["enterprise_incidents"]);
     return i;
   }
 
@@ -9143,7 +9195,7 @@ export class CommerceDatabase {
       ...this.data.enterprise_incidents[idx],
       ...safePatch(updates),
     };
-    this.persist();
+    this.persist(["enterprise_incidents"]);
     return this.data.enterprise_incidents[idx];
   }
 
@@ -9162,7 +9214,7 @@ export class CommerceDatabase {
     } else {
       this.data.enterprise_ai_budgets.push(b);
     }
-    this.persist();
+    this.persist(["enterprise_ai_budgets"]);
     return b;
   }
 
@@ -9172,7 +9224,7 @@ export class CommerceDatabase {
 
   public createAIUsageRecord(r: EnterpriseAIUsageRecord): EnterpriseAIUsageRecord {
     this.data.ai_usage_records.push(r);
-    this.persist();
+    this.persist(["ai_usage_records"]);
     return r;
   }
 
@@ -9181,7 +9233,7 @@ export class CommerceDatabase {
     const existing = this.data.global_events.find((e) => e.event_id === event.event_id);
     if (existing) return existing;
     this.data.global_events.push(event);
-    this.persist();
+    this.persist(["global_events"]);
     return event;
   }
 
@@ -9217,7 +9269,7 @@ export class CommerceDatabase {
   public createAutomation(record: AutomationRecord): AutomationRecord {
     if (!this.data.automations) this.data.automations = [];
     this.data.automations.push(record);
-    this.persist();
+    this.persist(["automations"]);
     return record;
   }
 
@@ -9230,7 +9282,7 @@ export class CommerceDatabase {
       ...safePatch(updates),
       updated_at: new Date().toISOString(),
     };
-    this.persist();
+    this.persist(["automations"]);
     return this.data.automations[idx];
   }
 
@@ -9238,7 +9290,7 @@ export class CommerceDatabase {
     if (!this.data.automations) return false;
     const initialLen = this.data.automations.length;
     this.data.automations = this.data.automations.filter((a) => !(a.tenant_id === tenantId && a.id === id));
-    this.persist();
+    this.persist(["automations"]);
     return this.data.automations.length < initialLen;
   }
 
@@ -9253,7 +9305,7 @@ export class CommerceDatabase {
   public createAutomationWorkflow(wf: AutomationWorkflow): AutomationWorkflow {
     if (!this.data.automation_workflows) this.data.automation_workflows = [];
     this.data.automation_workflows.push(wf);
-    this.persist();
+    this.persist(["automation_workflows"]);
     return wf;
   }
 
@@ -9266,7 +9318,7 @@ export class CommerceDatabase {
       ...safePatch(updates),
       updated_at: new Date().toISOString(),
     };
-    this.persist();
+    this.persist(["automation_workflows"]);
     return this.data.automation_workflows[idx];
   }
 
@@ -9279,7 +9331,7 @@ export class CommerceDatabase {
   public createAutomationWorkflowVersion(v: AutomationWorkflowVersion): AutomationWorkflowVersion {
     if (!this.data.automation_workflow_versions) this.data.automation_workflow_versions = [];
     this.data.automation_workflow_versions.push(v);
-    this.persist();
+    this.persist(["automation_workflow_versions"]);
     return v;
   }
 
@@ -9330,7 +9382,7 @@ export class CommerceDatabase {
   public createAutomationExecution(exec: AutomationExecution): AutomationExecution {
     if (!this.data.automation_executions) this.data.automation_executions = [];
     this.data.automation_executions.push(exec);
-    this.persist();
+    this.persist(["automation_executions"]);
     return exec;
   }
 
@@ -9346,7 +9398,7 @@ export class CommerceDatabase {
       ...this.data.automation_executions[idx],
       ...safePatch(updates),
     };
-    this.persist();
+    this.persist(["automation_executions"]);
     return this.data.automation_executions[idx];
   }
 
@@ -9357,7 +9409,7 @@ export class CommerceDatabase {
   public createAutomationExecutionStep(step: AutomationExecutionStep): AutomationExecutionStep {
     if (!this.data.automation_execution_steps) this.data.automation_execution_steps = [];
     this.data.automation_execution_steps.push(step);
-    this.persist();
+    this.persist(["automation_execution_steps"]);
     return step;
   }
 
@@ -9372,7 +9424,7 @@ export class CommerceDatabase {
       ...this.data.automation_execution_steps[idx],
       ...safePatch(updates),
     };
-    this.persist();
+    this.persist(["automation_execution_steps"]);
     return this.data.automation_execution_steps[idx];
   }
 
@@ -9393,7 +9445,7 @@ export class CommerceDatabase {
       throw new Error(`Idempotency conflict for key ${rec.idempotency_key} and operation ${rec.operation}`);
     }
     this.data.idempotency_records.push(rec);
-    this.persist();
+    this.persist(["idempotency_records"]);
     return rec;
   }
 
@@ -9405,7 +9457,7 @@ export class CommerceDatabase {
       ...this.data.idempotency_records[idx],
       ...safePatch(updates),
     };
-    this.persist();
+    this.persist(["idempotency_records"]);
     return this.data.idempotency_records[idx];
   }
 
@@ -9418,7 +9470,7 @@ export class CommerceDatabase {
   public createAutomationRetry(retry: AutomationRetry): AutomationRetry {
     if (!this.data.automation_retries) this.data.automation_retries = [];
     this.data.automation_retries.push(retry);
-    this.persist();
+    this.persist(["automation_retries"]);
     return retry;
   }
 
@@ -9431,7 +9483,7 @@ export class CommerceDatabase {
       ...safePatch(updates),
       updated_at: new Date().toISOString(),
     };
-    this.persist();
+    this.persist(["automation_retries"]);
     return this.data.automation_retries[idx];
   }
 
@@ -9449,7 +9501,7 @@ export class CommerceDatabase {
   public createAutomationDeadLetter(dlq: AutomationDeadLetter): AutomationDeadLetter {
     if (!this.data.automation_dead_letters) this.data.automation_dead_letters = [];
     this.data.automation_dead_letters.push(dlq);
-    this.persist();
+    this.persist(["automation_dead_letters"]);
     return dlq;
   }
 
@@ -9461,7 +9513,7 @@ export class CommerceDatabase {
       ...this.data.automation_dead_letters[idx],
       ...safePatch(updates),
     };
-    this.persist();
+    this.persist(["automation_dead_letters"]);
     return this.data.automation_dead_letters[idx];
   }
 
@@ -9491,7 +9543,7 @@ export class CommerceDatabase {
   public createAutomationWebhook(wh: AutomationWebhook): AutomationWebhook {
     if (!this.data.automation_webhooks) this.data.automation_webhooks = [];
     this.data.automation_webhooks.push(wh);
-    this.persist();
+    this.persist(["automation_webhooks"]);
     return wh;
   }
 
@@ -9504,7 +9556,7 @@ export class CommerceDatabase {
       ...safePatch(updates),
       updated_at: new Date().toISOString(),
     };
-    this.persist();
+    this.persist(["automation_webhooks"]);
     return this.data.automation_webhooks[idx];
   }
 
@@ -9518,7 +9570,7 @@ export class CommerceDatabase {
   public createAutomationWebhookDelivery(del: AutomationWebhookDelivery): AutomationWebhookDelivery {
     if (!this.data.automation_webhook_deliveries) this.data.automation_webhook_deliveries = [];
     this.data.automation_webhook_deliveries.push(del);
-    this.persist();
+    this.persist(["automation_webhook_deliveries"]);
     return del;
   }
 
@@ -9532,7 +9584,7 @@ export class CommerceDatabase {
   public createAutomationAuditLog(log: AutomationAuditRecord): AutomationAuditRecord {
     if (!this.data.automation_audit_logs) this.data.automation_audit_logs = [];
     this.data.automation_audit_logs.push(log);
-    this.persist();
+    this.persist(["automation_audit_logs"]);
     return log;
   }
 
@@ -9571,7 +9623,7 @@ export class CommerceDatabase {
     } else {
       this.data.connector_configurations.push(config);
     }
-    this.persist();
+    this.persist(["connector_configurations"]);
     return config;
   }
 
@@ -9583,7 +9635,7 @@ export class CommerceDatabase {
     );
     const changed = this.data.connector_configurations.length < initialLen;
     if (changed) {
-      this.persist();
+      this.persist(["connector_configurations"]);
     }
     return changed;
   }
@@ -9608,7 +9660,7 @@ export class CommerceDatabase {
     } else {
       this.data.platform_memberships.push(membership);
     }
-    this.persist();
+    this.persist(["platform_memberships"]);
     return membership;
   }
 
@@ -9617,7 +9669,7 @@ export class CommerceDatabase {
     const initialLen = this.data.platform_memberships.length;
     this.data.platform_memberships = this.data.platform_memberships.filter((pm) => pm.user_id !== userId);
     const changed = this.data.platform_memberships.length < initialLen;
-    if (changed) this.persist();
+    if (changed) this.persist(["platform_memberships"]);
     return changed;
   }
 
@@ -9637,7 +9689,7 @@ export class CommerceDatabase {
     } else {
       this.data.plans.push(plan);
     }
-    this.persist();
+    this.persist(["plans"]);
     return plan;
   }
 
@@ -9658,7 +9710,7 @@ export class CommerceDatabase {
     } else {
       this.data.plan_versions.push(version);
     }
-    this.persist();
+    this.persist(["plan_versions"]);
     return version;
   }
 
@@ -9678,7 +9730,7 @@ export class CommerceDatabase {
     } else {
       this.data.subscriptions.push(sub);
     }
-    this.persist();
+    this.persist(["subscriptions"]);
     return sub;
   }
 
@@ -9698,7 +9750,7 @@ export class CommerceDatabase {
     } else {
       this.data.entitlements.push(entitlement);
     }
-    this.persist();
+    this.persist(["entitlements"]);
     return entitlement;
   }
 
@@ -9722,7 +9774,7 @@ export class CommerceDatabase {
     } else {
       this.data.tenant_entitlements.push(record);
     }
-    this.persist();
+    this.persist(["tenant_entitlements"]);
     return record;
   }
 
@@ -9744,7 +9796,7 @@ export class CommerceDatabase {
     } else {
       this.data.usage_records.push(record);
     }
-    this.persist();
+    this.persist(["usage_records"]);
     return record;
   }
 
@@ -9764,7 +9816,7 @@ export class CommerceDatabase {
     } else {
       this.data.platform_feature_flags.push(flag);
     }
-    this.persist();
+    this.persist(["platform_feature_flags"]);
     return flag;
   }
 
@@ -9801,7 +9853,7 @@ export class CommerceDatabase {
       });
     }
 
-    this.persist();
+    this.persist(["platform_setting_versions", "platform_settings"]);
     return setting;
   }
 
@@ -9826,7 +9878,7 @@ export class CommerceDatabase {
     } else {
       this.data.platform_incidents.unshift(incident);
     }
-    this.persist();
+    this.persist(["platform_incidents"]);
     return incident;
   }
 
@@ -9842,7 +9894,7 @@ export class CommerceDatabase {
     } else {
       this.data.platform_maintenance_windows.push(window);
     }
-    this.persist();
+    this.persist(["platform_maintenance_windows"]);
     return window;
   }
 
@@ -9869,7 +9921,7 @@ export class CommerceDatabase {
   public appendPlatformAuditLog(log: PlatformAuditLogRecord): PlatformAuditLogRecord {
     if (!this.data.platform_audit_logs) this.data.platform_audit_logs = [];
     this.data.platform_audit_logs.unshift(log);
-    this.persist();
+    this.persist(["platform_audit_logs"]);
     return log;
   }
 
@@ -9889,7 +9941,7 @@ export class CommerceDatabase {
     } else {
       this.data.platform_kill_switches.push(killSwitch);
     }
-    this.persist();
+    this.persist(["platform_kill_switches"]);
     return killSwitch;
   }
 
@@ -9901,7 +9953,7 @@ export class CommerceDatabase {
   public recordPlatformSecurityEvent(event: PlatformSecurityEventRecord): PlatformSecurityEventRecord {
     if (!this.data.platform_security_events) this.data.platform_security_events = [];
     this.data.platform_security_events.unshift(event);
-    this.persist();
+    this.persist(["platform_security_events"]);
     return event;
   }
 
@@ -9917,7 +9969,7 @@ export class CommerceDatabase {
     } else {
       this.data.platform_announcements.unshift(announcement);
     }
-    this.persist();
+    this.persist(["platform_announcements"]);
     return announcement;
   }
 
@@ -9933,7 +9985,7 @@ export class CommerceDatabase {
     } else {
       this.data.platform_api_keys.push(key);
     }
-    this.persist();
+    this.persist(["platform_api_keys"]);
     return key;
   }
 
@@ -9953,7 +10005,7 @@ export class CommerceDatabase {
     } else {
       this.data.impersonation_sessions.unshift(session);
     }
-    this.persist();
+    this.persist(["impersonation_sessions"]);
     return session;
   }
 }

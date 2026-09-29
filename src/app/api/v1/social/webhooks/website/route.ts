@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { WebhookIngressService } from "@/domains/social/webhooks/webhook-ingress.service";
 import { logger } from "@/lib/logger";
+import { withStore } from "@/lib/store-unit";
 
 /**
  * Server-to-server website chat ingress (audit H5, FX-07).
@@ -8,7 +9,7 @@ import { logger } from "@/lib/logger";
  * (hex HMAC-SHA256 in `x-commerceos-signature`). Unknown channels are ignored; unsigned requests are rejected.
  * Browser widgets use /api/v1/social/widget/message instead.
  */
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     const channelId = new URL(request.url).searchParams.get("channel_id");
     if (!channelId) {
@@ -36,3 +37,5 @@ export async function POST(request: Request) {
     );
   }
 }
+
+export const POST = withStore("POST", handlePOST);

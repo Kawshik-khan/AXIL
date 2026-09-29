@@ -2,8 +2,9 @@ import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response"
 import { RbacService } from "@/domains/rbac/service";
 import { PERMISSIONS } from "@/lib/permissions";
 import { KnowledgeService } from "@/domains/ai/rag/knowledge.service";
+import { withStore } from "@/lib/store-unit";
 
-export async function POST(
+async function handlePOST(
   request: Request,
   { params }: { params: { id: string } }
 ) {
@@ -17,3 +18,5 @@ export async function POST(
     return apiError(err);
   }
 }
+
+export const POST = withStore("POST", handlePOST);

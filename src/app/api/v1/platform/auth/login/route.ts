@@ -8,6 +8,7 @@ import { PlatformMfaService } from "@/domains/platform/services/platform-mfa.ser
 import { PLATFORM_ROLE_PERMISSIONS } from "@/lib/permissions";
 import { AppError } from "@/lib/errors";
 import { enforceRateLimit, clientKey, MINUTE } from "@/lib/rate-limit";
+import { withStore } from "@/lib/store-unit";
 
 const LoginBody = z.object({
   email: z.string().trim().toLowerCase().email().max(254),
@@ -22,7 +23,7 @@ const DUMMY_BCRYPT_HASH = bcrypt.hashSync(crypto.randomUUID(), 10);
 const invalidCredentials = () =>
   new AppError("INVALID_CREDENTIALS", "Invalid platform administrator credentials.", 401);
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     const parsed = LoginBody.safeParse(await request.json().catch(() => ({})));
     if (!parsed.success) {
@@ -101,3 +102,5 @@ export async function POST(request: Request) {
     return apiError(error);
   }
 }
+
+export const POST = withStore("POST", handlePOST);

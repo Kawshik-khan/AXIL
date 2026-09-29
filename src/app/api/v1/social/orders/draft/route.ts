@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { SocialOrderService } from "@/domains/social/commerce-integration/social-order.service";
+import { withStore } from "@/lib/store-unit";
 
 const DraftBody = z
   .object({
@@ -25,7 +26,7 @@ const DraftBody = z
   })
   .strict();
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     const context = await extractRequestContext(request);
     const body = DraftBody.parse(await request.json());
@@ -36,3 +37,5 @@ export async function POST(request: Request) {
     return apiError(err);
   }
 }
+
+export const POST = withStore("POST", handlePOST);

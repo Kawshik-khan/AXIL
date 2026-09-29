@@ -4,6 +4,7 @@ import { PERMISSIONS } from "@/lib/permissions";
 import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { operationalBudgetService } from "@/domains/operations/services/operational-budget.service";
+import { withStore } from "@/lib/store-unit";
 
 const BudgetPatch = z
   .object({
@@ -14,7 +15,7 @@ const BudgetPatch = z
   .partial()
   .strict();
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.OPERATIONS_READ);
@@ -27,7 +28,7 @@ export async function GET(request: Request) {
   }
 }
 
-export async function PUT(request: Request) {
+async function handlePUT(request: Request) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.OPERATIONS_APPROVE);
@@ -41,3 +42,6 @@ export async function PUT(request: Request) {
     return apiError(err);
   }
 }
+
+export const GET = withStore("GET", handleGET);
+export const PUT = withStore("PUT", handlePUT);

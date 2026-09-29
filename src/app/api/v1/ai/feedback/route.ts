@@ -5,8 +5,9 @@ import { PERMISSIONS } from "@/lib/permissions";
 import { db } from "@/infrastructure/db";
 import { AppError } from "@/lib/errors";
 import { AIFeedbackRecord } from "@/types/ai";
+import { withStore } from "@/lib/store-unit";
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.AI_FEEDBACK);
@@ -22,7 +23,7 @@ export async function GET(request: Request) {
   }
 }
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.AI_FEEDBACK);
@@ -51,3 +52,6 @@ export async function POST(request: Request) {
     return apiError(err);
   }
 }
+
+export const GET = withStore("GET", handleGET);
+export const POST = withStore("POST", handlePOST);

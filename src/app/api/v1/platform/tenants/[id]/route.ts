@@ -1,7 +1,8 @@
 import { apiSuccess, apiError, extractPlatformContext } from "@/lib/api-response";
 import { PlatformTenantService } from "@/domains/platform";
+import { withStore } from "@/lib/store-unit";
 
-export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
+async function handleGET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const context = await extractPlatformContext(request);
     const { id } = await params;
@@ -12,7 +13,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   }
 }
 
-export async function DELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
+async function handleDELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const context = await extractPlatformContext(request);
     const { id } = await params;
@@ -24,3 +25,6 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
     return apiError(error);
   }
 }
+
+export const GET = withStore("GET", handleGET);
+export const DELETE = withStore("DELETE", handleDELETE);

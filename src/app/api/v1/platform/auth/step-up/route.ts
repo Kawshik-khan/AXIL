@@ -7,6 +7,7 @@ import { parseOrThrow, readJson } from "@/lib/validation";
 import { enforceRateLimit, MINUTE } from "@/lib/rate-limit";
 import { logger } from "@/lib/logger";
 import { db } from "@/infrastructure/db";
+import { withStore } from "@/lib/store-unit";
 
 const Body = z
   .object({
@@ -20,7 +21,7 @@ const Body = z
  * Requires an enrolled TOTP authenticator and a fresh, unused code. Returns a 5-minute step-up token that the console
  * sends as `x-step-up-token`; PlatformAuthorizationService.assertStepUp() accepts nothing else.
  */
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     const context = await extractPlatformContext(request); // unauthenticated callers get 401
     enforceRateLimit(`mfa:step-up:${context.platformUser.id}`, 5, 15 * MINUTE);
@@ -42,3 +43,5 @@ export async function POST(request: Request) {
     return apiError(error);
   }
 }
+
+export const POST = withStore("POST", handlePOST);

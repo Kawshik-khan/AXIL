@@ -1,8 +1,9 @@
 import { apiSuccess, apiError, extractPlatformContext } from "@/lib/api-response";
 import { db } from "@/infrastructure/db";
 import { PlatformAuthorizationService } from "@/domains/platform";
+import { withStore } from "@/lib/store-unit";
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     const context = await extractPlatformContext(request);
     PlatformAuthorizationService.assertCan(context, "automation.read");
@@ -45,3 +46,5 @@ export async function GET(request: Request) {
     return apiError(error);
   }
 }
+
+export const GET = withStore("GET", handleGET);

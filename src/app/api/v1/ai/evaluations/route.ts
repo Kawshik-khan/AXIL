@@ -3,8 +3,9 @@ import { RbacService } from "@/domains/rbac/service";
 import { PERMISSIONS } from "@/lib/permissions";
 import { EvaluationService } from "@/domains/ai/eval/evaluation.service";
 import { GOLDEN_DATASET } from "@/domains/ai/eval/golden-dataset";
+import { withStore } from "@/lib/store-unit";
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.AI_ANALYTICS_READ);
@@ -26,7 +27,7 @@ export async function GET(request: Request) {
   }
 }
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.AI_SIMULATION_RUN);
@@ -40,3 +41,6 @@ export async function POST(request: Request) {
     return apiError(err);
   }
 }
+
+export const GET = withStore("GET", handleGET);
+export const POST = withStore("POST", handlePOST);

@@ -2,8 +2,9 @@ import { PERMISSIONS } from "@/lib/permissions";
 import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { marketingService } from "@/domains/marketing/marketing.service";
+import { withStore } from "@/lib/store-unit";
 
-export async function POST(
+async function handlePOST(
   request: Request,
   { params }: { params: { id: string } }
 ) {
@@ -21,3 +22,5 @@ export async function POST(
     return apiError(err);
   }
 }
+
+export const POST = withStore("POST", handlePOST);

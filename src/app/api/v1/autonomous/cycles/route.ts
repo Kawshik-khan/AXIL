@@ -4,6 +4,7 @@ import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { autonomousCyclesService } from "@/domains/autonomous/services";
+import { withStore } from "@/lib/store-unit";
 
 const Body = z.object({ cycle_type: z.enum(["DAILY", "WEEKLY", "MONTHLY"]).default("DAILY") }).strict();
 
@@ -12,7 +13,7 @@ const Body = z.object({ cycle_type: z.enum(["DAILY", "WEEKLY", "MONTHLY"]).defau
  * it had run). The cycle is recorded at its first step; no worker executes the steps yet, and the response says so.
  * Refused while autonomy is halted.
  */
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.AUTONOMOUS_EXECUTE);
@@ -33,3 +34,5 @@ export async function POST(request: Request) {
     return apiError(err);
   }
 }
+
+export const POST = withStore("POST", handlePOST);

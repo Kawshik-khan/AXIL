@@ -3,8 +3,9 @@ import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { marketingService } from "@/domains/marketing/marketing.service";
 import { AttributionModel } from "@/types/growth";
+import { withStore } from "@/lib/store-unit";
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.MARKETING_READ);
@@ -17,3 +18,5 @@ export async function GET(request: Request) {
     return apiError(err);
   }
 }
+
+export const GET = withStore("GET", handleGET);

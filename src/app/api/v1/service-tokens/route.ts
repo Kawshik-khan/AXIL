@@ -2,6 +2,7 @@ import { z } from "zod";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { ServiceTokenService } from "@/domains/automation/services/service-token.service";
 import { parseOrThrow, readJson } from "@/lib/validation";
+import { withStore } from "@/lib/store-unit";
 
 const CreateBody = z
   .object({
@@ -12,7 +13,7 @@ const CreateBody = z
   .strict();
 
 /** Lists this workspace's service tokens (never the secrets). */
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     const context = await extractRequestContext(request);
     return apiSuccess({ service_tokens: ServiceTokenService.list(context) });
@@ -22,7 +23,7 @@ export async function GET(request: Request) {
 }
 
 /** Creates a service token. The token value is in this response only; it can't be shown again. */
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     const context = await extractRequestContext(request);
     const input = parseOrThrow(CreateBody, await readJson(request));
@@ -34,3 +35,6 @@ export async function POST(request: Request) {
     return apiError(err);
   }
 }
+
+export const GET = withStore("GET", handleGET);
+export const POST = withStore("POST", handlePOST);

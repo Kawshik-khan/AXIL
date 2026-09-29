@@ -2,11 +2,12 @@ import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response"
 import { AuditService } from "@/domains/audit/service";
 import { db } from "@/infrastructure/db";
 import { AUTH_COOKIE_NAME, PLATFORM_AUTH_COOKIE_NAME } from "@/lib/security";
+import { withStore } from "@/lib/store-unit";
 
 const expired = { value: "", httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax" as const, path: "/", maxAge: 0 };
 
 /** "Sign out everywhere": revokes every workspace and platform session of the signed-in user (FX-15). */
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     const context = await extractRequestContext(request);
     db.bumpSessionVersion(context.user.id);
@@ -26,3 +27,5 @@ export async function POST(request: Request) {
     return apiError(err);
   }
 }
+
+export const POST = withStore("POST", handlePOST);

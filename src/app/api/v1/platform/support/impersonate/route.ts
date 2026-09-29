@@ -5,8 +5,9 @@ import { NotFoundError, ValidationError } from "@/lib/errors";
 import { PlatformAuthorizationService } from "@/domains/platform/services/platform-authorization.service";
 import { db } from "@/infrastructure/db";
 import { PlatformSupportService } from "@/domains/platform";
+import { withStore } from "@/lib/store-unit";
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     const context = await extractPlatformContext(request);
     const sessions = PlatformSupportService.listSessions(context);
@@ -32,7 +33,7 @@ const StartBody = z
  * Starts a support session and sets the impersonation cookie (FX-34 step 5). The token used to be returned in the
  * body (and shown in an alert), and nothing accepted it; the console also sent field names the service didn't read.
  */
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     const context = await extractPlatformContext(request);
     PlatformAuthorizationService.assertCan(context, "support.impersonate"); // before any lookup (no existence probing)
@@ -60,7 +61,7 @@ export async function POST(request: Request) {
   }
 }
 
-export async function DELETE(request: Request) {
+async function handleDELETE(request: Request) {
   try {
     const context = await extractPlatformContext(request);
     const { searchParams } = new URL(request.url);
@@ -77,3 +78,7 @@ export async function DELETE(request: Request) {
     return apiError(error);
   }
 }
+
+export const GET = withStore("GET", handleGET);
+export const POST = withStore("POST", handlePOST);
+export const DELETE = withStore("DELETE", handleDELETE);

@@ -1,8 +1,9 @@
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { CustomerService } from "@/domains/customers/customer.service";
 import { db } from "@/infrastructure/db";
+import { withStore } from "@/lib/store-unit";
 
-export async function GET(
+async function handleGET(
   request: Request,
   { params }: { params: { id: string } }
 ) {
@@ -21,7 +22,7 @@ export async function GET(
   }
 }
 
-export async function PATCH(
+async function handlePATCH(
   request: Request,
   { params }: { params: { id: string } }
 ) {
@@ -35,3 +36,6 @@ export async function PATCH(
     return apiError(err);
   }
 }
+
+export const GET = withStore("GET", handleGET);
+export const PATCH = withStore("PATCH", handlePATCH);

@@ -5,6 +5,7 @@ import { TenantService } from "@/domains/tenants/service";
 import { RbacService } from "@/domains/rbac/service";
 import { AuditService } from "@/domains/audit/service";
 import { PERMISSIONS } from "@/lib/permissions";
+import { withStore } from "@/lib/store-unit";
 
 // FX-12: only these workspace fields and known settings keys can change (audit H4).
 const SettingsPatch = z
@@ -25,7 +26,7 @@ const SettingsPatch = z
   .partial()
   .strict();
 
-export async function PATCH(request: Request) {
+async function handlePATCH(request: Request) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.SETTINGS_UPDATE);
@@ -47,3 +48,5 @@ export async function PATCH(request: Request) {
     return apiError(err);
   }
 }
+
+export const PATCH = withStore("PATCH", handlePATCH);

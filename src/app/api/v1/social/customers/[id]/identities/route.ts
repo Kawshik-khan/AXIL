@@ -3,8 +3,9 @@ import { db } from "@/infrastructure/db";
 import { IdentityResolutionService } from "@/domains/social/identity/identity-resolution.service";
 import { RbacService } from "@/domains/rbac/service";
 import { PERMISSIONS } from "@/lib/permissions";
+import { withStore } from "@/lib/store-unit";
 
-export async function GET(
+async function handleGET(
   request: Request,
   { params }: { params: { id: string } }
 ) {
@@ -18,7 +19,7 @@ export async function GET(
   }
 }
 
-export async function POST(
+async function handlePOST(
   request: Request,
   { params }: { params: { id: string } }
 ) {
@@ -38,3 +39,6 @@ export async function POST(
     return apiError(err);
   }
 }
+
+export const GET = withStore("GET", handleGET);
+export const POST = withStore("POST", handlePOST);

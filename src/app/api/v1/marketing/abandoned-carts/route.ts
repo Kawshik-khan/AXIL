@@ -3,6 +3,7 @@ import { RbacService } from "@/domains/rbac/service";
 import { z } from "zod";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { marketingService } from "@/domains/marketing/marketing.service";
+import { withStore } from "@/lib/store-unit";
 
 const CreateCartSchema = z.object({
   customer_id: z.string().min(1, "Customer ID is required"),
@@ -17,7 +18,7 @@ const CreateCartSchema = z.object({
   abandoned_at: z.string().optional(),
 });
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.MARKETING_READ);
@@ -28,7 +29,7 @@ export async function GET(request: Request) {
   }
 }
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.MARKETING_WRITE);
@@ -47,3 +48,6 @@ export async function POST(request: Request) {
     return apiError(err);
   }
 }
+
+export const GET = withStore("GET", handleGET);
+export const POST = withStore("POST", handlePOST);

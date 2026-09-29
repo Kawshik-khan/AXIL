@@ -2,6 +2,7 @@ import { z } from "zod";
 import { parseOrThrow, readJson } from "@/lib/validation";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { ChannelService } from "@/domains/social/channels/channel.service";
+import { withStore } from "@/lib/store-unit";
 
 // FX-12: channel fields an operator may change; tenant, type and provider account id are fixed.
 const ChannelPatch = z
@@ -23,7 +24,7 @@ const ChannelPatch = z
   .partial()
   .strict();
 
-export async function GET(
+async function handleGET(
   request: Request,
   { params }: { params: { id: string } }
 ) {
@@ -36,7 +37,7 @@ export async function GET(
   }
 }
 
-export async function PATCH(
+async function handlePATCH(
   request: Request,
   { params }: { params: { id: string } }
 ) {
@@ -50,7 +51,7 @@ export async function PATCH(
   }
 }
 
-export async function DELETE(
+async function handleDELETE(
   request: Request,
   { params }: { params: { id: string } }
 ) {
@@ -62,3 +63,7 @@ export async function DELETE(
     return apiError(err);
   }
 }
+
+export const GET = withStore("GET", handleGET);
+export const PATCH = withStore("PATCH", handlePATCH);
+export const DELETE = withStore("DELETE", handleDELETE);

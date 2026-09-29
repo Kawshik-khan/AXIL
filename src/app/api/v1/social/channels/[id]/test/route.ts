@@ -1,7 +1,8 @@
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { ChannelService } from "@/domains/social/channels/channel.service";
+import { withStore } from "@/lib/store-unit";
 
-export async function POST(
+async function handlePOST(
   request: Request,
   { params }: { params: { id: string } }
 ) {
@@ -13,3 +14,5 @@ export async function POST(
     return apiError(err);
   }
 }
+
+export const POST = withStore("POST", handlePOST);

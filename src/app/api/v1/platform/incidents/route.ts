@@ -2,6 +2,7 @@ import { z } from "zod";
 import { parseOrThrow, readJson } from "@/lib/validation";
 import { apiSuccess, apiError, extractPlatformContext } from "@/lib/api-response";
 import { PlatformIncidentService } from "@/domains/platform";
+import { withStore } from "@/lib/store-unit";
 
 const IncidentPatch = z
   .object({
@@ -11,7 +12,7 @@ const IncidentPatch = z
   })
   .strict();
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     const context = await extractPlatformContext(request);
     const incidents = PlatformIncidentService.listIncidents(context);
@@ -21,7 +22,7 @@ export async function GET(request: Request) {
   }
 }
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     const context = await extractPlatformContext(request);
     const body = await request.json();
@@ -32,7 +33,7 @@ export async function POST(request: Request) {
   }
 }
 
-export async function PATCH(request: Request) {
+async function handlePATCH(request: Request) {
   try {
     const context = await extractPlatformContext(request);
     const { id, status, notes } = parseOrThrow(IncidentPatch, await readJson(request));
@@ -42,3 +43,7 @@ export async function PATCH(request: Request) {
     return apiError(error);
   }
 }
+
+export const GET = withStore("GET", handleGET);
+export const POST = withStore("POST", handlePOST);
+export const PATCH = withStore("PATCH", handlePATCH);

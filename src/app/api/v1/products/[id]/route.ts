@@ -1,7 +1,8 @@
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { ProductService } from "@/domains/catalog/product.service";
+import { withStore } from "@/lib/store-unit";
 
-export async function GET(
+async function handleGET(
   request: Request,
   { params }: { params: { id: string } }
 ) {
@@ -14,7 +15,7 @@ export async function GET(
   }
 }
 
-export async function PATCH(
+async function handlePATCH(
   request: Request,
   { params }: { params: { id: string } }
 ) {
@@ -28,7 +29,7 @@ export async function PATCH(
   }
 }
 
-export async function DELETE(
+async function handleDELETE(
   request: Request,
   { params }: { params: { id: string } }
 ) {
@@ -40,3 +41,7 @@ export async function DELETE(
     return apiError(err);
   }
 }
+
+export const GET = withStore("GET", handleGET);
+export const PATCH = withStore("PATCH", handlePATCH);
+export const DELETE = withStore("DELETE", handleDELETE);

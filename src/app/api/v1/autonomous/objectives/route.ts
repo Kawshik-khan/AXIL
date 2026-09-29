@@ -7,8 +7,9 @@ import { businessObjectivesService } from "@/domains/autonomous/services";
 import { ObjectiveStatus } from "@/types/autonomous";
 import { NotFoundError, ValidationError } from "@/lib/errors";
 import { resolveOrganizationId } from "@/domains/enterprise/organization-access";
+import { withStore } from "@/lib/store-unit";
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.OBJECTIVES_READ);
@@ -75,7 +76,7 @@ const CreateObjective = z
  * "admin" as the creator. Now: new objectives start PROPOSED with no progress, the baseline approvals always apply, the
  * organization and parent must be this workspace's, and the creator is the signed-in user.
  */
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.OBJECTIVES_MANAGE);
@@ -129,3 +130,6 @@ export async function POST(request: Request) {
     return apiError(err);
   }
 }
+
+export const GET = withStore("GET", handleGET);
+export const POST = withStore("POST", handlePOST);

@@ -6,6 +6,7 @@ import { AuditService } from "@/domains/audit/service";
 import { ASSIGNABLE_ROLES, PERMISSIONS } from "@/lib/permissions";
 import { ConflictError, NotFoundError, ValidationError, ForbiddenError } from "@/lib/errors";
 import { parseOrThrow, readJson } from "@/lib/validation";
+import { withStore } from "@/lib/store-unit";
 
 
 /**
@@ -22,7 +23,7 @@ const MemberPatch = z
   .strict()
   .refine((patch) => patch.role !== undefined || patch.status !== undefined, { message: "Nothing to update." });
 
-export async function PATCH(
+async function handlePATCH(
   request: Request,
   { params }: { params: { id: string } }
 ) {
@@ -91,3 +92,5 @@ export async function PATCH(
     return apiError(err);
   }
 }
+
+export const PATCH = withStore("PATCH", handlePATCH);

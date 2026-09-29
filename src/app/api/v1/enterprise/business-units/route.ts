@@ -7,9 +7,10 @@ import { ForbiddenError, NotFoundError } from "@/lib/errors";
 import { enterpriseHierarchyService } from "@/domains/enterprise/services/enterprise-hierarchy.service";
 import { enterpriseDataAccessService } from "@/domains/enterprise/services/enterprise-data-access.service";
 import { db } from "@/infrastructure/db";
+import { withStore } from "@/lib/store-unit";
 
 /** Lists only the business units in the caller's enterprise scope (N13). */
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.BUSINESS_UNIT_READ);
@@ -33,7 +34,7 @@ const CreateBusinessUnit = z
   .strict();
 
 /** A business unit is organization-level structure: only organization-wide callers create one (N13). */
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.BUSINESS_UNIT_MANAGE);
@@ -53,3 +54,6 @@ export async function POST(request: Request) {
     return apiError(err);
   }
 }
+
+export const GET = withStore("GET", handleGET);
+export const POST = withStore("POST", handlePOST);

@@ -3,8 +3,9 @@ import { PERMISSIONS } from "@/lib/permissions";
 import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { nlAnalyticsService } from "@/domains/intelligence/services/nl-analytics.service";
+import { withStore } from "@/lib/store-unit";
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.ANALYTICS_READ);
@@ -21,3 +22,5 @@ export async function POST(request: Request) {
     return apiError(err);
   }
 }
+
+export const POST = withStore("POST", handlePOST);

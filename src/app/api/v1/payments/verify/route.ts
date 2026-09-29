@@ -1,8 +1,9 @@
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { PaymentService } from "@/domains/payments/payment.service";
 import { BadRequestError } from "@/lib/errors";
+import { withStore } from "@/lib/store-unit";
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     const context = await extractRequestContext(request);
     const body = await request.json();
@@ -22,3 +23,5 @@ export async function POST(request: Request) {
     return apiError(err);
   }
 }
+
+export const POST = withStore("POST", handlePOST);

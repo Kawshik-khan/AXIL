@@ -5,8 +5,9 @@ import { operationalTwinService } from "@/domains/operations/services/operationa
 import { operationalBudgetService } from "@/domains/operations/services/operational-budget.service";
 import { providerHealthService } from "@/domains/operations/services/provider-health.service";
 import { db } from "@/infrastructure/db";
+import { withStore } from "@/lib/store-unit";
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.OPERATIONS_READ);
@@ -30,3 +31,5 @@ export async function GET(request: Request) {
     return apiError(err);
   }
 }
+
+export const GET = withStore("GET", handleGET);

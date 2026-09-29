@@ -1,8 +1,9 @@
 import { apiSuccess, apiError, extractPlatformContext } from "@/lib/api-response";
+import { withStore } from "@/lib/store-unit";
 
 export const dynamic = "force-dynamic";
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     const context = await extractPlatformContext(request);
     const res = apiSuccess({
@@ -21,3 +22,5 @@ export async function GET(request: Request) {
     return errRes;
   }
 }
+
+export const GET = withStore("GET", handleGET);

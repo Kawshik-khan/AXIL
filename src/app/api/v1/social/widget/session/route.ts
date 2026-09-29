@@ -4,6 +4,7 @@ import { z } from "zod";
 import { db } from "@/infrastructure/db";
 import { ChatSession } from "@/types/social";
 import { logger } from "@/lib/logger";
+import { withStore } from "@/lib/store-unit";
 
 /**
  * Public website chat session bootstrap (audit H5, FX-07).
@@ -18,7 +19,7 @@ const WidgetSession = z
   })
   .strict();
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     const parsed = WidgetSession.safeParse(await request.json().catch(() => null));
     if (!parsed.success) {
@@ -65,3 +66,5 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: { code: "WIDGET_SESSION_FAILED", message: "Failed to initialize chat session." } }, { status: 500 });
   }
 }
+
+export const POST = withStore("POST", handlePOST);

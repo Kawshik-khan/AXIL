@@ -3,8 +3,9 @@ import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { consentService } from "@/domains/growth/services/consent.service";
 import { db } from "@/infrastructure/db";
+import { withStore } from "@/lib/store-unit";
 
-export async function GET(
+async function handleGET(
   request: Request,
   { params }: { params: Promise<{ customerId: string }> }
 ) {
@@ -19,7 +20,7 @@ export async function GET(
   }
 }
 
-export async function POST(
+async function handlePOST(
   request: Request,
   { params }: { params: Promise<{ customerId: string }> }
 ) {
@@ -43,3 +44,6 @@ export async function POST(
     return apiError(err);
   }
 }
+
+export const GET = withStore("GET", handleGET);
+export const POST = withStore("POST", handlePOST);

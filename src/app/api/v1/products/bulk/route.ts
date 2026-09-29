@@ -2,8 +2,9 @@ import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response"
 import { ProductService } from "@/domains/catalog/product.service";
 import { CsvParser } from "@/lib/csv-parser";
 import { BadRequestError } from "@/lib/errors";
+import { withStore } from "@/lib/store-unit";
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     const context = await extractRequestContext(request);
     const contentType = request.headers.get("content-type") || "";
@@ -48,3 +49,5 @@ export async function POST(request: Request) {
     return apiError(err);
   }
 }
+
+export const POST = withStore("POST", handlePOST);

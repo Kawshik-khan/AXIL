@@ -1,8 +1,9 @@
 import { z } from "zod";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { KnowledgeService } from "@/domains/ai/rag/knowledge.service";
+import { withStore } from "@/lib/store-unit";
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     const context = await extractRequestContext(request);
     const docs = await KnowledgeService.listDocuments(context);
@@ -35,7 +36,7 @@ const IngestBody = z
   })
   .strict();
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     const context = await extractRequestContext(request);
     const body = IngestBody.parse(await request.json());
@@ -54,3 +55,6 @@ export async function POST(request: Request) {
     return apiError(err);
   }
 }
+
+export const GET = withStore("GET", handleGET);
+export const POST = withStore("POST", handlePOST);

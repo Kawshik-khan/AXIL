@@ -2,6 +2,7 @@ import { z } from "zod";
 import { parseOrThrow, readJson } from "@/lib/validation";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { LeadService } from "@/domains/social/leads/lead.service";
+import { withStore } from "@/lib/store-unit";
 
 const LeadPatch = z
   .object({
@@ -10,7 +11,7 @@ const LeadPatch = z
   })
   .strict();
 
-export async function GET(
+async function handleGET(
   request: Request,
   { params }: { params: { id: string } }
 ) {
@@ -23,7 +24,7 @@ export async function GET(
   }
 }
 
-export async function PATCH(
+async function handlePATCH(
   request: Request,
   { params }: { params: { id: string } }
 ) {
@@ -37,3 +38,6 @@ export async function PATCH(
     return apiError(err);
   }
 }
+
+export const GET = withStore("GET", handleGET);
+export const PATCH = withStore("PATCH", handlePATCH);

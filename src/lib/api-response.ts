@@ -98,8 +98,6 @@ export function apiError(error: unknown, requestId?: string) {
 }
 
 export async function extractRequestContext(request: Request): Promise<RequestContext> {
-  // Refuse a change the store can't save before anything is touched (Postgres lease unconfirmed; ADR-108).
-  if (!["GET", "HEAD", "OPTIONS"].includes(request.method.toUpperCase())) db.assertWritable();
   const requestId = request.headers.get("x-request-id") || `req_${randomSuffix()}`;
   const impersonated = await resolveImpersonationContext(request, requestId, extractPlatformContext);
   const context = impersonated ?? (await resolveCallerContext(request, requestId));
@@ -244,7 +242,6 @@ function devAuthBypassContext(request: Request, requestId: string): RequestConte
 }
 
 export async function extractPlatformContext(request: Request): Promise<PlatformContext> {
-  if (!["GET", "HEAD", "OPTIONS"].includes(request.method.toUpperCase())) db.assertWritable();
   const requestId = request.headers.get("x-request-id") || `req_plat_${randomSuffix()}`;
   const traceId = request.headers.get("x-trace-id") || `trc_plat_${randomSuffix()}`;
 

@@ -6,6 +6,7 @@ import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { audienceService } from "@/domains/growth/services/audience.service";
 import { db } from "@/infrastructure/db";
+import { withStore } from "@/lib/store-unit";
 
 // FX-12: status, size and ownership are computed server-side, never taken from the body.
 const AudiencePatch = z
@@ -17,7 +18,7 @@ const AudiencePatch = z
   .partial()
   .strict();
 
-export async function GET(
+async function handleGET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -35,7 +36,7 @@ export async function GET(
   }
 }
 
-export async function PUT(
+async function handlePUT(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -56,3 +57,6 @@ export async function PUT(
     return apiError(err);
   }
 }
+
+export const GET = withStore("GET", handleGET);
+export const PUT = withStore("PUT", handlePUT);

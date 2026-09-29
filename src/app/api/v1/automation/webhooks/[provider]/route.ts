@@ -6,6 +6,7 @@ import { CourierProviderName } from "@/types/commerce";
 import { logger } from "@/lib/logger";
 import { IdempotencyService } from "@/domains/automation/services/idempotency.service";
 import { checkRateLimit, MINUTE } from "@/lib/rate-limit";
+import { withStore } from "@/lib/store-unit";
 
 const COURIER_PROVIDERS = new Set<string>(["STEADFAST", "PATHAO", "REDX", "PAPERFLY", "ECOURIER", "SUNDARBAN"]);
 const MAX_BODY_BYTES = 256 * 1024;
@@ -22,7 +23,7 @@ const reject = (status: number, code: string, message: string, deliveryId?: stri
  * - The tenant is the webhook row's tenant. Client headers and query parameters never choose it, and unknown
  *   endpoints are rejected without writing anything.
  */
-export async function POST(request: Request, { params }: { params: { provider: string } }) {
+async function handlePOST(request: Request, { params }: { params: { provider: string } }) {
   try {
     const provider = params.provider.toUpperCase() as WebhookProvider;
     const webhookId = new URL(request.url).searchParams.get("wh") || "";
@@ -128,3 +129,5 @@ async function applyWebhook(
     message: `Webhook for ${provider} verified and recorded.`,
   });
 }
+
+export const POST = withStore("POST", handlePOST);

@@ -1,7 +1,8 @@
 import { apiSuccess, apiError, extractPlatformContext } from "@/lib/api-response";
 import { PlatformSubscriptionService } from "@/domains/platform";
+import { withStore } from "@/lib/store-unit";
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     const context = await extractPlatformContext(request);
     const plans = PlatformSubscriptionService.listPlans(context);
@@ -11,7 +12,7 @@ export async function GET(request: Request) {
   }
 }
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     const context = await extractPlatformContext(request);
     const body = await request.json();
@@ -21,3 +22,6 @@ export async function POST(request: Request) {
     return apiError(error);
   }
 }
+
+export const GET = withStore("GET", handleGET);
+export const POST = withStore("POST", handlePOST);

@@ -2,6 +2,7 @@ import fs from "fs";
 import { NextResponse } from "next/server";
 import { db } from "@/infrastructure/db";
 import { logger } from "@/lib/logger";
+import { withStore } from "@/lib/store-unit";
 
 export const dynamic = "force-dynamic";
 
@@ -17,7 +18,7 @@ let lastNotReadyLogAt = 0;
  * The endpoint is unauthenticated, so it returns booleans and reason codes only. Paths, pids, host names and raw
  * error text go to the log (Phase 2 security review L-1).
  */
-export async function GET() {
+async function handleGET() {
   const persistence = db.getPersistenceHealth();
   const postgres = persistence.backend === "pg";
   let writable = true;
@@ -76,3 +77,5 @@ export async function GET() {
     { status: ready ? 200 : 503, headers: { "Cache-Control": "no-store" } }
   );
 }
+
+export const GET = withStore("GET", handleGET);

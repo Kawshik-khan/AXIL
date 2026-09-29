@@ -2,8 +2,9 @@ import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response"
 import { RbacService } from "@/domains/rbac/service";
 import { PERMISSIONS } from "@/lib/permissions";
 import { db } from "@/infrastructure/db";
+import { withStore } from "@/lib/store-unit";
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.AI_READ);
@@ -14,3 +15,5 @@ export async function GET(request: Request) {
     return apiError(err);
   }
 }
+
+export const GET = withStore("GET", handleGET);

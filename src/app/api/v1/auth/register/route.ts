@@ -3,8 +3,9 @@ import { AuthService } from "@/domains/auth/service";
 import { apiSuccess, apiError } from "@/lib/api-response";
 import { AUTH_COOKIE_NAME } from "@/lib/security";
 import { enforceRateLimit, clientKey, MINUTE } from "@/lib/rate-limit";
+import { withStore } from "@/lib/store-unit";
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     // Sign-up limits (FX-14): 5 per client per hour behind a trusted proxy, and a global cap of 30 per hour.
     const client = clientKey(request);
@@ -39,3 +40,5 @@ export async function POST(request: Request) {
     return apiError(err);
   }
 }
+
+export const POST = withStore("POST", handlePOST);

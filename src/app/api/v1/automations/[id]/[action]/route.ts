@@ -6,8 +6,9 @@ import { AutomationRegistryService } from "@/domains/automation/services/automat
 import { N8nProviderService } from "@/domains/automation/services/n8n-provider.service";
 import { db } from "@/infrastructure/db";
 import { BadRequestError, NotFoundError } from "@/lib/errors";
+import { withStore } from "@/lib/store-unit";
 
-export async function GET(
+async function handleGET(
   request: Request,
   { params }: { params: { id: string; action: string } }
 ) {
@@ -28,7 +29,7 @@ export async function GET(
   }
 }
 
-export async function POST(
+async function handlePOST(
   request: Request,
   { params }: { params: { id: string; action: string } }
 ) {
@@ -142,3 +143,6 @@ export async function POST(
     return apiError(err);
   }
 }
+
+export const GET = withStore("GET", handleGET);
+export const POST = withStore("POST", handlePOST);

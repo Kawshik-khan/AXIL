@@ -4,6 +4,7 @@ import { db } from "@/infrastructure/db";
 import { WebhookIngressService } from "@/domains/social/webhooks/webhook-ingress.service";
 import { logger } from "@/lib/logger";
 import { checkRateLimit, clientKey, MINUTE } from "@/lib/rate-limit";
+import { withStore } from "@/lib/store-unit";
 
 /**
  * Public website chat widget ingress (audit H5, FX-07).
@@ -29,7 +30,7 @@ const WidgetMessage = z
 const badRequest = (message: string) =>
   NextResponse.json({ error: { code: "INVALID_WIDGET_MESSAGE", message } }, { status: 400 });
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     const parsed = WidgetMessage.safeParse(await request.json().catch(() => null));
     if (!parsed.success) {
@@ -77,3 +78,5 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: { code: "WIDGET_MESSAGE_FAILED", message: "Message could not be delivered." } }, { status: 500 });
   }
 }
+
+export const POST = withStore("POST", handlePOST);

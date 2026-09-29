@@ -3,8 +3,9 @@ import { RbacService } from "@/domains/rbac/service";
 import { PERMISSIONS } from "@/lib/permissions";
 import { DeadLetterService } from "@/domains/automation/services/dead-letter.service";
 import { BadRequestError } from "@/lib/errors";
+import { withStore } from "@/lib/store-unit";
 
-export async function POST(
+async function handlePOST(
   request: Request,
   { params }: { params: { id: string; action: string } }
 ) {
@@ -50,3 +51,5 @@ export async function POST(
     return apiError(err);
   }
 }
+
+export const POST = withStore("POST", handlePOST);

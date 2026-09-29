@@ -3,10 +3,11 @@ import { ConnectorService } from "@/domains/connectors/service";
 import { RbacService } from "@/domains/rbac/service";
 import { PERMISSIONS } from "@/lib/permissions";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { withStore } from "@/lib/store-unit";
 
 const MINUTE = 60_000;
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     const context = await extractRequestContext(request);
     // Some providers are now checked live with the submitted key, so this is limited to people who can change
@@ -21,3 +22,5 @@ export async function POST(request: Request) {
     return apiError(err);
   }
 }
+
+export const POST = withStore("POST", handlePOST);

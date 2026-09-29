@@ -1,6 +1,7 @@
 import { CsvParser } from "@/lib/csv-parser";
+import { withStore } from "@/lib/store-unit";
 
-export async function GET() {
+async function handleGET() {
   const templateHeaders = [
     { key: "Title", label: "Title" },
     { key: "SKU", label: "SKU" },
@@ -68,3 +69,5 @@ export async function GET() {
     },
   });
 }
+
+export const GET = withStore("GET", handleGET);

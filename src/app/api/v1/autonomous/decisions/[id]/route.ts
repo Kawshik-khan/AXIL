@@ -3,8 +3,9 @@ import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { globalDecisionEngineService } from "@/domains/autonomous/services";
 import { NotFoundError } from "@/lib/errors";
+import { withStore } from "@/lib/store-unit";
 
-export async function GET(
+async function handleGET(
   request: Request,
   { params }: { params: Promise<{ id: string }> | { id: string } }
 ) {
@@ -21,3 +22,5 @@ export async function GET(
     return apiError(err);
   }
 }
+
+export const GET = withStore("GET", handleGET);

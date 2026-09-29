@@ -6,6 +6,7 @@ import { verifyPassword } from "@/lib/security";
 import { AppError } from "@/lib/errors";
 import { parseOrThrow, readJson } from "@/lib/validation";
 import { enforceRateLimit, MINUTE } from "@/lib/rate-limit";
+import { withStore } from "@/lib/store-unit";
 
 const Body = z.object({ password: z.string().min(1).max(200) }).strict();
 
@@ -13,7 +14,7 @@ const Body = z.object({ password: z.string().min(1).max(200) }).strict();
  * Starts TOTP setup for the signed-in operator (FX-15). Requires the operator's password again, so a stolen session
  * alone can't bind an attacker's authenticator. The secret is returned once; MFA stays off until /mfa/confirm.
  */
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     const context = await extractPlatformContext(request);
     enforceRateLimit(`mfa:enroll:${context.platformUser.id}`, 5, 15 * MINUTE);
@@ -31,3 +32,5 @@ export async function POST(request: Request) {
     return apiError(error);
   }
 }
+
+export const POST = withStore("POST", handlePOST);

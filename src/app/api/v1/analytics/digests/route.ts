@@ -1,12 +1,13 @@
 import { z } from "zod";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { analyticsService } from "@/domains/analytics/analytics.service";
+import { withStore } from "@/lib/store-unit";
 
 const GenerateDigestSchema = z.object({
   period_type: z.enum(["DAILY", "WEEKLY", "MONTHLY"]).default("DAILY"),
 });
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     const context = await extractRequestContext(request);
     const digests = await analyticsService.getExecutiveDigests(context);
@@ -16,7 +17,7 @@ export async function GET(request: Request) {
   }
 }
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     const context = await extractRequestContext(request);
     const body = await request.json().catch(() => ({}));
@@ -31,3 +32,6 @@ export async function POST(request: Request) {
     return apiError(err);
   }
 }
+
+export const GET = withStore("GET", handleGET);
+export const POST = withStore("POST", handlePOST);

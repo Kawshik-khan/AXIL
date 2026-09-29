@@ -6,6 +6,7 @@ import { PERMISSIONS } from "@/lib/permissions";
 import { db } from "@/infrastructure/db";
 import { AppError } from "@/lib/errors";
 import { AgentDefinition } from "@/types/ai";
+import { withStore } from "@/lib/store-unit";
 
 // FX-12: identity, type and tenant are fixed; limits are bounded.
 const AgentPatch = z
@@ -26,7 +27,7 @@ const AgentPatch = z
   .partial()
   .strict();
 
-export async function GET(
+async function handleGET(
   request: Request,
   { params }: { params: { id: string } }
 ) {
@@ -45,7 +46,7 @@ export async function GET(
   }
 }
 
-export async function PATCH(
+async function handlePATCH(
   request: Request,
   { params }: { params: { id: string } }
 ) {
@@ -65,3 +66,6 @@ export async function PATCH(
     return apiError(err);
   }
 }
+
+export const GET = withStore("GET", handleGET);
+export const PATCH = withStore("PATCH", handlePATCH);

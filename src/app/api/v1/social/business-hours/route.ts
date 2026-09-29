@@ -2,6 +2,7 @@ import { z } from "zod";
 import { parseOrThrow, readJson } from "@/lib/validation";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { QuickReplyService } from "@/domains/social/templates/quick-reply.service";
+import { withStore } from "@/lib/store-unit";
 
 const TIME = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
 // FX-12: without a schema the whole body (including tenant_id) was merged into the stored record.
@@ -26,7 +27,7 @@ const BusinessHoursPatch = z
   .partial()
   .strict();
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     const context = await extractRequestContext(request);
     const businessHours = await QuickReplyService.getBusinessHours(context);
@@ -36,7 +37,7 @@ export async function GET(request: Request) {
   }
 }
 
-export async function PUT(request: Request) {
+async function handlePUT(request: Request) {
   try {
     const context = await extractRequestContext(request);
     const body = parseOrThrow(BusinessHoursPatch, await readJson(request));
@@ -47,3 +48,6 @@ export async function PUT(request: Request) {
     return apiError(err);
   }
 }
+
+export const GET = withStore("GET", handleGET);
+export const PUT = withStore("PUT", handlePUT);

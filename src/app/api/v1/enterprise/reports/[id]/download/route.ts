@@ -5,12 +5,13 @@ import { extractRequestContext, apiError } from "@/lib/api-response";
 import { NotFoundError } from "@/lib/errors";
 import { enterpriseReportingService } from "@/domains/enterprise/services/enterprise-reporting.service";
 import { db } from "@/infrastructure/db";
+import { withStore } from "@/lib/store-unit";
 
 /**
  * The report as CSV for the caller's enterprise scope (FX-33 #8: executions advertised this URL, which didn't exist).
  * Computed on request; nothing is stored.
  */
-export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
+async function handleGET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.EXPORTS_READ);
@@ -32,3 +33,5 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     return apiError(err);
   }
 }
+
+export const GET = withStore("GET", handleGET);

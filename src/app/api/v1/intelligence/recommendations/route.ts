@@ -5,12 +5,13 @@ import { intelligenceSnapshots } from "@/domains/intelligence/services/intellige
 import { db } from "@/infrastructure/db";
 import { recommendationService } from "@/domains/intelligence/services/recommendation.service";
 import { RecommendationStatus } from "@/types/intelligence";
+import { withStore } from "@/lib/store-unit";
 
 /**
  * Read-only (FX-21). Without `status`: the current recommendations (stored snapshot while fresh, otherwise computed,
  * with decisions already made carried over). With `status`: every stored recommendation in that state (history).
  */
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.ANALYTICS_READ);
@@ -29,3 +30,5 @@ export async function GET(request: Request) {
     return apiError(err);
   }
 }
+
+export const GET = withStore("GET", handleGET);

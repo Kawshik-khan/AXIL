@@ -2,12 +2,13 @@ import { apiSuccess, apiError, extractPlatformContext } from "@/lib/api-response
 import { IMPERSONATION_COOKIE_NAME, impersonationCookie, readCookie } from "@/lib/impersonation";
 import { verifyImpersonationToken } from "@/lib/security";
 import { PlatformSupportService } from "@/domains/platform";
+import { withStore } from "@/lib/store-unit";
 
 /**
  * Ends the support session this browser is in (FX-34 step 5): revokes it (as the operator) and clears the cookie.
  * The cookie is cleared even if the session can no longer be revoked (expired, or the operator signed out).
  */
-export async function DELETE(request: Request) {
+async function handleDELETE(request: Request) {
   try {
     const token = readCookie(request, IMPERSONATION_COOKIE_NAME);
     let revoked = false;
@@ -32,3 +33,5 @@ export async function DELETE(request: Request) {
     return apiError(err);
   }
 }
+
+export const DELETE = withStore("DELETE", handleDELETE);

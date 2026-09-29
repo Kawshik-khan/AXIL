@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { db } from "@/infrastructure/db";
 import { QuickReplyService } from "@/domains/social/templates/quick-reply.service";
+import { withStore } from "@/lib/store-unit";
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const tenantSlug = searchParams.get("tenant") || "dhaka-d2c-apparel";
@@ -38,3 +39,5 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Failed to load widget configuration" }, { status: 500 });
   }
 }
+
+export const GET = withStore("GET", handleGET);

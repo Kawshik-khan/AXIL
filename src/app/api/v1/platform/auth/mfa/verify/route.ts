@@ -7,6 +7,7 @@ import { PLATFORM_ROLE_PERMISSIONS } from "@/lib/permissions";
 import { AppError } from "@/lib/errors";
 import { parseOrThrow, readJson } from "@/lib/validation";
 import { enforceRateLimit, MINUTE } from "@/lib/rate-limit";
+import { withStore } from "@/lib/store-unit";
 
 const Body = z.object({ mfa_token: z.string().min(1).max(4096), code: z.string().trim().regex(/^\d{6}$/) }).strict();
 const PLATFORM_SESSION_SECONDS = 4 * 60 * 60;
@@ -15,7 +16,7 @@ const PLATFORM_SESSION_SECONDS = 4 * 60 * 60;
  * Second step of operator sign-in (FX-15): exchanges the short-lived token from /platform/auth/login and a valid
  * TOTP code for a platform session marked MFA-verified.
  */
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     const { mfa_token, code } = parseOrThrow(Body, await readJson(request));
     const pending = await verifyMfaPendingToken(mfa_token);
@@ -64,3 +65,5 @@ export async function POST(request: Request) {
     return apiError(error);
   }
 }
+
+export const POST = withStore("POST", handlePOST);

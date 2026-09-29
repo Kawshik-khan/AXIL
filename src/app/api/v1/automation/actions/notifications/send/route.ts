@@ -5,8 +5,9 @@ import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response"
 import { IdempotencyService } from "@/domains/automation/services/idempotency.service";
 import { db } from "@/infrastructure/db";
 import { BadRequestError } from "@/lib/errors";
+import { withStore } from "@/lib/store-unit";
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.NOTIFICATIONS_SEND); // was unguarded (FX-18)
@@ -90,3 +91,5 @@ export async function POST(request: Request) {
     return apiError(err);
   }
 }
+
+export const POST = withStore("POST", handlePOST);

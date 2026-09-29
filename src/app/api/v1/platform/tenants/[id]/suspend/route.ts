@@ -1,8 +1,9 @@
 import { apiSuccess, apiError, extractPlatformContext } from "@/lib/api-response";
 import { PlatformTenantService } from "@/domains/platform";
 import { AppError } from "@/lib/errors";
+import { withStore } from "@/lib/store-unit";
 
-export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
+async function handlePOST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const context = await extractPlatformContext(request);
     const { id } = await params;
@@ -19,3 +20,5 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     return apiError(error);
   }
 }
+
+export const POST = withStore("POST", handlePOST);

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
+import { withStore } from "@/lib/store-unit";
 
-export async function GET() {
+async function handleGET() {
   return NextResponse.json(
     {
       status: "healthy",
@@ -10,3 +11,5 @@ export async function GET() {
     { status: 200 }
   );
 }
+
+export const GET = withStore("GET", handleGET);

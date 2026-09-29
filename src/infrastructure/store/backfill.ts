@@ -2,13 +2,13 @@
  * Backfill and verification (FIX_IMPLEMENTATION_PLAN FX-43, ADR-108). Used by scripts/migrate-json-to-pg.ts,
  * scripts/verify-migration.ts and the Phase 4 tests.
  *
- * The backfill uses the store's own writer (the same serialization, keys and tables as the running app), holds the
- * writer lease so the app can't write at the same time, and loads everything in ONE transaction: a failure leaves the
- * target exactly as it was.
+ * The backfill uses the store's own writer (the same serialization, keys and tables as the running app), refuses while
+ * an app is writing to the target, and loads everything in ONE transaction: a failure leaves the target exactly as it
+ * was. A new store epoch makes any server still attached reload (ADR-109).
  */
 import { countRecords, diffStores, type CollectionDiff } from "./canonical";
-import { PgStorePersistence, type RejectedRow, type WriteReport } from "./pg-store";
-import type { SqlClient } from "./sql-client";
+import { PgStorePersistence, type RejectedRow } from "./pg-store";
+import { isDataRejected, type SqlClient } from "./sql-client";
 import { CORE_TABLES, coreTableFor, qualified, recordId, type CoreTable } from "./store-schema";
 
 export interface BackfillResult {
@@ -18,9 +18,12 @@ export interface BackfillResult {
   unwritable: RejectedRow[];
   /** Records whose text Postgres can't hold (NUL, half an emoji) and that were cleaned; verification compares cleaned text. */
   sanitized: number;
-  report: WriteReport;
+  report: { mode: "batch" | "row-by-row"; written: number; rejected: RejectedRow[] };
   ms: number;
 }
+
+/** An app wrote to the target this recently: the backfill refuses (it would replace the app's writes). */
+const ACTIVE_APP_WINDOW_SECONDS = 60;
 
 async function targetRowCount(client: SqlClient): Promise<number> {
   let total = 0;
@@ -34,7 +37,8 @@ async function targetRowCount(client: SqlClient): Promise<number> {
 
 /**
  * Copies a whole store into Postgres. `replace` empties the target first; otherwise a non-empty target is refused.
- * `onRejected: "row-by-row"` (rehearsal) lists every row the database refuses instead of stopping at the first.
+ * `onRejected: "row-by-row"` (rehearsal) lists every row the database refuses instead of stopping at the first; nothing
+ * is written then.
  */
 export async function backfillStore(
   source: Record<string, unknown>,
@@ -44,23 +48,24 @@ export async function backfillStore(
   const started = Date.now();
   const pg = new PgStorePersistence(target);
   if (!(await pg.schemaPresent())) throw new Error("The target has no commerceos schema: run `npm run db:migrate` first.");
-  const lease = await pg.acquireLease();
-  if (!lease.acquired) {
-    throw new Error(
-      `The target store is in use (${lease.holder?.host ?? "?"}, pid ${lease.holder?.pid ?? "?"}, heartbeat ${lease.holder?.heartbeat_at ?? "?"}). Stop the app first.`
-    );
+  const active = await pg.recentForeignWrites(ACTIVE_APP_WINDOW_SECONDS);
+  if (active > 0) {
+    throw new Error(`An app wrote ${active} change(s) to the target in the last ${ACTIVE_APP_WINDOW_SECONDS} s. Stop every app server first.`);
   }
+  if (!options.replace) {
+    const existing = await targetRowCount(target);
+    if (existing > 0) throw new Error(`The target already holds ${existing} rows. Re-run with --replace to overwrite them.`);
+  }
+  const changes = pg.computeChanges(source);
+  const { rows, collections } = countRecords(source);
+  const base = { rows, collections, unwritable: changes.unwritable, sanitized: changes.sanitizedRows };
   try {
-    if (!options.replace) {
-      const existing = await targetRowCount(target);
-      if (existing > 0) throw new Error(`The target already holds ${existing} rows. Re-run with --replace to overwrite them.`);
-    }
-    const changes = pg.computeChanges(source);
-    const report = await pg.write(changes, { replaceAll: true, onRejected: options.onRejected });
-    const { rows, collections } = countRecords(source);
-    return { rows, collections, unwritable: changes.unwritable, sanitized: changes.sanitizedRows, report, ms: Date.now() - started };
-  } finally {
-    await pg.releaseLease().catch(() => undefined);
+    const { written } = await pg.write(changes, { replaceAll: true });
+    return { ...base, report: { mode: "batch", written, rejected: [] }, ms: Date.now() - started };
+  } catch (err) {
+    if (options.onRejected === "throw" || !isDataRejected(err)) throw err;
+    const rejected = await pg.findRejectedRows(changes);
+    return { ...base, report: { mode: "row-by-row", written: 0, rejected }, ms: Date.now() - started };
   }
 }
 

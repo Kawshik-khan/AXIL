@@ -4,8 +4,9 @@ import { PERMISSIONS } from "@/lib/permissions";
 import { ProviderCircuitBreakerService } from "@/domains/automation/services/provider-circuit-breaker.service";
 import { WebhookGatewayService } from "@/domains/automation/services/webhook-gateway.service";
 import { db } from "@/infrastructure/db";
+import { withStore } from "@/lib/store-unit";
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.AUTOMATION_READ);
@@ -34,3 +35,5 @@ export async function GET(request: Request) {
     return apiError(err);
   }
 }
+
+export const GET = withStore("GET", handleGET);

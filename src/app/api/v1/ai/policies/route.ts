@@ -4,6 +4,7 @@ import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response"
 import { RbacService } from "@/domains/rbac/service";
 import { PERMISSIONS } from "@/lib/permissions";
 import { AgentPolicyService } from "@/domains/ai/policy/agent-policy.service";
+import { withStore } from "@/lib/store-unit";
 
 const RATIO = z.number().finite().min(0).max(1);
 // FX-12: policy fields only, with bounded limits and budgets.
@@ -30,7 +31,7 @@ const PolicyPatch = z
   .partial()
   .strict();
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.AI_READ);
@@ -42,7 +43,7 @@ export async function GET(request: Request) {
   }
 }
 
-export async function PATCH(request: Request) {
+async function handlePATCH(request: Request) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.AI_CONFIGURE);
@@ -54,3 +55,6 @@ export async function PATCH(request: Request) {
     return apiError(err);
   }
 }
+
+export const GET = withStore("GET", handleGET);
+export const PATCH = withStore("PATCH", handlePATCH);

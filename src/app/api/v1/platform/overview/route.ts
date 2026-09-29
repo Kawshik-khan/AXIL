@@ -1,7 +1,8 @@
 import { apiSuccess, apiError, extractPlatformContext } from "@/lib/api-response";
 import { PlatformAnalyticsService } from "@/domains/platform";
+import { withStore } from "@/lib/store-unit";
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     const context = await extractPlatformContext(request);
     const overview = PlatformAnalyticsService.getPlatformOverview(context);
@@ -10,3 +11,5 @@ export async function GET(request: Request) {
     return apiError(error);
   }
 }
+
+export const GET = withStore("GET", handleGET);

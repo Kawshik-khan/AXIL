@@ -7,9 +7,10 @@ import { ForbiddenError, NotFoundError } from "@/lib/errors";
 import { enterpriseHierarchyService } from "@/domains/enterprise/services/enterprise-hierarchy.service";
 import { enterpriseDataAccessService } from "@/domains/enterprise/services/enterprise-data-access.service";
 import { db } from "@/infrastructure/db";
+import { withStore } from "@/lib/store-unit";
 
 /** Lists only the brands in the caller's enterprise scope (N13). */
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.BRAND_READ);
@@ -37,7 +38,7 @@ const CreateBrand = z
  * Creates a brand under a business unit of this organization that the caller manages. There used to be a
  * `"bu_default"` fallback and no check that the unit existed or was in the caller's scope (N13).
  */
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.BRAND_MANAGE);
@@ -61,3 +62,6 @@ export async function POST(request: Request) {
     return apiError(err);
   }
 }
+
+export const GET = withStore("GET", handleGET);
+export const POST = withStore("POST", handlePOST);

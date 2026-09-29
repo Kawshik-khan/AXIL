@@ -4,12 +4,13 @@ import { AuditService } from "@/domains/audit/service";
 import { enforceRateLimit, MINUTE } from "@/lib/rate-limit";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { intelligenceRecomputeService } from "@/domains/intelligence/services/intelligence-recompute.service";
+import { withStore } from "@/lib/store-unit";
 
 /**
  * Recomputes and stores every intelligence snapshot for the caller's workspace (FX-21). Intelligence GETs never
  * write; they serve the snapshot this stores while it is fresh (15 minutes) and compute in memory otherwise.
  */
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.ANALYTICS_MANAGE);
@@ -29,3 +30,5 @@ export async function POST(request: Request) {
     return apiError(err);
   }
 }
+
+export const POST = withStore("POST", handlePOST);

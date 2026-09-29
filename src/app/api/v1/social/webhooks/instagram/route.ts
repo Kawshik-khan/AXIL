@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { WebhookIngressService } from "@/domains/social/webhooks/webhook-ingress.service";
+import { withStore } from "@/lib/store-unit";
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   const { searchParams } = new URL(request.url);
   const mode = searchParams.get("hub.mode");
   const token = searchParams.get("hub.verify_token");
@@ -20,7 +21,7 @@ export async function GET(request: Request) {
   return new NextResponse("Forbidden", { status: 403 });
 }
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     const rawBody = await request.text();
     const signature = request.headers.get("x-hub-signature-256");
@@ -41,3 +42,6 @@ export async function POST(request: Request) {
     );
   }
 }
+
+export const GET = withStore("GET", handleGET);
+export const POST = withStore("POST", handlePOST);

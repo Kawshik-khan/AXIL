@@ -1,7 +1,8 @@
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { KnowledgeService } from "@/domains/ai/rag/knowledge.service";
+import { withStore } from "@/lib/store-unit";
 
-export async function GET(
+async function handleGET(
   request: Request,
   { params }: { params: { id: string } }
 ) {
@@ -14,7 +15,7 @@ export async function GET(
   }
 }
 
-export async function DELETE(
+async function handleDELETE(
   request: Request,
   { params }: { params: { id: string } }
 ) {
@@ -26,3 +27,6 @@ export async function DELETE(
     return apiError(err);
   }
 }
+
+export const GET = withStore("GET", handleGET);
+export const DELETE = withStore("DELETE", handleDELETE);

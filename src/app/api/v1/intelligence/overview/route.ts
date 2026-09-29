@@ -8,9 +8,10 @@ import { anomalyDetectorService } from "@/domains/intelligence/services/anomaly-
 import { opportunityDetectorService } from "@/domains/intelligence/services/opportunity-detector.service";
 import { riskDetectorService } from "@/domains/intelligence/services/risk-detector.service";
 import { recommendationService } from "@/domains/intelligence/services/recommendation.service";
+import { withStore } from "@/lib/store-unit";
 
 /** Read-only (FX-21): stored snapshots while fresh, otherwise computed for this request. Never writes. */
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.ANALYTICS_READ);
@@ -61,3 +62,5 @@ export async function GET(request: Request) {
     return apiError(err);
   }
 }
+
+export const GET = withStore("GET", handleGET);

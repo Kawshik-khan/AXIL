@@ -8,6 +8,7 @@ import { z } from "zod";
 import { hashPassword, verifyPassword, signSessionToken, AUTH_COOKIE_NAME, DISABLED_PASSWORD_HASH } from "@/lib/security";
 import { apiSuccess, apiError } from "@/lib/api-response";
 import { AuthenticationError, ValidationError } from "@/lib/errors";
+import { withStore } from "@/lib/store-unit";
 
 const AcceptBody = z
   .object({
@@ -16,7 +17,7 @@ const AcceptBody = z
   })
   .strict();
 
-export async function GET(
+async function handleGET(
   _request: Request,
   { params }: { params: { token: string } }
 ) {
@@ -38,7 +39,7 @@ export async function GET(
   }
 }
 
-export async function POST(
+async function handlePOST(
   request: Request,
   { params }: { params: { token: string } }
 ) {
@@ -128,3 +129,6 @@ export async function POST(
     return apiError(err);
   }
 }
+
+export const GET = withStore("GET", handleGET);
+export const POST = withStore("POST", handlePOST);

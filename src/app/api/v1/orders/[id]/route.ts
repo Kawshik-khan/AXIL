@@ -1,8 +1,9 @@
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { OrderService } from "@/domains/orders/order.service";
 import { db } from "@/infrastructure/db";
+import { withStore } from "@/lib/store-unit";
 
-export async function GET(
+async function handleGET(
   request: Request,
   { params }: { params: { id: string } }
 ) {
@@ -25,3 +26,5 @@ export async function GET(
     return apiError(err);
   }
 }
+
+export const GET = withStore("GET", handleGET);

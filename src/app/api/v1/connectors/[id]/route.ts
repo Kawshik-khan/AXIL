@@ -1,7 +1,8 @@
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { ConnectorService } from "@/domains/connectors/service";
+import { withStore } from "@/lib/store-unit";
 
-export async function DELETE(
+async function handleDELETE(
   request: Request,
   { params }: { params: { id: string } }
 ) {
@@ -13,3 +14,5 @@ export async function DELETE(
     return apiError(err);
   }
 }
+
+export const DELETE = withStore("DELETE", handleDELETE);

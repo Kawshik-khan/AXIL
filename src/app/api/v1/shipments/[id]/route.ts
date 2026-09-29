@@ -3,6 +3,7 @@ import { parseOrThrow, readJson } from "@/lib/validation";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { ShippingService } from "@/domains/shipping/shipping.service";
 import { DeliveryStatus } from "@/types/commerce";
+import { withStore } from "@/lib/store-unit";
 
 const ShipmentPatch = z
   .object({
@@ -10,7 +11,7 @@ const ShipmentPatch = z
   })
   .strict();
 
-export async function PATCH(
+async function handlePATCH(
   request: Request,
   { params }: { params: { id: string } }
 ) {
@@ -30,3 +31,5 @@ export async function PATCH(
     return apiError(err);
   }
 }
+
+export const PATCH = withStore("PATCH", handlePATCH);

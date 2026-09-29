@@ -5,8 +5,9 @@ import { GoogleSheetHelper } from "@/lib/google-sheet";
 import { CsvParser } from "@/lib/csv-parser";
 import { BadRequestError } from "@/lib/errors";
 import { db } from "@/infrastructure/db";
+import { withStore } from "@/lib/store-unit";
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.PRODUCTS_READ);
@@ -57,3 +58,5 @@ export async function POST(request: Request) {
     return apiError(err);
   }
 }
+
+export const POST = withStore("POST", handlePOST);

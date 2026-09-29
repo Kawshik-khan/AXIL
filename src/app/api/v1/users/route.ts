@@ -15,8 +15,9 @@ import { db } from "@/infrastructure/db";
 import { RbacService } from "@/domains/rbac/service";
 import { InvitationService } from "@/domains/invitations/service";
 import { PERMISSIONS } from "@/lib/permissions";
+import { withStore } from "@/lib/store-unit";
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.USER_READ);
@@ -57,7 +58,7 @@ export async function GET(request: Request) {
   }
 }
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.USER_INVITE);
@@ -80,3 +81,6 @@ export async function POST(request: Request) {
     return apiError(err);
   }
 }
+
+export const GET = withStore("GET", handleGET);
+export const POST = withStore("POST", handlePOST);

@@ -7,8 +7,9 @@ import { customerLifecycleService } from "@/domains/growth/services/customer-lif
 import { attributionService } from "@/domains/growth/services/attribution.service";
 import { growthIntelligenceService } from "@/domains/growth/services/growth-intelligence.service";
 import { intelligenceSnapshots } from "@/domains/intelligence/services/intelligence-snapshot.service";
+import { withStore } from "@/lib/store-unit";
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.MARKETING_READ);
@@ -46,3 +47,5 @@ export async function GET(request: Request) {
     return apiError(err);
   }
 }
+
+export const GET = withStore("GET", handleGET);

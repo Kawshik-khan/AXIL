@@ -3,9 +3,10 @@ import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { intelligenceSnapshots } from "@/domains/intelligence/services/intelligence-snapshot.service";
 import { customerIntelligenceService } from "@/domains/intelligence/services/customer-intelligence.service";
+import { withStore } from "@/lib/store-unit";
 
 /** Read-only (FX-21): the stored snapshot while fresh, otherwise computed for this request. Never writes. */
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.ANALYTICS_READ);
@@ -16,3 +17,5 @@ export async function GET(request: Request) {
     return apiError(err);
   }
 }
+
+export const GET = withStore("GET", handleGET);

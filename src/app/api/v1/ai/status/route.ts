@@ -2,12 +2,13 @@ import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response"
 import { RbacService } from "@/domains/rbac/service";
 import { PERMISSIONS } from "@/lib/permissions";
 import { modelRouter } from "@/domains/ai/providers/model-router";
+import { withStore } from "@/lib/store-unit";
 
 /**
  * Which AI is answering (FX-32): LIVE (a configured provider), DEMO (offline keyword mock) or NOT_CONFIGURED. The UI
  * shows a "Demo AI (offline)" badge on everything the demo answers, instead of presenting it as a model.
  */
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.AI_READ);
@@ -17,3 +18,5 @@ export async function GET(request: Request) {
     return apiError(err);
   }
 }
+
+export const GET = withStore("GET", handleGET);

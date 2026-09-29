@@ -23,8 +23,9 @@ const PolicyUpdates = z
   .strict();
 import { agentRegistry } from "@/domains/ai/orchestration/agent-registry";
 import { autonomyPolicyService } from "@/domains/ai/orchestration/autonomy/autonomy-policy.service";
+import { withStore } from "@/lib/store-unit";
 
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.AI_READ);
@@ -51,7 +52,7 @@ export async function GET(request: Request) {
   }
 }
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.AI_MANAGE);
@@ -134,3 +135,6 @@ export async function POST(request: Request) {
     return apiError(err);
   }
 }
+
+export const GET = withStore("GET", handleGET);
+export const POST = withStore("POST", handlePOST);

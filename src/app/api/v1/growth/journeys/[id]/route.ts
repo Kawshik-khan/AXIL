@@ -5,6 +5,7 @@ import { PERMISSIONS } from "@/lib/permissions";
 import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { db } from "@/infrastructure/db";
+import { withStore } from "@/lib/store-unit";
 
 // FX-12: status changes go through the pause/resume routes; counters are server-side.
 const JourneyPatch = z
@@ -17,7 +18,7 @@ const JourneyPatch = z
   .partial()
   .strict();
 
-export async function GET(
+async function handleGET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -36,7 +37,7 @@ export async function GET(
   }
 }
 
-export async function PUT(
+async function handlePUT(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -57,3 +58,6 @@ export async function PUT(
     return apiError(err);
   }
 }
+
+export const GET = withStore("GET", handleGET);
+export const PUT = withStore("PUT", handlePUT);

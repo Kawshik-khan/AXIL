@@ -235,43 +235,56 @@ async function main() {
     assert.strictEqual(saved?.notes, "ab � end");
   });
 
-  await runTest("a refused record is set aside and reported; every other change is saved; fixing it saves it", async () => {
-    store.createOrder(order(t, "ord_p4_dup", "P4-1001"), []); // same order number as ord_p4_1
-    store.createOrder(order(t, "ord_p4_ok", "P4-1002"), [item(t, "oi_p4_ok", "ord_p4_ok")]);
-    await store.flush();
-    const health = store.getPersistenceHealth();
-    assert.strictEqual(health.ok, false, "not ok while a record is unsaved");
-    assert.strictEqual(health.unsaved_rows, 1);
-    const [refused] = store.getUnsavedRows();
-    assert.strictEqual(refused.id, "ord_p4_dup");
-    assert.strictEqual(refused.constraint, "orders_tenant_order_number_key");
-    const rows = await client.query<{ id: string }>("SELECT id FROM commerceos.orders WHERE tenant_id = $1 ORDER BY id", [t]);
-    assert.deepStrictEqual(rows.rows.map((r) => r.id), ["ord_p4_1", "ord_p4_ok"], "the good order and its item were saved");
-    const dup = store.data.orders.find((x) => x.id === "ord_p4_dup");
-    assert.ok(dup);
-    dup.order_number = "P4-1003";
-    store.markDirty();
-    await store.flush();
-    assert.ok(store.getPersistenceHealth().ok, JSON.stringify(store.getPersistenceHealth()));
-    assert.strictEqual(store.getUnsavedRows().length, 0);
+  const refusedIn = (code: string) => (e: Error & { code?: string; statusCode?: number }) => e.code === code && e.statusCode === 409;
+  const commitAll = () => true;
+
+  await runTest("a unit whose change breaks a data rule is refused whole: 409, nothing written, memory restored", async () => {
+    const before = store.data.orders.length;
+    await assert.rejects(
+      store.unit(async () => {
+        store.createOrder(order(t, "ord_p4_dup", "P4-1001"), []); // same order number as ord_p4_1
+        store.createOrder(order(t, "ord_p4_ok", "P4-1002"), [item(t, "oi_p4_ok", "ord_p4_ok")]);
+        return true;
+      }, commitAll),
+      refusedIn("CONSTRAINT_VIOLATION")
+    );
+    assert.strictEqual(store.data.orders.length, before, "both orders of the refused unit are gone from memory");
+    const rows = await client.query("SELECT id FROM commerceos.orders WHERE id IN ('ord_p4_dup', 'ord_p4_ok')");
+    assert.strictEqual(rows.rows.length, 0, "nothing of the unit was written");
+    await store.unit(async () => {
+      store.createOrder(order(t, "ord_p4_ok", "P4-1002"), [item(t, "oi_p4_ok", "ord_p4_ok")]);
+      return true;
+    }, commitAll);
+    assert.strictEqual((await client.query("SELECT 1 FROM commerceos.order_items WHERE id = 'oi_p4_ok'")).rows.length, 1);
   });
 
-  await runTest("composite foreign keys: stock can't sit in another workspace's warehouse; items need their order", async () => {
+  await runTest("composite foreign keys: stock can't sit in another workspace's warehouse; items need their order (409)", async () => {
     const other = catalog("ten_p4_b");
-    store.createTenant(tenant("ten_p4_b"));
-    store.data.products.push(other.product);
-    store.data.product_variants.push(other.variant);
-    store.data.inventory_items.push({ ...other.stock, id: "inv_p4_cross", warehouse_id: warehouse.id }); // tenant B, tenant A's warehouse
-    store.data.order_items.push(item(t, "oi_p4_orphan", "ord_missing"));
-    store.markDirty();
-    await store.flush();
-    const refused = store.getUnsavedRows().map((r) => `${r.id}:${r.constraint}`).sort();
-    assert.deepStrictEqual(refused, ["inv_p4_cross:inventory_items_warehouse_fkey", "oi_p4_orphan:order_items_order_fkey"]);
-    store.data.inventory_items = store.data.inventory_items.filter((i) => i.id !== "inv_p4_cross");
-    store.data.order_items = store.data.order_items.filter((i) => i.id !== "oi_p4_orphan");
-    store.markDirty();
-    await store.flush();
-    assert.strictEqual(store.getUnsavedRows().length, 0, "records removed from memory are no longer reported");
+    await store.unit(async () => {
+      store.createTenant(tenant("ten_p4_b"));
+      store.data.products.push(other.product);
+      store.data.product_variants.push(other.variant);
+      store.markDirty();
+      return true;
+    }, commitAll);
+    await assert.rejects(
+      store.unit(async () => {
+        store.data.inventory_items.push({ ...other.stock, id: "inv_p4_cross", warehouse_id: warehouse.id }); // tenant B, tenant A's warehouse
+        store.markDirty();
+        return true;
+      }, commitAll),
+      refusedIn("CONSTRAINT_VIOLATION")
+    );
+    await assert.rejects(
+      store.unit(async () => {
+        store.data.order_items.push(item(t, "oi_p4_orphan", "ord_missing"));
+        store.markDirty();
+        return true;
+      }, commitAll),
+      refusedIn("CONSTRAINT_VIOLATION")
+    );
+    assert.ok(!store.data.inventory_items.some((i) => i.id === "inv_p4_cross") && !store.data.order_items.some((i) => i.id === "oi_p4_orphan"));
+    assert.strictEqual(store.getPersistenceHealth().ok, true, "a refused request leaves the store healthy");
   });
 
   await runTest("records without a usable id are reported, never sent", async () => {
@@ -285,19 +298,20 @@ async function main() {
     assert.ok(store.getPersistenceHealth().ok);
   });
 
-  await runTest("a row never moves to another tenant through an upsert (security review L5)", async () => {
-    const o = store.data.orders.find((x) => x.id === "ord_p4_ok");
-    assert.ok(o);
-    (o as { tenant_id: string }).tenant_id = "ten_p4_b"; // bypassing safePatch on purpose
-    store.markDirty();
-    await store.flush();
-    assert.deepStrictEqual(store.getUnsavedRows().map((r) => `${r.id}:${r.constraint}`), ["ord_p4_ok:tenant_id_unchanged"]);
+  await runTest("a row never moves to another tenant through a write (security review L5)", async () => {
+    await assert.rejects(
+      store.unit(async () => {
+        const o = store.data.orders.find((x) => x.id === "ord_p4_ok");
+        assert.ok(o);
+        (o as { tenant_id: string }).tenant_id = "ten_p4_b"; // bypassing safePatch on purpose
+        store.markDirty();
+        return true;
+      }, commitAll),
+      refusedIn("STORE_CONFLICT")
+    );
     const row = await client.query<{ tenant_id: string }>("SELECT tenant_id FROM commerceos.orders WHERE id = 'ord_p4_ok'");
     assert.strictEqual(row.rows[0].tenant_id, t);
-    (o as { tenant_id: string }).tenant_id = t;
-    store.markDirty();
-    await store.flush();
-    assert.ok(store.getPersistenceHealth().ok);
+    assert.strictEqual(store.data.orders.find((x) => x.id === "ord_p4_ok")?.tenant_id, t, "memory restored");
   });
 
   await runTest("new workspaces get distinct default warehouses even when their ids start alike (review M3)", async () => {
@@ -307,96 +321,6 @@ async function main() {
     assert.strictEqual(new Set(ids).size, 2, ids.join(","));
     await store.flush();
     assert.strictEqual(store.getUnsavedRows().length, 0);
-  });
-
-  await runTest("without a confirmed lease: requests are refused before any change; a change that slips through is never saved (review M1, done-check)", async () => {
-    const fencedClient = await migratedClient();
-    const fencedStore = await openStore(fencedClient);
-    const internals = fencedStore as unknown as { leaseConfirmedAt: number };
-    const tenantsBefore = fencedStore.data.tenants.length;
-    internals.leaseConfirmedAt = Date.now() - LEASE_TTL_MS * 0.55; // Postgres unreachable for more than half the lease
-    // The request context refuses a mutating request before it touches anything.
-    assert.throws(() => fencedStore.assertWritable(), (e: Error & { code?: string; statusCode?: number }) => e.code === "STORE_UNAVAILABLE" && e.statusCode === 503);
-    assert.strictEqual(fencedStore.data.tenants.length, tenantsBefore, "nothing changed; reads still work");
-    internals.leaseConfirmedAt = Date.now() - LEASE_TTL_MS * 0.85; // past 80%: another process may own the store soon
-    assert.throws(() => fencedStore.data.tenants, (e: Error & { statusCode?: number }) => e.statusCode === 503);
-    // A change that bypassed the request context: refused, and this store never saves anything again.
-    internals.leaseConfirmedAt = Date.now() - LEASE_TTL_MS * 0.55;
-    assert.throws(() => fencedStore.createTenant(tenant("ten_p4_fenced")), (e: Error & { statusCode?: number }) => e.statusCode === 503);
-    internals.leaseConfirmedAt = Date.now(); // Postgres answers again
-    await fencedStore.flush();
-    const saved = await fencedClient.query("SELECT 1 FROM commerceos.tenants WHERE id = 'ten_p4_fenced'");
-    assert.strictEqual(saved.rows.length, 0, "the refused change is never saved later (a retry can't duplicate it)");
-    assert.strictEqual(fencedStore.getPersistenceHealth().blocked_code, "DATABASE_UNAVAILABLE");
-    assert.throws(() => fencedStore.data.tenants, (e: Error & { statusCode?: number }) => e.statusCode === 503);
-    await fencedStore.shutdown();
-    await fencedClient.close();
-  });
-
-  await runTest("a child refused because of its parent is retried once the parent saves (done-check)", async () => {
-    store.createOrder(order(t, "ord_p4_parent", "P4-1001"), [item(t, "oi_p4_child", "ord_p4_parent", 2)]); // duplicate number
-    await store.flush();
-    assert.deepStrictEqual(
-      store.getUnsavedRows().map((r) => `${r.id}:${r.constraint}`).sort(),
-      ["oi_p4_child:order_items_order_fkey", "ord_p4_parent:orders_tenant_order_number_key"]
-    );
-    const parent = store.data.orders.find((x) => x.id === "ord_p4_parent");
-    assert.ok(parent);
-    parent.order_number = "P4-1101";
-    store.markDirty();
-    await store.flush(); // the order saves; that commit schedules a retry of the waiting item
-    await new Promise((resolve) => setTimeout(resolve, 600));
-    await store.flush();
-    assert.strictEqual(store.getUnsavedRows().length, 0, JSON.stringify(store.getUnsavedRows()));
-    const child = await client.query("SELECT 1 FROM commerceos.order_items WHERE id = 'oi_p4_child'");
-    assert.strictEqual(child.rows.length, 1);
-    const quarantine = await client.query("SELECT 1 FROM commerceos.refused_rows");
-    assert.strictEqual(quarantine.rows.length, 0, "saved rows leave the quarantine");
-  });
-
-  await runTest("refused rows survive a restart in commerceos.refused_rows and stay reported until saved (done-check)", async () => {
-    const qClient = await migratedClient();
-    const first = await openStore(qClient);
-    first.createTenant(tenant("ten_q"));
-    first.createOrder(order("ten_q", "ord_q_1", "Q-1"), []);
-    first.createOrder(order("ten_q", "ord_q_2", "Q-1"), []); // refused: duplicate order number
-    await first.flush();
-    assert.deepStrictEqual(first.getUnsavedRows().map((r) => r.id), ["ord_q_2"]);
-    await first.shutdown();
-    const kept = await qClient.query<{ id: string; constraint_name: string; data: { order_number: string } }>(
-      "SELECT id, constraint_name, data FROM commerceos.refused_rows"
-    );
-    assert.deepStrictEqual(kept.rows.map((r) => [r.id, r.constraint_name, r.data.order_number]), [["ord_q_2", "orders_tenant_order_number_key", "Q-1"]]);
-    const second = await openStore(qClient); // a restart: the refused order is not in memory any more
-    assert.ok(!second.data.orders.some((o) => o.id === "ord_q_2"));
-    assert.deepStrictEqual(second.getUnsavedRows().map((r) => r.id), ["ord_q_2"], "still reported after the restart");
-    assert.strictEqual(second.getPersistenceHealth().ok, false);
-    second.createOrder(order("ten_q", "ord_q_2", "Q-2"), []); // re-entered correctly
-    await second.flush();
-    assert.strictEqual(second.getUnsavedRows().length, 0);
-    assert.strictEqual((await qClient.query("SELECT 1 FROM commerceos.refused_rows")).rows.length, 0);
-    await second.shutdown();
-    await qClient.close();
-  });
-
-  await runTest("the lease is renewed while a large store loads (Neon rehearsal: a 56k-record load outlived the lease)", async () => {
-    const slowClient = await migratedClient();
-    let renewingDuringLoad: boolean | null = null;
-    let probe: CommerceDatabase | null = null;
-    const watching: SqlClient = {
-      ...slowClient,
-      query: (text, params) => {
-        if (text.includes("FROM commerceos.documents ORDER BY") && probe) {
-          renewingDuringLoad = (probe as unknown as { leaseTimer: unknown }).leaseTimer !== null;
-        }
-        return slowClient.query(text, params);
-      },
-    };
-    probe = new CommerceDatabase({ backend: "pg", client: watching, persist: true });
-    await probe.ready();
-    assert.strictEqual(renewingDuringLoad, true, "the renewal timer runs before the load starts");
-    await probe.shutdown();
-    await slowClient.close();
   });
 
   await runTest("the readiness ping runs one query at a time and at most every 5 s (review M2)", async () => {
@@ -436,26 +360,156 @@ async function main() {
     }
   });
 
-  await runTest("single writer: the lease is held; a stale lease is taken over; the old writer is fenced out", async () => {
-    const intruder = new PgStorePersistence(client);
-    const denied = await intruder.acquireLease();
-    assert.strictEqual(denied.acquired, false);
-    assert.ok(!denied.acquired && denied.holder?.pid === process.pid);
-    await client.query("UPDATE commerceos.store_writer SET heartbeat_at = now() - interval '1 hour'");
-    assert.strictEqual((await intruder.acquireLease()).acquired, true, "an expired lease can be taken over");
-    const o = store.data.orders.find((x) => x.id === "ord_p4_1");
-    assert.ok(o);
-    o.notes = "written after losing the lease";
-    store.markDirty();
-    await store.flush();
-    const health = store.getPersistenceHealth();
-    assert.strictEqual(health.blocked_code, "LOCK_LOST");
-    assert.strictEqual(health.ok, false);
-    const saved = await client.query<{ notes: string }>("SELECT data->>'notes' AS notes FROM commerceos.orders WHERE id = 'ord_p4_1'");
-    assert.notStrictEqual(saved.rows[0].notes, "written after losing the lease", "nothing was written without the lease");
-    assert.throws(() => store.createTenant(tenant("ten_p4_late")), (e: Error & { statusCode?: number }) => e.statusCode === 503);
-    await intruder.releaseLease();
+  // ---------------------------------------------------------------------------
+  console.log(`\n${ANSI_BOLD}[FX-45] Several app servers on one store${ANSI_RESET}`);
+  // ---------------------------------------------------------------------------
+  const mwClient = await migratedClient();
+  const A = await openStore(mwClient);
+  await A.flush(); // A's default seed is committed before B starts, so B loads it instead of seeding its own
+  const B = await openStore(mwClient);
+  const mwCatalog = catalog("ten_mw");
+
+  await runTest("a unit commits before it returns; the other server sees it at its next sync", async () => {
+    await A.unit(async () => {
+      A.createTenant(tenant("ten_mw"));
+      A.data.products.push(mwCatalog.product);
+      A.data.product_variants.push(mwCatalog.variant);
+      A.data.warehouses.push(mwCatalog.warehouse);
+      A.data.inventory_items.push({ ...mwCatalog.stock, quantity_on_hand: 1, quantity_reserved: 0, quantity_available: 1 });
+      A.createOrder(order("ten_mw", "ord_mw_1", "MW-1"), [item("ten_mw", "oi_mw_1", "ord_mw_1")]);
+      A.data.growth_insights.push({ id: "gi_counter", tenant_id: "ten_mw", count: 0 } as never);
+      A.markDirty();
+      return true;
+    }, commitAll);
+    assert.strictEqual((await mwClient.query("SELECT 1 FROM commerceos.orders WHERE id = 'ord_mw_1'")).rows.length, 1, "committed before unit() returned");
+    assert.ok(!B.data.orders.some((o) => o.id === "ord_mw_1"));
+    await B.syncNow();
+    assert.ok(B.data.orders.some((o) => o.id === "ord_mw_1"));
+    assert.ok(B.data.tenants.some((x) => x.id === "ten_mw"));
   });
+
+  await runTest("two servers change the same record: the second gets 409, nothing is lost, and it then sees the first's change", async () => {
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => (open = resolve));
+    const second = B.unit(async () => {
+      await gate; // B synced at the start of its unit, then waits while A commits
+      const o = B.data.orders.find((x) => x.id === "ord_mw_1");
+      assert.ok(o);
+      o.notes = "from B";
+      B.markDirty();
+      return true;
+    }, commitAll);
+    await new Promise((r) => setTimeout(r, 50));
+    await A.unit(async () => {
+      const o = A.data.orders.find((x) => x.id === "ord_mw_1");
+      assert.ok(o);
+      o.notes = "from A";
+      A.markDirty();
+      return true;
+    }, commitAll);
+    open();
+    await assert.rejects(second, refusedIn("STORE_CONFLICT"));
+    const saved = await mwClient.query<{ notes: string }>("SELECT data->>'notes' AS notes FROM commerceos.orders WHERE id = 'ord_mw_1'");
+    assert.strictEqual(saved.rows[0].notes, "from A");
+    assert.strictEqual(B.data.orders.find((x) => x.id === "ord_mw_1")?.notes, "from A", "B's memory holds the winner, not its own refused change");
+  });
+
+  await runTest("no lost writes: 30 concurrent read-modify-write requests on two servers (retrying on 409) all land", async () => {
+    const bump = async (server: CommerceDatabase) => {
+      for (let attempt = 0; attempt < 50; attempt++) {
+        try {
+          await server.unit(async () => {
+            const counter = server.data.growth_insights.find((x) => x.id === "gi_counter") as unknown as { count: number };
+            const next = counter.count + 1;
+            await new Promise((r) => setTimeout(r, Math.random() * 4));
+            counter.count = next;
+            server.markDirty();
+            return true;
+          }, commitAll);
+          return;
+        } catch (err) {
+          if ((err as { code?: string }).code !== "STORE_CONFLICT") throw err;
+        }
+      }
+      throw new Error("gave up after 50 conflicts");
+    };
+    await Promise.all(Array.from({ length: 30 }, (_, i) => bump(i % 2 ? A : B)));
+    const row = await mwClient.query<{ count: string }>("SELECT data->>'count' AS count FROM commerceos.documents WHERE collection = 'growth_insights' AND id = 'gi_counter'");
+    assert.strictEqual(Number(row.rows[0].count), 30);
+    await A.syncNow();
+    await B.syncNow();
+    for (const server of [A, B]) {
+      assert.strictEqual((server.data.growth_insights.find((x) => x.id === "gi_counter") as unknown as { count: number }).count, 30);
+    }
+  });
+
+  await runTest("no overselling across servers: the last unit of stock can be reserved once", async () => {
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => (open = resolve));
+    const reserve = (server: CommerceDatabase) =>
+      server.unit(async () => {
+        const inv = server.data.inventory_items.find((x) => x.id === mwCatalog.stock.id);
+        assert.ok(inv);
+        if (inv.quantity_on_hand - inv.quantity_reserved < 1) throw new Error("insufficient stock");
+        await gate; // both servers have seen 1 available
+        inv.quantity_reserved += 1;
+        inv.quantity_available = inv.quantity_on_hand - inv.quantity_reserved;
+        server.markDirty();
+        return true;
+      }, commitAll);
+    const results = Promise.allSettled([reserve(A), reserve(B)]);
+    await new Promise((r) => setTimeout(r, 50));
+    open();
+    const settled = await results;
+    assert.deepStrictEqual(settled.map((r) => r.status).sort(), ["fulfilled", "rejected"]);
+    const refused = settled.find((r) => r.status === "rejected") as PromiseRejectedResult;
+    assert.strictEqual((refused.reason as { code?: string }).code, "STORE_CONFLICT");
+    const row = await mwClient.query<{ q: string }>("SELECT quantity_reserved::text AS q FROM commerceos.inventory_items WHERE id = $1", [mwCatalog.stock.id]);
+    assert.strictEqual(row.rows[0].q, "1", "reserved once");
+  });
+
+  await runTest("a unit that fails or answers with an error writes nothing and restores memory", async () => {
+    await assert.rejects(A.unit(async () => {
+      A.createTenant(tenant("ten_mw_thrown"));
+      throw new Error("handler failed");
+    }, commitAll), /handler failed/);
+    const answered = await A.unit(async () => {
+      A.createTenant(tenant("ten_mw_400"));
+      return { status: 400 };
+    }, (res) => res.status < 400);
+    assert.strictEqual(answered.status, 400);
+    assert.ok(!A.data.tenants.some((x) => x.id === "ten_mw_thrown" || x.id === "ten_mw_400"));
+    const rows = await mwClient.query("SELECT 1 FROM commerceos.tenants WHERE id IN ('ten_mw_thrown', 'ten_mw_400')");
+    assert.strictEqual(rows.rows.length, 0);
+  });
+
+  await runTest("changes made outside a request are committed in the background and reach the other server", async () => {
+    A.createTenant(tenant("ten_mw_bg")); // e.g. the reservation sweeper
+    await A.flush();
+    await B.syncNow();
+    assert.ok(B.data.tenants.some((x) => x.id === "ten_mw_bg"));
+  });
+
+  await runTest("a new store epoch (backfill) or a pruned change log makes a server reload everything", async () => {
+    await mwClient.query(
+      "INSERT INTO commerceos.tenants (id, tenant_id, data) VALUES ('ten_mw_sql', 'ten_mw_sql', $1::jsonb)",
+      [JSON.stringify(tenant("ten_mw_sql"))]
+    );
+    await mwClient.query("UPDATE commerceos.store_state SET epoch = 'rebuilt' WHERE id = 1");
+    await B.syncNow();
+    assert.ok(B.data.tenants.some((x) => x.id === "ten_mw_sql"), "reloaded (the row had no change-log entry)");
+    await mwClient.query("DELETE FROM commerceos.tenants WHERE id = 'ten_mw_sql'");
+    await mwClient.query("UPDATE commerceos.store_state SET pruned_through = 1000000000 WHERE id = 1");
+    await B.syncNow();
+    assert.ok(!B.data.tenants.some((x) => x.id === "ten_mw_sql"), "reloaded again after the prune mark passed its position");
+    await mwClient.query("UPDATE commerceos.store_state SET pruned_through = 0 WHERE id = 1");
+  });
+
+  await runTest("a backfill refuses while an app server is writing to the target", async () => {
+    await assert.rejects(backfillStore({ tenants: [] }, mwClient, { replace: true, onRejected: "throw" }), /Stop every app server/);
+  });
+  await A.shutdown();
+  await B.shutdown();
 
   // ---------------------------------------------------------------------------
   console.log(`\n${ANSI_BOLD}[FX-43] Backfill, verification, export${ANSI_RESET}`);
@@ -497,14 +551,10 @@ async function main() {
     assert.deepStrictEqual(report.diffs.map((d) => [d.collection, d.different]), [["orders", ["ord_bf_1"]]]);
   });
 
-  await runTest("a non-empty target needs --replace; replace restores it exactly; an app holding the lease blocks it", async () => {
+  await runTest("a non-empty target needs --replace; replace restores it exactly", async () => {
     await assert.rejects(backfillStore(source, target, { replace: false, onRejected: "throw" }), /already holds/);
     await backfillStore(source, target, { replace: true, onRejected: "throw" });
     assert.ok((await verifyStore(source, target)).pass);
-    const app = new PgStorePersistence(target);
-    assert.ok((await app.acquireLease()).acquired);
-    await assert.rejects(backfillStore(source, target, { replace: true, onRejected: "throw" }), /in use/);
-    await app.releaseLease();
   });
 
   await runTest("a source the database refuses: the rehearsal lists the rows, the real backfill changes nothing", async () => {

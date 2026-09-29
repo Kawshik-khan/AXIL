@@ -2,8 +2,9 @@ import { PERMISSIONS } from "@/lib/permissions";
 import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { customerLifecycleService } from "@/domains/growth/services/customer-lifecycle.service";
+import { withStore } from "@/lib/store-unit";
 
-export async function GET(
+async function handleGET(
   request: Request,
   { params }: { params: Promise<{ customerId: string }> }
 ) {
@@ -17,3 +18,5 @@ export async function GET(
     return apiError(err);
   }
 }
+
+export const GET = withStore("GET", handleGET);

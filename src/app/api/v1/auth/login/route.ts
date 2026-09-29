@@ -3,8 +3,9 @@ import { AuthService } from "@/domains/auth/service";
 import { apiSuccess, apiError } from "@/lib/api-response";
 import { AUTH_COOKIE_NAME } from "@/lib/security";
 import { enforceRateLimit, clientKey, MINUTE } from "@/lib/rate-limit";
+import { withStore } from "@/lib/store-unit";
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   try {
     const body = await request.json();
     // Brute-force limits (FX-14): per account always, per client when a trusted proxy identifies it.
@@ -42,3 +43,5 @@ export async function POST(request: Request) {
     return apiError(err);
   }
 }
+
+export const POST = withStore("POST", handlePOST);
