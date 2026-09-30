@@ -2,6 +2,7 @@ import { db } from "@/infrastructure/db";
 import { apiError } from "@/lib/api-response";
 import { AppError } from "@/lib/errors";
 import { envNumber } from "@/lib/env-number";
+import { logger } from "@/lib/logger";
 
 type RouteHandler<A extends unknown[]> = (...args: A) => Promise<Response>;
 
@@ -49,7 +50,7 @@ async function receiveBody(request: Request): Promise<void> {
  *
  * Without Postgres persistence (tests, the JSON file) both simply call the handler.
  */
-export function withStore<A extends unknown[]>(
+function withStoreUnit<A extends unknown[]>(
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
   handler: RouteHandler<A>,
   options: { unit?: boolean } = {}
@@ -81,6 +82,49 @@ export function withStore<A extends unknown[]>(
       return await db.unit(() => handler(...args), (response) => response.status < 400);
     } catch (err) {
       return apiError(err);
+    }
+  };
+}
+
+/**
+ * One log line per API request (method, path prefix, status, duration), so the platform log shows activity.
+ * On in production (ACCESS_LOG=0 turns it off, ACCESS_LOG=1 turns it on elsewhere). Health probes are skipped.
+ * Only the first four path segments are logged (/api/v1/<resource>) and never the query string: ids, invitation
+ * tokens and search terms can be secrets or personal data, and this line must carry neither.
+ */
+function accessLogEnabled(): boolean {
+  const flag = process.env.ACCESS_LOG;
+  if (flag === "0") return false;
+  return flag === "1" || process.env.NODE_ENV === "production";
+}
+
+function logRequest(request: unknown, status: number, startedAt: number): void {
+  if (!accessLogEnabled() || !(request instanceof Request)) return;
+  const path = new URL(request.url).pathname;
+  if (path.startsWith("/health")) return;
+  logger.info("http.request", {
+    method: request.method,
+    path: path.split("/").slice(0, 5).join("/"),
+    status,
+    duration_ms: Date.now() - startedAt,
+  });
+}
+
+export function withStore<A extends unknown[]>(
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
+  handler: RouteHandler<A>,
+  options: { unit?: boolean } = {}
+): RouteHandler<A> {
+  const inner = withStoreUnit(method, handler, options);
+  return async (...args: A) => {
+    const startedAt = Date.now();
+    try {
+      const response = await inner(...args);
+      logRequest(args[0], response.status, startedAt);
+      return response;
+    } catch (err) {
+      logRequest(args[0], 500, startedAt);
+      throw err;
     }
   };
 }
