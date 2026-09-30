@@ -399,6 +399,62 @@ async function main() {
     }
   });
 
+  await runTest("AI: embeddings go to LLM_EMBEDDING_BASE_URL (own key, model, dimensions) while chat stays on the primary provider", async () => {
+    const router = ModelRouter.getInstance();
+    const realFetch = globalThis.fetch;
+    const calls: Array<{ url: string; auth: string | undefined; body: Record<string, unknown> }> = [];
+    globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(url), auth: (init?.headers as Record<string, string>)?.Authorization, body: JSON.parse(String(init?.body)) });
+      const isEmbed = String(url).endsWith("/embeddings");
+      return new Response(JSON.stringify(isEmbed ? { data: [{ embedding: [0.1, 0.2, 0.3] }] } : { choices: [{ message: { content: "hi" } }], usage: {} }), { status: 200 });
+    }) as typeof fetch;
+    try {
+      router.configure({
+        LLM_BASE_URL: "http://chat.p3/v1", LLM_API_KEY: "chat-key", LLM_MODEL_FAST: "chat-model",
+        LLM_EMBEDDING_BASE_URL: "http://embed.p3/v1", LLM_EMBEDDING_API_KEY: "embed-key", LLM_EMBEDDING_MODEL: "embed-model", LLM_EMBEDDING_DIMENSIONS: "768",
+      } as NodeJS.ProcessEnv);
+      assert.strictEqual(router.getStatus().embedding_provider, "embeddings");
+      assert.deepStrictEqual(await router.generateEmbedding("hello"), [0.1, 0.2, 0.3]);
+      assert.strictEqual(calls[0].url, "http://embed.p3/v1/embeddings");
+      assert.strictEqual(calls[0].auth, "Bearer embed-key");
+      assert.strictEqual(calls[0].body.model, "embed-model");
+      assert.strictEqual(calls[0].body.dimensions, 768);
+      await router.chatWithRouting("TIER_1_FAST", [{ role: "user", content: "x" }]);
+      assert.strictEqual(calls[1].url, "http://chat.p3/v1/chat/completions");
+      assert.strictEqual(calls[1].auth, "Bearer chat-key");
+    } finally {
+      globalThis.fetch = realFetch;
+      router.configure(process.env);
+    }
+  });
+
+  await runTest("n8n: calls carry X-CommerceOS-Token when COMMERCEOS_N8N_WEBHOOK_TOKEN is set, and none when it isn't", async () => {
+    const saved = { host: process.env.N8N_HOST, token: process.env.COMMERCEOS_N8N_WEBHOOK_TOKEN };
+    process.env.N8N_HOST = "http://n8n.tok.p3:5678";
+    const realFetch = globalThis.fetch;
+    let seen: Record<string, string> | null = null;
+    globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+      seen = init?.headers as Record<string, string>;
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch;
+    try {
+      process.env.COMMERCEOS_N8N_WEBHOOK_TOKEN = "p3-token-0123456789abcdef";
+      await invokeN8n();
+      assert.strictEqual((seen as Record<string, string> | null)?.["X-CommerceOS-Token"], "p3-token-0123456789abcdef");
+      delete process.env.COMMERCEOS_N8N_WEBHOOK_TOKEN;
+      seen = null;
+      await invokeN8n();
+      assert.ok(seen, "n8n must still be called");
+      assert.strictEqual((seen as Record<string, string>)["X-CommerceOS-Token"], undefined);
+    } finally {
+      globalThis.fetch = realFetch;
+      for (const [k, v] of [["N8N_HOST", saved.host], ["COMMERCEOS_N8N_WEBHOOK_TOKEN", saved.token]] as const) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  });
+
   await runTest("n8n: an unreachable configured instance fails, and the tenant sees no internal host", async () => {
     const saved = process.env.N8N_HOST;
     process.env.N8N_HOST = "http://n8n.internal.p3:5678";

@@ -7,14 +7,24 @@
         "httpMethod": "POST",
         "path": "commerceos-low-stock-webhook",
         "responseMode": "responseNode",
-        "options": {}
+        "options": {},
+        "authentication": "headerAuth"
       },
       "id": "low-stock-trigger",
       "name": "Low Stock Webhook Trigger",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [240, 300],
-      "webhookId": "commerceos-low-stock-webhook"
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "commerceos-low-stock-webhook",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "697pQouSJHtv6x4m",
+          "name": "CommerceOS Webhook Token"
+        }
+      }
     },
     {
       "parameters": {
@@ -24,7 +34,10 @@
       "name": "Prepare Alert Payload",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [480, 300]
+      "position": [
+        480,
+        300
+      ]
     },
     {
       "parameters": {
@@ -64,7 +77,10 @@
       "name": "Dispatch Operator Alert",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [720, 300],
+      "position": [
+        720,
+        300
+      ],
       "credentials": {
         "httpHeaderAuth": {
           "id": "commerceos-api-credential",
@@ -84,7 +100,10 @@
       "name": "Respond Low Stock Success",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [960, 300]
+      "position": [
+        960,
+        300
+      ]
     }
   ],
   "connections": {

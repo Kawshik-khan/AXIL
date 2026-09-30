@@ -50,6 +50,7 @@ export class ModelRouter {
   private static instance: ModelRouter;
   private primaryProvider: LLMProvider;
   private fallbackProvider: LLMProvider | null;
+  private embeddingProvider: LLMProvider | null;
   private failureCount = 0;
   private circuitOpenUntil = 0;
   private readonly failureThreshold = 5;
@@ -60,12 +61,15 @@ export class ModelRouter {
    * fallback, answering as if it were a model.
    * - LLM_BASE_URL (+ LLM_API_KEY, LLM_PROVIDER_NAME): a real OpenAI-compatible provider; LLM_FALLBACK_BASE_URL (+
    *   LLM_FALLBACK_API_KEY) an optional second one. Models: LLM_MODEL_FAST, LLM_MODEL_REASONING, LLM_EMBEDDING_MODEL.
+   * - LLM_EMBEDDING_BASE_URL (+ LLM_EMBEDDING_API_KEY, LLM_EMBEDDING_PROVIDER_NAME, LLM_EMBEDDING_DIMENSIONS): a separate
+   *   OpenAI-compatible provider used only for embeddings, with the model from LLM_EMBEDDING_MODEL.
    * - AI_DEMO_MODE=1 without LLM_BASE_URL: the offline keyword demo, labelled "Demo AI" everywhere it answers.
    * - Neither: every AI call refuses with 424 AI_PROVIDER_NOT_CONFIGURED. The mock is never a silent fallback.
    */
   private constructor() {
     this.primaryProvider = new UnconfiguredProvider();
     this.fallbackProvider = null;
+    this.embeddingProvider = null;
     this.configure(process.env);
   }
 
@@ -84,6 +88,17 @@ export class ModelRouter {
     } else {
       this.primaryProvider = new UnconfiguredProvider();
     }
+    // Embeddings can come from a different provider than chat (e.g. chat on Groq, which has no embedding model)
+    const dims = Number(env.LLM_EMBEDDING_DIMENSIONS);
+    this.embeddingProvider = env.LLM_EMBEDDING_BASE_URL
+      ? new OpenAICompatibleProvider({
+          baseUrl: env.LLM_EMBEDDING_BASE_URL,
+          apiKey: env.LLM_EMBEDDING_API_KEY,
+          name: env.LLM_EMBEDDING_PROVIDER_NAME || "embeddings",
+          models,
+          embeddingDimensions: Number.isInteger(dims) && dims > 0 ? dims : undefined,
+        })
+      : null;
     this.fallbackProvider = env.LLM_FALLBACK_BASE_URL
       ? new OpenAICompatibleProvider({ baseUrl: env.LLM_FALLBACK_BASE_URL, apiKey: env.LLM_FALLBACK_API_KEY, name: "fallback", models })
       : null;
@@ -96,7 +111,7 @@ export class ModelRouter {
     return "LIVE";
   }
 
-  public getStatus(): { mode: AiMode; provider: string; models: Record<ModelTier, string>; fallback: string | null } {
+  public getStatus(): { mode: AiMode; provider: string; models: Record<ModelTier, string>; fallback: string | null; embedding_provider: string | null } {
     return {
       mode: this.getMode(),
       provider: this.primaryProvider.providerName,
@@ -106,6 +121,7 @@ export class ModelRouter {
         TIER_3_EMBEDDING: this.resolveModelName("TIER_3_EMBEDDING"),
       },
       fallback: this.fallbackProvider?.providerName ?? null,
+      embedding_provider: this.embeddingProvider?.providerName ?? null,
     };
   }
 
@@ -238,7 +254,7 @@ export class ModelRouter {
   }
 
   public async generateEmbedding(text: string): Promise<number[]> {
-    const { provider } = this.getActiveProvider("TIER_3_EMBEDDING");
+    const provider = this.embeddingProvider ?? this.getActiveProvider("TIER_3_EMBEDDING").provider;
     if (PlatformSafetyService.isExecutionBlocked("PROVIDER", provider.providerName)) {
       throw new KillSwitchActiveError("PROVIDER", `AI provider ${provider.providerName} is paused by the platform.`);
     }

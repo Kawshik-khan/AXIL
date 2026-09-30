@@ -7,14 +7,24 @@
         "httpMethod": "POST",
         "path": "commerceos-abandoned-checkout",
         "responseMode": "responseNode",
-        "options": {}
+        "options": {},
+        "authentication": "headerAuth"
       },
       "id": "abandoned-checkout-trigger",
       "name": "Abandoned Checkout Webhook Trigger",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [240, 300],
-      "webhookId": "commerceos-abandoned-checkout"
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "commerceos-abandoned-checkout",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "697pQouSJHtv6x4m",
+          "name": "CommerceOS Webhook Token"
+        }
+      }
     },
     {
       "parameters": {
@@ -24,7 +34,10 @@
       "name": "Validate & Format Recovery",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [480, 300]
+      "position": [
+        480,
+        300
+      ]
     },
     {
       "parameters": {
@@ -64,7 +77,10 @@
       "name": "Send Recovery Message",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [720, 300],
+      "position": [
+        720,
+        300
+      ],
       "credentials": {
         "httpHeaderAuth": {
           "id": "commerceos-api-credential",
@@ -84,7 +100,10 @@
       "name": "Respond Recovery Success",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [960, 300]
+      "position": [
+        960,
+        300
+      ]
     }
   ],
   "connections": {

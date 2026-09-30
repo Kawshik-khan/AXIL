@@ -229,6 +229,18 @@ export class N8nProviderService {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), this.REQUEST_TIMEOUT_MS);
 
+      const rawBody = JSON.stringify({
+        event: params.event,
+        execution_mode: executionMode,
+        correlation_id: params.correlationId,
+        causation_id: params.causationId,
+        idempotency_key: params.idempotencyKey,
+        timestamp: new Date().toISOString(),
+      });
+      // The n8n webhooks require the shared token as a Header Auth credential (X-CommerceOS-Token). Without
+      // COMMERCEOS_N8N_WEBHOOK_TOKEN the call goes out without it and n8n answers 403 (never a fake success).
+      const webhookToken = process.env.COMMERCEOS_N8N_WEBHOOK_TOKEN;
+
       const res = await fetch(targetUrl, {
         method: "POST",
         headers: {
@@ -238,14 +250,9 @@ export class N8nProviderService {
           "X-Causation-ID": params.causationId || "",
           "Idempotency-Key": params.idempotencyKey,
           "X-Execution-Mode": executionMode,
+          ...(webhookToken ? { "X-CommerceOS-Token": webhookToken } : {}),
         },
-        body: JSON.stringify({
-          event: params.event,
-          correlation_id: params.correlationId,
-          causation_id: params.causationId,
-          idempotency_key: params.idempotencyKey,
-          timestamp: new Date().toISOString(),
-        }),
+        body: rawBody,
         signal: controller.signal,
       });
 

@@ -19,6 +19,8 @@ export interface OpenAICompatibleConfig {
   apiKey?: string;
   name?: string;
   timeoutMs?: number;
+  /** Sent as `dimensions` on embedding calls (providers that support shortened vectors). */
+  embeddingDimensions?: number;
   models: { TIER_1_FAST: string; TIER_2_REASONING: string; TIER_3_EMBEDDING: string };
 }
 
@@ -142,7 +144,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
   }
 
   public async embed(text: string): Promise<number[]> {
-    const data = await this.post("/embeddings", { model: this.cfg.models.TIER_3_EMBEDDING, input: text });
+    const data = await this.post("/embeddings", { model: this.cfg.models.TIER_3_EMBEDDING, input: text, ...(this.cfg.embeddingDimensions ? { dimensions: this.cfg.embeddingDimensions } : {}) });
     const embedding = data.data?.[0]?.embedding;
     if (!embedding?.length) throw new AppError("LLM_PROVIDER_ERROR", `AI provider ${this.providerName} returned no embedding.`, 502);
     return embedding;

@@ -7,14 +7,24 @@
         "httpMethod": "POST",
         "path": "commerceos-order-created",
         "responseMode": "responseNode",
-        "options": {}
+        "options": {},
+        "authentication": "headerAuth"
       },
       "id": "webhook-trigger",
       "name": "Order Created Webhook Trigger",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [240, 300],
-      "webhookId": "commerceos-order-created-webhook"
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "commerceos-order-created-webhook",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "697pQouSJHtv6x4m",
+          "name": "CommerceOS Webhook Token"
+        }
+      }
     },
     {
       "parameters": {
@@ -24,7 +34,10 @@
       "name": "Validate Event Envelope",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [480, 300]
+      "position": [
+        480,
+        300
+      ]
     },
     {
       "parameters": {
@@ -34,7 +47,10 @@
       "name": "Prepare Context & Idempotency",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [720, 300]
+      "position": [
+        720,
+        300
+      ]
     },
     {
       "parameters": {
@@ -82,7 +98,10 @@
       "name": "Call CommerceOS Notification API",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [960, 300],
+      "position": [
+        960,
+        300
+      ],
       "credentials": {
         "httpHeaderAuth": {
           "id": "commerceos-api-credential",
@@ -116,7 +135,10 @@
       "name": "Verify Execution Result",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [1200, 300]
+      "position": [
+        1200,
+        300
+      ]
     },
     {
       "parameters": {
@@ -130,7 +152,10 @@
       "name": "Respond Success",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [1440, 200]
+      "position": [
+        1440,
+        200
+      ]
     },
     {
       "parameters": {
@@ -144,7 +169,10 @@
       "name": "Respond Failure",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [1440, 420]
+      "position": [
+        1440,
+        420
+      ]
     }
   ],
   "connections": {
