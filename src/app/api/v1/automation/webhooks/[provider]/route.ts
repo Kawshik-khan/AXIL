@@ -23,7 +23,8 @@ const reject = (status: number, code: string, message: string, deliveryId?: stri
  * - The tenant is the webhook row's tenant. Client headers and query parameters never choose it, and unknown
  *   endpoints are rejected without writing anything.
  */
-async function handlePOST(request: Request, { params }: { params: { provider: string } }) {
+async function handlePOST(request: Request, { params: rawParams }: { params: Promise<{ provider: string }> }) {
+  const params = await rawParams;
   try {
     const provider = params.provider.toUpperCase() as WebhookProvider;
     const webhookId = new URL(request.url).searchParams.get("wh") || "";

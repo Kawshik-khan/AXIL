@@ -13,8 +13,9 @@ const LeadPatch = z
 
 async function handleGET(
   request: Request,
-  { params }: { params: { id: string } }
+  { params: rawParams }: { params: Promise<{ id: string }> }
 ) {
+  const params = await rawParams;
   try {
     const context = await extractRequestContext(request);
     const lead = await LeadService.getLeadById(context, params.id);
@@ -26,8 +27,9 @@ async function handleGET(
 
 async function handlePATCH(
   request: Request,
-  { params }: { params: { id: string } }
+  { params: rawParams }: { params: Promise<{ id: string }> }
 ) {
+  const params = await rawParams;
   try {
     const context = await extractRequestContext(request);
     const body = parseOrThrow(LeadPatch, await readJson(request));

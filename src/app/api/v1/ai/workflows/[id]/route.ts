@@ -7,8 +7,9 @@ import { withStore } from "@/lib/store-unit";
 
 async function handleGET(
   request: Request,
-  { params }: { params: { id: string } }
+  { params: rawParams }: { params: Promise<{ id: string }> }
 ) {
+  const params = await rawParams;
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.AI_READ);

@@ -11,8 +11,9 @@ const RecoverSchema = z.object({
 
 async function handlePOST(
   request: Request,
-  { params }: { params: { id: string } }
+  { params: rawParams }: { params: Promise<{ id: string }> }
 ) {
+  const params = await rawParams;
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.MARKETING_WRITE);

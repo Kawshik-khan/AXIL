@@ -4,8 +4,9 @@ import { withStore } from "@/lib/store-unit";
 
 async function handleGET(
   request: Request,
-  { params }: { params: { id: string } }
+  { params: rawParams }: { params: Promise<{ id: string }> }
 ) {
+  const params = await rawParams;
   try {
     const context = await extractRequestContext(request);
     const product = await ProductService.getProductById(context, params.id);
@@ -17,8 +18,9 @@ async function handleGET(
 
 async function handlePATCH(
   request: Request,
-  { params }: { params: { id: string } }
+  { params: rawParams }: { params: Promise<{ id: string }> }
 ) {
+  const params = await rawParams;
   try {
     const context = await extractRequestContext(request);
     const body = await request.json();
@@ -31,8 +33,9 @@ async function handlePATCH(
 
 async function handleDELETE(
   request: Request,
-  { params }: { params: { id: string } }
+  { params: rawParams }: { params: Promise<{ id: string }> }
 ) {
+  const params = await rawParams;
   try {
     const context = await extractRequestContext(request);
     const success = await ProductService.archiveProduct(context, params.id);

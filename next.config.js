@@ -18,8 +18,7 @@ const securityHeaders = [
 ];
 
 const nextConfig = {
-  // src/instrumentation.ts loads the Postgres-backed store at server start (ADR-108); opt-in flag in Next 14.
-  experimental: { instrumentationHook: true },
+  // src/instrumentation.ts loads the Postgres-backed store at server start (ADR-108); no flag needed since Next 15.
   reactStrictMode: true,
   poweredByHeader: false,
   async headers() {

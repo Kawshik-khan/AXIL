@@ -6,8 +6,9 @@ import { withStore } from "@/lib/store-unit";
 
 async function handlePOST(
   request: Request,
-  { params }: { params: { id: string; action: string } }
+  { params: rawParams }: { params: Promise<{ id: string; action: string }> }
 ) {
+  const params = await rawParams;
   try {
     const context = await extractRequestContext(request);
     const action = params.action.toLowerCase();
