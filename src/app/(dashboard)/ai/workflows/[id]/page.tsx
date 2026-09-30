@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
+import { useParams } from "next/navigation";
 import {
   ArrowLeft,
   Workflow,
@@ -26,8 +27,9 @@ import { Badge } from "@/components/ui/Badge/Badge";
 import { Button } from "@/components/ui/Button/Button";
 import { LoadingState, EmptyState, ErrorState } from "@/components/ui/States/States";
 
-export default function WorkflowDetailPage({ params }: { params: { id: string } }) {
-  const id = params.id;
+export default function WorkflowDetailPage() {
+  // Next 16 hands page params over as a Promise; in a client component useParams() reads them synchronously
+  const { id } = useParams<{ id: string }>();
 
   const [workflow, setWorkflow] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);

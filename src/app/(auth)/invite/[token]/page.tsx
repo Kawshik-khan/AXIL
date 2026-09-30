@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
+import { useParams } from "next/navigation";
 import { Button } from "@/components/ui/Button/Button";
 import { Input } from "@/components/ui/Input/Input";
 import styles from "../../auth.module.css";
@@ -19,7 +20,9 @@ interface InvitationInfo {
  * Accept an invitation (FX-37): new people choose a name and password; an existing account confirms with its own
  * password; a provisioned workspace owner sets theirs (audit N8).
  */
-export default function AcceptInvitationPage({ params }: { params: { token: string } }) {
+export default function AcceptInvitationPage() {
+  // Next 16 hands page params over as a Promise; in a client component useParams() reads them synchronously
+  const params = useParams<{ token: string }>();
   const [info, setInfo] = useState<InvitationInfo | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [name, setName] = useState("");

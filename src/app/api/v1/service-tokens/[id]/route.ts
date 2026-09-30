@@ -3,7 +3,8 @@ import { ServiceTokenService } from "@/domains/automation/services/service-token
 import { withStore } from "@/lib/store-unit";
 
 /** Revokes a service token immediately. */
-async function handleDELETE(request: Request, { params }: { params: { id: string } }) {
+async function handleDELETE(request: Request, { params: rawParams }: { params: Promise<{ id: string }> }) {
+  const params = await rawParams;
   try {
     const context = await extractRequestContext(request);
     return apiSuccess({ service_token: ServiceTokenService.revoke(context, params.id) });

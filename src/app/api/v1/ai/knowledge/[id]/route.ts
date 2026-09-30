@@ -4,8 +4,9 @@ import { withStore } from "@/lib/store-unit";
 
 async function handleGET(
   request: Request,
-  { params }: { params: { id: string } }
+  { params: rawParams }: { params: Promise<{ id: string }> }
 ) {
+  const params = await rawParams;
   try {
     const context = await extractRequestContext(request);
     const result = await KnowledgeService.getDocumentById(context, params.id);
@@ -17,8 +18,9 @@ async function handleGET(
 
 async function handleDELETE(
   request: Request,
-  { params }: { params: { id: string } }
+  { params: rawParams }: { params: Promise<{ id: string }> }
 ) {
+  const params = await rawParams;
   try {
     const context = await extractRequestContext(request);
     await KnowledgeService.deleteDocument(context, params.id);

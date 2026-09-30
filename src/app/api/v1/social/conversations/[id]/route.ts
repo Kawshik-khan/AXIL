@@ -14,8 +14,9 @@ const ConversationPatch = z
 
 async function handleGET(
   request: Request,
-  { params }: { params: { id: string } }
+  { params: rawParams }: { params: Promise<{ id: string }> }
 ) {
+  const params = await rawParams;
   try {
     const context = await extractRequestContext(request);
     const conversation = await ConversationService.getConversationById(context, params.id);
@@ -27,8 +28,9 @@ async function handleGET(
 
 async function handlePATCH(
   request: Request,
-  { params }: { params: { id: string } }
+  { params: rawParams }: { params: Promise<{ id: string }> }
 ) {
+  const params = await rawParams;
   try {
     const context = await extractRequestContext(request);
     const body = parseOrThrow(ConversationPatch, await readJson(request));

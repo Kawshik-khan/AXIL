@@ -19,8 +19,9 @@ const AcceptBody = z
 
 async function handleGET(
   _request: Request,
-  { params }: { params: { token: string } }
+  { params: rawParams }: { params: Promise<{ token: string }> }
 ) {
+  const params = await rawParams;
   try {
     const invitation = InvitationService.getInvitationByToken(params.token);
     const tenant = TenantService.getTenantById(invitation.tenant_id);
@@ -41,8 +42,9 @@ async function handleGET(
 
 async function handlePOST(
   request: Request,
-  { params }: { params: { token: string } }
+  { params: rawParams }: { params: Promise<{ token: string }> }
 ) {
+  const params = await rawParams;
   try {
     const invitation = InvitationService.getInvitationByToken(params.token);
     const tenant = TenantService.getTenantById(invitation.tenant_id);
