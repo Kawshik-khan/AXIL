@@ -141,7 +141,9 @@ right after the trigger:
 // Needs NODE_FUNCTION_ALLOW_BUILTIN=crypto on the n8n container.
 const crypto = require('crypto');
 const headers = $json.headers;
-const raw = $json.rawBody ?? JSON.stringify($json.body);
+// The raw body, byte for byte (enable "Raw Body" on the Webhook node); a re-serialized body won't match
+const raw = $json.rawBody;
+if (!raw) throw new Error('Enable Raw Body on the Webhook node');
 const ts = headers['x-commerceos-timestamp'];
 const expected = 'v1=' + crypto.createHmac('sha256', $env.COMMERCEOS_N8N_WEBHOOK_SECRET).update(`${ts}.${raw}`).digest('hex');
 const given = headers['x-commerceos-signature'] || '';
@@ -152,8 +154,9 @@ if (!fresh || given.length !== expected.length || !crypto.timingSafeEqual(Buffer
 return $input.all();
 ```
 
-Without the secret, CommerceOS still calls n8n but logs `n8n.calls_unsigned` once at start; anyone who can reach the
-n8n webhook URL could then trigger the workflows.
+Use `tenant_id` and `execution_mode` from the signed body, not from the `X-Tenant-ID` / `X-Execution-Mode` headers
+(headers are not signed). Without the secret, a production server (`NODE_ENV=production`) refuses to call n8n; a
+development server calls it unsigned and logs `n8n.calls_unsigned` once.
 
 **Where n8n runs.** `N8N_HOST` is platform configuration, so a local Docker n8n (`http://localhost:5678`) works as is.
 An n8n instance stored in the app (not only the environment) must be a public https URL, or be listed in

@@ -178,7 +178,8 @@ export class JevClient {
       this.recordFailure();
 
       // No silent mock on a live failure: the caller falls back to its other routing stages
-      throw new JevClientError("Failed to evaluate with Jev System One", { error: String(err) });
+      // No provider text or host in the error (it can reach tenants; Phase 5 review L10)
+      throw new JevClientError("Failed to evaluate with Jev System One", {});
     }
   }
 

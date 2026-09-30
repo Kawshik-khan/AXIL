@@ -5895,12 +5895,9 @@ export class CommerceDatabase {
     return event;
   }
 
-  /** A workspace's events at or after a time, oldest first (the outbound webhook outbox). */
-  public getEventsSince(tenantId: string, sinceIso: string, limit: number): CommerceEvent[] {
-    return this.data.events
-      .filter((e) => e.tenant_id === tenantId && e.timestamp >= sinceIso)
-      .sort((a, b) => (a.timestamp < b.timestamp ? -1 : a.timestamp > b.timestamp ? 1 : 0))
-      .slice(0, limit);
+  /** Every workspace's events, in storage order (the outbound webhook outbox reads them in one pass). */
+  public getAllEvents(): readonly CommerceEvent[] {
+    return this.data.events;
   }
 
   public getEvents(tenantId: string, limit = 50): CommerceEvent[] {
@@ -9308,6 +9305,19 @@ export class CommerceDatabase {
     this.data.webhook_deliveries[idx] = { ...this.data.webhook_deliveries[idx], ...safePatch(rest) };
     this.persist(["webhook_deliveries"]);
     return this.data.webhook_deliveries[idx];
+  }
+
+  /** Removes finished deliveries older than `beforeIso` (retention); returns how many. */
+  public pruneWebhookDeliveries(beforeIso: string): number {
+    const keep = this.data.webhook_deliveries.filter(
+      (d) => !((d.status === "DELIVERED" || d.status === "DEAD_LETTERED" || d.status === "NOT_SENT") && (d.created_at ?? d.delivered_at) < beforeIso)
+    );
+    const removed = this.data.webhook_deliveries.length - keep.length;
+    if (removed) {
+      this.data.webhook_deliveries = keep;
+      this.persist(["webhook_deliveries"]);
+    }
+    return removed;
   }
 
   /** Deliveries to attempt now: pending, retry due, or claimed by a server that stopped before finishing. */

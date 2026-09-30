@@ -9,7 +9,10 @@
  *     reserved and documentation ranges, IPv6 unique-local / link-local, and IPv4 embedded in IPv6;
  *   - redirects are never followed (a 3xx is returned as the response);
  *   - OUTBOUND_ALLOWED_PRIVATE_HOSTS (platform env, comma-separated host:port, e.g. "localhost:5678" for a local n8n)
- *     is the only way to reach a private address with a URL that tenants can influence;
+ *     lets platform-owned records (a stored n8n instance) reach a private address;
+ *   - `tenantSupplied: true` is for URLs a tenant chose (webhook targets, connector endpoints): the allow-list never
+ *     applies to them, and only ports 443, 8443 and 6333 (Qdrant Cloud) are allowed, so a tenant can't reach the
+ *     platform's own private services or probe arbitrary ports;
  *   - `platformConfigured: true` is for URLs read from the platform's own environment (LLM_BASE_URL, N8N_HOST, …),
  *     which may point at a local server: it skips the https and private-address rules, nothing else. Never set it for
  *     a URL that came from a request, a tenant setting or a stored record.
@@ -49,7 +52,18 @@ export interface OutboundRequestOptions {
   maxResponseBytes?: number;
   /** The URL comes from the platform's environment, not from tenant data (see the header). */
   platformConfigured?: boolean;
+  /** A tenant chose this URL: no allow-list, standard ports only (see the header). */
+  tenantSupplied?: boolean;
 }
+
+export interface UrlPolicy {
+  platformConfigured?: boolean;
+  tenantSupplied?: boolean;
+}
+
+const TENANT_PORTS = new Set(["", "443", "8443", "6333"]);
+/** A resolver that never answers must not hold anyone up (Phase 5 review H1). */
+const DNS_TIMEOUT_MS = 3_000;
 
 export interface OutboundResponse {
   status: number;
@@ -103,12 +117,16 @@ for (const [range, prefix] of [
   blocked.addSubnet(range, prefix, "ipv6");
 }
 
-/** The IPv4 address inside an IPv4-mapped IPv6 address (::ffff:a.b.c.d or ::ffff:xxxx:xxxx), else null. */
+/**
+ * The IPv4 address inside an IPv4-mapped (::ffff:a.b.c.d / ::ffff:xxxx:xxxx) or IPv4-translated (::ffff:0:a.b.c.d,
+ * SIIT) IPv6 address, else null. (Node's BlockList can't hold ::ffff:0:0/96: it reads it as the mapped range and then
+ * matches every IPv4 address.)
+ */
 function embeddedIPv4(address: string): string | null {
   const lower = address.toLowerCase();
-  const dotted = lower.match(/^(?:0{0,4}:){0,5}:?ffff:(\d{1,3}(?:\.\d{1,3}){3})$/);
+  const dotted = lower.match(/^(?:0{0,4}:){0,5}:?ffff:(?:0{1,4}:)?(\d{1,3}(?:\.\d{1,3}){3})$/);
   if (dotted) return dotted[1];
-  const hex = lower.match(/^(?:0{0,4}:){0,5}:?ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  const hex = lower.match(/^(?:0{0,4}:){0,5}:?ffff:(?:0{1,4}:)?([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
   if (hex) {
     const hi = parseInt(hex[1], 16);
     const lo = parseInt(hex[2], 16);
@@ -139,9 +157,14 @@ function allowListedHosts(): Set<string> {
   );
 }
 
+/** The host without IPv6 brackets or a trailing dot ("localhost." is "localhost"). */
+function bareHost(url: URL): string {
+  return url.hostname.replace(/^\[|\]$/g, "").replace(/\.$/, "").toLowerCase();
+}
+
 function hostKey(url: URL): string {
   const port = url.port || (url.protocol === "https:" ? "443" : "80");
-  return `${url.hostname.replace(/^\[|\]$/g, "").toLowerCase()}:${port}`;
+  return `${bareHost(url)}:${port}`;
 }
 
 /** Whether the platform allow-list names this URL's host and port (the only way to reach a private address). */
@@ -149,11 +172,16 @@ export function isAllowListed(url: URL): boolean {
   return allowListedHosts().has(hostKey(url));
 }
 
+function relaxed(url: URL, policy: UrlPolicy): boolean {
+  if (policy.tenantSupplied) return false;
+  return policy.platformConfigured === true || isAllowListed(url);
+}
+
 /**
  * Checks a URL's form: http(s), no credentials, https unless allow-listed, not an IP literal in a refused range.
  * Returns the parsed URL. Use it where a URL is saved (webhook targets, endpoints) for a clear error up front.
  */
-export function parseSafeUrl(raw: string, options: { platformConfigured?: boolean } = {}): URL {
+export function parseSafeUrl(raw: string, options: UrlPolicy = {}): URL {
   let url: URL;
   try {
     url = new URL(raw);
@@ -163,9 +191,10 @@ export function parseSafeUrl(raw: string, options: { platformConfigured?: boolea
   if (url.protocol !== "https:" && url.protocol !== "http:") throw new OutboundBlockedError("only https URLs are allowed");
   if (url.username || url.password) throw new OutboundBlockedError("URLs with a user name or password are not allowed");
   if (!url.hostname) throw new OutboundBlockedError("the URL has no host");
-  const allowListed = options.platformConfigured === true || isAllowListed(url);
+  const allowListed = relaxed(url, options);
   if (url.protocol === "http:" && !allowListed) throw new OutboundBlockedError("only https URLs are allowed");
-  const host = url.hostname.replace(/^\[|\]$/g, "");
+  if (options.tenantSupplied && !TENANT_PORTS.has(url.port)) throw new OutboundBlockedError("only the standard https port is allowed");
+  const host = bareHost(url);
   if (!allowListed && net.isIP(host) && isBlockedAddress(host)) throw new OutboundBlockedError("private, loopback and link-local addresses are not allowed");
   if (!allowListed && /(^|\.)(localhost|local|internal|localdomain)$/i.test(host)) {
     throw new OutboundBlockedError("private, loopback and link-local addresses are not allowed");
@@ -177,15 +206,23 @@ let lookupForTesting: LookupFn | null = null;
 let transportForTesting: OutboundTransport | null = null;
 
 async function resolveHost(hostname: string): Promise<Array<{ address: string; family: number }>> {
-  if (lookupForTesting) return lookupForTesting(hostname);
-  return dns.promises.lookup(hostname, { all: true, verbatim: true });
+  const lookup = lookupForTesting ? lookupForTesting(hostname) : dns.promises.lookup(hostname, { all: true, verbatim: true });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(Object.assign(new Error("DNS lookup timed out"), { code: "EAI_AGAIN" })), DNS_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race([lookup, deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** Like parseSafeUrl, and also resolves the host now and refuses it if any address is in a refused range. */
-export async function assertSafeUrl(raw: string): Promise<URL> {
-  const url = parseSafeUrl(raw);
-  if (isAllowListed(url)) return url;
-  const host = url.hostname.replace(/^\[|\]$/g, "");
+export async function assertSafeUrl(raw: string, policy: UrlPolicy = {}): Promise<URL> {
+  const url = parseSafeUrl(raw, policy);
+  if (relaxed(url, policy)) return url;
+  const host = bareHost(url);
   if (net.isIP(host)) return url;
   let addresses: Array<{ address: string }>;
   try {
@@ -206,11 +243,11 @@ export async function assertSafeUrl(raw: string): Promise<URL> {
  * or OutboundNetworkError; any HTTP status (including 4xx/5xx and 3xx) is returned, not thrown.
  */
 export async function outboundRequest(raw: string, options: OutboundRequestOptions = {}): Promise<OutboundResponse> {
-  const url = parseSafeUrl(raw, { platformConfigured: options.platformConfigured });
+  const url = parseSafeUrl(raw, { platformConfigured: options.platformConfigured, tenantSupplied: options.tenantSupplied });
   const method = options.method ?? "GET";
   const timeoutMs = options.timeoutMs ?? 5_000;
   if (transportForTesting) return transportForTesting(url, { ...options, method, timeoutMs });
-  const allowListed = options.platformConfigured === true || isAllowListed(url);
+  const allowListed = relaxed(url, options);
   const maxBytes = options.maxResponseBytes ?? 1_048_576;
   const started = Date.now();
   const host = url.hostname.replace(/^\[|\]$/g, "");

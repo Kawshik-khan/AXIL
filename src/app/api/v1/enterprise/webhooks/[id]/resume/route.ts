@@ -12,7 +12,7 @@ async function handlePOST(request: Request, { params }: { params: Promise<{ id: 
     RbacService.assertCan(context, PERMISSIONS.DEVELOPER_MANAGE);
     const { id } = await params;
     const orgId = resolveOrganizationId(context, new URL(request.url).searchParams.get("organization_id"));
-    const { secret: _secret, ...subscription } = webhookPlatformService.resumeSubscription(orgId, id);
+    const { secret: _secret, ...subscription } = webhookPlatformService.resumeSubscription(orgId, id, { tenantId: context.tenant.id, userId: context.user.id });
     return apiSuccess(subscription);
   } catch (err) {
     return apiError(err);

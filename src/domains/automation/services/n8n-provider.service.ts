@@ -42,6 +42,13 @@ export interface N8nInvokeResult {
   error?: string;
 }
 
+/** n8n calls are signed; in production nothing is sent without the secret. */
+class N8nUnsignedError extends Error {
+  constructor() {
+    super("COMMERCEOS_N8N_WEBHOOK_SECRET is not set");
+  }
+}
+
 /** An n8n call that answered with an error status (the tenant sees only the status). */
 class N8nHttpError extends Error {
   constructor(readonly status: number) {
@@ -243,15 +250,20 @@ export class N8nProviderService {
     try {
       if (!instance) throw new Error("No n8n instance is configured");
       const targetUrl = `${instance.base_url.replace(/\/$/, "")}/webhook/${params.webhookPath.replace(/^\//, "")}`;
+      // The tenant and mode are in the signed body too: headers are not covered by the signature
       const body = JSON.stringify({
         event: params.event,
+        tenant_id: params.tenantId,
+        execution_mode: executionMode,
         correlation_id: params.correlationId,
         causation_id: params.causationId,
         idempotency_key: params.idempotencyKey,
         timestamp: new Date().toISOString(),
       });
-      // Signed so the n8n Webhook node can refuse forged calls (FX-55); see n8n/deployment/import.md
+      // Signed so the n8n Webhook node can refuse forged calls (FX-55); see n8n/deployment/import.md. In production
+      // an unsigned call is refused rather than sent.
       const secret = process.env.COMMERCEOS_N8N_WEBHOOK_SECRET;
+      if (!secret && process.env.NODE_ENV === "production") throw new N8nUnsignedError();
       if (!secret && !this.warnedUnsigned) {
         this.warnedUnsigned = true;
         logger.warn("n8n.calls_unsigned", { reason: "COMMERCEOS_N8N_WEBHOOK_SECRET is not set" });
@@ -313,7 +325,9 @@ export class N8nProviderService {
       const errorMsg =
         err instanceof N8nHttpError
           ? err.message
-          : err instanceof OutboundBlockedError
+          : err instanceof N8nUnsignedError
+            ? "n8n calls are not configured for signing (COMMERCEOS_N8N_WEBHOOK_SECRET)"
+            : err instanceof OutboundBlockedError
             ? "the n8n address is not allowed"
             : err instanceof OutboundTimeoutError
               ? "n8n did not answer in time"

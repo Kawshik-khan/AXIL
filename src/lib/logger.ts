@@ -15,12 +15,20 @@ export interface LogFields {
   [key: string]: unknown;
 }
 
-const SECRET_KEY = /(token|secret|passw(or)?d|authorization|api[_-]?key|cookie|signature|credential)/i;
+const SECRET_KEY = /(token|secret|passw(or)?d|authorization|api[_-]?key|cookie|signature|credential|private[_-]?key|dsn|connection[_-]?(string|uri)|database[_-]?url|bearer|otp)/i;
 /** Names of things, not the things: `service_token_id`, `secret_reference`, `token_count`, `signature_at` stay. */
-const NOT_A_SECRET = /(_ids?|_ref(erence)?|_name|_count|_at|_type)$/i;
+const NOT_A_SECRET = /(_ids?|_ref(erence)?|_name|_count|_at|_type|_status)$/i;
+/** Credentials that turn up inside free text (an error message, a URL). */
+const SECRET_IN_TEXT = /(Bearer\s+[A-Za-z0-9._~+/=-]{8,}|\bsk-[A-Za-z0-9_-]{8,}|whsec_[A-Za-z0-9]{8,}|cos_svc_[A-Za-z0-9_-]{8,}|postgres(?:ql)?:\/\/[^\s"']+)/g;
 
 function redact(value: unknown, depth: number): unknown {
-  if (depth > 4 || value === null || typeof value !== "object") return value;
+  if (typeof value === "string") return value.replace(SECRET_IN_TEXT, "[REDACTED]");
+  if (value instanceof Date) return value.toISOString();
+  if (value instanceof Error) return redact({ name: value.name, message: value.message }, depth);
+  if (value === null || typeof value !== "object") return value;
+  if (depth > 6) return "[TRUNCATED]";
+  if (value instanceof Map) return redact(Object.fromEntries(value), depth);
+  if (value instanceof Set) return redact([...value], depth);
   if (Array.isArray(value)) return value.map((v) => redact(v, depth + 1));
   const out: Record<string, unknown> = {};
   for (const [key, v] of Object.entries(value as Record<string, unknown>)) {

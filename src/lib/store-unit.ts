@@ -42,9 +42,29 @@ async function receiveBody(request: Request): Promise<void> {
  *   `db.keepEvenIfRequestFails`). If another server changed the same record first, or a data rule refuses the change,
  *   the caller gets 409 and nothing is saved; if the database is down or this server's writes are backed up, 503.
  *
+ * - `{ unit: false }` (a POST that mostly calls another server: a connector test, a webhook target check): the handler
+ *   runs outside the store lock like a read, so a slow external host can't hold up other requests' writes (ADR-110,
+ *   Phase 5 review H1). It must save through its own short `db.unit(...)`; anything else it changes is committed later
+ *   by the background loop and is not undone on an error response.
+ *
  * Without Postgres persistence (tests, the JSON file) both simply call the handler.
  */
-export function withStore<A extends unknown[]>(method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE", handler: RouteHandler<A>): RouteHandler<A> {
+export function withStore<A extends unknown[]>(
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
+  handler: RouteHandler<A>,
+  options: { unit?: boolean } = {}
+): RouteHandler<A> {
+  if (method !== "GET" && options.unit === false) {
+    return async (...args: A) => {
+      try {
+        if (args[0] instanceof Request) await receiveBody(args[0]);
+        await db.syncIfDue();
+      } catch (err) {
+        return apiError(err);
+      }
+      return handler(...args);
+    };
+  }
   if (method === "GET") {
     return async (...args: A) => {
       try {

@@ -23,4 +23,4 @@ async function handlePOST(request: Request) {
   }
 }
 
-export const POST = withStore("POST", handlePOST);
+export const POST = withStore("POST", handlePOST, { unit: false }); // calls the provider: never under the store lock

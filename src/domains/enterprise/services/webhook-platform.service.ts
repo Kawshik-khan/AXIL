@@ -3,23 +3,29 @@ import { randomSuffix } from "@/lib/ids";
 /**
  * Enterprise outbound webhooks, delivered for real (FIX_IMPLEMENTATION_PLAN FX-54, ADR-110).
  *
- * - Subscribe: the target must be an https URL that passes the SSRF guard; the signing secret is shown once.
+ * - Subscribe: the target is a tenant-chosen URL, so it must be https on a standard port and must not resolve to a
+ *   private, loopback or link-local address (the platform allow-list never applies). The check runs outside the store
+ *   lock (prepareTarget), the save inside a short unit (createSubscription). The signing secret is shown once and
+ *   stored encrypted. At most 25 subscriptions per organization.
  * - Outbox: the workspace's commerce events (everything recorded through db.recordEvent) are queued per matching
- *   subscription, one delivery per (subscription, event) — the delivery id is derived from both, so two servers
- *   queuing the same event produce one delivery.
+ *   subscription, one delivery per (subscription, event): the delivery id is derived from both, so two servers queuing
+ *   the same event produce one delivery.
  * - Delivery: POST of a JSON envelope, signed (X-CommerceOS-Signature over "<timestamp>.<body>", see
  *   src/lib/outbound-signing.ts), 10 s deadline, no redirects. 2xx = DELIVERED. Otherwise retried with backoff
  *   (~30 s, 2 min, 10 min, 1 h, 6 h) up to the subscription's retry_count_max, then DEAD_LETTERED (retry by hand).
- *   20 failed deliveries in a row pause the subscription (resume by hand).
+ *   20 failed deliveries in a row pause the subscription (resume by hand). A suspended or kill-switched workspace or an
+ *   inactive organization sends nothing. Each pass sends at most 5 deliveries per organization, 4 at a time.
  * - Several servers: a delivery is claimed in a unit of work before it is sent (ADR-109), so only one server sends
  *   it; a claim expires after 60 s if that server stops. Delivery is at-least-once: receivers dedupe on
- *   X-CommerceOS-Event-Id.
+ *   X-CommerceOS-Event-Id. Finished deliveries are removed after 30 days.
  */
-import { db } from "@/infrastructure/db";
-import { BadRequestError, NotFoundError, isAppError } from "@/lib/errors";
+import { db, type TenantRecord } from "@/infrastructure/db";
+import { BadRequestError, NotFoundError, PlanLimitError, isAppError } from "@/lib/errors";
 import { logger } from "@/lib/logger";
 import { assertSafeUrl, outboundRequest } from "@/lib/outbound-http";
 import { signOutbound } from "@/lib/outbound-signing";
+import { decryptCredential, encryptCredential } from "@/lib/security";
+import { PlatformSafetyService } from "@/domains/platform/services/platform-safety.service";
 import { EnterpriseWebhookSubscription, WebhookDeliveryRecord } from "@/types/enterprise";
 import type { CommerceEvent } from "@/types/commerce";
 
@@ -27,17 +33,30 @@ const DELIVERY_TIMEOUT_MS = 10_000;
 const CLAIM_MS = 60_000;
 const PAUSE_AFTER_CONSECUTIVE_FAILURES = 20;
 const DEFAULT_ATTEMPTS = 6;
+const MAX_SUBSCRIPTIONS_PER_ORG = 25;
 /** Delay before attempt n+1 (after attempt n failed), before jitter. */
 const BACKOFF_MS = [30_000, 120_000, 600_000, 3_600_000, 21_600_000];
 /** Events are re-scanned from a little before the saved position: an event another server recorded can arrive late. */
 const OUTBOX_OVERLAP_MS = 120_000;
-const OUTBOX_BATCH = 500;
+/** New deliveries queued per subscription and pass; the rest follow on the next pass. */
+const OUTBOX_QUEUE_PER_PASS = 1_000;
+const PER_ORG_PER_PASS = 5;
+const SEND_CONCURRENCY = 4;
+const RETENTION_MS = 30 * 24 * 3_600_000;
+const PRUNE_EVERY_MS = 3_600_000;
+const SENDING_TENANT_STATUSES = new Set<TenantRecord["status"]>(["ACTIVE", "TRIAL", "PAST_DUE"]);
 
 export interface WebhookRunSummary {
   queued: number;
   attempted: number;
   delivered: number;
   failed: number;
+}
+
+/** Who made a management change (for the workspace audit log). */
+export interface WebhookActor {
+  tenantId: string;
+  userId: string;
 }
 
 function deliveryIdFor(subscriptionId: string, eventId: string): string {
@@ -48,32 +67,58 @@ function matches(sub: EnterpriseWebhookSubscription, eventType: string): boolean
   return sub.event_types.includes("*") || sub.event_types.includes(eventType);
 }
 
+/** The HMAC key: stored encrypted; subscriptions from before encryption hold the plain `whsec_` value. */
+function signingSecret(sub: EnterpriseWebhookSubscription): string {
+  return sub.secret.startsWith("whsec_") ? sub.secret : decryptCredential<{ secret: string }>(sub.secret).secret;
+}
+
+function audit(actor: WebhookActor | undefined, action: string, resourceId: string, metadata: Record<string, unknown>): void {
+  if (!actor) return;
+  db.createAuditLog({
+    id: `aud_wh_${randomSuffix()}`,
+    tenant_id: actor.tenantId,
+    actor_user_id: actor.userId,
+    action,
+    resource_type: "enterprise_webhook",
+    resource_id: resourceId,
+    metadata,
+    created_at: new Date().toISOString(),
+  });
+}
+
 export class WebhookPlatformService {
+  private lastPruneAt = 0;
+
+  /** Checks a target URL (DNS included). Call it outside any unit of work: it may wait on the network. */
+  public async prepareTarget(targetUrl: string): Promise<URL> {
+    if (typeof targetUrl !== "string" || !targetUrl.trim()) throw new BadRequestError("A webhook URL is required.");
+    return assertSafeUrl(targetUrl.trim(), { tenantSupplied: true });
+  }
+
   /**
-   * Registers a subscription. The target must be https and must not resolve to a private, loopback or link-local
-   * address. The returned record carries the signing secret; it is never returned again.
+   * Saves a subscription for a checked target. Returns it with the signing secret in plain text — the only time it is
+   * ever returned.
    */
-  public async subscribe(
+  public createSubscription(
     orgId: string,
-    params: {
-      targetUrl: string;
-      eventTypes: string[];
-      applicationId?: string;
-    }
-  ): Promise<EnterpriseWebhookSubscription> {
-    if (typeof params.targetUrl !== "string" || !params.targetUrl.trim()) throw new BadRequestError("A webhook URL is required.");
-    const url = await assertSafeUrl(params.targetUrl.trim());
+    target: URL,
+    params: { eventTypes: string[]; applicationId?: string },
+    actor?: WebhookActor
+  ): EnterpriseWebhookSubscription {
     const eventTypes = [...new Set(params.eventTypes)].filter((t) => /^(\*|[a-z_]+(\.[a-z_]+)+)$/.test(t));
-    if (!eventTypes.length || eventTypes.length !== params.eventTypes.length) {
+    if (!eventTypes.length || eventTypes.length !== new Set(params.eventTypes).size) {
       throw new BadRequestError('Event types look like "order.created" (or "*" for every event).');
     }
+    const existing = db.getEnterpriseWebhooks(orgId).filter((w) => w.status !== "DISABLED").length;
+    if (existing >= MAX_SUBSCRIPTIONS_PER_ORG) throw new PlanLimitError("webhook subscriptions", MAX_SUBSCRIPTIONS_PER_ORG, existing);
+    const secret = `whsec_${crypto.randomBytes(24).toString("hex")}`;
     const now = new Date().toISOString();
     const sub: EnterpriseWebhookSubscription = {
       id: `whsub_${Date.now()}_${randomSuffix()}`,
       organization_id: orgId,
       application_id: params.applicationId,
-      target_url: url.toString(),
-      secret: `whsec_${crypto.randomBytes(24).toString("hex")}`,
+      target_url: target.toString(),
+      secret: encryptCredential({ secret }),
       event_types: eventTypes,
       status: "ACTIVE",
       retry_count_max: DEFAULT_ATTEMPTS,
@@ -83,7 +128,19 @@ export class WebhookPlatformService {
       created_at: now,
       updated_at: now,
     };
-    return db.createEnterpriseWebhook(sub);
+    db.createEnterpriseWebhook(sub);
+    audit(actor, "webhook.subscribed", sub.id, { organization_id: orgId, target_host: target.host, event_types: eventTypes });
+    return { ...sub, secret };
+  }
+
+  /** prepareTarget + createSubscription, for callers that aren't inside a unit of work. */
+  public async subscribe(
+    orgId: string,
+    params: { targetUrl: string; eventTypes: string[]; applicationId?: string },
+    actor?: WebhookActor
+  ): Promise<EnterpriseWebhookSubscription> {
+    const target = await this.prepareTarget(params.targetUrl);
+    return this.createSubscription(orgId, target, params, actor);
   }
 
   /**
@@ -101,17 +158,19 @@ export class WebhookPlatformService {
       timestamp: new Date().toISOString(),
       payload: params.payload,
     };
+    const known = new Set(db.getWebhookDeliveries().map((d) => d.id));
     return db
       .getEnterpriseWebhooks(params.organizationId)
       .filter((s) => s.status === "ACTIVE" && matches(s, params.eventType))
-      .map((sub) => this.queue(sub, event))
+      .map((sub) => this.queue(sub, event, known))
       .filter((d): d is WebhookDeliveryRecord => d !== null);
   }
 
   /** One delivery of `event` to `sub`, unless it exists already (the id is derived from both). */
-  private queue(sub: EnterpriseWebhookSubscription, event: CommerceEvent): WebhookDeliveryRecord | null {
+  private queue(sub: EnterpriseWebhookSubscription, event: CommerceEvent, known: Set<string>): WebhookDeliveryRecord | null {
     const id = deliveryIdFor(sub.id, event.id);
-    if (db.findWebhookDelivery(id)) return null;
+    if (known.has(id)) return null;
+    known.add(id);
     const payload = JSON.stringify({
       event_id: event.id,
       event_type: event.type,
@@ -139,25 +198,66 @@ export class WebhookPlatformService {
     });
   }
 
-  /** Outbox: new commerce events of each subscription's workspace become deliveries. */
+  /** The workspace that owns the organization, if it may send data out now (active, not kill-switched). */
+  private sendingTenant(orgId: string): string | null {
+    const org = db.findOrganizationById(orgId);
+    if (!org?.tenant_id || org.status !== "ACTIVE") return null;
+    const tenant = db.findTenantById(org.tenant_id);
+    if (!tenant || !SENDING_TENANT_STATUSES.has(tenant.status)) return null;
+    if (PlatformSafetyService.isExecutionBlocked("TENANT", tenant.id)) return null;
+    return tenant.id;
+  }
+
+  /**
+   * Outbox: new commerce events of each subscription's workspace become deliveries. One pass over the events for all
+   * subscriptions; each subscription's position moves only past events it has handled, so a burst of any size is
+   * worked through over several passes and never stalls.
+   */
   public enqueueFromEvents(): number {
-    let queued = 0;
-    for (const sub of db.getAllEnterpriseWebhooks()) {
-      if (sub.status !== "ACTIVE") continue;
-      const tenantId = db.findOrganizationById(sub.organization_id)?.tenant_id;
+    const active = db.getAllEnterpriseWebhooks().filter((s) => s.status === "ACTIVE");
+    if (!active.length) return 0;
+    const byTenant = new Map<string, Array<{ sub: EnterpriseWebhookSubscription; since: string }>>();
+    for (const sub of active) {
+      const tenantId = this.sendingTenant(sub.organization_id);
       if (!tenantId) continue;
       const position = sub.events_queued_through ?? sub.created_at;
       const since = new Date(Date.parse(position) - OUTBOX_OVERLAP_MS).toISOString();
-      const events = db.getEventsSince(tenantId, since, OUTBOX_BATCH);
-      let through = position;
-      for (const event of events) {
-        if (event.timestamp < sub.created_at) continue;
-        if (matches(sub, event.type) && this.queue(sub, event)) queued++;
-        if (event.timestamp > through) through = event.timestamp;
+      const list = byTenant.get(tenantId) ?? [];
+      list.push({ sub, since });
+      byTenant.set(tenantId, list);
+    }
+    if (!byTenant.size) return 0;
+    const earliest = new Map<string, string>();
+    for (const [tenantId, subs] of byTenant) earliest.set(tenantId, subs.reduce((m, s) => (s.since < m ? s.since : m), subs[0].since));
+    const eventsByTenant = new Map<string, CommerceEvent[]>();
+    for (const e of db.getAllEvents()) {
+      const from = earliest.get(e.tenant_id);
+      if (from === undefined || e.timestamp < from) continue;
+      const list = eventsByTenant.get(e.tenant_id) ?? [];
+      list.push(e);
+      eventsByTenant.set(e.tenant_id, list);
+    }
+    const known = new Set(db.getWebhookDeliveries().map((d) => d.id));
+    let queued = 0;
+    for (const [tenantId, subs] of byTenant) {
+      const events = (eventsByTenant.get(tenantId) ?? []).sort((a, b) => (a.timestamp < b.timestamp ? -1 : a.timestamp > b.timestamp ? 1 : a.id < b.id ? -1 : 1));
+      for (const { sub, since } of subs) {
+        const position = sub.events_queued_through ?? sub.created_at;
+        let through = position;
+        let queuedHere = 0;
+        for (const event of events) {
+          if (event.timestamp < since || event.timestamp < sub.created_at) continue;
+          if (matches(sub, event.type)) {
+            if (queuedHere >= OUTBOX_QUEUE_PER_PASS && !known.has(deliveryIdFor(sub.id, event.id))) break; // the rest next pass
+            if (this.queue(sub, event, known)) queuedHere++;
+          }
+          // Only as far as the newest event handled, never to "now": an event another server recorded (its clock may
+          // be a little behind) must still be found by the next pass
+          if (event.timestamp > through) through = event.timestamp;
+        }
+        queued += queuedHere;
+        if (through !== sub.events_queued_through) db.updateEnterpriseWebhook(sub.organization_id, sub.id, { events_queued_through: through });
       }
-      // Only as far as the newest event seen, never to "now": an event another server recorded (its clock may be a
-      // little behind) must still be found by the next pass
-      if (through !== sub.events_queued_through) db.updateEnterpriseWebhook(sub.organization_id, sub.id, { events_queued_through: through });
     }
     return queued;
   }
@@ -179,7 +279,7 @@ export class WebhookPlatformService {
             (d.status === "IN_FLIGHT" && !!d.claimed_until && d.claimed_until < nowIso);
           if (!due) return null;
           const sub = db.findEnterpriseWebhook(d.organization_id ?? "", d.subscription_id);
-          if (!sub || sub.status !== "ACTIVE") return null;
+          if (!sub || sub.status !== "ACTIVE" || !this.sendingTenant(sub.organization_id)) return null;
           return db.updateWebhookDelivery(d.id, {
             status: "IN_FLIGHT",
             claimed_until: new Date(now.getTime() + CLAIM_MS).toISOString(),
@@ -202,7 +302,7 @@ export class WebhookPlatformService {
     const started = Date.now();
     let status: number | undefined;
     let error: string | undefined;
-    const signed = signOutbound(sub.secret, delivery.payload_json);
+    const signed = signOutbound(signingSecret(sub), delivery.payload_json);
     try {
       const res = await outboundRequest(sub.target_url, {
         method: "POST",
@@ -217,6 +317,7 @@ export class WebhookPlatformService {
         body: delivery.payload_json,
         timeoutMs: DELIVERY_TIMEOUT_MS,
         maxResponseBytes: 16 * 1024,
+        tenantSupplied: true,
       });
       status = res.status;
       if (res.status < 200 || res.status >= 300) error = `HTTP_${res.status}`;
@@ -262,20 +363,40 @@ export class WebhookPlatformService {
     return ok;
   }
 
-  /** One worker pass: queue new events, then send what is due (at most `limit`). */
+  /** One worker pass: queue new events, then send what is due (at most `limit`, fairly across organizations). */
   public async runOnce(options: { now?: Date; limit?: number } = {}): Promise<WebhookRunSummary> {
     const now = options.now ?? new Date();
     const summary: WebhookRunSummary = { queued: 0, attempted: 0, delivered: 0, failed: 0 };
+    if (!db.getAllEnterpriseWebhooks().some((s) => s.status === "ACTIVE") && !db.getDueWebhookDeliveries(now.toISOString(), 1).length) return summary;
     summary.queued = await db.unit(async () => this.enqueueFromEvents(), () => true).catch((err: unknown) => {
       if (isAppError(err) && err.statusCode === 409) return 0; // another server queued them first
       throw err;
     });
-    for (const due of db.getDueWebhookDeliveries(now.toISOString(), options.limit ?? 20)) {
-      const claimed = await this.claim(due.id, now);
-      if (!claimed) continue;
-      summary.attempted++;
-      if (await this.send(claimed)) summary.delivered++;
-      else summary.failed++;
+    if (Date.now() - this.lastPruneAt > PRUNE_EVERY_MS) {
+      this.lastPruneAt = Date.now();
+      await db.unit(async () => db.pruneWebhookDeliveries(new Date(now.getTime() - RETENTION_MS).toISOString()), () => true).catch(() => 0);
+    }
+    // Fair share: at most PER_ORG_PER_PASS per organization, so one organization's slow receiver can't hold up others
+    const perOrg = new Map<string, number>();
+    const batch: WebhookDeliveryRecord[] = [];
+    for (const due of db.getDueWebhookDeliveries(now.toISOString(), 1_000)) {
+      const org = due.organization_id ?? "";
+      const n = perOrg.get(org) ?? 0;
+      if (n >= PER_ORG_PER_PASS) continue;
+      perOrg.set(org, n + 1);
+      batch.push(due);
+      if (batch.length >= (options.limit ?? 20)) break;
+    }
+    for (let i = 0; i < batch.length; i += SEND_CONCURRENCY) {
+      await Promise.all(
+        batch.slice(i, i + SEND_CONCURRENCY).map(async (due) => {
+          const claimed = await this.claim(due.id, now);
+          if (!claimed) return;
+          summary.attempted++;
+          if (await this.send(claimed)) summary.delivered++;
+          else summary.failed++;
+        })
+      );
     }
     return summary;
   }
@@ -286,24 +407,29 @@ export class WebhookPlatformService {
     if (!db.findEnterpriseWebhook(orgId, subscriptionId)) throw new NotFoundError("Webhook subscription", subscriptionId);
     return db
       .getWebhookDeliveries(subscriptionId)
+      .filter((d) => d.organization_id === undefined || d.organization_id === orgId)
       .slice(-Math.min(Math.max(limit, 1), 200))
       .reverse()
       .map(({ payload_json: _p, signature: _s, ...rest }) => rest);
   }
 
   /** A dead-lettered (or failed) delivery gets a fresh round of attempts. */
-  public retryDelivery(orgId: string, deliveryId: string): WebhookDeliveryRecord {
+  public retryDelivery(orgId: string, deliveryId: string, actor?: WebhookActor): WebhookDeliveryRecord {
     const d = db.findWebhookDelivery(deliveryId);
-    if (!d || !db.findEnterpriseWebhook(orgId, d.subscription_id)) throw new NotFoundError("Webhook delivery", deliveryId);
+    if (!d || d.organization_id !== orgId || !db.findEnterpriseWebhook(orgId, d.subscription_id)) throw new NotFoundError("Webhook delivery", deliveryId);
     if (d.status !== "DEAD_LETTERED" && d.status !== "FAILED") throw new BadRequestError(`Only dead-lettered deliveries can be retried (this one is ${d.status}).`);
-    return db.updateWebhookDelivery(d.id, { status: "PENDING", attempt_number: 0, next_attempt_at: new Date().toISOString(), last_error: undefined });
+    const updated = db.updateWebhookDelivery(d.id, { status: "PENDING", attempt_number: 0, next_attempt_at: new Date().toISOString(), last_error: undefined });
+    audit(actor, "webhook.delivery_retried", d.id, { organization_id: orgId, subscription_id: d.subscription_id, event_type: d.event_type });
+    return updated;
   }
 
-  public resumeSubscription(orgId: string, subscriptionId: string): EnterpriseWebhookSubscription {
+  public resumeSubscription(orgId: string, subscriptionId: string, actor?: WebhookActor): EnterpriseWebhookSubscription {
     const sub = db.findEnterpriseWebhook(orgId, subscriptionId);
     if (!sub) throw new NotFoundError("Webhook subscription", subscriptionId);
     if (sub.status !== "PAUSED") throw new BadRequestError("Only a paused subscription can be resumed.");
-    return db.updateEnterpriseWebhook(orgId, subscriptionId, { status: "ACTIVE", failed_consecutive_deliveries: 0, paused_reason: undefined });
+    const resumed = db.updateEnterpriseWebhook(orgId, subscriptionId, { status: "ACTIVE", failed_consecutive_deliveries: 0, paused_reason: undefined });
+    audit(actor, "webhook.resumed", sub.id, { organization_id: orgId, paused_reason: sub.paused_reason });
+    return resumed;
   }
 }
 

@@ -12,7 +12,7 @@ async function handlePOST(request: Request, { params }: { params: Promise<{ id: 
     RbacService.assertCan(context, PERMISSIONS.DEVELOPER_MANAGE);
     const { id } = await params;
     const orgId = resolveOrganizationId(context, new URL(request.url).searchParams.get("organization_id"));
-    const { payload_json: _payload, signature: _signature, ...delivery } = webhookPlatformService.retryDelivery(orgId, id);
+    const { payload_json: _payload, signature: _signature, ...delivery } = webhookPlatformService.retryDelivery(orgId, id, { tenantId: context.tenant.id, userId: context.user.id });
     return apiSuccess(delivery);
   } catch (err) {
     return apiError(err);

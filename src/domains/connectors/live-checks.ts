@@ -11,8 +11,13 @@
  *   Upstash GET {rest_url}/ping (Bearer) · HubSpot GET /account-info/v3/details (Bearer)
  *   Shopify GET https://{shop}.myshopify.com/admin/api/{version}/shop.json (X-Shopify-Access-Token)
  * Providers not listed here stay NOT_VERIFIED.
+ *
+ * Every URL here is treated as tenant-supplied: the platform allow-list never applies and only standard https ports are
+ * allowed, so a tenant can't reach the platform's private services. Failures after the URL check (DNS, connect,
+ * timeout, an address refused at connect time) all read UNREACHABLE with one message, so the test can't be used to
+ * map internal names or ports (Phase 5 review M6, L7).
  */
-import { OutboundBlockedError, OutboundNetworkError, OutboundTimeoutError, outboundRequest } from "@/lib/outbound-http";
+import { OutboundBlockedError, OutboundNetworkError, OutboundTimeoutError, outboundRequest, parseSafeUrl } from "@/lib/outbound-http";
 import type { TestConnectionResult } from "@/types/connector";
 
 const TIMEOUT_MS = 5_000;
@@ -21,7 +26,7 @@ const STEADFAST_BASE = "https://portal.packzy.com/api/v1";
 const GRAPH_BASE = "https://graph.facebook.com";
 const SHOPIFY_DEFAULT_API_VERSION = "2025-07";
 
-export type LiveCheckReason = "UNAUTHORIZED" | "NOT_FOUND" | "RATE_LIMITED" | "PROVIDER_ERROR" | "TIMEOUT" | "UNREACHABLE" | "BLOCKED_URL" | "INVALID_INPUT";
+export type LiveCheckReason = "UNAUTHORIZED" | "NOT_FOUND" | "RATE_LIMITED" | "PROVIDER_ERROR" | "UNREACHABLE" | "BLOCKED_URL" | "INVALID_INPUT";
 
 interface CheckRequest {
   url: string;
@@ -124,7 +129,21 @@ export async function runLiveCheck(input: LiveCheckInput): Promise<TestConnectio
   if (req === null) return null;
   if ("invalid" in req) return failed(input.providerName, "INVALID_INPUT", `${req.invalid}.`, null);
   try {
-    const res = await outboundRequest(req.url, { method: "GET", headers: { Accept: "application/json", ...req.headers }, timeoutMs: TIMEOUT_MS, maxResponseBytes: 64 * 1024 });
+    parseSafeUrl(req.url, { tenantSupplied: true });
+  } catch (err) {
+    if (err instanceof OutboundBlockedError) {
+      return failed(input.providerName, "BLOCKED_URL", `${err.message} Self-hosted servers on a private network can't be tested from here.`, null);
+    }
+    throw err;
+  }
+  try {
+    const res = await outboundRequest(req.url, {
+      method: "GET",
+      headers: { Accept: "application/json", ...req.headers },
+      timeoutMs: TIMEOUT_MS,
+      maxResponseBytes: 64 * 1024,
+      tenantSupplied: true,
+    });
     const latency = res.durationMs;
     if (res.status >= 200 && res.status < 300 && (!req.bodyOk || req.bodyOk(res.body))) {
       return { success: true, status: "VERIFIED", latency_ms: latency, message: `${input.providerName} accepted the credentials.`, details: { reason: null } };
@@ -136,11 +155,9 @@ export async function runLiveCheck(input: LiveCheckInput): Promise<TestConnectio
     if (res.status === 429) return failed(input.providerName, "RATE_LIMITED", "the provider is rate limiting; try again later.", latency);
     return failed(input.providerName, "PROVIDER_ERROR", `the provider answered HTTP ${res.status}.`, latency);
   } catch (err) {
-    if (err instanceof OutboundBlockedError) {
-      return failed(input.providerName, "BLOCKED_URL", `${err.message} Self-hosted servers on a private network need the platform allow-list (OUTBOUND_ALLOWED_PRIVATE_HOSTS).`, null);
+    if (err instanceof OutboundBlockedError || err instanceof OutboundTimeoutError || err instanceof OutboundNetworkError) {
+      return failed(input.providerName, "UNREACHABLE", "the server could not be reached in time, or its address is not one this service may call.", null);
     }
-    if (err instanceof OutboundTimeoutError) return failed(input.providerName, "TIMEOUT", err.message, null);
-    if (err instanceof OutboundNetworkError) return failed(input.providerName, "UNREACHABLE", err.message, null);
     throw err;
   }
 }
