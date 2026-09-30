@@ -98,7 +98,8 @@ export function apiError(error: unknown, requestId?: string) {
 }
 
 export async function extractRequestContext(request: Request): Promise<RequestContext> {
-  const requestId = request.headers.get("x-request-id") || `req_${randomSuffix()}`;
+  // Always generated here: a client-chosen id would let a caller forge log correlation or inject text into log lines
+  const requestId = `req_${randomSuffix()}`;
   const impersonated = await resolveImpersonationContext(request, requestId, extractPlatformContext);
   const context = impersonated ?? (await resolveCallerContext(request, requestId));
   const mutating = !["GET", "HEAD", "OPTIONS"].includes(request.method.toUpperCase());
@@ -245,8 +246,10 @@ function devAuthBypassContext(request: Request, requestId: string): RequestConte
 }
 
 export async function extractPlatformContext(request: Request): Promise<PlatformContext> {
-  const requestId = request.headers.get("x-request-id") || `req_plat_${randomSuffix()}`;
-  const traceId = request.headers.get("x-trace-id") || `trc_plat_${randomSuffix()}`;
+  const requestId = `req_plat_${randomSuffix()}`;
+  const clientTrace = request.headers.get("x-trace-id");
+  // A caller-supplied trace id is kept only when it is a plain token, so it can't carry text into log lines
+  const traceId = clientTrace && /^[A-Za-z0-9_-]{8,64}$/.test(clientTrace) ? clientTrace : `trc_plat_${randomSuffix()}`;
 
   let token: string | null = null;
 
