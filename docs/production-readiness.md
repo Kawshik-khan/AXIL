@@ -210,3 +210,5 @@ Live behavior of any endpoint; Render/Vercel/Neon/Qdrant/Upstash settings; wheth
 **Finding while doing R5 (P0-3 is bigger than first reported):** Next 14.x will get no more security fixes. `next@14.2.35` is the last 14.x release, and `npm audit` still reports 15 distinct high/critical advisories whose fixes exist only in 15.5.x (up to 15.5.24) or 16.x. Applied mitigations: 14.2.35, image optimizer switched off (`images.unoptimized`; no `next/image` is used), no server actions in the code, Linux hosting. The remaining exposure is accepted temporarily in `security/audit-exceptions.json` (expires 2026-11-30). The real fix is a Next 15.5.x upgrade, which requires React 19 for the App Router: a separate project, not yet scheduled.
 
 **R5 progress:** on branch `ci/pipeline`: workflows, eval gate, audit gate, migration check, smoke test, dependabot, `docs/ci-setup.md`. Not yet run on GitHub.
+
+**Update 2026-09-30:** P0-3 is closed. Next was upgraded to 16.3.7 (React stays on 18): `npm audit --omit=dev` reports 0 vulnerabilities and `security/audit-exceptions.json` is empty. The 14.x mitigation notes above are historical.

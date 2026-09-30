@@ -28,7 +28,7 @@ Next.js 14 App Router · React 18 · TypeScript (strict) · Zod · jose/bcryptjs
 | Two-server soak | `SOAK_URL_A=… SOAK_URL_B=… node scripts/soak-two-servers.mjs` | Two `next start` servers on one Postgres (a Neon branch, never production — ask before creating one), same `JWT_SECRET`; checks no acknowledged write is lost (ADR-109) |
 | Lint | `npm run lint` | **No ESLint config yet** — don't rely on it |
 
-There is no `test:eval`, `test:unit`, `test:e2e` or Dockerfile yet. The project is a local git repository with no remote (see STATUS §2).
+`npm run test:eval` is the offline eval gate. There is no `test:unit`, `test:e2e` or Dockerfile. Deployment: `render.yaml`, `docs/render-runbook.md`; CI: `.github/workflows`, `docs/ci-setup.md`.
 
 ## 3. Where things are
 

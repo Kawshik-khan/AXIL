@@ -5,10 +5,6 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
-    ignore:
-      # Next 15 needs React 19 and code changes: planned as its own project (docs/production-readiness.md, P0-3).
-      - dependency-name: next
-        update-types: [version-update:semver-major]
   - package-ecosystem: github-actions
     directory: /
     schedule:
