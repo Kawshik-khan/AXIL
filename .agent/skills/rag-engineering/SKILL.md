@@ -13,7 +13,7 @@ Rules: `.agent/rules/rag.md`. Target design: `.agent/RAG_ARCHITECTURE.md` (partl
 | Ingestion / knowledge API | `src/domains/ai/rag/knowledge.service.ts` |
 | Chunking | `chunking.service.ts`, `parent-child-chunking.service.ts` |
 | Embeddings | `embedding.service.ts` (**fake today**, audit H14) |
-| Vector store | `src/infrastructure/pinecone/client.ts` |
+| Vector store | `src/infrastructure/qdrant/client.ts` (env-only: `QDRANT_URL`) |
 | Lexical | `bm25.service.ts` |
 | Hybrid + fusion | `hybrid-search.service.ts` |
 | Rerank | `reranker.service.ts` |
@@ -28,4 +28,4 @@ Rules: `.agent/rules/rag.md`. Target design: `.agent/RAG_ARCHITECTURE.md` (partl
 - Server-side document parsing only; client `readAsText` on PDF/DOCX produces garbage (audit M16).
 
 ## Verify
-`node tests/ts-runner.cjs ./tests/agentic-rag-tests.ts`; add a cross-tenant retrieval test (tenant B query must not return tenant A chunks). `tests/pinecone-rag-tests.ts` hits live Pinecone — ask first.
+`node tests/ts-runner.cjs ./tests/agentic-rag-tests.ts`; add a cross-tenant retrieval test (tenant B query must not return tenant A chunks). `tests/qdrant-rag-tests.ts` runs against an in-process fake Qdrant (no network).

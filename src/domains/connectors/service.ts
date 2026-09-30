@@ -1443,16 +1443,6 @@ export class ConnectorService {
       }
     }
 
-    // Invalidate Pinecone client cache if Pinecone configuration changed
-    if (provider.id === "pinecone") {
-      try {
-        const { clearPineconeCache } = await import("@/infrastructure/pinecone/client");
-        clearPineconeCache();
-      } catch {
-        // Non-blocking
-      }
-    }
-
     // Record audit log
     db.createAuditLog({
       id: `aud_${Date.now()}_connector_saved_${randomSuffix()}`,
@@ -1677,15 +1667,6 @@ export class ConnectorService {
       }
     }
 
-    // Invalidate Pinecone client cache if Pinecone connector deleted
-    if (existing.provider_id === "pinecone") {
-      try {
-        const { clearPineconeCache } = await import("@/infrastructure/pinecone/client");
-        clearPineconeCache();
-      } catch {
-        // Non-blocking
-      }
-    }
 
     db.createAuditLog({
       id: `aud_${Date.now()}_connector_deleted_${randomSuffix()}`,

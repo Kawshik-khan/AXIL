@@ -1,13 +1,13 @@
 /**
  * CommerceOS — Infrastructure Health Check
- * Verifies connectivity to Neon PostgreSQL, Pinecone, and Upstash Redis.
+ * Verifies connectivity to Neon PostgreSQL, Qdrant, and Upstash Redis.
  * 
  * Usage:
  *   npm run db:health
  */
 
 import { healthCheck as neonHealth } from '../neon/client';
-import { healthCheck as pineconeHealth } from '../pinecone/client';
+import { healthCheck as qdrantHealth } from '../qdrant/client';
 import { healthCheck as redisHealth } from '../redis/client';
 
 async function checkHealth() {
@@ -19,14 +19,14 @@ async function checkHealth() {
   const pgIcon = pgResult.ok ? '✅' : '❌';
   console.log(`  ${pgIcon} Neon PostgreSQL: ${pgResult.ok ? 'Connected' : 'FAILED'} (${pgResult.latencyMs}ms)${pgResult.error ? ` — ${pgResult.error}` : ''}`);
 
-  // Pinecone
+  // Qdrant
   let pcResult = { ok: false, latencyMs: 0 };
-  if (process.env.PINECONE_API_KEY) {
-    pcResult = await pineconeHealth();
+  if (process.env.QDRANT_URL) {
+    pcResult = await qdrantHealth();
     const pcIcon = pcResult.ok ? '✅' : '❌';
-    console.log(`  ${pcIcon} Pinecone:        ${pcResult.ok ? 'Connected' : 'FAILED'} (${pcResult.latencyMs}ms)`);
+    console.log(`  ${pcIcon} Qdrant:          ${pcResult.ok ? 'Connected' : 'FAILED'} (${pcResult.latencyMs}ms)`);
   } else {
-    console.log(`  ⚠️  Pinecone:        Skipped (PINECONE_API_KEY not set)`);
+    console.log(`  ⚠️  Qdrant:          Skipped (QDRANT_URL not set)`);
   }
 
   // Upstash Redis

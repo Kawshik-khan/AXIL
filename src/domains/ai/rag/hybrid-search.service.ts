@@ -118,10 +118,10 @@ export class HybridSearchService {
     try {
       const queryEmbedding = await EmbeddingService.embedText(query);
 
-      // 1. Check if Pinecone is dynamically configured for this tenant (via connector or env)
+      // 1. Use Qdrant when configured (QDRANT_URL)
       try {
-        const { isPineconeConfigured, searchVectors } = await import("@/infrastructure/pinecone/client");
-        if (isPineconeConfigured(tenantId)) {
+        const { isQdrantConfigured, searchVectors } = await import("@/infrastructure/qdrant/client");
+        if (isQdrantConfigured(tenantId)) {
           const pcResults = await searchVectors(tenantId, queryEmbedding, limit, minScore);
           if (pcResults && pcResults.length > 0) {
             return pcResults.map((r, idx) => {
@@ -155,7 +155,7 @@ export class HybridSearchService {
           }
         }
       } catch (pcErr) {
-        console.warn("[HybridSearch] Pinecone search error, falling back to local vectors:", pcErr);
+        console.warn("[HybridSearch] Qdrant search error, falling back to local vectors:", pcErr);
       }
 
       // 2. Local pgvector / in-memory vector search fallback

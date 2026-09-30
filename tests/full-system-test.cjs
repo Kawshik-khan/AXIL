@@ -25,7 +25,7 @@ const testSuites = [
   { name: 'Marketing Campaigns & Segments', file: 'tests/marketing-tests.ts' },
   { name: 'Analytics & Golden Signals', file: 'tests/analytics-tests.ts' },
   { name: 'Neon PostgreSQL Repositories', file: 'tests/neon-integration-tests.ts' },
-  { name: 'Pinecone Vector RAG Isolation', file: 'tests/pinecone-rag-tests.ts' },
+  { name: 'Qdrant Vector RAG Isolation', file: 'tests/qdrant-rag-tests.ts' },
   { name: 'Upstash Redis Caching & Locks', file: 'tests/redis-integration-tests.ts' },
 ];
 

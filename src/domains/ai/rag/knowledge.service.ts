@@ -2,7 +2,7 @@ import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 4: Knowledge Base & RAG Management Service
  * Multi-tenant semantic retrieval over merchant store policies, FAQs, and sizing guides.
- * Backed by Pinecone vector database with tenant namespace isolation.
+ * Backed by the Qdrant vector database with tenant payload-filter isolation.
  */
 
 import { db } from "@/infrastructure/db";
@@ -51,7 +51,7 @@ export class KnowledgeService {
   }
 
   /**
-   * Ingest and index new store policy or guide into Pinecone
+   * Ingest and index new store policy or guide into Qdrant
    */
   public static async ingestDocument(
     context: RequestContext,
@@ -119,10 +119,10 @@ export class KnowledgeService {
       const allChunks = [...parentChunks, ...childChunks];
       db.saveKnowledgeChunks(tenantId, docId, allChunks);
 
-      // 5. Upsert child chunks to Pinecone if configured (dynamically checked per tenant)
+      // 5. Upsert child chunks to Qdrant if configured
       try {
-        const { isPineconeConfigured, upsertChunks } = await import("@/infrastructure/pinecone/client");
-        if (isPineconeConfigured(tenantId)) {
+        const { isQdrantConfigured, upsertChunks } = await import("@/infrastructure/qdrant/client");
+        if (isQdrantConfigured(tenantId)) {
           await upsertChunks(
             tenantId,
             childChunks.map((c) => ({
@@ -144,7 +144,7 @@ export class KnowledgeService {
           );
         }
       } catch (pcErr) {
-        console.warn("[Pinecone] Ingestion warning, fallback used:", pcErr);
+        console.warn("[Qdrant] Ingestion warning, fallback used:", pcErr);
       }
 
       // 6. Transition to ACTIVE
@@ -202,10 +202,10 @@ export class KnowledgeService {
     const allChunks = [...parentChunks, ...childChunks];
     db.saveKnowledgeChunks(context.tenant.id, doc.id, allChunks);
 
-    // 5. Upsert child chunks to Pinecone if configured (dynamically checked per tenant)
+    // 5. Upsert child chunks to Qdrant if configured
     try {
-      const { isPineconeConfigured, upsertChunks } = await import("@/infrastructure/pinecone/client");
-      if (isPineconeConfigured(context.tenant.id)) {
+      const { isQdrantConfigured, upsertChunks } = await import("@/infrastructure/qdrant/client");
+      if (isQdrantConfigured(context.tenant.id)) {
         await upsertChunks(
           context.tenant.id,
           childChunks.map((c) => ({
@@ -227,7 +227,7 @@ export class KnowledgeService {
         );
       }
     } catch (pcErr) {
-      console.warn("[Pinecone] Reindex warning:", pcErr);
+      console.warn("[Qdrant] Reindex warning:", pcErr);
     }
 
     const updated = db.updateKnowledgeDocument(context.tenant.id, doc.id, {
@@ -302,12 +302,12 @@ export class KnowledgeService {
     RbacService.assertCan(context, PERMISSIONS.AI_KNOWLEDGE_MANAGE);
 
     try {
-      const { isPineconeConfigured, deleteDocumentVectors } = await import("@/infrastructure/pinecone/client");
-      if (isPineconeConfigured(context.tenant.id)) {
+      const { isQdrantConfigured, deleteDocumentVectors } = await import("@/infrastructure/qdrant/client");
+      if (isQdrantConfigured(context.tenant.id)) {
         await deleteDocumentVectors(context.tenant.id, documentId);
       }
     } catch (pcErr) {
-      console.warn("[Pinecone] Delete vectors warning:", pcErr);
+      console.warn("[Qdrant] Delete vectors warning:", pcErr);
     }
 
     return db.deleteKnowledgeDocument(context.tenant.id, documentId);
