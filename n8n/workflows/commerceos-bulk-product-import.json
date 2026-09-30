@@ -13,7 +13,10 @@
       "name": "Inbound Catalog Webhook Trigger",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [200, 300],
+      "position": [
+        200,
+        300
+      ],
       "webhookId": "commerceos-product-import-webhook"
     },
     {
@@ -27,7 +30,7 @@
         },
         "documentId": {
           "__rl": true,
-          "value": "={{ $env.GOOGLE_SHEET_CATALOG_ID || '' }}",
+          "value": "={{ ($vars.GOOGLE_SHEET_CATALOG_ID || $env.GOOGLE_SHEET_CATALOG_ID) || '' }}",
           "mode": "id"
         },
         "sheetName": {
@@ -41,7 +44,10 @@
       "name": "Google Sheets Catalog Sync",
       "type": "n8n-nodes-base.googleSheetsTrigger",
       "typeVersion": 1,
-      "position": [200, 480]
+      "position": [
+        200,
+        480
+      ]
     },
     {
       "parameters": {
@@ -51,7 +57,10 @@
       "name": "Normalize & Clean Catalog Rows",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [460, 380]
+      "position": [
+        460,
+        380
+      ]
     },
     {
       "parameters": {
@@ -62,12 +71,15 @@
       "name": "Split in Batches (50 SKUs)",
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
-      "position": [680, 380]
+      "position": [
+        680,
+        380
+      ]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.COMMERCEOS_API_BASE_URL || 'http://localhost:3000' }}/api/v1/products/bulk",
+        "url": "={{ ($vars.COMMERCEOS_API_BASE_URL || $env.COMMERCEOS_API_BASE_URL) || 'http://localhost:3000' }}/api/v1/products/bulk",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
@@ -79,7 +91,7 @@
             },
             {
               "name": "X-Tenant-ID",
-              "value": "={{ $env.COMMERCEOS_TENANT_ID || 'ten_default_dhaka' }}"
+              "value": "={{ ($vars.COMMERCEOS_TENANT_ID || $env.COMMERCEOS_TENANT_ID) || 'ten_default_dhaka' }}"
             },
             {
               "name": "Content-Type",
@@ -102,7 +114,10 @@
       "name": "Dispatch POST /api/v1/products/bulk",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [900, 380]
+      "position": [
+        900,
+        380
+      ]
     },
     {
       "parameters": {
@@ -112,7 +127,10 @@
       "name": "Aggregate Import Summary",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1120, 380]
+      "position": [
+        1120,
+        380
+      ]
     },
     {
       "parameters": {
@@ -124,7 +142,10 @@
       "name": "Respond to Webhook",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
-      "position": [1340, 380]
+      "position": [
+        1340,
+        380
+      ]
     }
   ],
   "connections": {

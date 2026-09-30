@@ -152,6 +152,24 @@ credential holds a placeholder and those calls get 401). The low-stock alert als
 Check it: `POST http://localhost:5678/webhook/commerceos-signature-check` without a signature answers 401; the
 `CommerceOS — Signed Call Check` workflow answers 200 only to a correctly signed call and has no side effects.
 
+## n8n Cloud
+
+n8n Cloud has no environment variables for workflows. The workflows read every setting as
+`$vars.NAME || $env.NAME`, so on Cloud create these as **Variables** (Overview → Variables; Pro and Enterprise plans,
+and the 14-day trial):
+
+| Variable | Value |
+|---|---|
+| `COMMERCEOS_N8N_WEBHOOK_SECRET` | The same value as `COMMERCEOS_N8N_WEBHOOK_SECRET` on the CommerceOS server |
+| `COMMERCEOS_API_BASE_URL` | CommerceOS's public https address (Cloud can't reach a local server) |
+| `COMMERCEOS_OPERATOR_ALERT_PHONE` | Who gets the low-stock SMS |
+
+`crypto` is available in Cloud Code nodes without configuration. On CommerceOS set
+`N8N_HOST=https://<your-instance>.app.n8n.cloud`. Import the workflows (Workflows → Import from File, or through the n8n
+MCP server), create the `CommerceOS API` credential with a service token and link it on the HTTP nodes, publish the
+workflows CommerceOS calls, and check that an unsigned `POST …/webhook/commerceos-signature-check` answers 401. On the
+Starter plan there are no Variables: self-host n8n for production instead.
+
 ## Calls from CommerceOS to n8n are signed (Phase 5, FX-55)
 
 When `COMMERCEOS_N8N_WEBHOOK_SECRET` is set on the CommerceOS server, every call to an n8n webhook carries:
