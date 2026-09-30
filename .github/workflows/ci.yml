@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Type-check, tests, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Type-check
+        run: npm run type-check
+      # No secrets and no network: the suites use the offline demo AI and in-process stubs.
+      - name: Tests (JSON store)
+        run: npm test
+      - name: Tests (every suite on in-memory Postgres)
+        run: npm run test:pg
+      - name: Eval gate
+        run: npm run test:eval
+      - name: Build
+        run: npm run build
+
+  migrations:
+    name: Migration check
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - run: node scripts/check-migrations.mjs origin/${{ github.base_ref }}

@@ -26,3 +26,17 @@ src/infrastructure/db/seeds/growth-data.json
 src/infrastructure/db/migrations/legacy/004_seed_10000_customers.sql
 src/infrastructure/db/migrations/legacy/004_seed_1000_customers.sql
 src/infrastructure/db/migrations/legacy/005_seed_5000_orders.sql
+
+# Tool output and local-only files (not needed to build or deploy)
+graphify-out/
+*.graphify-bak
+.claude/settings.local.json
+.vscode/*
+!.vscode/settings.json
+.DS_Store
+Thumbs.db
+*.log
+npm-debug.log*
+coverage/
+.vercel/
+.env*.local

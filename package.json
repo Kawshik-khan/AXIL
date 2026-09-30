@@ -22,6 +22,7 @@
     "db:seed:products": "node tests/ts-runner.cjs ./scripts/seed-max-products-inventory.ts",
     "db:seed:growth": "node tests/ts-runner.cjs ./scripts/seed-growth-intelligence.ts",
     "test:db": "node tests/ts-runner.cjs ./tests/neon-integration-tests.ts && node tests/ts-runner.cjs ./tests/qdrant-rag-tests.ts && node tests/ts-runner.cjs ./tests/redis-integration-tests.ts",
+    "test:eval": "node tests/ts-runner.cjs ./tests/eval-gate.ts",
     "test:pg": "node tests/run-pg-mode.cjs",
     "db:backfill": "node tests/ts-runner.cjs ./scripts/migrate-json-to-pg.ts",
     "db:verify-migration": "node tests/ts-runner.cjs ./scripts/verify-migration.ts"

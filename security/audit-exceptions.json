@@ -1,0 +1,95 @@
+{
+  "_comment": "Accepted npm audit advisories. Each needs a reason and an expiry (YYYY-MM-DD); the gate fails once one expires.",
+  "exceptions": [
+    {
+      "id": "GHSA-mwv6-3258-q52c",
+      "title": "Next Vulnerable to Denial of Service with Server Components",
+      "reason": "Next 14.x receives no fixes for this; the fix exists only in Next 15.5.x/16.x. Tracked as P0-3 in docs/production-readiness.md (upgrade decision pending). Mitigations in place: no server actions, no next/image (image optimizer switched off), Linux hosting (Render).",
+      "expires": "2026-11-30"
+    },
+    {
+      "id": "GHSA-5j59-xgg2-r9c4",
+      "title": "Next has a Denial of Service with Server Components - Incomplete Fix Follow-Up",
+      "reason": "Next 14.x receives no fixes for this; the fix exists only in Next 15.5.x/16.x. Tracked as P0-3 in docs/production-readiness.md (upgrade decision pending). Mitigations in place: no server actions, no next/image (image optimizer switched off), Linux hosting (Render).",
+      "expires": "2026-11-30"
+    },
+    {
+      "id": "GHSA-h25m-26qc-wcjf",
+      "title": "Next.js HTTP request deserialization can lead to DoS when using insecure React Server Components",
+      "reason": "Next 14.x receives no fixes for this; the fix exists only in Next 15.5.x/16.x. Tracked as P0-3 in docs/production-readiness.md (upgrade decision pending). Mitigations in place: no server actions, no next/image (image optimizer switched off), Linux hosting (Render).",
+      "expires": "2026-11-30"
+    },
+    {
+      "id": "GHSA-f82v-jwr5-mffw",
+      "title": "Authorization Bypass in Next.js Middleware",
+      "reason": "Next 14.x receives no fixes for this; the fix exists only in Next 15.5.x/16.x. Tracked as P0-3 in docs/production-readiness.md (upgrade decision pending). Mitigations in place: no server actions, no next/image (image optimizer switched off), Linux hosting (Render).",
+      "expires": "2026-11-30"
+    },
+    {
+      "id": "GHSA-q4gf-8mx6-v5v3",
+      "title": "Next.js has a Denial of Service with Server Components",
+      "reason": "Next 14.x receives no fixes for this; the fix exists only in Next 15.5.x/16.x. Tracked as P0-3 in docs/production-readiness.md (upgrade decision pending). Mitigations in place: no server actions, no next/image (image optimizer switched off), Linux hosting (Render).",
+      "expires": "2026-11-30"
+    },
+    {
+      "id": "GHSA-8h8q-6873-q5fj",
+      "title": "Next.js Vulnerable to Denial of Service with Server Components",
+      "reason": "Next 14.x receives no fixes for this; the fix exists only in Next 15.5.x/16.x. Tracked as P0-3 in docs/production-readiness.md (upgrade decision pending). Mitigations in place: no server actions, no next/image (image optimizer switched off), Linux hosting (Render).",
+      "expires": "2026-11-30"
+    },
+    {
+      "id": "GHSA-c4j6-fc7j-m34r",
+      "title": "Next.js vulnerable to server-side request forgery in applications using WebSocket upgrades",
+      "reason": "Next 14.x receives no fixes for this; the fix exists only in Next 15.5.x/16.x. Tracked as P0-3 in docs/production-readiness.md (upgrade decision pending). Mitigations in place: no server actions, no next/image (image optimizer switched off), Linux hosting (Render).",
+      "expires": "2026-11-30"
+    },
+    {
+      "id": "GHSA-36qx-fr4f-26g5",
+      "title": "Next.js has a Middleware / Proxy bypass in Pages Router applications using i18n",
+      "reason": "Next 14.x receives no fixes for this; the fix exists only in Next 15.5.x/16.x. Tracked as P0-3 in docs/production-readiness.md (upgrade decision pending). Mitigations in place: no server actions, no next/image (image optimizer switched off), Linux hosting (Render).",
+      "expires": "2026-11-30"
+    },
+    {
+      "id": "GHSA-m99w-x7hq-7vfj",
+      "title": "Next.js: Denial of Service in App Router using Server Actions",
+      "reason": "Next 14.x receives no fixes for this; the fix exists only in Next 15.5.x/16.x. Tracked as P0-3 in docs/production-readiness.md (upgrade decision pending). Mitigations in place: no server actions, no next/image (image optimizer switched off), Linux hosting (Render).",
+      "expires": "2026-11-30"
+    },
+    {
+      "id": "GHSA-89xv-2m56-2m9x",
+      "title": "Next.js: Server-Side Request Forgery in Server Actions on custom servers",
+      "reason": "Next 14.x receives no fixes for this; the fix exists only in Next 15.5.x/16.x. Tracked as P0-3 in docs/production-readiness.md (upgrade decision pending). Mitigations in place: no server actions, no next/image (image optimizer switched off), Linux hosting (Render).",
+      "expires": "2026-11-30"
+    },
+    {
+      "id": "GHSA-p9j2-gv94-2wf4",
+      "title": "Next.js: Server-Side Request Forgery in rewrites via attacker-controlled destination hostname",
+      "reason": "Next 14.x receives no fixes for this; the fix exists only in Next 15.5.x/16.x. Tracked as P0-3 in docs/production-readiness.md (upgrade decision pending). Mitigations in place: no server actions, no next/image (image optimizer switched off), Linux hosting (Render).",
+      "expires": "2026-11-30"
+    },
+    {
+      "id": "GHSA-p293-qw3h-jr36",
+      "title": "Next.js: Unauthenticated Remote Code Execution on windows-hosted servers",
+      "reason": "Next 14.x receives no fixes for this; the fix exists only in Next 15.5.x/16.x. Tracked as P0-3 in docs/production-readiness.md (upgrade decision pending). Mitigations in place: no server actions, no next/image (image optimizer switched off), Linux hosting (Render).",
+      "expires": "2026-11-30"
+    },
+    {
+      "id": "GHSA-2xp9-vwfh-vxw4",
+      "title": "Next.js: Unauthenticated Remote Code Execution in Image Optimization API when AVIF files are used",
+      "reason": "Next 14.x receives no fixes for this; the fix exists only in Next 15.5.x/16.x. Tracked as P0-3 in docs/production-readiness.md (upgrade decision pending). Mitigations in place: no server actions, no next/image (image optimizer switched off), Linux hosting (Render).",
+      "expires": "2026-11-30"
+    },
+    {
+      "id": "GHSA-6g55-p6wh-862q",
+      "title": "PostCSS: Arbitrary file read and information disclosure via attacker-controlled sourceMappingURL in CSS comments",
+      "reason": "Next 14.x receives no fixes for this; the fix exists only in Next 15.5.x/16.x. Tracked as P0-3 in docs/production-readiness.md (upgrade decision pending). Mitigations in place: no server actions, no next/image (image optimizer switched off), Linux hosting (Render).",
+      "expires": "2026-11-30"
+    },
+    {
+      "id": "GHSA-r28c-9q8g-f849",
+      "title": "PostCSS: Path Traversal in Previous Source Map Auto-Loading (sourceMappingURL) leads to Arbitrary .map File Disclosure",
+      "reason": "Next 14.x receives no fixes for this; the fix exists only in Next 15.5.x/16.x. Tracked as P0-3 in docs/production-readiness.md (upgrade decision pending). Mitigations in place: no server actions, no next/image (image optimizer switched off), Linux hosting (Render).",
+      "expires": "2026-11-30"
+    }
+  ]
+}
