@@ -206,3 +206,7 @@ Live behavior of any endpoint; Render/Vercel/Neon/Qdrant/Upstash settings; wheth
 3. Qdrant, Redis and the LLM provider down = full readiness reports not-ready (`READY_REQUIRED`); Render's restart check uses `?scope=core` so a provider outage can't cause restart loops. 4. n8n on n8n Cloud (Header Auth token, optional HMAC). 5. Repo name AXIL (not yet created). 6. Production LLM and monthly budget: still open.
 
 **Progress:** R1 is on branch `ops/render-backend` (blueprint, readiness dependencies, server-generated request ids, runbook). Already done outside this plan: SSRF guard for outbound calls (P1-6), signed n8n calls, secret scrub of `.env.example`, Postgres-shared rate limits.
+
+**Finding while doing R5 (P0-3 is bigger than first reported):** Next 14.x will get no more security fixes. `next@14.2.35` is the last 14.x release, and `npm audit` still reports 15 distinct high/critical advisories whose fixes exist only in 15.5.x (up to 15.5.24) or 16.x. Applied mitigations: 14.2.35, image optimizer switched off (`images.unoptimized`; no `next/image` is used), no server actions in the code, Linux hosting. The remaining exposure is accepted temporarily in `security/audit-exceptions.json` (expires 2026-11-30). The real fix is a Next 15.5.x upgrade, which requires React 19 for the App Router: a separate project, not yet scheduled.
+
+**R5 progress:** on branch `ci/pipeline`: workflows, eval gate, audit gate, migration check, smoke test, dependabot, `docs/ci-setup.md`. Not yet run on GitHub.
