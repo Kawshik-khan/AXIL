@@ -41,7 +41,7 @@ With a single maintainer, a required review blocks your own merges: set `require
 ## What each gate does
 
 - **Eval gate** (`evals/thresholds.json`, `npm run test:eval`): runs the golden dataset offline against the demo AI (no cost, deterministic) and fails when a score drops below the floors. It guards routing, handoff and policy behavior, not a live model's quality.
-- **Audit gate** (`scripts/audit-gate.mjs`): fails on high/critical advisories not in `security/audit-exceptions.json` (each with a reason and an expiry, currently 2026-11-30). The 15 listed are Next 14 advisories with fixes only in Next 15.5.x/16.x.
+- **Audit gate** (`scripts/audit-gate.mjs`): fails on high/critical advisories not in `security/audit-exceptions.json` (each with a reason and an expiry). The list is empty since the Next 16.3.7 upgrade.
 - **Migration check** (`scripts/check-migrations.mjs`): every new migration needs `-- rollback:`; destructive statements need `-- allow-destructive: <reason>`; existing migrations can't be edited.
 - **Smoke test** (`scripts/smoke-deploy.mjs`): waits for `/health` and the full `/health/ready`, then signs in to the smoke workspace and reads orders and products. It is read-only on purpose. A failure opens a GitHub issue; roll back from Render (Events → Rollback).
 

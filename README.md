@@ -85,17 +85,20 @@ Never commit `.env.local` or real keys.
 | Command | What it runs |
 |---|---|
 | `npm run type-check` | TypeScript, strict; 0 errors |
-| `npm test` | 27 suites: security regressions, RBAC matrix, persistence, analytics, commerce, social, AI, enterprise, connectors and more |
+| `npm test` | 28 suites: security regressions, RBAC matrix, persistence, analytics, commerce, social, AI, enterprise, connectors and more |
 | `npm run test:pg` | The same suites with the store persisted to in-memory Postgres and compared record by record |
+| `npm run test:eval` | Golden AI dataset (offline, deterministic); fails below `evals/thresholds.json` |
 | `node scripts/smoke-security.mjs` | Replays the audit's exploits against a running server (start it without a dev auth bypass) |
+| `node scripts/audit-gate.mjs` | Fails on high or critical dependency advisories that are not accepted with a reason and expiry |
 
-The CI pipeline (eval gate, dependency audit gate, migration safety check, secret scan, deploy and smoke test) lives on the `ci/pipeline` branch and is described in
-`docs/ci-setup.md` once merged.
+The GitHub Actions pipeline (`.github/workflows`) runs these on every pull request, plus a migration safety check and a secret scan, and deploys `main` to Render
+after CI passes. Setup and branch-protection settings: [`docs/ci-setup.md`](docs/ci-setup.md).
 
 ## Deployment
 
-The target is one always-on Render web service with Postgres on Neon. The blueprint (`render.yaml`), runbook (`docs/render-runbook.md`) and the production-readiness
-audit (`docs/production-readiness.md`) arrive with the `ops/render-backend` branch. Until then see [`.agent/DEVOPS.md`](.agent/DEVOPS.md) for the design.
+One always-on Render web service with Postgres on Neon, described in [`render.yaml`](render.yaml): migrations run as a pre-deploy step, the platform health check uses
+`/health/ready?scope=core`, and `/health/ready` (which also reports Qdrant, Redis and the LLM provider) is for monitors. Runbook, sizing, migration policy and rollback:
+[`docs/render-runbook.md`](docs/render-runbook.md). The gap analysis behind it: [`docs/production-readiness.md`](docs/production-readiness.md).
 
 ## Repository map
 
