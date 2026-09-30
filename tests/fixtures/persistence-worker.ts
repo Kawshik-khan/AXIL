@@ -126,7 +126,7 @@ async function main() {
     // The test wrote a lock owned by a live-looking process on another host before this process started.
     const health = db.getPersistenceHealth();
     const { GET } = await import("@/app/health/ready/route");
-    const res = await GET();
+    const res = await GET(new Request("http://localhost/health/ready"));
     out({
       lock_held: health.lock.held, blocked_code: health.blocked_code, seeded_users: db.data.users.length, refused_exit: refusedExit,
       ready_status: res.status, ready_body: await res.text(), lock_left: fs.readFileSync(path.join(dataDir, "commerceos.lock"), "utf-8"),
