@@ -29,6 +29,8 @@ export default function SettingsPage() {
   const [timezone, setTimezone] = useState("Asia/Dhaka");
   const [insideDhakaFee, setInsideDhakaFee] = useState("60");
   const [outsideDhakaFee, setOutsideDhakaFee] = useState("120");
+  const [contactPhone, setContactPhone] = useState("");
+  const [telegramBot, setTelegramBot] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
@@ -69,6 +71,8 @@ export default function SettingsPage() {
         setBusinessName(ten.name);
         setCurrency(ten.currency || "BDT");
         setTimezone(ten.timezone || "Asia/Dhaka");
+        setContactPhone(String(ten.settings?.contact_phone ?? ""));
+        setTelegramBot(String(ten.settings?.telegram_bot_username ?? ""));
         // The fees orders are charged (settings or the defaults in PricingService), not a second copy of the defaults
         setInsideDhakaFee(String(t.data.delivery_fees?.inside_dhaka_bdt ?? ten.settings?.delivery_charge_inside_dhaka ?? ""));
         setOutsideDhakaFee(String(t.data.delivery_fees?.outside_dhaka_bdt ?? ten.settings?.delivery_charge_outside_dhaka ?? ""));
@@ -109,6 +113,8 @@ export default function SettingsPage() {
           settings: {
             delivery_charge_inside_dhaka: Number(insideDhakaFee),
             delivery_charge_outside_dhaka: Number(outsideDhakaFee),
+            contact_phone: contactPhone,
+            telegram_bot_username: telegramBot,
           },
         }),
       });
@@ -317,6 +323,27 @@ export default function SettingsPage() {
                         <option value="America/New_York">America/New_York (EST)</option>
                       </select>
                     </div>
+                  </div>
+                </BentoCard>
+
+                <BentoCard span={6} title="Customer Contact" subtitle="Where customers can message your store">
+                  <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+                    <Input
+                      label="Phone / WhatsApp Number"
+                      type="tel"
+                      value={contactPhone}
+                      onChange={(e) => setContactPhone(e.target.value)}
+                      placeholder="+8801712345678"
+                      hint="Include the country code. Leave empty to hide."
+                    />
+
+                    <Input
+                      label="Telegram Bot Username"
+                      value={telegramBot}
+                      onChange={(e) => setTelegramBot(e.target.value)}
+                      placeholder="@mystore_bot"
+                      hint="The bot customers open in Telegram; the username ends in 'bot'. Leave empty to hide."
+                    />
                   </div>
                 </BentoCard>
 

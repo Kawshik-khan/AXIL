@@ -19,6 +19,17 @@ const SettingsPatch = z
         delivery_charge_inside_dhaka: z.number().finite().min(0).max(100_000),
         delivery_charge_outside_dhaka: z.number().finite().min(0).max(100_000),
         allow_overselling: z.boolean(),
+        // Where customers can message the store; an empty string clears the value
+        contact_phone: z
+          .string()
+          .trim()
+          .transform((v) => v.replace(/[\s-]/g, ""))
+          .pipe(z.string().regex(/^(\+?[0-9]{8,15})?$/, "Enter a phone number like +8801712345678")),
+        telegram_bot_username: z
+          .string()
+          .trim()
+          .transform((v) => v.replace(/^@/, ""))
+          .pipe(z.string().regex(/^([A-Za-z][A-Za-z0-9_]{2,28}[Bb][Oo][Tt])?$/, "Enter the bot username ending in 'bot', like mystore_bot")),
       })
       .partial()
       .strict(),
