@@ -29,5 +29,13 @@ N8N_CONCURRENCY_PRODUCTION_LIMIT=20
 EXECUTIONS_TIMEOUT=120
 EXECUTIONS_TIMEOUT_MAX=300
 
+# CommerceOS calls (Phase 5, FX-55). The same secret is set on the CommerceOS server; the Code nodes verify every call
+# with it, so they need env access and the crypto module. Locally, n8n/deployment/setup-local-n8n.mjs writes n8n/.env.
+COMMERCEOS_N8N_WEBHOOK_SECRET=replace_with_the_same_random_value_as_commerceos
+N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+NODE_FUNCTION_ALLOW_BUILTIN=crypto
+# Who gets the low-stock SMS (business configuration, not hard-coded in the workflow)
+COMMERCEOS_OPERATOR_ALERT_PHONE=
+
 # Optional Sentry / Telemetry Monitoring
 # N8N_SENTRY_DSN=

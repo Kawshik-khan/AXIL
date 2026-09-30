@@ -124,6 +124,34 @@ Once verification passes:
 
 ---
 
+## Local Docker n8n in one step
+
+```bash
+node n8n/deployment/setup-local-n8n.mjs
+```
+
+For a container named `n8n` on the volume `n8n_data` (flags `--container`, `--volume`, `--image` change that). It
+creates `n8n/.env` (git-ignored) with a new `COMMERCEOS_N8N_WEBHOOK_SECRET`, stops n8n (the first time it keeps the old
+container as `n8n-before-commerceos-<time>` for rollback), imports the `CommerceOS API` credential and every workflow in
+`n8n/workflows/` through a one-off container on the same volume, publishes the workflows CommerceOS calls
+(`wf_sig_check`, `wf_ord_01`, `wf_inv_01`, `wf_mkt_01`), and starts n8n again with the environment they need. Run it
+again after changing a workflow or `n8n/.env`.
+
+Then, in CommerceOS's `.env.local` (the script never touches it):
+
+```
+N8N_HOST=http://localhost:5678
+COMMERCEOS_N8N_WEBHOOK_SECRET=<the same value as in n8n/.env>
+```
+
+For the workflows' calls back into CommerceOS, create a service token (Settings → Service Tokens, scopes as in the
+table above), put it in `n8n/.env` as `COMMERCEOS_SERVICE_TOKEN=cos_svc_…` and run the script again (until then the
+credential holds a placeholder and those calls get 401). The low-stock alert also needs
+`COMMERCEOS_OPERATOR_ALERT_PHONE` in `n8n/.env`.
+
+Check it: `POST http://localhost:5678/webhook/commerceos-signature-check` without a signature answers 401; the
+`CommerceOS — Signed Call Check` workflow answers 200 only to a correctly signed call and has no side effects.
+
 ## Calls from CommerceOS to n8n are signed (Phase 5, FX-55)
 
 When `COMMERCEOS_N8N_WEBHOOK_SECRET` is set on the CommerceOS server, every call to an n8n webhook carries:
@@ -133,25 +161,23 @@ When `COMMERCEOS_N8N_WEBHOOK_SECRET` is set on the CommerceOS server, every call
 | `X-CommerceOS-Timestamp` | Unix time in seconds |
 | `X-CommerceOS-Signature` | `v1=` + hex HMAC-SHA256 of `<timestamp>.<raw body>`, keyed with `COMMERCEOS_N8N_WEBHOOK_SECRET` |
 
-Put the same secret into the n8n environment (for example `COMMERCEOS_N8N_WEBHOOK_SECRET` in
-`n8n/deployment/environment.example`), set the Webhook node to receive the **raw body**, and check it in a Code node
-right after the trigger:
+The three workflows CommerceOS triggers (order created, low stock, abandoned checkout) and `CommerceOS — Signed Call
+Check` already do this: **Raw Body** is on in their trigger, then a `Verify CommerceOS Signature` Code node, a
+`Signature Valid?` check and a `Respond Unauthorized` (401) branch. Copy those three nodes into a new workflow. The core
+of the Code node (n8n 2.x; it needs `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` and `NODE_FUNCTION_ALLOW_BUILTIN=crypto`):
 
 ```js
-// Needs NODE_FUNCTION_ALLOW_BUILTIN=crypto on the n8n container.
 const crypto = require('crypto');
-const headers = $json.headers;
-// The raw body, byte for byte (enable "Raw Body" on the Webhook node); a re-serialized body won't match
-const raw = $json.rawBody;
-if (!raw) throw new Error('Enable Raw Body on the Webhook node');
-const ts = headers['x-commerceos-timestamp'];
-const expected = 'v1=' + crypto.createHmac('sha256', $env.COMMERCEOS_N8N_WEBHOOK_SECRET).update(`${ts}.${raw}`).digest('hex');
-const given = headers['x-commerceos-signature'] || '';
-const fresh = Math.abs(Date.now() / 1000 - Number(ts)) <= 300;
-if (!fresh || given.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(given), Buffer.from(expected))) {
-  throw new Error('Unsigned or forged call');
-}
-return $input.all();
+const item = $input.first();
+const headers = item.json.headers || {};
+// Raw Body puts the exact bytes in the binary property "data"; a re-serialized body would not match
+const raw = (await this.helpers.getBinaryDataBuffer(0, 'data')).toString('utf8');
+const ts = String(headers['x-commerceos-timestamp'] || '');
+const expected = 'v1=' + crypto.createHmac('sha256', $env.COMMERCEOS_N8N_WEBHOOK_SECRET).update(ts + '.' + raw).digest('hex');
+const given = String(headers['x-commerceos-signature'] || '');
+const fresh = /^\d{9,11}$/.test(ts) && Math.abs(Date.now() / 1000 - Number(ts)) <= 300;
+const ok = fresh && given.length === expected.length && crypto.timingSafeEqual(Buffer.from(given), Buffer.from(expected));
+return [{ json: { headers, body: ok ? JSON.parse(raw) : null, signature_verified: ok } }];
 ```
 
 Use `tenant_id` and `execution_mode` from the signed body, not from the `X-Tenant-ID` / `X-Execution-Mode` headers
