@@ -7,6 +7,7 @@
 import assert from "assert";
 import fs from "fs";
 import path from "path";
+import { db } from "@/infrastructure/db";
 import { checkDependencies, failingDependencyReason, requiredDependencies, resetDependencyHealthForTesting } from "@/lib/dependency-health";
 import { setOutboundLookupForTesting, setOutboundTransportForTesting } from "@/lib/outbound-http";
 
@@ -103,6 +104,8 @@ async function main(): Promise<void> {
 
   await runTest("GET /health/ready: 503 with a reason when a required service is down; ?scope=core ignores it", async () => {
     const { GET } = await import("@/app/health/ready/route");
+    // A fresh checkout (CI) has no data directory yet, and readiness would answer DATA_DIR_NOT_WRITABLE before anything else
+    fs.mkdirSync(db.getPersistenceHealth().data_dir, { recursive: true });
     const saved = { ...process.env };
     try {
       Object.assign(process.env, ENV);
