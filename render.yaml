@@ -1,0 +1,126 @@
+# Render Blueprint for CommerceOS (production readiness R1; see docs/production-readiness.md and docs/render-runbook.md).
+#
+# One long-running Node service: the app keeps the whole store in memory and syncs it from Postgres, so it is NOT a
+# serverless workload. Database is Neon (outside this file); secrets are never in this file: every `sync: false`
+# variable is entered once in the Render dashboard.
+#
+# Region: oregon (the Neon project is in AWS us-east-2, so each database round trip crosses the country; a matching
+# `ohio` region is available and would cut latency, but the region is kept as chosen).
+#
+# Plan: `starter` (always-on, supports preDeployCommand). The Free plan sleeps after idle, reloads the entire store on
+# wake, has no pre-deploy command and drops webhooks while asleep, so use it for a throwaway staging service only.
+# Auto-deploy is off until CI exists (R5): deploys are started by hand or by the CI deploy hook.
+services:
+  - type: web
+    name: commerceos
+    runtime: node
+    region: oregon
+    plan: starter
+    autoDeployTrigger: "off"
+    buildCommand: npm ci --include=dev && npm run build
+    # Runs once per deploy in the build environment, before the new version starts. A failure cancels the deploy and the
+    # running version keeps serving. Migrations must be backward compatible (docs/render-runbook.md, "Migrations").
+    preDeployCommand: npm run db:migrate
+    startCommand: npm run start
+    # Store and database only. The full check (GET /health/ready) also reports Qdrant, Redis and the LLM provider; it must not
+    # be the restart trigger, or a provider outage would restart a healthy instance in a loop.
+    healthCheckPath: /health/ready?scope=core
+    # Time to flush the store's pending writes on SIGTERM before Render kills the process.
+    maxShutdownDelaySeconds: 60
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NODE_ENV
+        value: production
+      # The store loads all data into memory: keep the V8 heap below the instance RAM (512 MB on starter). Raise both together.
+      - key: NODE_OPTIONS
+        value: --max-old-space-size=384
+      # Next.js's own SIGTERM handler exits as soon as connections close, which can beat the store's flush (its handler is in
+      # src/infrastructure/db/index.ts). With this set only the store's handler runs: flush pending writes, then exit.
+      - key: NEXT_MANUAL_SIG_HANDLE
+        value: "1"
+      - key: DATA_BACKEND
+        value: pg
+      # Render's load balancer sets X-Forwarded-For: rate limits key on the client address only with this on. Confirm on
+      # staging that the hop count yields the real client address.
+      - key: TRUST_PROXY
+        value: "1"
+      - key: TRUST_PROXY_HOPS
+        value: "1"
+      - key: STORE_POOL_MAX
+        value: "5"
+      # Which external services make /health/ready report not-ready when down (Postgres always does).
+      - key: READY_REQUIRED
+        value: qdrant,redis,llm
+      - key: DEFAULT_CURRENCY
+        value: BDT
+      - key: DEFAULT_TIMEZONE
+        value: Asia/Dhaka
+      - key: DEFAULT_LANGUAGE
+        value: en
+      # ---- secrets and endpoints: set in the dashboard ----
+      - key: APP_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: CREDENTIALS_ENCRYPTION_KEY
+        sync: false
+      # Direct (unpooled) URL: the pre-deploy migration needs it. The pooled URL is what the app uses.
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_URL_POOLED
+        sync: false
+      - key: STEADFAST_WEBHOOK_SECRET
+        sync: false
+      - key: PATHAO_WEBHOOK_SECRET
+        sync: false
+      - key: BKASH_WEBHOOK_SECRET
+        sync: false
+      - key: NAGAD_WEBHOOK_SECRET
+        sync: false
+      - key: META_APP_SECRET
+        sync: false
+      - key: META_VERIFY_TOKEN
+        sync: false
+      - key: QDRANT_URL
+        sync: false
+      - key: QDRANT_API_KEY
+        sync: false
+      - key: QDRANT_COLLECTION
+        sync: false
+      - key: UPSTASH_REDIS_REST_URL
+        sync: false
+      - key: UPSTASH_REDIS_REST_TOKEN
+        sync: false
+      - key: LLM_BASE_URL
+        sync: false
+      - key: LLM_API_KEY
+        sync: false
+      - key: LLM_PROVIDER_NAME
+        sync: false
+      - key: LLM_MODEL_FAST
+        sync: false
+      - key: LLM_MODEL_REASONING
+        sync: false
+      - key: LLM_EMBEDDING_MODEL
+        sync: false
+      - key: LLM_EMBEDDING_BASE_URL
+        sync: false
+      - key: LLM_EMBEDDING_API_KEY
+        sync: false
+      - key: LLM_EMBEDDING_PROVIDER_NAME
+        sync: false
+      - key: LLM_EMBEDDING_DIMENSIONS
+        sync: false
+      - key: LLM_FALLBACK_BASE_URL
+        sync: false
+      - key: LLM_FALLBACK_API_KEY
+        sync: false
+      - key: N8N_HOST
+        sync: false
+      - key: COMMERCEOS_N8N_WEBHOOK_SECRET
+        sync: false
+      - key: COMMERCEOS_N8N_WEBHOOK_TOKEN
+        sync: false
+      # Deliberately absent: DEV_AUTH_BYPASS, AI_DEMO_MODE, COMMERCEOS_FORCE_LOCK, SEED_ADMIN_PASSWORD.
+# Background worker and cron entries are added in R1b (job queue); nothing runs out of process yet.
