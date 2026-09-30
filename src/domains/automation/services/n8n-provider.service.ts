@@ -16,6 +16,9 @@ import {
 import { ProviderCircuitBreakerService } from "./provider-circuit-breaker.service";
 import { AutomationSafetyService } from "./automation-safety.service";
 import { RetryQueueService } from "./retry-queue.service";
+import { OutboundBlockedError, OutboundTimeoutError, outboundRequest } from "@/lib/outbound-http";
+import { signOutbound } from "@/lib/outbound-signing";
+import { logger } from "@/lib/logger";
 
 export interface N8nInvokeParams {
   tenantId: string;
@@ -39,8 +42,29 @@ export interface N8nInvokeResult {
   error?: string;
 }
 
+/** n8n calls are signed; in production nothing is sent without the secret. */
+class N8nUnsignedError extends Error {
+  constructor() {
+    super("COMMERCEOS_N8N_WEBHOOK_SECRET is not set");
+  }
+}
+
+/** An n8n call that answered with an error status (the tenant sees only the status). */
+class N8nHttpError extends Error {
+  constructor(readonly status: number) {
+    super(`n8n responded with HTTP ${status}`);
+  }
+}
+
 export class N8nProviderService {
   private static readonly REQUEST_TIMEOUT_MS = 10000;
+  private static warnedUnsigned = false;
+
+  /** The deployment's own instance (from N8N_HOST): its URL is platform configuration, not tenant data. */
+  private static isEnvironmentInstance(instance: N8nInstance): boolean {
+    const envUrl = process.env.N8N_HOST || process.env.COMMERCEOS_N8N_BASE_URL;
+    return instance.id.startsWith("n8n_env_") && !!envUrl && instance.base_url === envUrl;
+  }
 
   /**
    * Resolves target n8n instance for tenant
@@ -226,22 +250,29 @@ export class N8nProviderService {
     try {
       if (!instance) throw new Error("No n8n instance is configured");
       const targetUrl = `${instance.base_url.replace(/\/$/, "")}/webhook/${params.webhookPath.replace(/^\//, "")}`;
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), this.REQUEST_TIMEOUT_MS);
-
-      const rawBody = JSON.stringify({
+      // The tenant and mode are in the signed body too: headers are not covered by the signature
+      const body = JSON.stringify({
         event: params.event,
+        tenant_id: params.tenantId,
         execution_mode: executionMode,
         correlation_id: params.correlationId,
         causation_id: params.causationId,
         idempotency_key: params.idempotencyKey,
         timestamp: new Date().toISOString(),
       });
-      // The n8n webhooks require the shared token as a Header Auth credential (X-CommerceOS-Token). Without
-      // COMMERCEOS_N8N_WEBHOOK_TOKEN the call goes out without it and n8n answers 403 (never a fake success).
+      // Two ways to authenticate the call, either or both (FX-55): an HMAC signature the n8n Webhook node can verify
+      // (see n8n/deployment/import.md) and a shared Header Auth token for n8n Cloud plans that can't store the secret
+      // as a Variable. In production a call with neither is refused rather than sent.
+      const secret = process.env.COMMERCEOS_N8N_WEBHOOK_SECRET;
       const webhookToken = process.env.COMMERCEOS_N8N_WEBHOOK_TOKEN;
+      if (!secret && !webhookToken && process.env.NODE_ENV === "production") throw new N8nUnsignedError();
+      if (!secret && !webhookToken && !this.warnedUnsigned) {
+        this.warnedUnsigned = true;
+        logger.warn("n8n.calls_unsigned", { reason: "neither COMMERCEOS_N8N_WEBHOOK_SECRET nor COMMERCEOS_N8N_WEBHOOK_TOKEN is set" });
+      }
 
-      const res = await fetch(targetUrl, {
+      // The deployment's own n8n (N8N_HOST) may be a local server; a stored instance URL gets the full SSRF guard (M17)
+      const res = await outboundRequest(targetUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -250,19 +281,23 @@ export class N8nProviderService {
           "X-Causation-ID": params.causationId || "",
           "Idempotency-Key": params.idempotencyKey,
           "X-Execution-Mode": executionMode,
+          ...(secret ? signOutbound(secret, body) : {}),
           ...(webhookToken ? { "X-CommerceOS-Token": webhookToken } : {}),
         },
-        body: rawBody,
-        signal: controller.signal,
+        body,
+        timeoutMs: this.REQUEST_TIMEOUT_MS,
+        platformConfigured: this.isEnvironmentInstance(instance),
       });
 
-      clearTimeout(timeoutId);
+      if (res.status < 200 || res.status >= 300) throw new N8nHttpError(res.status);
 
-      if (!res.ok) {
-        throw new Error(`n8n responded with HTTP ${res.status}: ${res.statusText}`);
+      let responseBody: Record<string, unknown> = {};
+      try {
+        const parsed: unknown = JSON.parse(res.body);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) responseBody = parsed as Record<string, unknown>;
+      } catch {
+        // not JSON: an empty result
       }
-
-      const responseBody = (await res.json().catch(() => ({}))) as Record<string, unknown>;
 
       const duration = Date.now() - startTime;
       ProviderCircuitBreakerService.recordSuccess(params.tenantId, "N8N");
@@ -289,9 +324,17 @@ export class N8nProviderService {
       };
     } catch (err) {
       const duration = Date.now() - startTime;
-      // Tenants see a generic reason: fetch errors name internal hosts and ports (Phase 3 security review F3)
-      const detail = err instanceof Error ? err.message : "";
-      const errorMsg = /^n8n responded with HTTP \d+/.test(detail) ? detail.split(":")[0] : "n8n could not be reached";
+      // Tenants see a generic reason: network errors name internal hosts and ports (Phase 3 security review F3)
+      const errorMsg =
+        err instanceof N8nHttpError
+          ? err.message
+          : err instanceof N8nUnsignedError
+            ? "n8n calls are not configured for signing (COMMERCEOS_N8N_WEBHOOK_SECRET)"
+            : err instanceof OutboundBlockedError
+            ? "the n8n address is not allowed"
+            : err instanceof OutboundTimeoutError
+              ? "n8n did not answer in time"
+              : "n8n could not be reached";
       ProviderCircuitBreakerService.recordFailure(params.tenantId, "N8N");
 
       db.updateAutomationExecutionStep(triggerStep.id, {

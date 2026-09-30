@@ -5,6 +5,7 @@
  */
 
 import * as crypto from "crypto";
+import { outboundRequest } from "@/lib/outbound-http";
 import {
   JevEvaluateRequest,
   JevEvaluateResponse,
@@ -136,13 +137,11 @@ export class JevClient {
       }
     }
 
-    // 3. Live HTTP call to TypeSafe AI
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    // 3. Live HTTP call to TypeSafe AI (TYPESAFE_API_URL is platform configuration)
     const startTime = Date.now();
 
     try {
-      const response = await fetch(`${this.apiUrl}/decide`, {
+      const response = await outboundRequest(`${this.apiUrl}/decide`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -150,16 +149,16 @@ export class JevClient {
           "X-Tenant-ID": tenantId,
         },
         body: JSON.stringify(validatedRequest),
-        signal: controller.signal,
+        timeoutMs: this.timeoutMs,
+        platformConfigured: true,
       });
 
-      clearTimeout(timer);
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+      if (response.status < 200 || response.status >= 300) {
+        // The provider's error text stays out of errors and logs (it can carry account details)
+        throw new Error(`HTTP ${response.status}`);
       }
 
-      const rawData = await response.json();
+      const rawData = JSON.parse(response.body);
       const parsed = JevEvaluateResponseSchema.parse({
         results: rawData.results || rawData,
         latency_ms: Date.now() - startTime,
@@ -176,11 +175,11 @@ export class JevClient {
 
       return parsed;
     } catch (err: unknown) {
-      clearTimeout(timer);
       this.recordFailure();
 
       // No silent mock on a live failure: the caller falls back to its other routing stages
-      throw new JevClientError("Failed to evaluate with Jev System One", { error: String(err) });
+      // No provider text or host in the error (it can reach tenants; Phase 5 review L10)
+      throw new JevClientError("Failed to evaluate with Jev System One", {});
     }
   }
 

@@ -20,4 +20,9 @@ export async function loadStore(): Promise<void> {
   // Don't hold server start-up forever on an unreachable database: the store keeps retrying in the background and
   // /health/ready reports not-ready meanwhile.
   await Promise.race([db.ready(), new Promise<void>((resolve) => setTimeout(resolve, 30_000).unref())]);
+  // Outbound webhooks are delivered in the background once the store has loaded (FX-54)
+  void db
+    .ready()
+    .then(async () => (await import("@/domains/enterprise/services/webhook-worker")).startWebhookWorker())
+    .catch(() => undefined); // the store logs its own start-up failure
 }

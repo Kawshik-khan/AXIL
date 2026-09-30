@@ -40,6 +40,7 @@ src/lib/api-response.ts              extractRequestContext, extractPlatformConte
 src/lib/security.ts                  JWTs (issuer + per-purpose audience), bcrypt, credential encryption (ADR-103)
 src/lib/validation.ts                parseOrThrow / readJson for strict Zod bodies (ADR-104)
 src/lib/rate-limit.ts                await enforceRateLimit / checkRateLimit (shared in Postgres; in-memory without it)
+src/lib/outbound-http.ts             outboundRequest / assertSafeUrl: the ONLY way to call an external URL (SSRF guard, ADR-110)
 src/lib/store-unit.ts                withStore: wraps every route handler; a write request is one unit of work (ADR-109)
 src/lib/safety-gate.ts               assertNotKilled, assertWithinLimit, isFeatureEnabled (enforced platform controls)
 src/lib/impersonation.ts             read-only support sessions (cookie + operator session)

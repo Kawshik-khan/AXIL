@@ -6,6 +6,7 @@ import { RequestContext } from "@/lib/context";
 import { encryptCredential, decryptCredential, maskSecret } from "@/lib/security";
 import { RoleName, ROLE_PERMISSIONS, Permission } from "@/lib/permissions";
 import { ForbiddenError, BadRequestError } from "@/lib/errors";
+import { setOutboundTransportForTesting } from "@/lib/outbound-http";
 
 const ANSI_GREEN = "\x1b[32m";
 const ANSI_RED = "\x1b[31m";
@@ -335,13 +336,14 @@ async function main() {
   // -------------------------------------------------------------
   console.log(`\n${ANSI_BOLD}[5] Real-Time Connection Test Handshake${ANSI_RESET}`);
 
-  // Stub the network for the one provider test that makes a real request
+  // Live checks go through the SSRF-guarded outbound client; its transport is stubbed (no network in tests, FX-53)
   const fetchCalls: string[] = [];
   let stubStatus = 200;
-  globalThis.fetch = (async (url: string | URL | Request) => {
-    fetchCalls.push(String(url));
-    return new Response("{}", { status: stubStatus });
-  }) as typeof fetch;
+  let stubBody = "{}";
+  setOutboundTransportForTesting(async (url) => {
+    fetchCalls.push(url.toString());
+    return { status: stubStatus, headers: {}, body: stubBody, truncated: false, durationMs: 12 };
+  });
 
   await runTest("Test AI LLM connection handshake", async () => {
     const result = await ConnectorService.testConnection(tenantAContext, {
@@ -367,15 +369,25 @@ async function main() {
     assert.strictEqual(refused.status, "FAILED");
     assert.strictEqual(refused.success, false);
 
-    // A custom endpoint is never fetched from the server (SSRF): reported as not verified
+    // A custom endpoint on a private or metadata address is refused before any request (SSRF guard)
     fetchCalls.length = 0;
     const custom = await ConnectorService.testConnection(tenantAContext, {
       provider_id: "openai",
       endpoint_url: "http://169.254.169.254/latest",
       credentials: { api_key: "sk-proj-valid-api-key-here-1234" },
     });
-    assert.strictEqual(custom.status, "NOT_VERIFIED");
-    assert.deepStrictEqual(fetchCalls, [], "no request to a user-supplied URL");
+    assert.strictEqual(custom.status, "FAILED");
+    assert.strictEqual(custom.details?.reason, "BLOCKED_URL");
+    assert.deepStrictEqual(fetchCalls, [], "no request to a private address");
+    // A public custom base URL is checked for real
+    stubStatus = 200;
+    const gateway = await ConnectorService.testConnection(tenantAContext, {
+      provider_id: "openai",
+      endpoint_url: "https://gateway.example.com/v1",
+      credentials: { api_key: "sk-proj-valid-api-key-here-1234" },
+    });
+    assert.strictEqual(gateway.status, "VERIFIED");
+    assert.deepStrictEqual(fetchCalls, ["https://gateway.example.com/v1/models"]);
     stubStatus = 200;
   });
 
@@ -416,7 +428,9 @@ async function main() {
         vector_dimension: 1536,
       },
     });
-    assert.strictEqual(qdrantResult.status, "NOT_VERIFIED");
+    // A self-hosted server on localhost needs the platform allow-list; without it nothing is contacted
+    assert.strictEqual(qdrantResult.status, "FAILED");
+    assert.strictEqual(qdrantResult.details?.reason, "BLOCKED_URL");
     assert.ok(qdrantResult.message.includes("Qdrant"));
 
     const pineconeResult = await ConnectorService.testConnection(tenantAContext, {
@@ -427,8 +441,9 @@ async function main() {
         index_name: "commerceos-catalog",
       },
     });
-    assert.strictEqual(pineconeResult.status, "NOT_VERIFIED");
+    assert.strictEqual(pineconeResult.status, "VERIFIED");
     assert.ok(pineconeResult.message.includes("Pinecone"));
+    assert.ok(fetchCalls.includes("https://api.pinecone.io/indexes"));
   });
 
   await runTest("Test Redis connection handshake with PING -> PONG latency", async () => {
@@ -454,9 +469,17 @@ async function main() {
         bot_username: "@CommerceOSStoreBot",
       },
     });
-    assert.strictEqual(validResult.status, "NOT_VERIFIED");
-    assert.strictEqual(validResult.latency_ms, null);
-    assert.ok(validResult.message.includes("Telegram"));
+    // Telegram answers 200 with ok:false for a bad token: only ok:true verifies
+    assert.strictEqual(validResult.status, "FAILED");
+    assert.strictEqual(validResult.details?.reason, "UNAUTHORIZED");
+    stubBody = '{"ok":true,"result":{"id":123456789,"is_bot":true}}';
+    const okResult = await ConnectorService.testConnection(tenantAContext, {
+      provider_id: "telegram",
+      credentials: { bot_token: "123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ_012345" },
+    });
+    stubBody = "{}";
+    assert.strictEqual(okResult.status, "VERIFIED");
+    assert.ok(okResult.message.includes("Telegram"));
 
     let threw = false;
     try {

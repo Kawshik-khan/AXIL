@@ -15,9 +15,7 @@ import {
   TestConnectionSchema,
 } from "@/types/connector";
 import { randomSuffix } from "@/lib/ids";
-
-/** Providers whose API exposes an OpenAI-compatible GET /models that accepts a Bearer key. */
-const OPENAI_COMPATIBLE_PROVIDERS = new Set(["openai", "deepseek", "groq", "openrouter"]);
+import { runLiveCheck } from "./live-checks";
 
 /**
  * Connector tests used to return success with a random latency and claims like "webhook verified with 200 OK" without
@@ -1478,8 +1476,6 @@ export class ConnectorService {
       throw new BadRequestError(`Unknown connector provider '${parsed.provider_id}'.`);
     }
 
-    const startTime = Date.now();
-
     // Category-specific connection validation
     if (provider.category === "AI_LLM") {
       const apiKey = String(parsed.credentials.api_key || parsed.credentials.bearer_token || "");
@@ -1494,23 +1490,7 @@ export class ConnectorService {
         throw new BadRequestError(`API key is required to test ${provider.name}.`);
       }
 
-      // A real check for OpenAI-compatible providers, only against the provider's own public HTTPS endpoint: a
-      // user-supplied URL is never fetched from the server (SSRF). Everything else is reported as not verified.
-      if (OPENAI_COMPATIBLE_PROVIDERS.has(provider.id) && endpoint === provider.default_endpoint && endpoint?.startsWith("https://")) {
-        try {
-          const res = await globalThis.fetch(`${endpoint.replace(/\/$/, "")}/models`, {
-            headers: { Authorization: `Bearer ${apiKey}` },
-            signal: AbortSignal.timeout(5000),
-          });
-          const latencyMs = Date.now() - startTime;
-          return res.ok
-            ? { success: true, status: "VERIFIED", latency_ms: latencyMs, message: `${provider.name} accepted the API key.`, details: { endpoint, model } }
-            : { success: false, status: "FAILED", latency_ms: latencyMs, message: `${provider.name} refused the request (HTTP ${res.status}).`, details: { endpoint } };
-        } catch (err) {
-          return { success: false, status: "FAILED", latency_ms: null, message: `${provider.name} couldn't be reached: ${(err as Error).message}`, details: { endpoint } };
-        }
-      }
-      return notVerified(provider.name, { endpoint, model });
+      return this.liveOrNotVerified(provider, parsed, { endpoint, model });
     }
 
     if (provider.category === "SOCIAL_ADS") {
@@ -1538,7 +1518,7 @@ export class ConnectorService {
         }
       }
 
-      return notVerified(provider.name);
+      return this.liveOrNotVerified(provider, parsed);
     }
 
     if (provider.category === "LOGISTICS") {
@@ -1556,7 +1536,7 @@ export class ConnectorService {
         }
       }
 
-      return notVerified(provider.name);
+      return this.liveOrNotVerified(provider, parsed);
     }
 
     if (provider.category === "DATABASE") {
@@ -1574,7 +1554,7 @@ export class ConnectorService {
         throw new BadRequestError("Database host or valid Connection URI is required.");
       }
 
-      return notVerified(provider.name, { host, database: database || null });
+      return this.liveOrNotVerified(provider, parsed, { host, database: database || null });
     }
 
     if (provider.category === "VECTOR_DB") {
@@ -1589,7 +1569,7 @@ export class ConnectorService {
         throw new BadRequestError(`Endpoint or host URL is required for ${provider.name}.`);
       }
 
-      return notVerified(provider.name);
+      return this.liveOrNotVerified(provider, parsed);
     }
 
     if (provider.category === "REDIS_CACHE") {
@@ -1600,7 +1580,7 @@ export class ConnectorService {
         throw new BadRequestError("Redis connection URI, Host, or REST URL is required.");
       }
 
-      return notVerified(provider.name);
+      return this.liveOrNotVerified(provider, parsed);
     }
 
     if (provider.category === "ENTERPRISE") {
@@ -1613,7 +1593,7 @@ export class ConnectorService {
         const sheetId = GoogleSheetHelper.extractSpreadsheetId(sheetUrl);
         const sheetName = String(parsed.credentials.sheet_name || "Products");
 
-        return notVerified(provider.name, { spreadsheet_id: sheetId, sheet_name: sheetName });
+        return this.liveOrNotVerified(provider, parsed, { spreadsheet_id: sheetId, sheet_name: sheetName });
       }
 
       const authVal = String(
@@ -1628,10 +1608,28 @@ export class ConnectorService {
         throw new BadRequestError(`Authentication credentials (Client ID, App Key, or Access Token) are required for ${provider.name}.`);
       }
 
-      return notVerified(provider.name);
+      return this.liveOrNotVerified(provider, parsed);
     }
 
-    return notVerified(provider.name);
+    return this.liveOrNotVerified(provider, parsed);
+  }
+
+  /**
+   * The provider's live auth check (FX-53) when one exists, otherwise NOT_VERIFIED. Fields were validated by the caller.
+   */
+  private static async liveOrNotVerified(
+    provider: ConnectorProviderDefinition,
+    parsed: { credentials: Record<string, unknown>; endpoint_url?: string },
+    details?: Record<string, unknown>
+  ): Promise<TestConnectionResult> {
+    const live = await runLiveCheck({
+      providerId: provider.id,
+      providerName: provider.name,
+      credentials: parsed.credentials,
+      endpoint: parsed.endpoint_url,
+      defaultEndpoint: provider.default_endpoint,
+    });
+    return live ? { ...live, details: { ...details, ...live.details } } : notVerified(provider.name, details);
   }
 
   /**

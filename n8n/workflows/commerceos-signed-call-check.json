@@ -1,31 +1,31 @@
 {
-  "id": "wf_mkt_01",
-  "name": "CommerceOS — Abandoned Checkout Recovery Automation",
+  "id": "wf_sig_check",
+  "name": "CommerceOS — Signed Call Check (no side effects)",
   "nodes": [
     {
       "parameters": {
         "httpMethod": "POST",
-        "path": "commerceos-abandoned-checkout",
+        "path": "commerceos-signature-check",
         "responseMode": "responseNode",
         "options": {
           "rawBody": true
         }
       },
-      "id": "abandoned-checkout-trigger",
-      "name": "Abandoned Checkout Webhook Trigger",
+      "id": "sig-webhook-trigger",
+      "name": "Signed Call Trigger",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [
         240,
         300
       ],
-      "webhookId": "commerceos-abandoned-checkout"
+      "webhookId": "commerceos-signature-check"
     },
     {
       "parameters": {
         "jsCode": "// Verifies a call from CommerceOS (FX-55, ADR-110; n8n/deployment/import.md):\n//   X-CommerceOS-Timestamp: unix seconds (at most 5 minutes old)\n//   X-CommerceOS-Signature: v1=<hex HMAC-SHA256(COMMERCEOS_N8N_WEBHOOK_SECRET, \"<timestamp>.<raw body>\")>\n// Needs COMMERCEOS_N8N_WEBHOOK_SECRET, N8N_BLOCK_ENV_ACCESS_IN_NODE=false and NODE_FUNCTION_ALLOW_BUILTIN=crypto in\n// the n8n environment, and Raw Body on the trigger. The body used downstream is the one that was signed.\nconst crypto = require('crypto');\nconst item = $input.first();\nconst headers = item.json.headers || {};\nlet secret = $vars.COMMERCEOS_N8N_WEBHOOK_SECRET;\nif (!secret) {\n  try {\n    secret = $env.COMMERCEOS_N8N_WEBHOOK_SECRET;\n  } catch (e) {\n    secret = undefined; // n8n Cloud refuses $env: use a Variable\n  }\n}\nlet reason = null;\nlet raw = null;\nif (!secret) reason = 'n8n is not configured with COMMERCEOS_N8N_WEBHOOK_SECRET';\nelse if (!item.binary || !item.binary.data) reason = 'no raw body (enable Raw Body on the trigger)';\nelse raw = (await this.helpers.getBinaryDataBuffer(0, 'data')).toString('utf8');\nconst ts = String(headers['x-commerceos-timestamp'] || '');\nconst given = String(headers['x-commerceos-signature'] || '');\nif (!reason && !/^\\d{9,11}$/.test(ts)) reason = 'missing or malformed timestamp';\nif (!reason && Math.abs(Date.now() / 1000 - Number(ts)) > 300) reason = 'timestamp too old or in the future';\nif (!reason) {\n  const expected = 'v1=' + crypto.createHmac('sha256', secret).update(ts + '.' + raw).digest('hex');\n  const a = Buffer.from(given);\n  const b = Buffer.from(expected);\n  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) reason = 'signature does not match';\n}\nlet body = null;\nif (!reason) {\n  try {\n    body = JSON.parse(raw);\n  } catch (e) {\n    reason = 'body is not JSON';\n  }\n}\nreturn [{ json: { headers, body, signature_verified: !reason, signature_error: reason } }];"
       },
-      "id": "mkt-verify-signature",
+      "id": "sig-verify-signature",
       "name": "Verify CommerceOS Signature",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -44,7 +44,7 @@
           },
           "conditions": [
             {
-              "id": "mkt-signature-ok",
+              "id": "sig-signature-ok",
               "leftValue": "={{ $json.signature_verified }}",
               "rightValue": true,
               "operator": {
@@ -57,7 +57,7 @@
         },
         "options": {}
       },
-      "id": "mkt-signature-valid",
+      "id": "sig-signature-valid",
       "name": "Signature Valid?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -69,12 +69,29 @@
     {
       "parameters": {
         "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, verified: true, execution_mode: $json.body.execution_mode, event_type: ($json.body.event || {}).type || null, idempotency_key: $json.body.idempotency_key }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "sig-respond-ok",
+      "name": "Respond Verified",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        900,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
         "responseBody": "={{ JSON.stringify({ success: false, status: 'UNAUTHORIZED', error: $json.signature_error }) }}",
         "options": {
           "responseCode": 401
         }
       },
-      "id": "mkt-respond-unauthorized",
+      "id": "sig-respond-unauthorized",
       "name": "Respond Unauthorized",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
@@ -82,116 +99,14 @@
         900,
         520
       ]
-    },
-    {
-      "parameters": {
-        "jsCode": "// Extract checkout session and consent details\nconst input = $input.first().json;\nconst event = input.event || input.body || input;\nconst payload = event.payload || {};\n\nconst customerPhone = payload.customer_phone || payload.phone;\nconst checkoutId = payload.checkout_id || event.aggregate_id;\nconst cartValue = Number(payload.subtotal || 0);\n\nif (!customerPhone) {\n  throw new Error('VALIDATION_ERROR: Missing customer_phone for abandoned checkout recovery');\n}\n\nreturn [{\n  json: {\n    tenant_id: event.tenant_id,\n    checkout_id: checkoutId,\n    customer_phone: customerPhone,\n    cart_value: cartValue,\n    correlation_id: `recov_${checkoutId}`,\n    idempotency_key: `idemp_cart_recov_${checkoutId}`,\n    notification_payload: {\n      channel: 'WhatsApp',\n      recipient: customerPhone,\n      template_code: 'ABANDONED_CART_RECOVERY',\n      body: `You left items in your cart! Complete your order now and enjoy special free delivery.`,\n      order_id: checkoutId\n    }\n  }\n}];"
-      },
-      "id": "validate-and-format-recovery",
-      "name": "Validate & Format Recovery",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1140,
-        300
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "={{ ($vars.COMMERCEOS_API_BASE_URL || $env.COMMERCEOS_API_BASE_URL) || 'http://localhost:3000' }}/api/v1/automation/actions/notifications/send",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "X-Correlation-ID",
-              "value": "={{ $json.correlation_id }}"
-            },
-            {
-              "name": "Idempotency-Key",
-              "value": "={{ $json.idempotency_key }}"
-            },
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify($json.notification_payload) }}",
-        "options": {
-          "timeout": 10000,
-          "retry": {
-            "maxRetries": 3,
-            "retryInterval": 1000
-          }
-        }
-      },
-      "id": "send-recovery-message",
-      "name": "Send Recovery Message",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        1380,
-        300
-      ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "commerceos-api-credential",
-          "name": "CommerceOS API"
-        }
-      },
-      "onError": "continueRegularOutput"
-    },
-    {
-      "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({ success: true, verified: true, message: 'Recovery notification dispatched', timestamp: new Date().toISOString() }) }}",
-        "options": {
-          "responseCode": 200
-        }
-      },
-      "id": "respond-recovery-success",
-      "name": "Respond Recovery Success",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.1,
-      "position": [
-        1620,
-        300
-      ]
     }
   ],
   "connections": {
-    "Abandoned Checkout Webhook Trigger": {
+    "Signed Call Trigger": {
       "main": [
         [
           {
             "node": "Verify CommerceOS Signature",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Validate & Format Recovery": {
-      "main": [
-        [
-          {
-            "node": "Send Recovery Message",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Send Recovery Message": {
-      "main": [
-        [
-          {
-            "node": "Respond Recovery Success",
             "type": "main",
             "index": 0
           }
@@ -213,7 +128,7 @@
       "main": [
         [
           {
-            "node": "Validate & Format Recovery",
+            "node": "Respond Verified",
             "type": "main",
             "index": 0
           }
@@ -235,20 +150,9 @@
     "saveManualExecutions": true,
     "availableInMCP": true
   },
-  "versionId": "f9988776-5544-3322-1100-eeddccbbaa99",
+  "versionId": "sig-check-v1",
   "meta": {
-    "templateCredsSetupCompleted": true,
-    "instanceId": "commerceos-prod-n8n"
+    "templateCredsSetupCompleted": true
   },
-  "tags": [
-    {
-      "name": "CommerceOS"
-    },
-    {
-      "name": "Marketing Automation"
-    },
-    {
-      "name": "Phase 6"
-    }
-  ]
+  "tags": []
 }

@@ -5,7 +5,7 @@ import os from "os";
 import { AsyncLocalStorage } from "async_hooks";
 import { logger } from "@/lib/logger";
 import { envNumber } from "@/lib/env-number";
-import { AppError } from "@/lib/errors";
+import { AppError, NotFoundError } from "@/lib/errors";
 import { mergeComputedRow } from "@/lib/computed-rows";
 import { channelOfOrder, SALES_CHANNEL_NAMES } from "@/lib/sales-channel";
 import type { SalesChannel as OrderSalesChannel } from "@/types/analytics";
@@ -5895,6 +5895,11 @@ export class CommerceDatabase {
     return event;
   }
 
+  /** Every workspace's events, in storage order (the outbound webhook outbox reads them in one pass). */
+  public getAllEvents(): readonly CommerceEvent[] {
+    return this.data.events;
+  }
+
   public getEvents(tenantId: string, limit = 50): CommerceEvent[] {
     return this.data.events
       .filter((e) => e.tenant_id === tenantId)
@@ -9269,6 +9274,64 @@ export class CommerceDatabase {
 
   public getWebhookDeliveries(subscriptionId?: string): WebhookDeliveryRecord[] {
     return this.data.webhook_deliveries.filter((d) => !subscriptionId || d.subscription_id === subscriptionId);
+  }
+
+  /** Every subscription of every organization (the delivery worker). */
+  public getAllEnterpriseWebhooks(): EnterpriseWebhookSubscription[] {
+    return this.data.enterprise_webhooks;
+  }
+
+  public findEnterpriseWebhook(orgId: string, id: string): EnterpriseWebhookSubscription | undefined {
+    return this.data.enterprise_webhooks.find((w) => w.id === id && w.organization_id === orgId);
+  }
+
+  public updateEnterpriseWebhook(orgId: string, id: string, patch: Partial<EnterpriseWebhookSubscription>): EnterpriseWebhookSubscription {
+    const idx = this.data.enterprise_webhooks.findIndex((w) => w.id === id && w.organization_id === orgId);
+    if (idx === -1) throw new NotFoundError("Webhook subscription", id);
+    const { id: _id, organization_id: _org, secret: _secret, ...rest } = patch;
+    this.data.enterprise_webhooks[idx] = { ...this.data.enterprise_webhooks[idx], ...safePatch(rest), updated_at: new Date().toISOString() };
+    this.persist(["enterprise_webhooks"]);
+    return this.data.enterprise_webhooks[idx];
+  }
+
+  public findWebhookDelivery(id: string): WebhookDeliveryRecord | undefined {
+    return this.data.webhook_deliveries.find((d) => d.id === id);
+  }
+
+  public updateWebhookDelivery(id: string, patch: Partial<WebhookDeliveryRecord>): WebhookDeliveryRecord {
+    const idx = this.data.webhook_deliveries.findIndex((d) => d.id === id);
+    if (idx === -1) throw new NotFoundError("Webhook delivery", id);
+    const { id: _id, subscription_id: _sub, organization_id: _org, ...rest } = patch;
+    this.data.webhook_deliveries[idx] = { ...this.data.webhook_deliveries[idx], ...safePatch(rest) };
+    this.persist(["webhook_deliveries"]);
+    return this.data.webhook_deliveries[idx];
+  }
+
+  /** Removes finished deliveries older than `beforeIso` (retention); returns how many. */
+  public pruneWebhookDeliveries(beforeIso: string): number {
+    const keep = this.data.webhook_deliveries.filter(
+      (d) => !((d.status === "DELIVERED" || d.status === "DEAD_LETTERED" || d.status === "NOT_SENT") && (d.created_at ?? d.delivered_at) < beforeIso)
+    );
+    const removed = this.data.webhook_deliveries.length - keep.length;
+    if (removed) {
+      this.data.webhook_deliveries = keep;
+      this.persist(["webhook_deliveries"]);
+    }
+    return removed;
+  }
+
+  /** Deliveries to attempt now: pending, retry due, or claimed by a server that stopped before finishing. */
+  public getDueWebhookDeliveries(nowIso: string, limit: number): WebhookDeliveryRecord[] {
+    const due: WebhookDeliveryRecord[] = [];
+    for (const d of this.data.webhook_deliveries) {
+      const ready =
+        d.status === "PENDING" ||
+        (d.status === "RETRY_SCHEDULED" && (!d.next_attempt_at || d.next_attempt_at <= nowIso)) ||
+        (d.status === "IN_FLIGHT" && !!d.claimed_until && d.claimed_until < nowIso);
+      if (ready) due.push(d);
+      if (due.length >= limit) break;
+    }
+    return due;
   }
 
   public createWebhookDelivery(d: WebhookDeliveryRecord): WebhookDeliveryRecord {

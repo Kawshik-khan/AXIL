@@ -82,6 +82,9 @@ const MATRIX: Array<[string, Method, PermissionKey]> = [
   ["enterprise/stores", "POST", "STORE_MANAGE"],
   ["enterprise/webhooks", "GET", "DEVELOPER_READ"],
   ["enterprise/webhooks", "POST", "DEVELOPER_MANAGE"],
+  ["enterprise/webhooks/[id]/deliveries", "GET", "DEVELOPER_READ"],
+  ["enterprise/webhooks/[id]/resume", "POST", "DEVELOPER_MANAGE"],
+  ["enterprise/webhooks/deliveries/[id]/retry", "POST", "DEVELOPER_MANAGE"],
   ["growth/attribution", "GET", "MARKETING_READ"],
   ["growth/audiences", "GET", "MARKETING_READ"],
   ["growth/audiences", "POST", "MARKETING_WRITE"],
@@ -231,8 +234,9 @@ async function main() {
   const support = await member("SUPPORT");
   const admin = await member("ADMIN");
 
-  await runTest(`the matrix covers all 140 guarded handlers`, () => {
-    assert.strictEqual(MATRIX.length, 140);
+  // 140 from Appendix A, plus the Phase 5 webhook delivery routes (FX-54)
+  await runTest(`the matrix covers all 143 guarded handlers`, () => {
+    assert.strictEqual(MATRIX.length, 143);
   });
 
   await runTest("ADMIN holds every permission the matrix requires; SUPPORT holds none of them", () => {

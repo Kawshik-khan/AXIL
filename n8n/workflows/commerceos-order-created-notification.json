@@ -7,8 +7,9 @@
         "httpMethod": "POST",
         "path": "commerceos-order-created",
         "responseMode": "responseNode",
-        "options": {},
-        "authentication": "headerAuth"
+        "options": {
+          "rawBody": true
+        }
       },
       "id": "webhook-trigger",
       "name": "Order Created Webhook Trigger",
@@ -18,13 +19,69 @@
         240,
         300
       ],
-      "webhookId": "commerceos-order-created-webhook",
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "697pQouSJHtv6x4m",
-          "name": "CommerceOS Webhook Token"
+      "webhookId": "commerceos-order-created-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Verifies a call from CommerceOS (FX-55, ADR-110; n8n/deployment/import.md):\n//   X-CommerceOS-Timestamp: unix seconds (at most 5 minutes old)\n//   X-CommerceOS-Signature: v1=<hex HMAC-SHA256(COMMERCEOS_N8N_WEBHOOK_SECRET, \"<timestamp>.<raw body>\")>\n// Needs COMMERCEOS_N8N_WEBHOOK_SECRET, N8N_BLOCK_ENV_ACCESS_IN_NODE=false and NODE_FUNCTION_ALLOW_BUILTIN=crypto in\n// the n8n environment, and Raw Body on the trigger. The body used downstream is the one that was signed.\nconst crypto = require('crypto');\nconst item = $input.first();\nconst headers = item.json.headers || {};\nlet secret = $vars.COMMERCEOS_N8N_WEBHOOK_SECRET;\nif (!secret) {\n  try {\n    secret = $env.COMMERCEOS_N8N_WEBHOOK_SECRET;\n  } catch (e) {\n    secret = undefined; // n8n Cloud refuses $env: use a Variable\n  }\n}\nlet reason = null;\nlet raw = null;\nif (!secret) reason = 'n8n is not configured with COMMERCEOS_N8N_WEBHOOK_SECRET';\nelse if (!item.binary || !item.binary.data) reason = 'no raw body (enable Raw Body on the trigger)';\nelse raw = (await this.helpers.getBinaryDataBuffer(0, 'data')).toString('utf8');\nconst ts = String(headers['x-commerceos-timestamp'] || '');\nconst given = String(headers['x-commerceos-signature'] || '');\nif (!reason && !/^\\d{9,11}$/.test(ts)) reason = 'missing or malformed timestamp';\nif (!reason && Math.abs(Date.now() / 1000 - Number(ts)) > 300) reason = 'timestamp too old or in the future';\nif (!reason) {\n  const expected = 'v1=' + crypto.createHmac('sha256', secret).update(ts + '.' + raw).digest('hex');\n  const a = Buffer.from(given);\n  const b = Buffer.from(expected);\n  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) reason = 'signature does not match';\n}\nlet body = null;\nif (!reason) {\n  try {\n    body = JSON.parse(raw);\n  } catch (e) {\n    reason = 'body is not JSON';\n  }\n}\nreturn [{ json: { headers, body, signature_verified: !reason, signature_error: reason } }];"
+      },
+      "id": "ord-verify-signature",
+      "name": "Verify CommerceOS Signature",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "ord-signature-ok",
+              "leftValue": "={{ $json.signature_verified }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ord-signature-valid",
+      "name": "Signature Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, status: 'UNAUTHORIZED', error: $json.signature_error }) }}",
+        "options": {
+          "responseCode": 401
         }
-      }
+      },
+      "id": "ord-respond-unauthorized",
+      "name": "Respond Unauthorized",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        900,
+        520
+      ]
     },
     {
       "parameters": {
@@ -35,27 +92,27 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        480,
+        1140,
         300
       ]
     },
     {
       "parameters": {
-        "jsCode": "// 2. Prepare Context, Correlation, and Authoritative Idempotency Key\nconst validated = $input.first().json;\n\n// Deterministic idempotency key per event and side-effecting task\nconst idempotencyKey = `n8n_ord_notif_${validated.event_id}`;\n\n// Format recipient and message safely without exposing unneeded PII\nconst payload = validated.payload;\nconst recipientPhone = payload.customer_phone || payload.phone || '+8801700000000';\nconst grandTotal = payload.grand_total || 0;\nconst orderNumber = payload.order_number || validated.aggregate_id;\n\nconst notificationPayload = {\n  template_code: 'ORDER_CONFIRMATION_SMS',\n  channel: 'SMS',\n  recipient: recipientPhone,\n  customer_phone: recipientPhone,\n  order_id: validated.aggregate_id,\n  order_number: orderNumber,\n  body: `Your order #${orderNumber} of BDT ${grandTotal} has been received and is being processed.`,\n  metadata: {\n    event_id: validated.event_id,\n    tenant_id: validated.tenant_id,\n    orchestrator: 'n8n'\n  }\n};\n\nreturn [{\n  json: {\n    tenant_id: validated.tenant_id,\n    correlation_id: validated.correlation_id,\n    causation_id: validated.causation_id,\n    idempotency_key: idempotencyKey,\n    notification_payload: notificationPayload\n  }\n}];"
+        "jsCode": "// 2. Prepare Context, Correlation, and Authoritative Idempotency Key\nconst validated = $input.first().json;\n\n// Deterministic idempotency key per event and side-effecting task\nconst idempotencyKey = `n8n_ord_notif_${validated.event_id}`;\n\n// Format recipient and message safely without exposing unneeded PII\nconst payload = validated.payload;\nconst recipientPhone = payload.customer_phone || payload.phone;\nif (!recipientPhone) throw new Error('VALIDATION_ERROR: the order has no customer phone; nothing to send');\nconst grandTotal = payload.grand_total || 0;\nconst orderNumber = payload.order_number || validated.aggregate_id;\n\nconst notificationPayload = {\n  template_code: 'ORDER_CONFIRMATION_SMS',\n  channel: 'SMS',\n  recipient: recipientPhone,\n  customer_phone: recipientPhone,\n  order_id: validated.aggregate_id,\n  order_number: orderNumber,\n  body: `Your order #${orderNumber} of BDT ${grandTotal} has been received and is being processed.`,\n  metadata: {\n    event_id: validated.event_id,\n    tenant_id: validated.tenant_id,\n    orchestrator: 'n8n'\n  }\n};\n\nreturn [{\n  json: {\n    tenant_id: validated.tenant_id,\n    correlation_id: validated.correlation_id,\n    causation_id: validated.causation_id,\n    idempotency_key: idempotencyKey,\n    notification_payload: notificationPayload\n  }\n}];"
       },
       "id": "prepare-context-idempotency",
       "name": "Prepare Context & Idempotency",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        720,
+        1380,
         300
       ]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.COMMERCEOS_API_BASE_URL || 'http://localhost:3000' }}/api/v1/automation/actions/notifications/send",
+        "url": "={{ ($vars.COMMERCEOS_API_BASE_URL || $env.COMMERCEOS_API_BASE_URL) || 'http://localhost:3000' }}/api/v1/automation/actions/notifications/send",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
@@ -99,7 +156,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        960,
+        1620,
         300
       ],
       "credentials": {
@@ -107,7 +164,8 @@
           "id": "commerceos-api-credential",
           "name": "CommerceOS API"
         }
-      }
+      },
+      "onError": "continueRegularOutput"
     },
     {
       "parameters": {
@@ -136,7 +194,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        1200,
+        1860,
         300
       ]
     },
@@ -153,7 +211,7 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
-        1440,
+        2100,
         200
       ]
     },
@@ -170,7 +228,7 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
-        1440,
+        2100,
         420
       ]
     }
@@ -180,7 +238,7 @@
       "main": [
         [
           {
-            "node": "Validate Event Envelope",
+            "node": "Verify CommerceOS Signature",
             "type": "main",
             "index": 0
           }
@@ -237,13 +295,43 @@
           }
         ]
       ]
+    },
+    "Verify CommerceOS Signature": {
+      "main": [
+        [
+          {
+            "node": "Signature Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Signature Valid?": {
+      "main": [
+        [
+          {
+            "node": "Validate Event Envelope",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Unauthorized",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": false,
   "settings": {
     "executionOrder": "v1",
     "saveExecutionProgress": true,
-    "saveManualExecutions": true
+    "saveManualExecutions": true,
+    "availableInMCP": true
   },
   "versionId": "b1a78e49-81bc-4dc2-b3e1-778899001122",
   "meta": {

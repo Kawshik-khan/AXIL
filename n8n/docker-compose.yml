@@ -1,3 +1,6 @@
+# Local n8n for CommerceOS. The simplest route is `node n8n/deployment/setup-local-n8n.mjs`, which also imports the
+# credential and workflows (see n8n/deployment/import.md). With compose instead: create n8n/.env first (that script
+# writes it; it holds COMMERCEOS_N8N_WEBHOOK_SECRET and is git-ignored), then `docker compose up -d` here.
 services:
   n8n:
     image: n8nio/n8n:latest
@@ -5,6 +8,8 @@ services:
     restart: unless-stopped
     ports:
       - "5678:5678"
+    env_file:
+      - .env
     environment:
       - N8N_PORT=5678
       - N8N_PROTOCOL=http
@@ -17,7 +22,9 @@ services:
       - EXECUTIONS_DATA_MAX_AGE=168
       - EXECUTIONS_DATA_PRUNE_MAX_COUNT=50000
       - N8N_LOG_LEVEL=info
+      # The Code nodes read COMMERCEOS_N8N_WEBHOOK_SECRET and compute an HMAC to verify calls from CommerceOS (FX-55)
       - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+      - NODE_FUNCTION_ALLOW_BUILTIN=crypto
     volumes:
       - n8n_data:/home/node/.n8n
       - ./workflows:/n8n/workflows:ro

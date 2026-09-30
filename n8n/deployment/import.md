@@ -124,6 +124,90 @@ Once verification passes:
 
 ---
 
+## Local Docker n8n in one step
+
+```bash
+node n8n/deployment/setup-local-n8n.mjs
+```
+
+For a container named `n8n` on the volume `n8n_data` (flags `--container`, `--volume`, `--image` change that). It
+creates `n8n/.env` (git-ignored) with a new `COMMERCEOS_N8N_WEBHOOK_SECRET`, stops n8n (the first time it keeps the old
+container as `n8n-before-commerceos-<time>` for rollback), imports the `CommerceOS API` credential and every workflow in
+`n8n/workflows/` through a one-off container on the same volume, publishes the workflows CommerceOS calls
+(`wf_sig_check`, `wf_ord_01`, `wf_inv_01`, `wf_mkt_01`), and starts n8n again with the environment they need. Run it
+again after changing a workflow or `n8n/.env`.
+
+Then, in CommerceOS's `.env.local` (the script never touches it):
+
+```
+N8N_HOST=http://localhost:5678
+COMMERCEOS_N8N_WEBHOOK_SECRET=<the same value as in n8n/.env>
+```
+
+For the workflows' calls back into CommerceOS, create a service token (Settings → Service Tokens, scopes as in the
+table above), put it in `n8n/.env` as `COMMERCEOS_SERVICE_TOKEN=cos_svc_…` and run the script again (until then the
+credential holds a placeholder and those calls get 401). The low-stock alert also needs
+`COMMERCEOS_OPERATOR_ALERT_PHONE` in `n8n/.env`.
+
+Check it: `POST http://localhost:5678/webhook/commerceos-signature-check` without a signature answers 401; the
+`CommerceOS — Signed Call Check` workflow answers 200 only to a correctly signed call and has no side effects.
+
+## n8n Cloud
+
+n8n Cloud has no environment variables for workflows. The workflows read every setting as
+`$vars.NAME || $env.NAME`, so on Cloud create these as **Variables** (Overview → Variables; Pro and Enterprise plans,
+and the 14-day trial):
+
+| Variable | Value |
+|---|---|
+| `COMMERCEOS_N8N_WEBHOOK_SECRET` | The same value as `COMMERCEOS_N8N_WEBHOOK_SECRET` on the CommerceOS server |
+| `COMMERCEOS_API_BASE_URL` | CommerceOS's public https address (Cloud can't reach a local server) |
+| `COMMERCEOS_OPERATOR_ALERT_PHONE` | Who gets the low-stock SMS |
+
+`crypto` is available in Cloud Code nodes without configuration. On CommerceOS set
+`N8N_HOST=https://<your-instance>.app.n8n.cloud`. Import the workflows (Workflows → Import from File, or through the n8n
+MCP server), create the `CommerceOS API` credential with a service token and link it on the HTTP nodes, publish the
+workflows CommerceOS calls, and check that an unsigned `POST …/webhook/commerceos-signature-check` answers 401. On the
+Starter plan there are no Variables: self-host n8n for production instead.
+
+## Calls from CommerceOS to n8n are signed (Phase 5, FX-55)
+
+When `COMMERCEOS_N8N_WEBHOOK_SECRET` is set on the CommerceOS server, every call to an n8n webhook carries:
+
+| Header | Value |
+|---|---|
+| `X-CommerceOS-Timestamp` | Unix time in seconds |
+| `X-CommerceOS-Signature` | `v1=` + hex HMAC-SHA256 of `<timestamp>.<raw body>`, keyed with `COMMERCEOS_N8N_WEBHOOK_SECRET` |
+
+The three workflows CommerceOS triggers (order created, low stock, abandoned checkout) and `CommerceOS — Signed Call
+Check` already do this: **Raw Body** is on in their trigger, then a `Verify CommerceOS Signature` Code node, a
+`Signature Valid?` check and a `Respond Unauthorized` (401) branch. Copy those three nodes into a new workflow. The core
+of the Code node (n8n 2.x; it needs `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` and `NODE_FUNCTION_ALLOW_BUILTIN=crypto`):
+
+```js
+const crypto = require('crypto');
+const item = $input.first();
+const headers = item.json.headers || {};
+// Raw Body puts the exact bytes in the binary property "data"; a re-serialized body would not match
+const raw = (await this.helpers.getBinaryDataBuffer(0, 'data')).toString('utf8');
+const ts = String(headers['x-commerceos-timestamp'] || '');
+const expected = 'v1=' + crypto.createHmac('sha256', $env.COMMERCEOS_N8N_WEBHOOK_SECRET).update(ts + '.' + raw).digest('hex');
+const given = String(headers['x-commerceos-signature'] || '');
+const fresh = /^\d{9,11}$/.test(ts) && Math.abs(Date.now() / 1000 - Number(ts)) <= 300;
+const ok = fresh && given.length === expected.length && crypto.timingSafeEqual(Buffer.from(given), Buffer.from(expected));
+return [{ json: { headers, body: ok ? JSON.parse(raw) : null, signature_verified: ok } }];
+```
+
+Use `tenant_id` and `execution_mode` from the signed body, not from the `X-Tenant-ID` / `X-Execution-Mode` headers
+(headers are not signed). Without the secret, a production server (`NODE_ENV=production`) refuses to call n8n; a
+development server calls it unsigned and logs `n8n.calls_unsigned` once.
+
+**Where n8n runs.** `N8N_HOST` is platform configuration, so a local Docker n8n (`http://localhost:5678`) works as is.
+An n8n instance stored in the app (not only the environment) must be a public https URL, or be listed in
+`OUTBOUND_ALLOWED_PRIVATE_HOSTS` (SSRF guard, audit M17).
+
+---
+
 ## Courier and payment callbacks into CommerceOS (changed in Phase 0)
 
 `commerceos-courier-status-sync.json` and `commerceos-payment-verification.json` relay provider callbacks to

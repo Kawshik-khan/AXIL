@@ -12,6 +12,8 @@ import { enterpriseReportingService } from "@/domains/enterprise/services/enterp
 import { integrationHubService, toPublicInstallation } from "@/domains/enterprise/services/integration-hub.service";
 import { developerPlatformService } from "@/domains/enterprise/services/developer-platform.service";
 import { webhookPlatformService } from "@/domains/enterprise/services/webhook-platform.service";
+import { setOutboundLookupForTesting } from "@/lib/outbound-http";
+import { signOutbound, verifyOutboundSignature } from "@/lib/outbound-signing";
 import { dataGovernanceService } from "@/domains/enterprise/services/data-governance.service";
 import { dataQualityService } from "@/domains/enterprise/services/data-quality.service";
 import { enterpriseCustomerIdentityService } from "@/domains/enterprise/services/enterprise-customer-identity.service";
@@ -407,28 +409,22 @@ export async function runEnterpriseTests() {
   // -------------------------------------------------------------
   // 9. Enterprise Webhook Platform HMAC Signing
   // -------------------------------------------------------------
-  await runTest("9.1 Webhook Platform: HMAC-SHA256 Signature Verification & Dispatch Simulation", async () => {
-    const sub = webhookPlatformService.subscribe(orgId, {
+  await runTest("9.1 Webhook Platform: signed deliveries are queued for real sending (FX-54)", async () => {
+    setOutboundLookupForTesting(async () => [{ address: "93.184.216.34", family: 4 }]); // no DNS in tests
+    const sub = await webhookPlatformService.subscribe(orgId, {
       targetUrl: "https://warehouse-erp.apex.com/webhook",
       eventTypes: ["order.created", "inventory.low_stock"],
     });
 
     assert.strictEqual(sub.target_url, "https://warehouse-erp.apex.com/webhook");
 
+    // The signature receivers check: HMAC-SHA256 over "<timestamp>.<body>"
     const payload = JSON.stringify({ event: "order.created", order_id: "ord_9901", total: 4500 });
-    const signature = webhookPlatformService.computeSignature(payload, sub.secret);
-
-    assert(signature.length === 64, "SHA-256 signature should be 64 hex characters");
-
-    const isValid = webhookPlatformService.verifySignature(payload, sub.secret, signature);
-    assert.strictEqual(isValid, true, "Signature must verify successfully");
-
-    const isTampered = webhookPlatformService.verifySignature(
-      JSON.stringify({ event: "order.created", order_id: "ord_9901", total: 99999 }),
-      sub.secret,
-      signature
-    );
-    assert.strictEqual(isTampered, false, "Tampered payload must fail signature verification");
+    const headers = signOutbound(sub.secret, payload);
+    assert.ok(/^v1=[0-9a-f]{64}$/.test(headers["X-CommerceOS-Signature"]));
+    assert.strictEqual(verifyOutboundSignature(sub.secret, payload, headers["X-CommerceOS-Timestamp"], headers["X-CommerceOS-Signature"]), true);
+    const tampered = JSON.stringify({ event: "order.created", order_id: "ord_9901", total: 99999 });
+    assert.strictEqual(verifyOutboundSignature(sub.secret, tampered, headers["X-CommerceOS-Timestamp"], headers["X-CommerceOS-Signature"]), false);
 
     const dispatchRecords = await webhookPlatformService.dispatchEvent({
       organizationId: orgId,
@@ -436,11 +432,11 @@ export async function runEnterpriseTests() {
       payload: { order_id: "ord_9901", amount: 4500 },
     });
     assert(dispatchRecords.length >= 1);
-    // Signed and recorded, but no HTTP delivery exists: never "DELIVERED" (FX-31)
-    assert.strictEqual(dispatchRecords[0].status, "NOT_SENT");
+    // Queued for the delivery worker: nothing claims it was delivered before a receiver answered
+    assert.strictEqual(dispatchRecords[0].status, "PENDING");
     assert.strictEqual(dispatchRecords[0].http_status, undefined);
     assert.strictEqual(dispatchRecords[0].duration_ms, null);
-    assert.strictEqual(dispatchRecords[0].signature.length, 64);
+    setOutboundLookupForTesting(null);
   });
 
   // -------------------------------------------------------------

@@ -450,8 +450,13 @@ export interface EnterpriseWebhookSubscription {
   secret: string; // HMAC secret
   event_types: string[]; // e.g. ["order.created", "inventory.low_stock", "incident.created"]
   status: "ACTIVE" | "PAUSED" | "DISABLED";
+  /** Attempts per delivery before it is dead-lettered. */
   retry_count_max: number;
   failed_consecutive_deliveries: number;
+  /** Why the subscription was paused (too many failures in a row); cleared on resume. */
+  paused_reason?: string;
+  /** Events of the owning workspace up to this time have been queued for this subscription (outbox position). */
+  events_queued_through?: string;
   created_at: string;
   updated_at: string;
 }
@@ -468,10 +473,23 @@ export interface WebhookDeliveryRecord {
   /** Measured request time; null when no request was made. */
   duration_ms: number | null;
   attempt_number: number;
-  /** NOT_SENT: no HTTP delivery exists yet, so the event was signed and recorded but not sent (FX-31). */
-  status: "DELIVERED" | "FAILED" | "RETRY_SCHEDULED" | "DEAD_LETTERED" | "NOT_SENT";
+  /**
+   * PENDING → IN_FLIGHT → DELIVERED, or RETRY_SCHEDULED (next_attempt_at) and finally DEAD_LETTERED (FX-54).
+   * NOT_SENT: recorded before real delivery existed (FX-31), never sent.
+   */
+  status: "PENDING" | "IN_FLIGHT" | "DELIVERED" | "FAILED" | "RETRY_SCHEDULED" | "DEAD_LETTERED" | "NOT_SENT";
   response_body?: string;
+  /** Last attempt's time (for DELIVERED: when the receiver accepted it). */
   delivered_at: string;
+  organization_id?: string;
+  /** The commerce event this delivery carries (one delivery per subscription and event). */
+  source_event_id?: string;
+  next_attempt_at?: string;
+  /** A server is sending it until this time; after that another server may take it over. */
+  claimed_until?: string;
+  /** Why the last attempt failed: HTTP_<status>, OUTBOUND_TIMEOUT, OUTBOUND_UNREACHABLE, OUTBOUND_URL_BLOCKED. */
+  last_error?: string;
+  created_at?: string;
 }
 
 // ============================================================

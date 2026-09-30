@@ -13,23 +13,29 @@
       "name": "Facebook Comment Webhook Trigger",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [240, 300],
+      "position": [
+        240,
+        300
+      ],
       "webhookId": "commerceos-facebook-comment-webhook"
     },
     {
       "parameters": {
-        "jsCode": "// Extract and analyze public Facebook post comment\nconst input = $input.first().json;\nconst body = input.body || input;\n\nconst commentId = body.comment_id || `cmt_${Date.now()}`;\nconst postId = body.post_id || 'post_default_01';\nconst commentText = (body.comment_text || body.message || body.text || '').trim();\nconst senderName = body.sender_name || body.from?.name || 'Customer';\nconst senderId = body.sender_id || body.from?.id || `psid_${Date.now()}`;\nconst customerPhone = body.customer_phone || '+8801700000000';\n\n// Intent matching for Bengali and Banglish e-commerce price inquiries\nconst lower = commentText.toLowerCase();\nconst isPriceInquiry = lower.includes('price') || lower.includes('dam') || lower.includes('koto') || lower.includes('কত') || lower.includes('available');\n\nconst publicReply = `ধন্যবাদ ${senderName}! আমরা ইনবক্সে পণ্যের দাম এবং সাইজ চার্ট পাঠিয়ে দিয়েছি। অনুগ্রহ করে আপনার ইনবক্স চেক করুন।`;\n\nreturn [{\n  json: {\n    comment_id: commentId,\n    post_id: postId,\n    sender_id: senderId,\n    sender_name: senderName,\n    comment_text: commentText,\n    is_buying_intent: isPriceInquiry,\n    public_reply: publicReply,\n    correlation_id: `cmt_lead_${commentId}`,\n    idempotency_key: `idemp_cmt_${commentId}`,\n    tenant_id: body.tenant_id || 'ten_default_dhaka',\n    notification_payload: {\n      channel: 'SMS',\n      recipient: customerPhone,\n      template_code: 'FACEBOOK_COMMENT_LEAD_NUDGE',\n      message: `Hello ${senderName}! Thanks for your inquiry on Facebook. View details and complete order: https://commerceos.io/p/${postId}`\n    }\n  }\n}];"
+        "jsCode": "// Extract and analyze public Facebook post comment\nconst input = $input.first().json;\nconst body = input.body || input;\n\nconst commentId = body.comment_id || `cmt_${Date.now()}`;\nconst postId = body.post_id || 'post_default_01';\nconst commentText = (body.comment_text || body.message || body.text || '').trim();\nconst senderName = body.sender_name || body.from?.name || 'Customer';\nconst senderId = body.sender_id || body.from?.id || `psid_${Date.now()}`;\nconst customerPhone = body.customer_phone;\nif (!customerPhone) throw new Error('VALIDATION_ERROR: the comment has no customer phone; nothing to send');\n\n// Intent matching for Bengali and Banglish e-commerce price inquiries\nconst lower = commentText.toLowerCase();\nconst isPriceInquiry = lower.includes('price') || lower.includes('dam') || lower.includes('koto') || lower.includes('কত') || lower.includes('available');\n\nconst publicReply = `ধন্যবাদ ${senderName}! আমরা ইনবক্সে পণ্যের দাম এবং সাইজ চার্ট পাঠিয়ে দিয়েছি। অনুগ্রহ করে আপনার ইনবক্স চেক করুন।`;\n\nreturn [{\n  json: {\n    comment_id: commentId,\n    post_id: postId,\n    sender_id: senderId,\n    sender_name: senderName,\n    comment_text: commentText,\n    is_buying_intent: isPriceInquiry,\n    public_reply: publicReply,\n    correlation_id: `cmt_lead_${commentId}`,\n    idempotency_key: `idemp_cmt_${commentId}`,\n    tenant_id: body.tenant_id || 'ten_default_dhaka',\n    notification_payload: {\n      channel: 'SMS',\n      recipient: customerPhone,\n      template_code: 'FACEBOOK_COMMENT_LEAD_NUDGE',\n      message: `Hello ${senderName}! Thanks for your inquiry on Facebook. View details and complete order: https://commerceos.io/p/${postId}`\n    }\n  }\n}];"
       },
       "id": "analyze-comment-intent",
       "name": "Analyze Comment Intent & Prepare Nudge",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [480, 300]
+      "position": [
+        480,
+        300
+      ]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.COMMERCEOS_API_BASE_URL || 'http://localhost:3000' }}/api/v1/automation/actions/notifications/send",
+        "url": "={{ ($vars.COMMERCEOS_API_BASE_URL || $env.COMMERCEOS_API_BASE_URL) || 'http://localhost:3000' }}/api/v1/automation/actions/notifications/send",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
@@ -68,7 +74,10 @@
       "name": "Dispatch Private Lead Nudge",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [720, 300],
+      "position": [
+        720,
+        300
+      ],
       "credentials": {
         "httpHeaderAuth": {
           "id": "commerceos-api-credential",
@@ -102,7 +111,10 @@
       "name": "Check Lead Result",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [960, 300]
+      "position": [
+        960,
+        300
+      ]
     },
     {
       "parameters": {
@@ -116,7 +128,10 @@
       "name": "Respond Comment Success",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [1200, 200]
+      "position": [
+        1200,
+        200
+      ]
     },
     {
       "parameters": {
@@ -130,7 +145,10 @@
       "name": "Respond Comment Failure",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [1200, 420]
+      "position": [
+        1200,
+        420
+      ]
     }
   ],
   "connections": {
