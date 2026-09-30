@@ -147,7 +147,8 @@
   "settings": {
     "executionOrder": "v1",
     "saveExecutionProgress": true,
-    "saveManualExecutions": true
+    "saveManualExecutions": true,
+    "availableInMCP": true
   },
   "versionId": "sig-check-v1",
   "meta": {

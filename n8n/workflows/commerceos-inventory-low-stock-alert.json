@@ -232,7 +232,8 @@
   "settings": {
     "executionOrder": "v1",
     "saveExecutionProgress": true,
-    "saveManualExecutions": true
+    "saveManualExecutions": true,
+    "availableInMCP": true
   },
   "versionId": "e1122334-4455-6677-8899-aabbccddeeff",
   "meta": {
