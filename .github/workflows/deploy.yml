@@ -31,8 +31,20 @@ jobs:
         with:
           node-version-file: .nvmrc
       - name: Deploy this commit
-        run: curl --fail-with-body -sS -X POST "${{ secrets.STAGING_DEPLOY_HOOK_URL }}&ref=${{ github.event.workflow_run.head_sha }}" >/dev/null
+        id: deploy
+        env:
+          HOOK_URL: ${{ secrets.STAGING_DEPLOY_HOOK_URL }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          if [ -z "$HOOK_URL" ]; then
+            echo "::warning::STAGING_DEPLOY_HOOK_URL is not set, so staging was NOT deployed. Add it under Settings, Secrets and variables, Actions (docs/ci-setup.md)."
+            echo "deployed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          curl --fail-with-body -sS -X POST "${HOOK_URL}&ref=${SHA}" >/dev/null
+          echo "deployed=true" >> "$GITHUB_OUTPUT"
       - name: Smoke test
+        if: steps.deploy.outputs.deployed == 'true'
         run: node scripts/smoke-deploy.mjs
         env:
           BASE_URL: ${{ vars.STAGING_BASE_URL }}
@@ -55,8 +67,20 @@ jobs:
         with:
           node-version-file: .nvmrc
       - name: Deploy this commit
-        run: curl --fail-with-body -sS -X POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}&ref=${{ github.event.workflow_run.head_sha }}" >/dev/null
+        id: deploy
+        env:
+          HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          if [ -z "$HOOK_URL" ]; then
+            echo "::warning::RENDER_DEPLOY_HOOK_URL is not set, so production was NOT deployed. Add it under Settings, Secrets and variables, Actions (docs/ci-setup.md)."
+            echo "deployed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          curl --fail-with-body -sS -X POST "${HOOK_URL}&ref=${SHA}" >/dev/null
+          echo "deployed=true" >> "$GITHUB_OUTPUT"
       - name: Smoke test
+        if: steps.deploy.outputs.deployed == 'true'
         run: node scripts/smoke-deploy.mjs
         env:
           BASE_URL: ${{ vars.PRODUCTION_BASE_URL }}
