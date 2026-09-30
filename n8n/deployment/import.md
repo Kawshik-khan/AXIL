@@ -12,6 +12,22 @@ This guide details how to import, configure, and activate the production workflo
 
 ---
 
+## Authenticating calls from CommerceOS (choose per n8n plan)
+
+The four CommerceOS-triggered workflows (`signed-call-check`, `order-created-notification`, `inventory-low-stock-alert`,
+`abandoned-checkout-recovery`) authenticate every call with two independent layers:
+
+1. **Header Auth token (works on every n8n plan, including n8n Cloud without Variables).** Create a **Header Auth**
+   credential named `CommerceOS Webhook Token` (header name `X-CommerceOS-Token`, value = a long random token) and set the same
+   token as `COMMERCEOS_N8N_WEBHOOK_TOKEN` on the CommerceOS server. The webhook triggers reference this credential; n8n
+   answers 403 to any call without the token, before any node runs. After importing, re-select the credential on each trigger if
+   n8n does not map it by name. (Use the plain **Header Auth** type, not "Multiple Headers Auth".)
+2. **HMAC signature (optional, needs a secret n8n can read).** If you set `COMMERCEOS_N8N_WEBHOOK_SECRET` on the CommerceOS server
+   and the same value in n8n (a Variable, or the environment on self-hosted n8n), the workflow's *Verify CommerceOS Signature*
+   node also requires a valid `X-CommerceOS-Signature`. With no secret in n8n that check is skipped and the token alone applies.
+
+CommerceOS sends whichever of the two it is configured with, both when both are set, and refuses to call n8n in production if neither is set.
+
 ## Step 1: Configure Credentials in n8n
 
 Before importing or activating workflows, configure the shared header credential in n8n:

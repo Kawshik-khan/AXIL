@@ -9,7 +9,8 @@
         "responseMode": "responseNode",
         "options": {
           "rawBody": true
-        }
+        },
+        "authentication": "headerAuth"
       },
       "id": "sig-webhook-trigger",
       "name": "Signed Call Trigger",
@@ -19,11 +20,17 @@
         240,
         300
       ],
-      "webhookId": "commerceos-signature-check"
+      "webhookId": "commerceos-signature-check",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "697pQouSJHtv6x4m",
+          "name": "CommerceOS Webhook Token"
+        }
+      }
     },
     {
       "parameters": {
-        "jsCode": "// Verifies a call from CommerceOS (FX-55, ADR-110; n8n/deployment/import.md):\n//   X-CommerceOS-Timestamp: unix seconds (at most 5 minutes old)\n//   X-CommerceOS-Signature: v1=<hex HMAC-SHA256(COMMERCEOS_N8N_WEBHOOK_SECRET, \"<timestamp>.<raw body>\")>\n// Needs COMMERCEOS_N8N_WEBHOOK_SECRET, N8N_BLOCK_ENV_ACCESS_IN_NODE=false and NODE_FUNCTION_ALLOW_BUILTIN=crypto in\n// the n8n environment, and Raw Body on the trigger. The body used downstream is the one that was signed.\nconst crypto = require('crypto');\nconst item = $input.first();\nconst headers = item.json.headers || {};\nlet secret = $vars.COMMERCEOS_N8N_WEBHOOK_SECRET;\nif (!secret) {\n  try {\n    secret = $env.COMMERCEOS_N8N_WEBHOOK_SECRET;\n  } catch (e) {\n    secret = undefined; // n8n Cloud refuses $env: use a Variable\n  }\n}\nlet reason = null;\nlet raw = null;\nif (!secret) reason = 'n8n is not configured with COMMERCEOS_N8N_WEBHOOK_SECRET';\nelse if (!item.binary || !item.binary.data) reason = 'no raw body (enable Raw Body on the trigger)';\nelse raw = (await this.helpers.getBinaryDataBuffer(0, 'data')).toString('utf8');\nconst ts = String(headers['x-commerceos-timestamp'] || '');\nconst given = String(headers['x-commerceos-signature'] || '');\nif (!reason && !/^\\d{9,11}$/.test(ts)) reason = 'missing or malformed timestamp';\nif (!reason && Math.abs(Date.now() / 1000 - Number(ts)) > 300) reason = 'timestamp too old or in the future';\nif (!reason) {\n  const expected = 'v1=' + crypto.createHmac('sha256', secret).update(ts + '.' + raw).digest('hex');\n  const a = Buffer.from(given);\n  const b = Buffer.from(expected);\n  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) reason = 'signature does not match';\n}\nlet body = null;\nif (!reason) {\n  try {\n    body = JSON.parse(raw);\n  } catch (e) {\n    reason = 'body is not JSON';\n  }\n}\nreturn [{ json: { headers, body, signature_verified: !reason, signature_error: reason } }];"
+        "jsCode": "// Verifies a call from CommerceOS. Two layers:\n// 1. Header Auth on the webhook trigger (X-CommerceOS-Token, credential \"CommerceOS Webhook Token\"): n8n answers 403\n//    before this node runs unless the token matches. Works on every n8n plan (no Variables needed).\n// 2. HMAC, OPTIONAL: enforced only when COMMERCEOS_N8N_WEBHOOK_SECRET is configured (an n8n Variable, or the environment\n//    on self-hosted n8n with N8N_BLOCK_ENV_ACCESS_IN_NODE=false and NODE_FUNCTION_ALLOW_BUILTIN=crypto). Then the call must\n//    carry X-CommerceOS-Timestamp (unix seconds, at most 5 minutes old) and\n//    X-CommerceOS-Signature: v1=<hex HMAC-SHA256(secret, \"<timestamp>.<raw body>\")>, and Raw Body must be on the trigger.\n// With no secret configured, the token alone authenticates the call and the parsed body is used.\nconst crypto = require('crypto');\nconst item = $input.first();\nconst headers = item.json.headers || {};\nlet secret;\ntry {\n  secret = $vars.COMMERCEOS_N8N_WEBHOOK_SECRET;\n} catch (e) {\n  secret = undefined; // Variables are not available on this plan\n}\nif (!secret) {\n  try {\n    secret = $env.COMMERCEOS_N8N_WEBHOOK_SECRET;\n  } catch (e) {\n    secret = undefined; // n8n Cloud refuses $env\n  }\n}\nlet reason = null;\nlet body = null;\nif (secret) {\n  let raw = null;\n  if (!item.binary || !item.binary.data) reason = 'no raw body (enable Raw Body on the trigger)';\n  else raw = (await this.helpers.getBinaryDataBuffer(0, 'data')).toString('utf8');\n  const ts = String(headers['x-commerceos-timestamp'] || '');\n  const given = String(headers['x-commerceos-signature'] || '');\n  if (!reason && !/^\\d{9,11}$/.test(ts)) reason = 'missing or malformed timestamp';\n  if (!reason && Math.abs(Date.now() / 1000 - Number(ts)) > 300) reason = 'timestamp too old or in the future';\n  if (!reason) {\n    const expected = 'v1=' + crypto.createHmac('sha256', secret).update(ts + '.' + raw).digest('hex');\n    const a = Buffer.from(given);\n    const b = Buffer.from(expected);\n    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) reason = 'signature does not match';\n  }\n  if (!reason) {\n    try {\n      body = JSON.parse(raw);\n    } catch (e) {\n      reason = 'body is not JSON';\n    }\n  }\n} else {\n  body = item.json.body;\n  if (typeof body === 'string') {\n    try {\n      body = JSON.parse(body);\n    } catch (e) {\n      body = null;\n    }\n  }\n  if (!body || typeof body !== 'object') reason = 'body is not JSON';\n}\nreturn [{ json: { headers, body: reason ? null : body, signature_verified: !reason, signature_error: reason } }];"
       },
       "id": "sig-verify-signature",
       "name": "Verify CommerceOS Signature",

@@ -49,6 +49,7 @@ import { toolRegistry } from "@/domains/ai/tools/tool-registry";
 import { ContextBuilder } from "@/domains/ai/context/context-builder";
 import { PricingService } from "@/domains/pricing/pricing.service";
 import { setOutboundLookupForTesting, setOutboundTransportForTesting } from "@/lib/outbound-http";
+import { verifyOutboundSignature } from "@/lib/outbound-signing";
 
 const ANSI_GREEN = "\x1b[32m";
 const ANSI_RED = "\x1b[31m";
@@ -455,6 +456,67 @@ async function main() {
         if (v === undefined) delete process.env[k];
         else process.env[k] = v;
       }
+    }
+  });
+
+  await runTest("n8n: with both COMMERCEOS_N8N_WEBHOOK_TOKEN and COMMERCEOS_N8N_WEBHOOK_SECRET set, a call carries the token AND a valid signature", async () => {
+    const saved = { host: process.env.N8N_HOST, token: process.env.COMMERCEOS_N8N_WEBHOOK_TOKEN, secret: process.env.COMMERCEOS_N8N_WEBHOOK_SECRET };
+    process.env.N8N_HOST = "http://n8n.both.p3:5678";
+    process.env.COMMERCEOS_N8N_WEBHOOK_TOKEN = "p3-token-0123456789abcdef";
+    process.env.COMMERCEOS_N8N_WEBHOOK_SECRET = "p3-secret-0123456789abcdef0123456789";
+    let seen: { headers: Record<string, string>; body: string } | null = null;
+    setOutboundTransportForTesting(async (_url, options) => {
+      seen = { headers: options.headers ?? {}, body: String(options.body) };
+      return { status: 200, headers: {}, body: "{}", truncated: false, durationMs: 1 };
+    });
+    try {
+      await invokeN8n();
+      assert.ok(seen, "n8n must be called");
+      const { headers, body } = seen as { headers: Record<string, string>; body: string };
+      assert.strictEqual(headers["X-CommerceOS-Token"], "p3-token-0123456789abcdef");
+      assert.ok(verifyOutboundSignature("p3-secret-0123456789abcdef0123456789", body, String(headers["X-CommerceOS-Timestamp"] ?? headers["x-commerceos-timestamp"]), String(headers["X-CommerceOS-Signature"] ?? headers["x-commerceos-signature"])), "signature must verify");
+      // secret only: no token header
+      delete process.env.COMMERCEOS_N8N_WEBHOOK_TOKEN;
+      seen = null;
+      await invokeN8n();
+      assert.strictEqual((seen as unknown as { headers: Record<string, string> }).headers["X-CommerceOS-Token"], undefined);
+    } finally {
+      setOutboundTransportForTesting(null);
+      for (const [k, v] of [["N8N_HOST", saved.host], ["COMMERCEOS_N8N_WEBHOOK_TOKEN", saved.token], ["COMMERCEOS_N8N_WEBHOOK_SECRET", saved.secret]] as const) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  });
+
+  await runTest("n8n workflows: Header Auth on the trigger; the Verify node needs the HMAC only when a secret is configured", async () => {
+    const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as new (...args: string[]) => (...a: unknown[]) => Promise<Array<{ json: Record<string, unknown> }>>;
+    const secret = "p3-hmac-secret-0123456789abcdef";
+    const raw = JSON.stringify({ execution_mode: "PRODUCTION", idempotency_key: "k1", event: { type: "order.created" } });
+    const ts = String(Math.floor(Date.now() / 1000));
+    const sig = "v1=" + crypto.createHmac("sha256", secret).update(`${ts}.${raw}`).digest("hex");
+    for (const file of ["signed-call-check", "order-created-notification", "inventory-low-stock-alert", "abandoned-checkout-recovery"]) {
+      const wf = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "n8n", "workflows", `commerceos-${file}.json`), "utf8")) as {
+        nodes: Array<{ name: string; type: string; parameters: Record<string, unknown>; credentials?: Record<string, unknown> }>;
+      };
+      const trigger = wf.nodes.find((n) => n.type === "n8n-nodes-base.webhook");
+      assert.strictEqual(trigger?.parameters.authentication, "headerAuth", `${file}: trigger must use Header Auth`);
+      assert.ok(trigger?.credentials?.httpHeaderAuth, `${file}: trigger must reference the Header Auth credential`);
+      const code = String(wf.nodes.find((n) => n.name === "Verify CommerceOS Signature")?.parameters.jsCode);
+      const run = (vars: Record<string, string>, headers: Record<string, string>, withBinary: boolean) =>
+        new AsyncFunction("$input", "$vars", "$env", "require", code).call(
+          { helpers: { getBinaryDataBuffer: async () => Buffer.from(raw) } },
+          { first: () => ({ json: { headers, body: JSON.parse(raw) }, binary: withBinary ? { data: {} } : undefined }) },
+          vars, {}, require,
+        );
+      // no secret configured: the token (checked by the trigger) is enough
+      assert.strictEqual((await run({}, {}, false))[0].json.signature_verified, true, `${file}: no secret, body accepted`);
+      // secret configured: an unsigned call is refused, a signed one accepted
+      assert.strictEqual((await run({ COMMERCEOS_N8N_WEBHOOK_SECRET: secret }, {}, true))[0].json.signature_verified, false, `${file}: secret set, unsigned refused`);
+      const ok = await run({ COMMERCEOS_N8N_WEBHOOK_SECRET: secret }, { "x-commerceos-timestamp": ts, "x-commerceos-signature": sig }, true);
+      assert.strictEqual(ok[0].json.signature_verified, true, `${file}: secret set, signed accepted`);
+      const bad = await run({ COMMERCEOS_N8N_WEBHOOK_SECRET: secret }, { "x-commerceos-timestamp": ts, "x-commerceos-signature": sig.slice(0, -2) + "00" }, true);
+      assert.strictEqual(bad[0].json.signature_verified, false, `${file}: secret set, bad signature refused`);
     }
   });
 
