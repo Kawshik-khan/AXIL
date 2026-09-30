@@ -104,7 +104,8 @@ function logRequest(request: unknown, status: number, startedAt: number): void {
   if (path.startsWith("/health")) return;
   logger.info("http.request", {
     method: request.method,
-    path: path.split("/").slice(0, 5).join("/"),
+    // split("/") starts with an empty string, so four pieces are "", "api", "v1" and the resource
+    path: path.split("/").slice(0, 4).join("/"),
     status,
     duration_ms: Date.now() - startedAt,
   });
