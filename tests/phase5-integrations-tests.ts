@@ -270,8 +270,6 @@ async function main() {
       ["meta_graph", { page_access_token: "EAAB" }, "https://graph.facebook.com/me?fields=id", "Authorization", undefined],
       ["whatsapp_cloud", { phone_number_id: "1234567890", permanent_access_token: "EAAW" }, "https://graph.facebook.com/1234567890?fields=id", "Authorization", undefined],
       ["steadfast", { api_key: "sf-key-4411", secret_key: "sf-secret-9922" }, "https://portal.packzy.com/api/v1/get_balance", "Secret-Key", undefined],
-      ["pinecone", { api_key: "pcsk_pine_2211" }, "https://api.pinecone.io/indexes", "Api-Key", undefined],
-      ["upstash_redis", { rest_url: "https://eu1-x.upstash.io", rest_token: "up-token-7788" }, "https://eu1-x.upstash.io/ping", "Authorization", undefined],
       ["prov_hubspot_crm", { access_token: "pat-1" }, "https://api.hubapi.com/account-info/v3/details", "Authorization", undefined],
       ["prov_shopify_plus", { shop_domain: "my-store.myshopify.com", access_token: "shpat" }, "https://my-store.myshopify.com/admin/api/2025-07/shop.json", "X-Shopify-Access-Token", undefined],
     ];
@@ -290,7 +288,7 @@ async function main() {
   await runTest("refusals are classified (401 → UNAUTHORIZED, 404, 429, 5xx) and never echo the provider's body", async () => {
     for (const [status, reason] of [[401, "UNAUTHORIZED"], [403, "UNAUTHORIZED"], [404, "NOT_FOUND"], [429, "RATE_LIMITED"], [503, "PROVIDER_ERROR"]] as const) {
       answer = { status, body: '{"error":"account acct_998 suspended, contact billing@provider"}' };
-      const r = await check("pinecone", { api_key: "pcsk_1" });
+      const r = await check("steadfast", { api_key: "sf-1", secret_key: "sf-2" });
       assert.strictEqual(r?.status, "FAILED");
       assert.strictEqual(r?.details?.reason, reason);
       assert.ok(!JSON.stringify(r).includes("acct_998"));

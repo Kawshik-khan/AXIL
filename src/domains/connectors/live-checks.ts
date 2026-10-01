@@ -89,19 +89,11 @@ function requestFor(input: LiveCheckInput): CheckRequest | { invalid: string } |
       if (!apiKey || !secret) return { invalid: "the API key and secret key are required" };
       return { url: `${STEADFAST_BASE}/get_balance`, headers: { "Api-Key": apiKey, "Secret-Key": secret, "Content-Type": "application/json" } };
     }
-    case "pinecone":
-      return { url: "https://api.pinecone.io/indexes", headers: { "Api-Key": str(c.api_key), "X-Pinecone-API-Version": "2025-04" } };
     case "qdrant": {
       const base = str(c.endpoint_url) || str(input.endpoint);
       if (!base) return { invalid: "the Qdrant URL is required" };
       const key = str(c.api_key);
       return { url: `${trimSlash(base)}/collections`, headers: key ? { "api-key": key } : {} };
-    }
-    case "upstash_redis": {
-      const base = str(c.rest_url);
-      const token = str(c.rest_token);
-      if (!base || !token) return { invalid: "the REST URL and REST token are required" };
-      return { url: `${trimSlash(base)}/ping`, headers: { Authorization: `Bearer ${token}` } };
     }
     case "prov_hubspot_crm": {
       const token = str(c.access_token);
@@ -171,9 +163,7 @@ export const LIVE_CHECK_PROVIDERS = [
   "whatsapp_cloud",
   "telegram",
   "steadfast",
-  "pinecone",
   "qdrant",
-  "upstash_redis",
   "prov_hubspot_crm",
   "prov_shopify_plus",
 ];

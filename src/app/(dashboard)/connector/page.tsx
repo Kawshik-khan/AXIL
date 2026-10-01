@@ -525,20 +525,6 @@ export default function ConnectorPage() {
 
             <div className={styles.metricCard}>
               <span className={styles.metricLabel}>
-                <Database size={13} style={{ color: "#00897B" }} /> Primary Database
-              </span>
-              <div className={styles.metricValueRow}>
-                <span className={styles.metricValue}>
-                  {configurations.find((c) => c.category === "DATABASE")?.name || "Built-in Store"}
-                </span>
-                <span className={styles.metricSubtext}>
-                  {stats?.by_category?.DATABASE?.active ?? 0} active
-                </span>
-              </div>
-            </div>
-
-            <div className={styles.metricCard}>
-              <span className={styles.metricLabel}>
                 <Building2 size={13} style={{ color: "#F3B63F" }} /> Enterprise & ERP
               </span>
               <div className={styles.metricValueRow}>
@@ -632,32 +618,12 @@ export default function ConnectorPage() {
               </button>
               <button
                 type="button"
-                className={`${styles.tabButton} ${activeCategory === "REDIS_CACHE" ? styles.activeTab : ""}`}
-                onClick={() => setActiveCategory("REDIS_CACHE")}
-              >
-                Redis & In-Memory Cache
-                <span className={styles.tabBadge}>
-                  {providers.filter((p) => p.category === "REDIS_CACHE").length}
-                </span>
-              </button>
-              <button
-                type="button"
                 className={`${styles.tabButton} ${activeCategory === "ENTERPRISE" ? styles.activeTab : ""}`}
                 onClick={() => setActiveCategory("ENTERPRISE")}
               >
                 Enterprise & ERP Systems
                 <span className={styles.tabBadge}>
                   {providers.filter((p) => p.category === "ENTERPRISE").length}
-                </span>
-              </button>
-              <button
-                type="button"
-                className={`${styles.tabButton} ${activeCategory === "DATABASE" ? styles.activeTab : ""}`}
-                onClick={() => setActiveCategory("DATABASE")}
-              >
-                Relational Databases
-                <span className={styles.tabBadge}>
-                  {providers.filter((p) => p.category === "DATABASE").length}
                 </span>
               </button>
             </>
@@ -709,26 +675,6 @@ export default function ConnectorPage() {
                 Vector DB
                 <span className={styles.tabBadge}>
                   {providers.filter((p) => p.category === "VECTOR_DB").length}
-                </span>
-              </button>
-              <button
-                type="button"
-                className={`${styles.tabButton} ${activeCategory === "REDIS_CACHE" ? styles.activeTab : ""}`}
-                onClick={() => setActiveCategory("REDIS_CACHE")}
-              >
-                Redis
-                <span className={styles.tabBadge}>
-                  {providers.filter((p) => p.category === "REDIS_CACHE").length}
-                </span>
-              </button>
-              <button
-                type="button"
-                className={`${styles.tabButton} ${activeCategory === "DATABASE" ? styles.activeTab : ""}`}
-                onClick={() => setActiveCategory("DATABASE")}
-              >
-                Databases
-                <span className={styles.tabBadge}>
-                  {providers.filter((p) => p.category === "DATABASE").length}
                 </span>
               </button>
               <button
@@ -816,7 +762,7 @@ export default function ConnectorPage() {
                     }`}
                   >
                     <span className={styles.statusDot} />
-                    {isConnected ? "Active" : "Not Configured"}
+                    {isConnected ? "Active" : provider.status === "COMING_SOON" ? "Coming soon" : "Not Configured"}
                   </span>
                 </div>
 
@@ -881,8 +827,10 @@ export default function ConnectorPage() {
                       isConnected ? styles.connectButtonActive : styles.connectButtonPrimary
                     }`}
                     onClick={() => handleOpenConfigure(provider)}
+                    disabled={provider.status === "COMING_SOON"}
+                    title={provider.status === "COMING_SOON" ? "Not available yet" : undefined}
                   >
-                    {isConnected ? "Configure" : "Connect"}
+                    {provider.status === "COMING_SOON" ? "Coming soon" : isConnected ? "Configure" : "Connect"}
                     <ArrowRight size={14} />
                   </button>
                 </div>

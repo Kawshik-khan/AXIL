@@ -157,6 +157,13 @@ Every phase must end with: type-check 0 errors · `npm test`, `npm run test:pg`,
 **Accept:** existing `connectors-tests` and `phase5-integrations-tests` pass unmodified except for the pruned providers; catalog diff is exactly the pruned set; no default secret in `src/`; bundle of `service.ts` under 400 lines.
 **Rollback:** revert the PR (records keep their ids and shape).
 
+**C0 status (2026-10-01): done on branch `feat/connectors-c0`.** Deviations from the task list above:
+- Manifests are grouped per **category** (`manifests/ai-llm.ts`, `social.ts`, `logistics.ts`, `vector.ts`, `enterprise.ts`), not one file per provider; per-provider driver files arrive with the drivers (C2 and later).
+- Default secrets were removed from the Meta, WhatsApp and Telegram forms, but **generated** per-connector secrets and rotation move to C3 (they need the webhook receivers). Until then a webhook verify token must be entered by the merchant.
+- Pruned: all DATABASE and REDIS_CACHE providers, Pinecone, Chroma, Milvus, pgvector, Upstash. COMING_SOON: Google Ads, TikTok Shop, RedX, Paperfly, eCourier, DHL, Daraz, SAP, NetSuite, Salesforce. Catalog went from 38 to 27 providers.
+- Saved records for removed providers are not shown in the UI (no card) but still deletable through the API; a visible "no longer supported" list is a C6 item.
+- `parseDatabaseUri` and its tests were left in place (dead code); remove them in C6 cleanup.
+
 ### C1. Verification coverage (S–M)
 **Tasks**
 1. Live checks for kept providers without one: Pathao (client-credentials token request, result discarded), RedX, Paperfly, eCourier (their documented auth endpoints). Any provider whose API has no safe auth-check endpoint becomes `BETA` and says "not verifiable".
