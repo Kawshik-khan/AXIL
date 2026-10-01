@@ -78,52 +78,34 @@ async function main() {
   // -------------------------------------------------------------
   console.log(`${ANSI_BOLD}[1] Provider Catalog & Specification Completeness${ANSI_RESET}`);
 
-  await runTest("Catalog includes all categories (AI, Vector DB, Redis, Social, Logistics, Database, Enterprise)", () => {
+  await runTest("Catalog includes the categories that can work from a hosted service (AI, Vector DB, Social, Logistics, Enterprise)", () => {
     const providers = ConnectorService.PROVIDERS;
-    assert.ok(providers.length >= 24, `Expected at least 24 providers, got ${providers.length}`);
+    assert.ok(providers.length >= 20, `Expected at least 20 providers, got ${providers.length}`);
 
     const categories = new Set(providers.map((p) => p.category));
     assert.ok(categories.has("AI_LLM"), "Missing AI_LLM category");
     assert.ok(categories.has("VECTOR_DB"), "Missing VECTOR_DB category");
-    assert.ok(categories.has("REDIS_CACHE"), "Missing REDIS_CACHE category");
     assert.ok(categories.has("SOCIAL_ADS"), "Missing SOCIAL_ADS category");
     assert.ok(categories.has("LOGISTICS"), "Missing LOGISTICS category");
-    assert.ok(categories.has("DATABASE"), "Missing DATABASE category");
     assert.ok(categories.has("ENTERPRISE"), "Missing ENTERPRISE category");
+    // TCP-only providers (databases, Redis) were removed: a hosted service must not open tenant-chosen TCP connections
+    assert.ok(!categories.has("DATABASE") && !categories.has("REDIS_CACHE"), "database and Redis connectors must not be listed");
   });
 
-  await runTest("Vector Databases catalog has Qdrant, Pinecone, ChromaDB, Milvus, and pgvector", () => {
+  await runTest("Vector Databases catalog has Qdrant; the other vector and TCP providers were removed", () => {
     const qdrant = ConnectorService.PROVIDERS.find((p) => p.id === "qdrant");
     assert.ok(qdrant, "Qdrant must exist");
     assert.strictEqual(qdrant.category, "VECTOR_DB");
     assert.ok(qdrant.fields.some((f) => f.name === "vector_dimension"));
-
-    const pinecone = ConnectorService.PROVIDERS.find((p) => p.id === "pinecone");
-    assert.ok(pinecone, "Pinecone must exist");
-    assert.strictEqual(pinecone.category, "VECTOR_DB");
-
-    const chromadb = ConnectorService.PROVIDERS.find((p) => p.id === "chromadb");
-    assert.ok(chromadb, "ChromaDB must exist");
-
-    const milvus = ConnectorService.PROVIDERS.find((p) => p.id === "milvus");
-    assert.ok(milvus, "Milvus must exist");
-
-    const pgvector = ConnectorService.PROVIDERS.find((p) => p.id === "pgvector_dedicated");
-    assert.ok(pgvector, "pgvector must exist");
+    for (const removed of ["pinecone", "chromadb", "milvus", "pgvector_dedicated"]) {
+      assert.ok(!ConnectorService.PROVIDERS.some((p) => p.id === removed), `${removed} must not be listed`);
+    }
   });
 
-  await runTest("Redis & In-Memory Cache catalog has Redis Self-Hosted, Upstash, and Redis Cloud", () => {
-    const redisLocal = ConnectorService.PROVIDERS.find((p) => p.id === "redis_self_hosted");
-    assert.ok(redisLocal, "Redis Self-Hosted must exist");
-    assert.strictEqual(redisLocal.category, "REDIS_CACHE");
-    assert.ok(redisLocal.fields.some((f) => f.name === "key_prefix"));
-
-    const upstash = ConnectorService.PROVIDERS.find((p) => p.id === "upstash_redis");
-    assert.ok(upstash, "Upstash must exist");
-    assert.strictEqual(upstash.category, "REDIS_CACHE");
-
-    const redisCloud = ConnectorService.PROVIDERS.find((p) => p.id === "redis_cloud");
-    assert.ok(redisCloud, "Redis Cloud must exist");
+  await runTest("Redis providers were removed from the catalog", () => {
+    for (const removed of ["redis_self_hosted", "upstash_redis", "redis_cloud"]) {
+      assert.ok(!ConnectorService.PROVIDERS.some((p) => p.id === removed), `${removed} must not be listed`);
+    }
   });
 
   await runTest("Enterprise Systems catalog has SAP S/4HANA, NetSuite, Salesforce CRM, HubSpot CRM, Daraz Marketplace, and Shopify Plus", () => {
@@ -405,18 +387,28 @@ async function main() {
     assert.strictEqual(threw, true, "Should throw BadRequestError on missing API key");
   });
 
-  await runTest("Test Database connection handshake with Neon URI", async () => {
-    const result = await ConnectorService.testConnection(tenantAContext, {
-      provider_id: "neon",
-      credentials: {
-        connection_uri: "postgresql://neondb_owner:pass@ep-cool-fog-123.neon.tech/neondb?sslmode=require",
-      },
-    });
+  await runTest("A removed provider (Neon, Redis, Pinecone) can't be tested or saved: PROVIDER_NOT_SUPPORTED", async () => {
+    for (const provider_id of ["neon", "redis_self_hosted", "pinecone"]) {
+      await assert.rejects(
+        () => ConnectorService.testConnection(tenantAContext, { provider_id, credentials: { connection_uri: "postgresql://u:p@host.example/db" } }),
+        (err: unknown) => err instanceof BadRequestError && /PROVIDER_NOT_SUPPORTED/.test(err.message),
+        provider_id
+      );
+      await assert.rejects(
+        () => ConnectorService.saveConnector(tenantAContext, { provider_id, credentials: { connection_uri: "postgresql://u:p@host.example/db" } }),
+        (err: unknown) => err instanceof BadRequestError && /PROVIDER_NOT_SUPPORTED/.test(err.message),
+        provider_id
+      );
+    }
+  });
 
-    // No live database check exists: not verified, never "TCP handshake and auth check" (FX-31)
-    assert.strictEqual(result.status, "NOT_VERIFIED");
-    assert.strictEqual(result.success, false);
-    assert.strictEqual(result.details?.host, "ep-cool-fog-123.neon.tech");
+  await runTest("A COMING_SOON provider (Pathao is BETA, RedX is not) is listed but can't be saved", async () => {
+    const redx = ConnectorService.PROVIDERS.find((p) => p.id === "redx");
+    assert.ok(redx && redx.status === "COMING_SOON");
+    await assert.rejects(
+      () => ConnectorService.saveConnector(tenantAContext, { provider_id: "redx", credentials: { api_key: "x" } }),
+      (err: unknown) => err instanceof BadRequestError && /PROVIDER_NOT_AVAILABLE/.test(err.message)
+    );
   });
 
   await runTest("Test Vector Database connection handshake for Qdrant and Pinecone", async () => {
@@ -433,32 +425,6 @@ async function main() {
     assert.strictEqual(qdrantResult.details?.reason, "BLOCKED_URL");
     assert.ok(qdrantResult.message.includes("Qdrant"));
 
-    const pineconeResult = await ConnectorService.testConnection(tenantAContext, {
-      provider_id: "pinecone",
-      credentials: {
-        api_key: "pcsk_valid_pinecone_key_12345678",
-        index_host: "https://commerceos-index-xyz.svc.pinecone.io",
-        index_name: "commerceos-catalog",
-      },
-    });
-    assert.strictEqual(pineconeResult.status, "VERIFIED");
-    assert.ok(pineconeResult.message.includes("Pinecone"));
-    assert.ok(fetchCalls.includes("https://api.pinecone.io/indexes"));
-  });
-
-  await runTest("Test Redis connection handshake with PING -> PONG latency", async () => {
-    const redisResult = await ConnectorService.testConnection(tenantAContext, {
-      provider_id: "redis_self_hosted",
-      credentials: {
-        host: "127.0.0.1",
-        port: 6379,
-        key_prefix: "tenant_alpha:",
-      },
-    });
-    // Nothing was pinged: no latency and no "PONG" (FX-31)
-    assert.strictEqual(redisResult.status, "NOT_VERIFIED");
-    assert.strictEqual(redisResult.latency_ms, null);
-    assert.strictEqual(redisResult.details?.ping, undefined);
   });
 
   await runTest("Test Telegram Bot API connection handshake and missing token error", async () => {
@@ -494,38 +460,25 @@ async function main() {
     assert.strictEqual(threw, true, "Should fail when Telegram bot_token is missing");
   });
 
-  await runTest("Test Enterprise handshake verification for Daraz Bangladesh & SAP ERP", async () => {
-    const darazTest = await ConnectorService.testConnection(tenantAContext, {
-      provider_id: "prov_daraz_marketplace",
-      credentials: {
-        app_key: "daraz_app_998811",
-        app_secret: "daraz_secret_xyz",
-        access_token: "daraz_token_abc_12345",
-        country_code: "BD",
-      },
+  await runTest("Enterprise provider without a live check (Google Sheets) is NOT_VERIFIED with no latency; SAP is coming soon", async () => {
+    const sheetsTest = await ConnectorService.testConnection(tenantAContext, {
+      provider_id: "prov_google_sheets",
+      credentials: { spreadsheet_url: "https://docs.google.com/spreadsheets/d/1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789/edit", sheet_name: "Products" },
     });
-    assert.strictEqual(darazTest.status, "NOT_VERIFIED");
-    assert.strictEqual(darazTest.latency_ms, null);
-    assert.ok(darazTest.message.includes("Daraz Marketplace"));
+    assert.strictEqual(sheetsTest.status, "NOT_VERIFIED");
+    assert.strictEqual(sheetsTest.latency_ms, null);
 
-    const sapTest = await ConnectorService.testConnection(tenantAContext, {
-      provider_id: "prov_sap_s4hana",
-      credentials: {
-        endpoint_url: "https://my-sap.s4hana.ondemand.com/sap/opu/odata/sap",
-        client_id: "SAP_COMM_USER",
-        client_secret: "sap_secret_key",
-        company_code: "1000",
-      },
-    });
-    assert.strictEqual(sapTest.status, "NOT_VERIFIED");
-    assert.ok(sapTest.message.includes("SAP S/4HANA"));
+    await assert.rejects(
+      () => ConnectorService.testConnection(tenantAContext, { provider_id: "prov_sap_s4hana", credentials: { client_id: "SAP_COMM_USER" } }),
+      (err: unknown) => err instanceof BadRequestError && /PROVIDER_NOT_AVAILABLE/.test(err.message)
+    );
   });
 
   await runTest("Fail Enterprise handshake when credentials are empty", async () => {
     let threw = false;
     try {
       await ConnectorService.testConnection(tenantAContext, {
-        provider_id: "prov_daraz_marketplace",
+        provider_id: "prov_hubspot_crm",
         credentials: {},
       });
     } catch (err) {
@@ -573,12 +526,10 @@ async function main() {
 
   await runTest("Save Enterprise connector and verify sync to db.data.integration_installations", async () => {
     const saved = await ConnectorService.saveConnector(tenantAContext, {
-      provider_id: "prov_daraz_marketplace",
+      provider_id: "prov_hubspot_crm",
       credentials: {
-        app_key: "daraz_app_key_888",
-        app_secret: "daraz_secret_999",
-        access_token: "seller_tok_555",
-        country_code: "BD",
+        access_token: "pat-na1-test-token-555",
+        portal_id: "12345678",
         sync_frequency_minutes: 10,
       },
     });
@@ -588,16 +539,16 @@ async function main() {
 
     // Verify presence in db integration installations
     const installations = db.getIntegrationInstallations(tenantAContext.tenant.id);
-    const darazInst = installations.find((i: any) => i.provider_id === "prov_daraz_marketplace");
-    assert.ok(darazInst, "Integration installation must be registered");
-    assert.strictEqual(darazInst.status, "NOT_VERIFIED"); // saved, never checked with Daraz (FX-31)
-    assert.strictEqual(darazInst.sync_frequency_minutes, 10);
+    const hubspotInst = installations.find((i: any) => i.provider_id === "prov_hubspot_crm");
+    assert.ok(hubspotInst, "Integration installation must be registered");
+    assert.strictEqual(hubspotInst.status, "NOT_VERIFIED"); // saved, never checked with HubSpot (FX-31)
+    assert.strictEqual(hubspotInst.sync_frequency_minutes, 10);
 
     // Delete Enterprise connector and verify marked DISCONNECTED
     const deleted = await ConnectorService.deleteConnector(tenantAContext, saved.id);
     assert.strictEqual(deleted, true);
 
-    const updatedInst = db.getIntegrationInstallations(tenantAContext.tenant.id).find((i: any) => i.id === darazInst.id);
+    const updatedInst = db.getIntegrationInstallations(tenantAContext.tenant.id).find((i: any) => i.id === hubspotInst.id);
     assert.ok(updatedInst);
     assert.strictEqual(updatedInst.status, "DISCONNECTED");
   });

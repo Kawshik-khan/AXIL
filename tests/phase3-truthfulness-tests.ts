@@ -343,8 +343,8 @@ async function main() {
     const ctx = await AuthService.resolveRequestContext(owner.token);
     assert.ok(ctx);
     const redis = await ConnectorService.testConnection(ctx, {
-      provider_id: "redis_cloud",
-      credentials: { connection_uri: "rediss://default:p3-token-value@p3-demo.redis-cloud.com:6379" },
+      provider_id: "pathao",
+      credentials: { client_id: "p3-client", store_id: "p3-store" },
     });
     assert.strictEqual(redis.status, "NOT_VERIFIED");
     assert.strictEqual(redis.success, false);

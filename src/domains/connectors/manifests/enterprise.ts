@@ -1,0 +1,236 @@
+import type { ConnectorProviderDefinition } from "@/types/connector";
+
+/**
+ * Provider manifests, category ENTERPRISE. A manifest describes a provider (fields, guide, capabilities, status); behavior
+ * belongs to its driver (connector plan, docs/connector-implementation-plan.md). Status: BETA = connectable and saved
+ * encrypted, with a live credential check where one exists; COMING_SOON = listed but not connectable.
+ */
+export const ENTERPRISE_MANIFESTS: ConnectorProviderDefinition[] = [
+  {
+    id: "prov_sap_s4hana",
+    name: "SAP S/4HANA (Enterprise ERP)",
+    category: "ENTERPRISE",
+    status: "COMING_SOON",
+    capabilities: [],
+    badge: "Tier-1 ERP",
+    description: "Enterprise ERP synchronization for master product catalogs, multi-plant inventory balances, purchase orders, and financial ledgers.",
+    portal_url: "https://api.sap.com",
+    documentation_url: "https://help.sap.com/docs/SAP_S4HANA_CLOUD",
+    fields: [
+      { name: "endpoint_url", label: "OData Service Base URL", type: "url", required: true, placeholder: "https://my-sap-host.s4hana.ondemand.com/sap/opu/odata/sap" },
+      { name: "client_id", label: "OAuth2 Client ID / User", type: "text", required: true, placeholder: "Communication User or Client ID" },
+      { name: "client_secret", label: "Client Secret / Password", type: "password", required: true, placeholder: "••••••••" },
+      { name: "token_url", label: "OAuth2 Token URL (Optional)", type: "url", required: false, placeholder: "https://my-auth.authentication.eu10.hana.ondemand.com/oauth/token" },
+      { name: "company_code", label: "SAP Company Code", type: "text", required: true, defaultValue: "1000", placeholder: "1000" },
+      { name: "sync_frequency_minutes", label: "Sync Interval (Minutes)", type: "number", required: true, defaultValue: 15 },
+    ],
+    guidelines: {
+      portal_url: "https://api.sap.com",
+      prerequisites: [
+        "SAP S/4HANA Cloud or On-Premise instance with OData services active.",
+        "Communication Arrangement (e.g. SAP_COM_0008, SAP_COM_0109) configured in SAP Fiori Launchpad.",
+      ],
+      steps: [
+        "Open Communication Arrangements in SAP Fiori Launchpad.",
+        "Create a new communication arrangement for Master Data / Sales Orders.",
+        "Copy the OData Service Base URL, OAuth Client ID, and Client Secret.",
+        "Provide your SAP Company Code (e.g. 1000) and set sync interval.",
+        "Click 'Test Connection' to verify bidirectional handshake.",
+      ],
+      tips: [
+        "CommerceOS automatically maps local SKU variants to SAP Material Masters (MATNR) during synchronization.",
+      ],
+    },
+  },
+  {
+    id: "prov_oracle_netsuite",
+    name: "Oracle NetSuite (Cloud ERP)",
+    category: "ENTERPRISE",
+    status: "COMING_SOON",
+    capabilities: [],
+    badge: "Cloud ERP",
+    description: "Cloud ERP bidirectional order sync, automated billing, inventory ledger adjustments, and multi-subsidiary consolidation.",
+    portal_url: "https://system.netsuite.com",
+    documentation_url: "https://docs.oracle.com/en/cloud/saas/netsuite/ns-online-help",
+    fields: [
+      { name: "account_id", label: "NetSuite Account ID", type: "text", required: true, placeholder: "e.g. 1234567 or 1234567_SB1" },
+      { name: "consumer_key", label: "Consumer Key (Client ID)", type: "text", required: true, placeholder: "TBA Consumer Key" },
+      { name: "consumer_secret", label: "Consumer Secret", type: "password", required: true, placeholder: "••••••••" },
+      { name: "token_id", label: "Token ID", type: "text", required: true, placeholder: "Token-Based Auth Token ID" },
+      { name: "token_secret", label: "Token Secret", type: "password", required: true, placeholder: "••••••••" },
+      { name: "endpoint_url", label: "SuiteTalk REST URL (Optional)", type: "url", required: false, placeholder: "https://1234567.suitetalk.api.netsuite.com/services/rest/record/v1" },
+      { name: "sync_frequency_minutes", label: "Sync Interval (Minutes)", type: "number", required: true, defaultValue: 15 },
+    ],
+    guidelines: {
+      portal_url: "https://system.netsuite.com",
+      prerequisites: [
+        "NetSuite Administrator access.",
+        "SuiteCloud features enabled: Token-based Authentication (TBA) and REST Web Services.",
+      ],
+      steps: [
+        "In NetSuite, navigate to Setup > Integration > Manage Integrations > New.",
+        "Create integration record with TBA enabled, and copy Consumer Key & Secret.",
+        "Under Setup > Users/Roles > Access Tokens > New, create a token for your role and copy Token ID & Secret.",
+        "Copy your Account ID from Setup > Company > Company Information.",
+      ],
+    },
+  },
+  {
+    id: "prov_salesforce_crm",
+    name: "Salesforce CRM",
+    category: "ENTERPRISE",
+    status: "COMING_SOON",
+    capabilities: [],
+    badge: "Enterprise CRM",
+    description: "Customer 360 sync, high-value B2B client tracking, VIP buyer segmentation, and omnichannel contact identity resolution.",
+    portal_url: "https://login.salesforce.com",
+    documentation_url: "https://developer.salesforce.com/docs",
+    fields: [
+      { name: "instance_url", label: "Salesforce My Domain URL", type: "url", required: true, placeholder: "https://your-company.my.salesforce.com" },
+      { name: "client_id", label: "Connected App Consumer Key", type: "text", required: true, placeholder: "3MVG9..." },
+      { name: "client_secret", label: "Consumer Secret", type: "password", required: true, placeholder: "••••••••" },
+      { name: "refresh_token", label: "OAuth2 Refresh Token", type: "password", required: true, placeholder: "5Aep..." },
+      { name: "sync_frequency_minutes", label: "Sync Interval (Minutes)", type: "number", required: true, defaultValue: 30 },
+    ],
+    guidelines: {
+      portal_url: "https://login.salesforce.com",
+      prerequisites: ["Salesforce Enterprise/Unlimited Edition."],
+      steps: [
+        "In Salesforce Setup, go to App Manager > New Connected App.",
+        "Enable OAuth with scopes: Access and manage your data (api), Perform requests at any time (refresh_token, offline_access).",
+        "Copy Consumer Key and Consumer Secret.",
+        "Authorize CommerceOS to generate your OAuth2 Refresh Token.",
+      ],
+    },
+  },
+  {
+    id: "prov_hubspot_crm",
+    name: "HubSpot CRM",
+    category: "ENTERPRISE",
+    status: "BETA",
+    capabilities: ["CRM_SYNC"],
+    badge: "Inbound CRM",
+    description: "Marketing contact properties, segmented list memberships, deals, and automated customer lifetime value tracking.",
+    portal_url: "https://app.hubspot.com",
+    documentation_url: "https://developers.hubspot.com/docs/api/overview",
+    fields: [
+      { name: "access_token", label: "Private App Access Token", type: "password", required: true, placeholder: "pat-na1-..." },
+      { name: "portal_id", label: "HubSpot Hub / Portal ID", type: "text", required: true, placeholder: "e.g. 12345678" },
+      { name: "sync_frequency_minutes", label: "Sync Interval (Minutes)", type: "number", required: true, defaultValue: 15 },
+    ],
+    guidelines: {
+      portal_url: "https://app.hubspot.com",
+      prerequisites: ["HubSpot account with Super Admin permissions."],
+      steps: [
+        "In HubSpot Settings, navigate to Integrations > Private Apps.",
+        "Click 'Create a private app' named 'CommerceOS'.",
+        "Grant Scopes: crm.objects.contacts (read/write), crm.objects.deals (read/write), crm.objects.orders (read/write).",
+        "Copy the token starting with pat- and paste into CommerceOS.",
+      ],
+    },
+  },
+  {
+    id: "prov_daraz_marketplace",
+    name: "Daraz Marketplace (Alibaba Group)",
+    category: "ENTERPRISE",
+    status: "COMING_SOON",
+    capabilities: [],
+    badge: "🇧🇩 Bangladesh Marketplace #1",
+    description: "Bidirectional marketplace order ingestion, catalog publishing, and real-time inventory synchronization with Daraz Bangladesh.",
+    default_endpoint: "https://api.daraz.com.bd/rest",
+    portal_url: "https://sellercenter.daraz.com.bd",
+    documentation_url: "https://open.daraz.com",
+    fields: [
+      { name: "app_key", label: "Daraz Open Platform App Key", type: "text", required: true, placeholder: "e.g. 123456" },
+      { name: "app_secret", label: "Daraz App Secret", type: "password", required: true, placeholder: "••••••••" },
+      { name: "access_token", label: "Seller Shop Access Token", type: "password", required: true, placeholder: "5000..." },
+      { name: "country_code", label: "Country / Region", type: "select", required: true, defaultValue: "BD", options: [
+        { label: "Bangladesh (BD)", value: "BD" },
+        { label: "Pakistan (PK)", value: "PK" },
+        { label: "Nepal (NP)", value: "NP" },
+        { label: "Sri Lanka (LK)", value: "LK" },
+      ]},
+      { name: "sync_frequency_minutes", label: "Sync Interval (Minutes)", type: "number", required: true, defaultValue: 10 },
+    ],
+    guidelines: {
+      portal_url: "https://sellercenter.daraz.com.bd",
+      prerequisites: ["Active Daraz Seller Center account and Daraz Open Platform App."],
+      steps: [
+        "Log into Daraz Open Platform at https://open.daraz.com.",
+        "Create a Seller In-House App and copy your App Key & Secret.",
+        "Authorize your Daraz Bangladesh shop to obtain your seller access token.",
+        "Enter your credentials and click 'Test Connection'.",
+      ],
+      tips: [
+        "Daraz orders automatically flow into CommerceOS Orders management, locking local warehouse inventory.",
+      ],
+    },
+  },
+  {
+    id: "prov_shopify_plus",
+    name: "Shopify Plus / Multi-Store",
+    category: "ENTERPRISE",
+    status: "BETA",
+    capabilities: ["CATALOG_IMPORT"],
+    badge: "Storefront Webhook",
+    description: "Multi-store web storefront catalog syncing, customer order webhook pipeline, and inventory reconciliation.",
+    portal_url: "https://admin.shopify.com",
+    documentation_url: "https://shopify.dev/docs/api/admin-rest",
+    fields: [
+      { name: "shop_domain", label: "Shopify Domain", type: "text", required: true, placeholder: "your-brand.myshopify.com" },
+      { name: "access_token", label: "Admin API Access Token", type: "password", required: true, placeholder: "shpat_..." },
+      { name: "api_version", label: "Admin API Version", type: "select", required: true, defaultValue: "2024-07", options: [
+        { label: "2024-07 (Latest)", value: "2024-07" },
+        { label: "2024-04", value: "2024-04" },
+      ]},
+      { name: "webhook_secret", label: "Webhook Signing Secret (Optional)", type: "password", required: false, placeholder: "For verifying order webhooks" },
+      { name: "sync_frequency_minutes", label: "Sync Interval (Minutes)", type: "number", required: true, defaultValue: 15 },
+    ],
+    guidelines: {
+      portal_url: "https://admin.shopify.com",
+      prerequisites: ["Shopify store with App development permissions."],
+      steps: [
+        "In Shopify Admin, go to Settings > Apps and sales channels > Develop apps.",
+        "Create an app named 'CommerceOS Connector'.",
+        "Grant Admin API scopes: read_products, write_products, read_orders, write_orders, read_inventory, write_inventory.",
+        "Click 'Install app' and copy the token starting with shpat_.",
+      ],
+      // No Shopify webhook receiver exists until an adapter does, so no URL is advertised (FX-33)
+    },
+  },
+  {
+    id: "prov_google_sheets",
+    name: "Google Sheets (Catalog & Inventory)",
+    category: "ENTERPRISE",
+    status: "BETA",
+    capabilities: ["CATALOG_IMPORT"],
+    badge: "📊 Live Spreadsheet Sync",
+    description: "Synchronize master product catalogs, variant attributes, price lists, and inventory levels directly from a live Google Sheet.",
+    portal_url: "https://docs.google.com/spreadsheets",
+    documentation_url: "https://support.google.com/docs/answer/183965",
+    fields: [
+      { name: "spreadsheet_url", label: "Google Spreadsheet Link or ID", type: "url", required: true, placeholder: "https://docs.google.com/spreadsheets/d/1BxiMVs.../edit" },
+      { name: "sheet_name", label: "Sheet Tab Name", type: "text", required: true, defaultValue: "Products", placeholder: "Products" },
+      { name: "api_key", label: "Google Cloud API Key (Optional for private sheets)", type: "password", required: false, placeholder: "AIzaSy..." },
+      { name: "sync_frequency_minutes", label: "Sync Interval (Minutes)", type: "number", required: true, defaultValue: 15 },
+    ],
+    guidelines: {
+      portal_url: "https://docs.google.com/spreadsheets",
+      prerequisites: [
+        "An active Google Sheet containing catalog rows.",
+        "Sheet set to 'Anyone with the link can view' (or Google Cloud API Key for restricted sheets).",
+      ],
+      steps: [
+        "Open your Google Sheet and ensure column headers (Title, SKU, Price, Stock, Category) exist on the first row.",
+        "Click the blue 'Share' button in the top right corner of Google Sheets.",
+        "Under 'General access', change from 'Restricted' to 'Anyone with the link' (Viewer).",
+        "Copy the spreadsheet link and paste it into the field above.",
+        "Specify the exact tab name (default: 'Products').",
+        "Click 'Test Connection' to verify handshake and readable columns.",
+      ],
+      tips: [
+        "CommerceOS auto-detects column variations such as 'Item Code', 'MRP', 'Initial Stock', and strips currency symbols (৳, BDT) automatically.",
+      ],
+    },
+  },
+];

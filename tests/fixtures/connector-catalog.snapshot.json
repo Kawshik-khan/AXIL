@@ -1,0 +1,900 @@
+{
+  "providers": [
+    {
+      "id": "openai",
+      "name": "OpenAI",
+      "category": "AI_LLM",
+      "status": "BETA",
+      "default_endpoint": "https://api.openai.com/v1",
+      "fields": [
+        {
+          "name": "api_key",
+          "type": "password",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "organization_id",
+          "type": "text",
+          "required": false,
+          "has_default": false
+        },
+        {
+          "name": "default_model",
+          "type": "select",
+          "required": true,
+          "has_default": true
+        },
+        {
+          "name": "custom_base_url",
+          "type": "url",
+          "required": false,
+          "has_default": false
+        }
+      ]
+    },
+    {
+      "id": "anthropic",
+      "name": "Anthropic Claude",
+      "category": "AI_LLM",
+      "status": "BETA",
+      "default_endpoint": "https://api.anthropic.com/v1",
+      "fields": [
+        {
+          "name": "api_key",
+          "type": "password",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "default_model",
+          "type": "select",
+          "required": true,
+          "has_default": true
+        },
+        {
+          "name": "custom_base_url",
+          "type": "url",
+          "required": false,
+          "has_default": false
+        }
+      ]
+    },
+    {
+      "id": "google_gemini",
+      "name": "Google Gemini",
+      "category": "AI_LLM",
+      "status": "BETA",
+      "default_endpoint": "https://generativelanguage.googleapis.com/v1beta",
+      "fields": [
+        {
+          "name": "api_key",
+          "type": "password",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "default_model",
+          "type": "select",
+          "required": true,
+          "has_default": true
+        }
+      ]
+    },
+    {
+      "id": "deepseek",
+      "name": "DeepSeek",
+      "category": "AI_LLM",
+      "status": "BETA",
+      "default_endpoint": "https://api.deepseek.com/v1",
+      "fields": [
+        {
+          "name": "api_key",
+          "type": "password",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "default_model",
+          "type": "select",
+          "required": true,
+          "has_default": true
+        }
+      ]
+    },
+    {
+      "id": "groq",
+      "name": "Groq Cloud (LPU)",
+      "category": "AI_LLM",
+      "status": "BETA",
+      "default_endpoint": "https://api.groq.com/openai/v1",
+      "fields": [
+        {
+          "name": "api_key",
+          "type": "password",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "default_model",
+          "type": "select",
+          "required": true,
+          "has_default": true
+        }
+      ]
+    },
+    {
+      "id": "openrouter",
+      "name": "OpenRouter",
+      "category": "AI_LLM",
+      "status": "BETA",
+      "default_endpoint": "https://openrouter.ai/api/v1",
+      "fields": [
+        {
+          "name": "api_key",
+          "type": "password",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "default_model",
+          "type": "select",
+          "required": true,
+          "has_default": true
+        }
+      ]
+    },
+    {
+      "id": "ollama",
+      "name": "Ollama (Self-Hosted)",
+      "category": "AI_LLM",
+      "status": "BETA",
+      "default_endpoint": "http://localhost:11434/v1",
+      "fields": [
+        {
+          "name": "endpoint_url",
+          "type": "url",
+          "required": true,
+          "has_default": true
+        },
+        {
+          "name": "default_model",
+          "type": "text",
+          "required": true,
+          "has_default": true
+        },
+        {
+          "name": "bearer_token",
+          "type": "password",
+          "required": false,
+          "has_default": false
+        }
+      ]
+    },
+    {
+      "id": "vllm",
+      "name": "vLLM (Self-Hosted)",
+      "category": "AI_LLM",
+      "status": "BETA",
+      "default_endpoint": "http://localhost:8000/v1",
+      "fields": [
+        {
+          "name": "endpoint_url",
+          "type": "url",
+          "required": true,
+          "has_default": true
+        },
+        {
+          "name": "default_model",
+          "type": "text",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "api_key",
+          "type": "password",
+          "required": false,
+          "has_default": false
+        }
+      ]
+    },
+    {
+      "id": "meta_graph",
+      "name": "Meta Graph API (Facebook & Instagram)",
+      "category": "SOCIAL_ADS",
+      "status": "BETA",
+      "default_endpoint": null,
+      "fields": [
+        {
+          "name": "app_id",
+          "type": "text",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "app_secret",
+          "type": "password",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "page_id",
+          "type": "text",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "page_access_token",
+          "type": "password",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "webhook_verify_token",
+          "type": "password",
+          "required": true,
+          "has_default": false
+        }
+      ]
+    },
+    {
+      "id": "google_ads",
+      "name": "Google Ads & Conversion Tracking",
+      "category": "SOCIAL_ADS",
+      "status": "COMING_SOON",
+      "default_endpoint": null,
+      "fields": [
+        {
+          "name": "customer_id",
+          "type": "text",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "developer_token",
+          "type": "password",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "client_id",
+          "type": "text",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "client_secret",
+          "type": "password",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "refresh_token",
+          "type": "password",
+          "required": true,
+          "has_default": false
+        }
+      ]
+    },
+    {
+      "id": "whatsapp_cloud",
+      "name": "WhatsApp Cloud API (Meta)",
+      "category": "SOCIAL_ADS",
+      "status": "BETA",
+      "default_endpoint": null,
+      "fields": [
+        {
+          "name": "phone_number_id",
+          "type": "text",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "waba_id",
+          "type": "text",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "permanent_access_token",
+          "type": "password",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "webhook_verify_token",
+          "type": "password",
+          "required": true,
+          "has_default": false
+        }
+      ]
+    },
+    {
+      "id": "tiktok_shop",
+      "name": "TikTok Shop & Marketing API",
+      "category": "SOCIAL_ADS",
+      "status": "COMING_SOON",
+      "default_endpoint": null,
+      "fields": [
+        {
+          "name": "app_key",
+          "type": "text",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "app_secret",
+          "type": "password",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "access_token",
+          "type": "password",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "advertiser_id",
+          "type": "text",
+          "required": false,
+          "has_default": false
+        }
+      ]
+    },
+    {
+      "id": "telegram",
+      "name": "Telegram Bot & Channels API",
+      "category": "SOCIAL_ADS",
+      "status": "BETA",
+      "default_endpoint": null,
+      "fields": [
+        {
+          "name": "bot_token",
+          "type": "password",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "bot_username",
+          "type": "text",
+          "required": false,
+          "has_default": false
+        },
+        {
+          "name": "default_chat_id",
+          "type": "text",
+          "required": false,
+          "has_default": false
+        },
+        {
+          "name": "webhook_secret",
+          "type": "password",
+          "required": false,
+          "has_default": false
+        }
+      ]
+    },
+    {
+      "id": "steadfast",
+      "name": "Steadfast Courier",
+      "category": "LOGISTICS",
+      "status": "BETA",
+      "default_endpoint": "https://portal.steadfast.com.bd/api/v1",
+      "fields": [
+        {
+          "name": "api_key",
+          "type": "password",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "secret_key",
+          "type": "password",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "webhook_secret",
+          "type": "password",
+          "required": false,
+          "has_default": false
+        },
+        {
+          "name": "delivery_charge_inside_dhaka",
+          "type": "number",
+          "required": true,
+          "has_default": true
+        },
+        {
+          "name": "delivery_charge_outside_dhaka",
+          "type": "number",
+          "required": true,
+          "has_default": true
+        }
+      ]
+    },
+    {
+      "id": "pathao",
+      "name": "Pathao Courier",
+      "category": "LOGISTICS",
+      "status": "BETA",
+      "default_endpoint": "https://api-hermes.pathao.com",
+      "fields": [
+        {
+          "name": "client_id",
+          "type": "text",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "client_secret",
+          "type": "password",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "username",
+          "type": "text",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "password",
+          "type": "password",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "store_id",
+          "type": "text",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "environment",
+          "type": "select",
+          "required": true,
+          "has_default": true
+        }
+      ]
+    },
+    {
+      "id": "redx",
+      "name": "RedX Logistics",
+      "category": "LOGISTICS",
+      "status": "COMING_SOON",
+      "default_endpoint": "https://openapi.redx.com.bd/v1.0.0-beta",
+      "fields": [
+        {
+          "name": "access_token",
+          "type": "password",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "store_id",
+          "type": "text",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "environment",
+          "type": "select",
+          "required": true,
+          "has_default": true
+        }
+      ]
+    },
+    {
+      "id": "paperfly",
+      "name": "Paperfly Courier",
+      "category": "LOGISTICS",
+      "status": "COMING_SOON",
+      "default_endpoint": null,
+      "fields": [
+        {
+          "name": "username",
+          "type": "text",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "password",
+          "type": "password",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "paperfly_key",
+          "type": "password",
+          "required": true,
+          "has_default": false
+        }
+      ]
+    },
+    {
+      "id": "ecourier",
+      "name": "eCourier",
+      "category": "LOGISTICS",
+      "status": "COMING_SOON",
+      "default_endpoint": null,
+      "fields": [
+        {
+          "name": "api_key",
+          "type": "password",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "api_secret",
+          "type": "password",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "user_id",
+          "type": "text",
+          "required": true,
+          "has_default": false
+        }
+      ]
+    },
+    {
+      "id": "dhl_express",
+      "name": "DHL Express",
+      "category": "LOGISTICS",
+      "status": "COMING_SOON",
+      "default_endpoint": null,
+      "fields": [
+        {
+          "name": "account_number",
+          "type": "text",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "api_key",
+          "type": "password",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "api_secret",
+          "type": "password",
+          "required": true,
+          "has_default": false
+        }
+      ]
+    },
+    {
+      "id": "qdrant",
+      "name": "Qdrant (Vector Database)",
+      "category": "VECTOR_DB",
+      "status": "BETA",
+      "default_endpoint": "http://localhost:6333",
+      "fields": [
+        {
+          "name": "endpoint_url",
+          "type": "url",
+          "required": true,
+          "has_default": true
+        },
+        {
+          "name": "api_key",
+          "type": "password",
+          "required": false,
+          "has_default": false
+        },
+        {
+          "name": "collection_name",
+          "type": "text",
+          "required": true,
+          "has_default": true
+        },
+        {
+          "name": "vector_dimension",
+          "type": "number",
+          "required": true,
+          "has_default": true
+        },
+        {
+          "name": "distance_metric",
+          "type": "select",
+          "required": true,
+          "has_default": true
+        }
+      ]
+    },
+    {
+      "id": "prov_sap_s4hana",
+      "name": "SAP S/4HANA (Enterprise ERP)",
+      "category": "ENTERPRISE",
+      "status": "COMING_SOON",
+      "default_endpoint": null,
+      "fields": [
+        {
+          "name": "endpoint_url",
+          "type": "url",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "client_id",
+          "type": "text",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "client_secret",
+          "type": "password",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "token_url",
+          "type": "url",
+          "required": false,
+          "has_default": false
+        },
+        {
+          "name": "company_code",
+          "type": "text",
+          "required": true,
+          "has_default": true
+        },
+        {
+          "name": "sync_frequency_minutes",
+          "type": "number",
+          "required": true,
+          "has_default": true
+        }
+      ]
+    },
+    {
+      "id": "prov_oracle_netsuite",
+      "name": "Oracle NetSuite (Cloud ERP)",
+      "category": "ENTERPRISE",
+      "status": "COMING_SOON",
+      "default_endpoint": null,
+      "fields": [
+        {
+          "name": "account_id",
+          "type": "text",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "consumer_key",
+          "type": "text",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "consumer_secret",
+          "type": "password",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "token_id",
+          "type": "text",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "token_secret",
+          "type": "password",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "endpoint_url",
+          "type": "url",
+          "required": false,
+          "has_default": false
+        },
+        {
+          "name": "sync_frequency_minutes",
+          "type": "number",
+          "required": true,
+          "has_default": true
+        }
+      ]
+    },
+    {
+      "id": "prov_salesforce_crm",
+      "name": "Salesforce CRM",
+      "category": "ENTERPRISE",
+      "status": "COMING_SOON",
+      "default_endpoint": null,
+      "fields": [
+        {
+          "name": "instance_url",
+          "type": "url",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "client_id",
+          "type": "text",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "client_secret",
+          "type": "password",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "refresh_token",
+          "type": "password",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "sync_frequency_minutes",
+          "type": "number",
+          "required": true,
+          "has_default": true
+        }
+      ]
+    },
+    {
+      "id": "prov_hubspot_crm",
+      "name": "HubSpot CRM",
+      "category": "ENTERPRISE",
+      "status": "BETA",
+      "default_endpoint": null,
+      "fields": [
+        {
+          "name": "access_token",
+          "type": "password",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "portal_id",
+          "type": "text",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "sync_frequency_minutes",
+          "type": "number",
+          "required": true,
+          "has_default": true
+        }
+      ]
+    },
+    {
+      "id": "prov_daraz_marketplace",
+      "name": "Daraz Marketplace (Alibaba Group)",
+      "category": "ENTERPRISE",
+      "status": "COMING_SOON",
+      "default_endpoint": "https://api.daraz.com.bd/rest",
+      "fields": [
+        {
+          "name": "app_key",
+          "type": "text",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "app_secret",
+          "type": "password",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "access_token",
+          "type": "password",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "country_code",
+          "type": "select",
+          "required": true,
+          "has_default": true
+        },
+        {
+          "name": "sync_frequency_minutes",
+          "type": "number",
+          "required": true,
+          "has_default": true
+        }
+      ]
+    },
+    {
+      "id": "prov_shopify_plus",
+      "name": "Shopify Plus / Multi-Store",
+      "category": "ENTERPRISE",
+      "status": "BETA",
+      "default_endpoint": null,
+      "fields": [
+        {
+          "name": "shop_domain",
+          "type": "text",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "access_token",
+          "type": "password",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "api_version",
+          "type": "select",
+          "required": true,
+          "has_default": true
+        },
+        {
+          "name": "webhook_secret",
+          "type": "password",
+          "required": false,
+          "has_default": false
+        },
+        {
+          "name": "sync_frequency_minutes",
+          "type": "number",
+          "required": true,
+          "has_default": true
+        }
+      ]
+    },
+    {
+      "id": "prov_google_sheets",
+      "name": "Google Sheets (Catalog & Inventory)",
+      "category": "ENTERPRISE",
+      "status": "BETA",
+      "default_endpoint": null,
+      "fields": [
+        {
+          "name": "spreadsheet_url",
+          "type": "url",
+          "required": true,
+          "has_default": false
+        },
+        {
+          "name": "sheet_name",
+          "type": "text",
+          "required": true,
+          "has_default": true
+        },
+        {
+          "name": "api_key",
+          "type": "password",
+          "required": false,
+          "has_default": false
+        },
+        {
+          "name": "sync_frequency_minutes",
+          "type": "number",
+          "required": true,
+          "has_default": true
+        }
+      ]
+    }
+  ],
+  "live_check_providers": [
+    "anthropic",
+    "deepseek",
+    "google_gemini",
+    "groq",
+    "meta_graph",
+    "ollama",
+    "openai",
+    "openrouter",
+    "prov_hubspot_crm",
+    "prov_shopify_plus",
+    "qdrant",
+    "steadfast",
+    "telegram",
+    "vllm",
+    "whatsapp_cloud"
+  ]
+}
