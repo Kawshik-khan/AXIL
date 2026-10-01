@@ -1,5 +1,6 @@
-import { IntegrationNotConfiguredError } from "@/lib/errors";
+import { IntegrationNotConfiguredError, AppError } from "@/lib/errors";
 import crypto from "crypto";
+import { outboundRequest, OutboundBlockedError, OutboundTimeoutError, OutboundNetworkError } from "@/lib/outbound-http";
 import { ChannelType, NormalizedIncomingMessage } from "@/types/social";
 import {
   IChannelProvider,
@@ -8,6 +9,49 @@ import {
   DeliveryReceipt,
   UserProfileResult,
 } from "../channel-provider.interface";
+
+const GRAPH_API = "https://graph.facebook.com/v21.0";
+const CALL_TIMEOUT_MS = 10_000;
+
+/** The part of a Meta error message that is safe to show: short, with anything token-shaped removed. */
+function safeError(raw: unknown): string {
+  const text = typeof raw === "string" ? raw : "request failed";
+  return text.replace(/[A-Za-z0-9_-]{20,}/g, "[redacted]").slice(0, 200);
+}
+
+async function graphCall(credentials: ChannelCredentials, path: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const token = typeof credentials.accessToken === "string" ? credentials.accessToken : "";
+  if (!token) throw new IntegrationNotConfiguredError("Instagram messaging", "no page access token");
+  let res;
+  try {
+    res = await outboundRequest(`${GRAPH_API}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify(body),
+      timeoutMs: CALL_TIMEOUT_MS,
+      maxResponseBytes: 256 * 1024,
+    });
+  } catch (err) {
+    if (err instanceof OutboundBlockedError || err instanceof OutboundTimeoutError || err instanceof OutboundNetworkError) {
+      throw new AppError("INSTAGRAM_UNREACHABLE", "Instagram could not be reached. Nothing was sent.", 502);
+    }
+    throw err;
+  }
+  let parsed: { error?: { code?: number; message?: string }; message_id?: string } = {};
+  try {
+    parsed = JSON.parse(res.body);
+  } catch {
+    // not JSON: handled below
+  }
+  if (res.status >= 200 && res.status < 300 && !parsed.error) return parsed;
+  const code = parsed.error?.code ?? res.status;
+  const msg = safeError(parsed.error?.message);
+  if (code === 190) throw new IntegrationNotConfiguredError("Instagram messaging", "the Instagram access token has expired");
+  if (code === 4 || code === 17 || code === 32) throw new AppError("INSTAGRAM_RATE_LIMITED", "Instagram rate limit hit. Retry later.", 429);
+  if (code === 200) throw new AppError("INSTAGRAM_PERMISSION_DENIED", "The Instagram app lacks permission for this operation.", 403);
+  if (code === 10) throw new AppError("INSTAGRAM_PERMISSION_DENIED", "The Instagram app lacks permission for this operation.", 403);
+  throw new AppError("INSTAGRAM_API_ERROR", `Instagram refused the request: ${msg}`, res.status >= 400 && res.status < 500 ? 400 : 502);
+}
 
 export class InstagramAdapter implements IChannelProvider {
   public readonly channelType: ChannelType = "INSTAGRAM";
@@ -118,34 +162,66 @@ export class InstagramAdapter implements IChannelProvider {
   }
 
   public async sendTextMessage(
-    _credentials: ChannelCredentials,
-    _recipientId: string,
-    _text: string,
+    credentials: ChannelCredentials,
+    recipientId: string,
+    text: string,
     _options?: { replyToMessageId?: string; metadata?: Record<string, unknown> }
   ): Promise<SendMessageResult> {
-    // Used to return a made-up message id with status SENT (FX-31, non-negotiable 7)
-    throw new IntegrationNotConfiguredError("Instagram messaging", "sending isn't implemented yet");
+    const result = await graphCall(credentials, `/${recipientId}/messages`, {
+      recipient: { id: recipientId },
+      message: { text: text.slice(0, 1000) },
+      messaging_type: "RESPONSE",
+    });
+    const msgId = typeof result.message_id === "string" ? result.message_id : "";
+    if (!msgId) throw new AppError("INSTAGRAM_API_ERROR", "Instagram did not return a message id.", 502);
+    return { externalMessageId: msgId, status: "SENT", providerTimestamp: new Date().toISOString() };
   }
 
   public async sendMediaMessage(
-    _credentials: ChannelCredentials,
-    _recipientId: string,
-    _mediaType: "IMAGE" | "VIDEO" | "AUDIO" | "FILE",
-    _mediaUrl: string,
-    _options?: { caption?: string; fileName?: string }
+    credentials: ChannelCredentials,
+    recipientId: string,
+    mediaType: "IMAGE" | "VIDEO" | "AUDIO" | "FILE",
+    mediaUrl: string,
+    options?: { caption?: string; fileName?: string }
   ): Promise<SendMessageResult> {
-    // Used to return a made-up message id with status SENT (FX-31, non-negotiable 7)
-    throw new IntegrationNotConfiguredError("Instagram messaging", "sending isn't implemented yet");
+    if (!/^https:\/\//i.test(mediaUrl)) throw new AppError("INSTAGRAM_MEDIA_URL", "Instagram media must be an https URL.", 400);
+    const typeMap = { IMAGE: "image", VIDEO: "video", AUDIO: "audio", FILE: "file" } as const;
+    const igType = typeMap[mediaType];
+    const attachment: Record<string, unknown> = { type: igType, payload: { url: mediaUrl } };
+    if (options?.caption) attachment.payload = { ...(attachment.payload as object), caption: options.caption.slice(0, 1024) };
+    const result = await graphCall(credentials, `/${recipientId}/messages`, {
+      recipient: { id: recipientId },
+      message: { attachment },
+      messaging_type: "RESPONSE",
+    });
+    const msgId = typeof result.message_id === "string" ? result.message_id : "";
+    if (!msgId) throw new AppError("INSTAGRAM_API_ERROR", "Instagram did not return a message id.", 502);
+    return { externalMessageId: msgId, status: "SENT", providerTimestamp: new Date().toISOString() };
   }
 
   public async sendTemplateMessage(
-    _credentials: ChannelCredentials,
-    _recipientId: string,
-    _templateName: string,
-    _parameters: Record<string, string>
+    credentials: ChannelCredentials,
+    recipientId: string,
+    templateName: string,
+    parameters: Record<string, string>
   ): Promise<SendMessageResult> {
-    // Used to return a made-up message id with status SENT (FX-31, non-negotiable 7)
-    throw new IntegrationNotConfiguredError("Instagram messaging", "sending isn't implemented yet");
+    const elements = Object.entries(parameters).map(([key, value]) => ({
+      title: key,
+      subtitle: String(value).slice(0, 80),
+    }));
+    const result = await graphCall(credentials, `/${recipientId}/messages`, {
+      recipient: { id: recipientId },
+      message: {
+        attachment: {
+          type: "template",
+          payload: { template_type: "generic", elements },
+        },
+      },
+      messaging_type: "RESPONSE",
+    });
+    const msgId = typeof result.message_id === "string" ? result.message_id : "";
+    if (!msgId) throw new AppError("INSTAGRAM_API_ERROR", "Instagram did not return a message id.", 502);
+    return { externalMessageId: msgId, status: "SENT", providerTimestamp: new Date().toISOString() };
   }
 
   public async markMessageRead(

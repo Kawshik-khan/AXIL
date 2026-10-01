@@ -6419,6 +6419,14 @@ export class CommerceDatabase {
     return this.data.messages.find((m) => m.tenant_id === tenantId && m.id === id);
   }
 
+  /**
+   * For the n8n dispatch callback, which names a stored message by id. The caller must have authenticated the
+   * callback; the row's tenant_id is authoritative and no tenant comes from the request.
+   */
+  public findMessageForDispatch(id: string): Message | undefined {
+    return this.data.messages.find((m) => m.id === id);
+  }
+
   public findMessageByExternalId(tenantId: string, channelId: string, externalMessageId: string): Message | undefined {
     // External message id is unique per channel
     return this.data.messages.find(
@@ -9838,6 +9846,15 @@ export class CommerceDatabase {
     return this.data.connector_configurations.find(
       (c) => c.tenant_id === tenantId && c.id === id
     );
+  }
+
+  /**
+   * Server-side lookup for provider and n8n traffic that names a connector by its public id. The caller must still
+   * authenticate the request (provider secret token, or the n8n callback token); the row's tenant_id is authoritative.
+   */
+  public findConnectorForIngress(id: string): ConnectorConfigRecord | undefined {
+    if (!this.data.connector_configurations) this.data.connector_configurations = [];
+    return this.data.connector_configurations.find((c) => c.id === id);
   }
 
   public findConnectorByProvider(tenantId: string, providerId: string): ConnectorConfigRecord | undefined {

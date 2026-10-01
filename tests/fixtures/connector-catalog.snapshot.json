@@ -366,12 +366,6 @@
           "type": "text",
           "required": false,
           "has_default": false
-        },
-        {
-          "name": "webhook_secret",
-          "type": "password",
-          "required": false,
-          "has_default": false
         }
       ]
     },

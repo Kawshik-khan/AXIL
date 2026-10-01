@@ -1,5 +1,5 @@
 import { db } from "@/infrastructure/db";
-import { ChannelType, ConnectedChannel } from "@/types/social";
+import { ChannelType, ConnectedChannel, NormalizedIncomingMessage } from "@/types/social";
 import { ChannelService, PROVIDER_ROUTED_TYPES } from "../channels/channel.service";
 import { ChannelCredentials, IChannelProvider } from "../channels/channel-provider.interface";
 import { logger } from "@/lib/logger";
@@ -10,11 +10,19 @@ import { MessageService } from "../messages/message.service";
 import { AssignmentService } from "../assignments/assignment.service";
 import { SocialEventService } from "../events/social-event.service";
 import { BadRequestError, AuthenticationError } from "@/lib/errors";
+import crypto from "crypto";
+import { forwardRawToN8n, isSocialChannel, socialN8nEnabled } from "../n8n/bridge";
+
+/** A stable id for a provider event, so n8n and CommerceOS can recognize a redelivery. */
+export function rawEventId(channelId: string, payload: Record<string, unknown>): string {
+  return `${channelId}:${crypto.createHash("sha256").update(JSON.stringify(payload)).digest("hex").slice(0, 24)}`;
+}
 
 export interface WebhookIngressResult {
   success: boolean;
   messagesProcessed: number;
   receiptsProcessed: number;
+  forwardedToN8n?: number;
   channelId?: string;
   tenantId?: string;
 }
@@ -114,7 +122,19 @@ export class WebhookIngressService {
 
     let messagesProcessed = 0;
     let receiptsProcessed = 0;
+    let forwardedToN8n = 0;
     for (const { channel, payload } of verified) {
+      // n8n is the preferred normalizer (connector plan C3). If it can't take the event, CommerceOS normalizes it itself:
+      // a provider's retry is not something to count on, so an n8n outage must not lose a customer's message.
+      if (socialN8nEnabled() && isSocialChannel(channel.type)) {
+        try {
+          await forwardRawToN8n(channel, rawEventId(channel.id, payload), payload);
+          forwardedToN8n++;
+          continue;
+        } catch (err) {
+          logger.warn("social.n8n_inbound_fallback", { channel_id: channel.id, code: err instanceof Error ? err.name : "Error" });
+        }
+      }
       const result = await this.processForChannel(adapter, channelType, channel, payload);
       messagesProcessed += result.messagesProcessed;
       receiptsProcessed += result.receiptsProcessed;
@@ -125,6 +145,7 @@ export class WebhookIngressService {
       success: true,
       messagesProcessed,
       receiptsProcessed,
+      forwardedToN8n,
       channelId: single?.id,
       tenantId: single?.tenant_id,
     };
@@ -155,15 +176,28 @@ export class WebhookIngressService {
 
   private static async processForChannel(
     adapter: IChannelProvider,
-    channelType: ChannelType,
+    _channelType: ChannelType,
     channel: ConnectedChannel,
     payload: Record<string, unknown>
   ): Promise<{ messagesProcessed: number; receiptsProcessed: number }> {
+    // 3. Normalize Incoming Messages and parse delivery receipts, then process them
+    const normalizedMessages = adapter.normalizeIncomingEvent(payload, channel.id);
+    const receipts = adapter.parseDeliveryReceipts(payload);
+    return this.ingestNormalized(channel, normalizedMessages, receipts);
+  }
+
+  /**
+   * Processes messages and delivery receipts that are already normalized: from a provider adapter (direct path) or from
+   * the n8n normalizer (POST /api/v1/social/ingest). The channel row is authoritative for the tenant.
+   */
+  public static async ingestNormalized(
+    channel: ConnectedChannel,
+    normalizedMessages: NormalizedIncomingMessage[],
+    receipts: Array<{ externalMessageId: string; status: "DELIVERED" | "READ" | "FAILED"; timestamp: string; failureReason?: string }>
+  ): Promise<{ messagesProcessed: number; receiptsProcessed: number }> {
     const tenantId = channel.tenant_id;
     const channelId = channel.id;
-
-    // 3. Normalize Incoming Messages
-    const normalizedMessages = adapter.normalizeIncomingEvent(payload, channelId);
+    const channelType = channel.type;
     let messagesProcessed = 0;
 
     for (const norm of normalizedMessages) {
@@ -226,8 +260,7 @@ export class WebhookIngressService {
       }
     }
 
-    // 4. Parse & Process Delivery Receipts
-    const receipts = adapter.parseDeliveryReceipts(payload);
+    // 4. Process Delivery Receipts
     let receiptsProcessed = 0;
 
     for (const receipt of receipts) {
