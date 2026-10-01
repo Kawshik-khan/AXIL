@@ -3,7 +3,7 @@ import assert from "assert";
 import { db } from "@/infrastructure/db";
 import { ConnectorService } from "@/domains/connectors/service";
 import { RequestContext } from "@/lib/context";
-import { encryptCredential, decryptCredential, maskSecret } from "@/lib/security";
+import { encryptCredential, decryptCredential, maskSecret, looksLikeMaskedSecret } from "@/lib/security";
 import { RoleName, ROLE_PERMISSIONS, Permission } from "@/lib/permissions";
 import { ForbiddenError, BadRequestError } from "@/lib/errors";
 import { setOutboundTransportForTesting } from "@/lib/outbound-http";
@@ -30,8 +30,11 @@ async function runTest(testName: string, testFn: () => Promise<void> | void) {
 
 function createMockContext(tenantId: string, role: RoleName = "OWNER"): RequestContext {
   const permissions: Permission[] = ROLE_PERMISSIONS[role] || [];
+  const now = new Date().toISOString();
   return {
     requestId: `req_test_${Date.now()}`,
+    traceId: `trc_test_${Date.now()}`,
+    timestamp: now,
     tenant: {
       id: tenantId,
       name: `Tenant ${tenantId}`,
@@ -41,28 +44,15 @@ function createMockContext(tenantId: string, role: RoleName = "OWNER"): RequestC
       language: "en",
       settings: {},
       status: "ACTIVE",
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
     },
     user: {
       id: `usr_${tenantId}`,
       email: `admin@${tenantId}.com`,
       name: "Test Admin",
       status: "ACTIVE",
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
     },
     role,
     permissions,
-    membership: {
-      id: `mem_${tenantId}`,
-      tenant_id: tenantId,
-      user_id: `usr_${tenantId}`,
-      role,
-      status: "ACTIVE",
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    },
   };
 }
 
@@ -243,6 +233,8 @@ async function main() {
 
     const shortSecret = maskSecret("abc");
     assert.strictEqual(shortSecret, "••••••••");
+    assert.strictEqual(looksLikeMaskedSecret("1234••••••••6789"), true);
+    assert.strictEqual(looksLikeMaskedSecret("123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ_012345"), false);
   });
 
   // -------------------------------------------------------------
@@ -475,6 +467,85 @@ async function main() {
       assert.ok(err instanceof BadRequestError);
     }
     assert.strictEqual(threw, true, "Should fail when Telegram bot_token is missing");
+  });
+
+  await runTest("After save, Test/Save with the masked token reuse the stored secret (not the bullets)", async () => {
+    const token = "123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ_012345";
+    stubStatus = 200;
+    stubBody = '{"ok":true,"result":{"id":123456789,"is_bot":true}}';
+    const tenant = createMockContext("tenant_tg_mask_reuse");
+    const saved = await ConnectorService.saveConnector(tenant, {
+      provider_id: "telegram",
+      credentials: { bot_token: token, bot_username: "@MyStoreBot" },
+    });
+    assert.strictEqual(saved.health_status, "UNVERIFIED");
+    const masked = saved.credentials_masked.bot_token;
+    assert.ok(masked.includes("•"), "UI mask must contain bullets");
+    assert.notStrictEqual(masked, token);
+
+    fetchCalls.length = 0;
+    const retest = await ConnectorService.testConnection(tenant, {
+      provider_id: "telegram",
+      credentials: { bot_token: masked, bot_username: "@MyStoreBot" },
+    });
+    assert.strictEqual(retest.status, "VERIFIED", "masked token must be replaced with the stored secret");
+    assert.ok(
+      fetchCalls.some((u) => u.includes(`/bot${token}/getMe`)),
+      "Telegram must be called with the real stored token"
+    );
+    assert.ok(!fetchCalls.some((u) => u.includes("•")), "the mask must never be placed in the request URL");
+
+    const listed = await ConnectorService.listConnectors(tenant);
+    const afterTest = listed.configurations.find((c) => c.provider_id === "telegram");
+    assert.ok(afterTest);
+    assert.strictEqual(afterTest.health_status, "HEALTHY");
+
+    const resaved = await ConnectorService.saveConnector(tenant, {
+      provider_id: "telegram",
+      credentials: { bot_token: masked, bot_username: "@MyStoreBot" },
+    });
+    assert.strictEqual(resaved.health_status, "HEALTHY", "re-save of unchanged secrets must keep verification");
+    const raw = db.findConnectorById(tenant.tenant.id, resaved.id);
+    assert.ok(raw);
+    const stored = decryptCredential<Record<string, string>>(raw.credentials_encrypted);
+    assert.strictEqual(stored.bot_token, token, "re-save must not encrypt the masked display value");
+
+    fetchCalls.length = 0;
+    const emptyTest = await ConnectorService.testConnection(tenant, {
+      provider_id: "telegram",
+      credentials: { bot_username: "@MyStoreBot" },
+    });
+    assert.strictEqual(emptyTest.status, "VERIFIED");
+    assert.ok(fetchCalls.some((u) => u.includes(`/bot${token}/getMe`)));
+
+    const outsider = createMockContext("tenant_tg_mask_other");
+    fetchCalls.length = 0;
+    let outsiderThrew = false;
+    try {
+      await ConnectorService.testConnection(outsider, {
+        provider_id: "telegram",
+        credentials: { bot_token: masked },
+      });
+    } catch (err) {
+      outsiderThrew = err instanceof BadRequestError;
+    }
+    assert.strictEqual(outsiderThrew, true, "another tenant must not reuse this workspace's token");
+    assert.deepStrictEqual(fetchCalls, [], "no outbound call with another tenant's secret");
+
+    const rotatedToken = "987654321:ZYXwvutsrqPONmlkJIHgfedCBA_543210";
+    const rotated = await ConnectorService.saveConnector(tenant, {
+      provider_id: "telegram",
+      credentials: { bot_token: rotatedToken, bot_username: "@MyStoreBot" },
+    });
+    assert.strictEqual(rotated.health_status, "UNVERIFIED", "changing a stored secret must clear its old verification");
+    const rotatedRaw = db.findConnectorById(tenant.tenant.id, rotated.id);
+    assert.ok(rotatedRaw);
+    assert.strictEqual(
+      decryptCredential<Record<string, string>>(rotatedRaw.credentials_encrypted).bot_token,
+      rotatedToken,
+      "a replacement token must be stored as supplied"
+    );
+    stubBody = "{}";
   });
 
   await runTest("Enterprise provider without a live check (Google Sheets) is NOT_VERIFIED with no latency; SAP is coming soon", async () => {

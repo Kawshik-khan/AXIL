@@ -40,3 +40,7 @@ npm-debug.log*
 coverage/
 .vercel/
 .env*.local
+.claude/*
+.CommerceOS_IEEE_Project_Proposal.docx
+.CommerceOS_IEEE_Project_Proposal.tex
+.AUDIT_REPORT_2026-09-27.md

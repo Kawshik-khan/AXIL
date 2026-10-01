@@ -202,6 +202,12 @@ export function maskSecret(secret?: string): string {
   return `${prefix}••••••••${suffix}`;
 }
 
+/** True when the client echoed a masked display value instead of the real secret. */
+export function looksLikeMaskedSecret(value?: string): boolean {
+  if (!value) return false;
+  return value.includes("•");
+}
+
 export const PLATFORM_AUTH_COOKIE_NAME = "commerceos_platform_session";
 
 export interface PlatformSessionPayload {

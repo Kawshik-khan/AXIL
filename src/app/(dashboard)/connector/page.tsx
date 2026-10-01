@@ -63,6 +63,7 @@ export default function ConnectorPage() {
   const [modalEndpoint, setModalEndpoint] = useState("");
   const [modalDefaultModel, setModalDefaultModel] = useState("");
   const [showSecrets, setShowSecrets] = useState<Record<string, boolean>>({});
+  const [keptSecrets, setKeptSecrets] = useState<Record<string, boolean>>({});
   const [isSaving, setIsSaving] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<TestConnectionResult | null>(null);
@@ -186,9 +187,15 @@ export default function ConnectorPage() {
     const existing = configMap.get(provider.id);
     const initialForm: Record<string, any> = {};
 
+    const kept: Record<string, boolean> = {};
     for (const field of provider.fields) {
-      if (existing?.credentials_masked && existing.credentials_masked[field.name]) {
-        initialForm[field.name] = existing.credentials_masked[field.name];
+      const storedMasked = existing?.credentials_masked?.[field.name];
+      if (field.type === "password" && storedMasked) {
+        // Never put the masked token in the input — Test/Save would send it and fail format checks.
+        kept[field.name] = true;
+        initialForm[field.name] = "";
+      } else if (storedMasked) {
+        initialForm[field.name] = storedMasked;
       } else if (field.defaultValue !== undefined) {
         initialForm[field.name] = field.defaultValue;
       } else {
@@ -196,9 +203,24 @@ export default function ConnectorPage() {
       }
     }
 
+    setKeptSecrets(kept);
+    setShowSecrets({});
     setModalFormData(initialForm);
     setModalEndpoint(existing?.endpoint_url || provider.default_endpoint || "");
     setModalDefaultModel(existing?.default_model || provider.suggested_models?.[0] || "");
+  };
+
+  const credentialsForRequest = () => {
+    if (!selectedProvider) return modalFormData;
+    const credentials: Record<string, unknown> = { ...modalFormData };
+    for (const field of selectedProvider.fields) {
+      if (field.type !== "password") continue;
+      const value = String(credentials[field.name] ?? "").trim();
+      if (!value || value.includes("•")) {
+        delete credentials[field.name];
+      }
+    }
+    return credentials;
   };
 
   // Handle Smart Database URI Parsing
@@ -252,7 +274,7 @@ export default function ConnectorPage() {
           provider_id: selectedProvider.id,
           endpoint_url: modalEndpoint,
           default_model: modalDefaultModel,
-          credentials: modalFormData,
+          credentials: credentialsForRequest(),
         }),
       });
 
@@ -262,6 +284,7 @@ export default function ConnectorPage() {
       }
 
       setTestResult(json.data);
+      await loadConnectors();
     } catch (err) {
       setTestError(err instanceof Error ? err.message : "Connection failed.");
     } finally {
@@ -285,7 +308,7 @@ export default function ConnectorPage() {
           name: selectedProvider.name,
           endpoint_url: modalEndpoint,
           default_model: modalDefaultModel,
-          credentials: modalFormData,
+          credentials: credentialsForRequest(),
         }),
       });
 
@@ -796,6 +819,12 @@ export default function ConnectorPage() {
                         <span style={{ fontWeight: 600 }}>Saved, not verified with the provider</span>
                       </div>
                     )}
+                    {config.health_status === "HEALTHY" && (
+                      <div className={styles.configSnippetRow}>
+                        <span className={styles.configSnippetLabel}>Status:</span>
+                        <span style={{ fontWeight: 600 }}>Verified with the provider</span>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -962,7 +991,11 @@ export default function ConnectorPage() {
                         <input
                           type={isSecret && !isVisible ? "password" : field.type === "number" ? "number" : "text"}
                           className={styles.textInput}
-                          placeholder={field.placeholder || ""}
+                          placeholder={
+                            isSecret && keptSecrets[field.name]
+                              ? "Saved — leave blank to keep the current token"
+                              : field.placeholder || ""
+                          }
                           value={modalFormData[field.name] ?? ""}
                           onChange={(e) =>
                             setModalFormData((prev) => ({
@@ -970,7 +1003,7 @@ export default function ConnectorPage() {
                               [field.name]: field.type === "number" ? Number(e.target.value) : e.target.value,
                             }))
                           }
-                          required={field.required}
+                          required={Boolean(field.required) && !(isSecret && keptSecrets[field.name])}
                         />
                         {isSecret && (
                           <button
