@@ -142,9 +142,9 @@ export const SOCIAL_ADS_MANIFESTS: ConnectorProviderDefinition[] = [
     portal_url: "https://t.me/botfather",
     documentation_url: "https://core.telegram.org/bots/api",
     fields: [
-      { name: "bot_token", label: "Telegram Bot Token", type: "password", required: true, placeholder: "123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ_012345", description: "API token issued by @BotFather on Telegram." },
-      { name: "bot_username", label: "Bot Username (Optional)", type: "text", required: false, placeholder: "@MyStoreBot", description: "Public username of your Telegram Bot." },
-      { name: "default_chat_id", label: "Default Chat / Channel ID (Optional)", type: "text", required: false, placeholder: "-1001234567890", description: "Telegram Channel or Group ID for receiving automated order & stock alerts." },
+      { name: "bot_token", label: "Telegram Bot Token", type: "password", required: true, placeholder: "Enter bot token from @BotFather", description: "API token issued by @BotFather on Telegram." },
+      { name: "bot_username", label: "Bot Username (Optional)", type: "text", required: false, placeholder: "@YourStoreBot", description: "Public username of your Telegram Bot." },
+      { name: "default_chat_id", label: "Default Chat / Channel ID (Optional)", type: "text", required: false, placeholder: "e.g. -100xxxxxxxxxx", description: "Telegram Channel or Group ID for receiving automated order & stock alerts." },
     ],
     guidelines: {
       portal_url: "https://t.me/botfather",

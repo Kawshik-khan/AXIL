@@ -80,7 +80,7 @@ function requestFor(input: LiveCheckInput): CheckRequest | { invalid: string } |
     }
     case "telegram": {
       const token = str(c.bot_token);
-      if (!/^\d{3,20}:[A-Za-z0-9_-]{20,100}$/.test(token)) return { invalid: "the bot token format is 123456789:ABC..." };
+      if (!/^\d{3,20}:[A-Za-z0-9_-]{20,100}$/.test(token)) return { invalid: "the Telegram bot token format is invalid (must be from @BotFather)" };
       return { url: `https://api.telegram.org/bot${token}/getMe`, headers: {}, bodyOk: (b) => /"ok"\s*:\s*true/.test(b) };
     }
     case "steadfast": {
