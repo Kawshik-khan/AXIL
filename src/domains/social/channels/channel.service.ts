@@ -142,7 +142,7 @@ export class ChannelService {
     if (existing) return existing;
     const creds = decryptCredential<Record<string, unknown>>(connector.credentials_encrypted);
     const botId = String(creds.bot_token ?? "").split(":")[0];
-    if (!/^d{3,20}$/.test(botId)) throw new BadRequestError("The Telegram bot token is malformed.");
+    if (!/^\d{3,20}$/.test(botId)) throw new BadRequestError("The Telegram bot token is malformed.");
     assertWithinLimit(tenantId, "max_channels");
     const now = new Date().toISOString();
     return db.createConnectedChannel({

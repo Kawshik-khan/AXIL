@@ -313,6 +313,23 @@ async function main() {
     assert.strictEqual(updated.credentials_masked.api_key, "sk-p••••••••9999");
   });
 
+  await runTest("Save Telegram connector and ensure channel creation", async () => {
+    const tenantCContext = createMockContext("tenant_gamma_03");
+    const saved = await ConnectorService.saveConnector(tenantCContext, {
+      provider_id: "telegram",
+      credentials: {
+        bot_token: "123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ_012345",
+        bot_username: "@CommerceOSStoreBot",
+      },
+    });
+    assert.strictEqual(saved.provider_id, "telegram");
+    const channels = db.getConnectedChannels("tenant_gamma_03");
+    const tgChannel = channels.find((c) => c.connector_id === saved.id);
+    assert.ok(tgChannel, "Telegram channel should be created");
+    assert.strictEqual(tgChannel.type, "TELEGRAM");
+    assert.strictEqual(tgChannel.provider_account_id, "123456789");
+  });
+
   // -------------------------------------------------------------
   // SUITE 5: REAL-TIME TEST CONNECTION HANDSHAKE
   // -------------------------------------------------------------
