@@ -21,7 +21,7 @@ export class ChannelPolicyService {
   ): PolicyCheckResult {
     // 1. Text character limits
     if (text) {
-      const maxLen = channelType === "WHATSAPP" ? 4096 : 2000;
+      const maxLen = channelType === "WHATSAPP" || channelType === "TELEGRAM" ? 4096 : 2000;
       if (text.length > maxLen) {
         return {
           allowed: false,

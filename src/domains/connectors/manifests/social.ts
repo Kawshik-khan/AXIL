@@ -145,7 +145,6 @@ export const SOCIAL_ADS_MANIFESTS: ConnectorProviderDefinition[] = [
       { name: "bot_token", label: "Telegram Bot Token", type: "password", required: true, placeholder: "123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ_012345", description: "API token issued by @BotFather on Telegram." },
       { name: "bot_username", label: "Bot Username (Optional)", type: "text", required: false, placeholder: "@MyStoreBot", description: "Public username of your Telegram Bot." },
       { name: "default_chat_id", label: "Default Chat / Channel ID (Optional)", type: "text", required: false, placeholder: "-1001234567890", description: "Telegram Channel or Group ID for receiving automated order & stock alerts." },
-      { name: "webhook_secret", label: "Webhook Secret Token (Optional)", type: "password", required: false, placeholder: "Custom string for X-Telegram-Bot-Api-Secret-Token verification" },
     ],
     guidelines: {
       portal_url: "https://t.me/botfather",

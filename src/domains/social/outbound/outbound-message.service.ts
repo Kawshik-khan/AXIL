@@ -13,6 +13,8 @@ import { SocialEventService } from "../events/social-event.service";
 import { BadRequestError, NotFoundError } from "@/lib/errors";
 import { assertNotKilled, isFeatureEnabled } from "@/lib/safety-gate";
 import { FeatureNotEntitledError } from "@/lib/errors";
+import { enqueueSendInN8n, isSocialChannel, socialN8nEnabled } from "../n8n/bridge";
+import { logger } from "@/lib/logger";
 
 export interface SendOutboundPayload {
   text: string;
@@ -131,6 +133,25 @@ export class OutboundMessageService {
     messageId: string,
     payload: SendOutboundPayload
   ): Promise<Message> {
+    // n8n is the preferred path for social channels (connector plan C3): it schedules, waits for the 24-hour
+    // window, retries, and then calls back to /api/v1/social/dispatch. When n8n is unavailable, CommerceOS
+    // delivers directly so a customer's message is never lost.
+    if (socialN8nEnabled() && isSocialChannel(channel.type)) {
+      try {
+        await enqueueSendInN8n({
+          messageId,
+          channel,
+          sendAt: null,
+          idempotencyKey: payload.idempotency_key || messageId,
+        });
+        // The message stays QUEUED; n8n will dispatch it and the dispatch route will update the status.
+        return db.findMessageById(context.tenant.id, messageId) ?? (await db.updateMessage(context.tenant.id, messageId, { status: "QUEUED" }));
+      } catch (err) {
+        // n8n couldn't take it: fall through to direct delivery
+        logger.warn("social.n8n_send_fallback", { message_id: messageId, error: err instanceof Error ? err.name : "Error" });
+      }
+    }
+
     const adapter = ChannelService.getAdapter(channel.type);
     let credentials: ChannelCredentials;
     try {

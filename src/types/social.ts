@@ -31,6 +31,8 @@ export interface ConnectedChannel {
   external_business_id?: string;
   external_phone_number_id?: string;
   credentials_encrypted: string; // AES-256-GCM encrypted JSON payload
+  /** When set, the credentials live in this connector (connector_configurations) and credentials_encrypted is unused (connector plan D3). */
+  connector_id?: string;
   configuration: {
     welcome_message?: string;
     auto_reply_enabled?: boolean;

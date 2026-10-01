@@ -11,6 +11,7 @@ import { FacebookAdapter } from "./adapters/facebook.adapter";
 import { InstagramAdapter } from "./adapters/instagram.adapter";
 import { WhatsAppAdapter } from "./adapters/whatsapp.adapter";
 import { WebsiteChatAdapter } from "./adapters/website-chat.adapter";
+import { TelegramAdapter } from "./adapters/telegram.adapter";
 import { assertWithinLimit } from "@/lib/safety-gate";
 
 /** Channel types whose inbound webhooks are routed by `provider_account_id` (Page id / WhatsApp phone number id). */
@@ -23,7 +24,7 @@ export class ChannelService {
     WHATSAPP: new WhatsAppAdapter(),
     WEBSITE_CHAT: new WebsiteChatAdapter(),
     TIKTOK: new FacebookAdapter() as any, // Extensible fallback
-    TELEGRAM: new FacebookAdapter() as any,
+    TELEGRAM: new TelegramAdapter(),
     EMAIL: new FacebookAdapter() as any,
     SMS: new FacebookAdapter() as any,
     MARKETPLACE: new FacebookAdapter() as any,
@@ -132,6 +133,34 @@ export class ChannelService {
     return db.createConnectedChannel(newChannel);
   }
 
+  /**
+   * The channel a Telegram connector feeds: created when the connector is saved, reused afterwards. Telegram has one
+   * webhook per bot, so the channel is routed by the connector id (/api/v1/connectors/<id>/webhook), not by an account id.
+   */
+  public static ensureChannelForTelegramConnector(tenantId: string, connector: { id: string; name: string; credentials_encrypted: string }): ConnectedChannel {
+    const existing = db.getConnectedChannels(tenantId).find((c) => c.connector_id === connector.id);
+    if (existing) return existing;
+    const creds = decryptCredential<Record<string, unknown>>(connector.credentials_encrypted);
+    const botId = String(creds.bot_token ?? "").split(":")[0];
+    if (!/^d{3,20}$/.test(botId)) throw new BadRequestError("The Telegram bot token is malformed.");
+    assertWithinLimit(tenantId, "max_channels");
+    const now = new Date().toISOString();
+    return db.createConnectedChannel({
+      id: `chn_tel_${Date.now()}_${randomSuffix()}`,
+      tenant_id: tenantId,
+      type: "TELEGRAM",
+      name: connector.name,
+      status: "ACTIVE",
+      provider_account_id: botId,
+      credentials_encrypted: "",
+      connector_id: connector.id,
+      configuration: { auto_reply_enabled: true },
+      last_sync_at: now,
+      created_at: now,
+      updated_at: now,
+    });
+  }
+
   public static async updateChannel(
     context: RequestContext,
     channelId: string,
@@ -177,6 +206,12 @@ export class ChannelService {
    */
   public static getDecryptedCredentials(channel: ConnectedChannel): ChannelCredentials {
     try {
+      if (channel.connector_id) {
+        // The credentials live in the connector, so there is one copy to rotate and revoke (connector plan D3)
+        const connector = db.findConnectorById(channel.tenant_id, channel.connector_id);
+        if (!connector || connector.enabled === false) throw new Error("connector missing or disabled");
+        return decryptCredential<ChannelCredentials>(connector.credentials_encrypted);
+      }
       return decryptCredential<ChannelCredentials>(channel.credentials_encrypted);
     } catch {
       throw new AppError(

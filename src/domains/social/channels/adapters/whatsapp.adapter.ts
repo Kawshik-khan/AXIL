@@ -1,5 +1,6 @@
-import { IntegrationNotConfiguredError } from "@/lib/errors";
+import { IntegrationNotConfiguredError, AppError } from "@/lib/errors";
 import crypto from "crypto";
+import { outboundRequest, OutboundBlockedError, OutboundTimeoutError, OutboundNetworkError } from "@/lib/outbound-http";
 import { ChannelType, NormalizedIncomingMessage } from "@/types/social";
 import {
   IChannelProvider,
@@ -8,6 +9,51 @@ import {
   DeliveryReceipt,
   UserProfileResult,
 } from "../channel-provider.interface";
+
+const GRAPH_API = "https://graph.facebook.com/v21.0";
+const CALL_TIMEOUT_MS = 10_000;
+
+/** The part of a WhatsApp error message that is safe to show: short, with anything token-shaped removed. */
+function safeError(raw: unknown): string {
+  const text = typeof raw === "string" ? raw : "request failed";
+  return text.replace(/[A-Za-z0-9_-]{20,}/g, "[redacted]").slice(0, 200);
+}
+
+async function graphCall(credentials: ChannelCredentials, path: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const token = typeof credentials.accessToken === "string" ? credentials.accessToken : "";
+  if (!token) throw new IntegrationNotConfiguredError("WhatsApp messaging", "no access token");
+  let res;
+  try {
+    res = await outboundRequest(`${GRAPH_API}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify(body),
+      timeoutMs: CALL_TIMEOUT_MS,
+      maxResponseBytes: 256 * 1024,
+    });
+  } catch (err) {
+    if (err instanceof OutboundBlockedError || err instanceof OutboundTimeoutError || err instanceof OutboundNetworkError) {
+      throw new AppError("WHATSAPP_UNREACHABLE", "WhatsApp could not be reached. Nothing was sent.", 502);
+    }
+    throw err;
+  }
+  let parsed: { error?: { code?: number; message?: string }; messages?: Array<{ id?: string }> } = {};
+  try {
+    parsed = JSON.parse(res.body);
+  } catch {
+    // not JSON: handled below
+  }
+  if (res.status >= 200 && res.status < 300 && !parsed.error) return parsed;
+  const code = parsed.error?.code ?? res.status;
+  const msg = safeError(parsed.error?.message);
+  // Map common WhatsApp error codes
+  if (code === 131047) throw new AppError("WHATSAPP_RE_ENGAGEMENT_REQUIRED", "The customer hasn't messaged in the last 24 hours. A template message is required.", 400);
+  if (code === 131026) throw new AppError("WHATSAPP_UNDELIVERABLE", "The message could not be delivered to this phone number.", 400);
+  if (code === 4 || code === 17 || code === 32 || code === 131047) throw new AppError("WHATSAPP_RATE_LIMITED", "WhatsApp rate limit hit. Retry later.", 429);
+  if (code === 190) throw new IntegrationNotConfiguredError("WhatsApp messaging", "the WhatsApp access token has expired");
+  if (code === 10) throw new AppError("WHATSAPP_PERMISSION_DENIED", "The WhatsApp app lacks permission for this operation.", 403);
+  throw new AppError("WHATSAPP_API_ERROR", `WhatsApp refused the request: ${msg}`, res.status >= 400 && res.status < 500 ? 400 : 502);
+}
 
 export class WhatsAppAdapter implements IChannelProvider {
   public readonly channelType: ChannelType = "WHATSAPP";
@@ -172,34 +218,71 @@ export class WhatsAppAdapter implements IChannelProvider {
   }
 
   public async sendTextMessage(
-    _credentials: ChannelCredentials,
-    _recipientId: string,
-    _text: string,
+    credentials: ChannelCredentials,
+    recipientId: string,
+    text: string,
     _options?: { replyToMessageId?: string; metadata?: Record<string, unknown> }
   ): Promise<SendMessageResult> {
-    // Used to return a made-up message id with status SENT (FX-31, non-negotiable 7)
-    throw new IntegrationNotConfiguredError("WhatsApp messaging", "sending isn't implemented yet");
+    const phoneNumberId = typeof credentials.phoneNumberId === "string" ? credentials.phoneNumberId : "";
+    if (!phoneNumberId) throw new IntegrationNotConfiguredError("WhatsApp messaging", "phone number id is required");
+    const result = await graphCall(credentials, `/${phoneNumberId}/messages`, {
+      messaging_product: "whatsapp",
+      to: recipientId,
+      type: "text",
+      text: { body: text.slice(0, 4096) },
+    });
+    const msgId = (result.messages as Array<{ id?: string }>)?.[0]?.id;
+    if (!msgId) throw new AppError("WHATSAPP_API_ERROR", "WhatsApp did not return a message id.", 502);
+    return { externalMessageId: msgId, status: "SENT", providerTimestamp: new Date().toISOString() };
   }
 
   public async sendMediaMessage(
-    _credentials: ChannelCredentials,
-    _recipientId: string,
-    _mediaType: "IMAGE" | "VIDEO" | "AUDIO" | "FILE",
-    _mediaUrl: string,
-    _options?: { caption?: string; fileName?: string }
+    credentials: ChannelCredentials,
+    recipientId: string,
+    mediaType: "IMAGE" | "VIDEO" | "AUDIO" | "FILE",
+    mediaUrl: string,
+    options?: { caption?: string; fileName?: string }
   ): Promise<SendMessageResult> {
-    // Used to return a made-up message id with status SENT (FX-31, non-negotiable 7)
-    throw new IntegrationNotConfiguredError("WhatsApp messaging", "sending isn't implemented yet");
+    const phoneNumberId = typeof credentials.phoneNumberId === "string" ? credentials.phoneNumberId : "";
+    if (!phoneNumberId) throw new IntegrationNotConfiguredError("WhatsApp messaging", "phone number id is required");
+    if (!/^https:\/\//i.test(mediaUrl)) throw new AppError("WHATSAPP_MEDIA_URL", "WhatsApp media must be an https URL.", 400);
+    const typeMap = { IMAGE: "image", VIDEO: "video", AUDIO: "audio", FILE: "document" } as const;
+    const waType = typeMap[mediaType];
+    const body: Record<string, unknown> = {
+      messaging_product: "whatsapp",
+      to: recipientId,
+      type: waType,
+      [waType]: { link: mediaUrl },
+    };
+    if (options?.caption) body[waType] = { ...(body[waType] as object), caption: options.caption.slice(0, 1024) };
+    if (options?.fileName && mediaType === "FILE") body[waType] = { ...(body[waType] as object), filename: options.fileName.slice(0, 255) };
+    const result = await graphCall(credentials, `/${phoneNumberId}/messages`, body);
+    const msgId = (result.messages as Array<{ id?: string }>)?.[0]?.id;
+    if (!msgId) throw new AppError("WHATSAPP_API_ERROR", "WhatsApp did not return a message id.", 502);
+    return { externalMessageId: msgId, status: "SENT", providerTimestamp: new Date().toISOString() };
   }
 
   public async sendTemplateMessage(
-    _credentials: ChannelCredentials,
-    _recipientId: string,
-    _templateName: string,
-    _parameters: Record<string, string>
+    credentials: ChannelCredentials,
+    recipientId: string,
+    templateName: string,
+    parameters: Record<string, string>
   ): Promise<SendMessageResult> {
-    // Used to return a made-up message id with status SENT (FX-31, non-negotiable 7)
-    throw new IntegrationNotConfiguredError("WhatsApp messaging", "sending isn't implemented yet");
+    const phoneNumberId = typeof credentials.phoneNumberId === "string" ? credentials.phoneNumberId : "";
+    if (!phoneNumberId) throw new IntegrationNotConfiguredError("WhatsApp messaging", "phone number id is required");
+    const components = Object.entries(parameters).map(([key, value]) => ({
+      type: "body",
+      parameters: [{ type: "text", text: String(value).slice(0) }],
+    }));
+    const result = await graphCall(credentials, `/${phoneNumberId}/messages`, {
+      messaging_product: "whatsapp",
+      to: recipientId,
+      type: "template",
+      template: { name: templateName, language: { code: "en_US" }, ...(components.length > 0 ? { components } : {}) },
+    });
+    const msgId = (result.messages as Array<{ id?: string }>)?.[0]?.id;
+    if (!msgId) throw new AppError("WHATSAPP_API_ERROR", "WhatsApp did not return a message id.", 502);
+    return { externalMessageId: msgId, status: "SENT", providerTimestamp: new Date().toISOString() };
   }
 
   public async markMessageRead(

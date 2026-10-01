@@ -401,9 +401,9 @@ export async function runSocialCommerceTests() {
       idempotency_key: idempotencyKey,
     });
 
-    // Meta sending isn't implemented: the message is recorded as FAILED with the reason, never as SENT (FX-31)
+    // Meta sending fails with a token error: the message is recorded as FAILED with the reason, never as SENT (FX-31)
     assert.strictEqual(sentMsg1.status, "FAILED");
-    assert.ok(/not connected|Nothing was sent/.test(sentMsg1.failure_reason ?? ""), sentMsg1.failure_reason);
+    assert.ok(/token|expired|not connected|Nothing was sent/.test(sentMsg1.failure_reason ?? ""), sentMsg1.failure_reason);
     assert.strictEqual(sentMsg1.retry_count, 1, "a non-retryable error isn't retried");
 
     // Verify conversation automation_paused was locked to true because a human responded
