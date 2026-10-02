@@ -702,10 +702,28 @@ export class ConnectorService {
       throw new NotFoundError(`Connector configuration '${id}' not found.`);
     }
 
-    const removed = db.deleteConnector(context.tenant.id, id);
-
-    if (existing.category === "ENTERPRISE") {
+    let telegramWebhookRemoved: boolean | undefined;
+    if (existing.provider_id === "telegram") {
       try {
+        const credentials = decryptCredential<Record<string, unknown>>(existing.credentials_encrypted);
+        await telegramCall(credentials, "deleteWebhook", { drop_pending_updates: false });
+        telegramWebhookRemoved = true;
+      } catch {
+        // Disconnect must still erase local credentials if Telegram is unavailable. A later setWebhook replaces the old URL.
+        telegramWebhookRemoved = false;
+      }
+    }
+
+    return db.unit(async () => {
+      // Remove the connector-owned channel route as well as the encrypted token. A stale Telegram channel reserves the
+      // bot id globally and otherwise blocks reconnecting the same bot after disconnect.
+      const attachedChannels = db.getConnectedChannels(context.tenant.id).filter((channel) => channel.connector_id === id);
+      for (const channel of attachedChannels) db.deleteConnectedChannel(context.tenant.id, channel.id);
+
+      const removed = db.deleteConnector(context.tenant.id, id);
+      if (!removed) return false;
+
+      if (existing.category === "ENTERPRISE") {
         // Only this workspace's installations: deleting a connector used to disconnect every organization's (FX-13).
         const insts = db.data.integration_installations.filter(
           (i) => i.provider_id === existing.provider_id && i.organization_id === context.tenant.id
@@ -716,26 +734,24 @@ export class ConnectorService {
             updated_at: new Date().toISOString(),
           });
         }
-      } catch {
-        // Non-blocking
       }
-    }
 
+      db.createAuditLog({
+        id: `aud_${Date.now()}_connector_deleted_${randomSuffix()}`,
+        tenant_id: context.tenant.id,
+        actor_user_id: context.user.id,
+        action: "CONNECTOR_DELETED",
+        resource_type: "connector",
+        resource_id: id,
+        metadata: {
+          provider_id: existing.provider_id,
+          category: existing.category,
+          ...(telegramWebhookRemoved === undefined ? {} : { telegram_webhook_removed: telegramWebhookRemoved }),
+        },
+        created_at: new Date().toISOString(),
+      });
 
-    db.createAuditLog({
-      id: `aud_${Date.now()}_connector_deleted_${randomSuffix()}`,
-      tenant_id: context.tenant.id,
-      actor_user_id: context.user.id,
-      action: "CONNECTOR_DELETED",
-      resource_type: "connector",
-      resource_id: id,
-      metadata: {
-        provider_id: existing.provider_id,
-        category: existing.category,
-      },
-      created_at: new Date().toISOString(),
-    });
-
-    return removed;
+      return true;
+    }, (removed) => removed);
   }
 }

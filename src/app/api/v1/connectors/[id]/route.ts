@@ -16,4 +16,5 @@ async function handleDELETE(
   }
 }
 
-export const DELETE = withStore("DELETE", handleDELETE);
+// Telegram disconnect calls deleteWebhook before its local cleanup; do not hold the shared store lock over that network call.
+export const DELETE = withStore("DELETE", handleDELETE, { unit: false });

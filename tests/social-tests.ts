@@ -421,6 +421,30 @@ export async function runSocialCommerceTests() {
     assert.strictEqual(anonRes.customer.source, "WEBSITE");
   });
 
+  await runTest("Disconnecting a Meta channel removes its saved token and permits reconnecting the same page", async () => {
+    const pageId = "page_disconnect_reconnect_01";
+    const token = "meta_page_token_disconnect_test_1234567890";
+    const channel = await ChannelService.connectChannel(contextB, {
+      type: "FACEBOOK_MESSENGER",
+      name: "Disconnect test page",
+      provider_account_id: pageId,
+      credentials: { pageId, accessToken: token },
+    });
+    assert.strictEqual(decryptCredential<Record<string, string>>(channel.credentials_encrypted).accessToken, token);
+
+    const disconnected = await ChannelService.deleteChannel(contextB, channel.id);
+    assert.strictEqual(disconnected.success, true);
+    assert.strictEqual(db.findConnectedChannelForIngress(channel.id), undefined, "disconnect must remove the channel credential record");
+
+    const reconnected = await ChannelService.connectChannel(contextB, {
+      type: "FACEBOOK_MESSENGER",
+      name: "Reconnect test page",
+      provider_account_id: pageId,
+      credentials: { pageId, accessToken: token },
+    });
+    assert.strictEqual(decryptCredential<Record<string, string>>(reconnected.credentials_encrypted).accessToken, token);
+  });
+
   // -------------------------------------------------------------
   // SUITE 4: CONVERSATION LIFECYCLE & STATE MACHINE
   // -------------------------------------------------------------

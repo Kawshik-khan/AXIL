@@ -674,6 +674,54 @@ async function main() {
     assert.strictEqual(listAfter.configurations.length, 0);
   });
 
+  await runTest("Disconnecting a Telegram connector removes its channel and permits reconnecting the same bot", async () => {
+    const tenant = createMockContext("tenant_tg_disconnect_reconnect");
+    const token = "456789123:ABCdefGhIJKlmNoPQRsTUVwxyZ_012345";
+    const saved = await ConnectorService.saveConnector(tenant, {
+      provider_id: "telegram",
+      credentials: { bot_token: token },
+    });
+    const oldChannel = db.getConnectedChannels(tenant.tenant.id).find((c) => c.connector_id === saved.id);
+    assert.ok(oldChannel);
+
+    stubStatus = 200;
+    stubBody = '{"ok":true,"result":true}';
+    fetchCalls.length = 0;
+    fetchBodies.length = 0;
+    assert.strictEqual(await ConnectorService.deleteConnector(tenant, saved.id), true);
+    assert.strictEqual(db.findConnectorById(tenant.tenant.id, saved.id), undefined, "disconnect must delete encrypted connector credentials");
+    assert.strictEqual(db.findConnectedChannelForIngress(oldChannel!.id), undefined, "disconnect must remove the stale Telegram channel route");
+    assert.ok(fetchCalls.some((url) => url.endsWith("/deleteWebhook")), "disconnect should ask Telegram to unregister its webhook");
+
+    const reconnected = await ConnectorService.saveConnector(tenant, {
+      provider_id: "telegram",
+      credentials: { bot_token: token },
+    });
+    assert.ok(db.getConnectedChannels(tenant.tenant.id).some((c) => c.connector_id === reconnected.id));
+  });
+
+  await runTest("Reconnecting cleans up a same-tenant Telegram channel orphaned by an older disconnect", async () => {
+    const tenant = createMockContext("tenant_tg_legacy_orphan");
+    const token = "567891234:ABCdefGhIJKlmNoPQRsTUVwxyZ_012345";
+    const oldConnector = await ConnectorService.saveConnector(tenant, {
+      provider_id: "telegram",
+      credentials: { bot_token: token },
+    });
+    const oldChannel = db.getConnectedChannels(tenant.tenant.id).find((c) => c.connector_id === oldConnector.id);
+    assert.ok(oldChannel);
+
+    // Reproduce the pre-fix state: old deleteConnector removed only the connector row.
+    db.deleteConnector(tenant.tenant.id, oldConnector.id);
+    assert.ok(db.findConnectedChannelForIngress(oldChannel!.id));
+
+    const reconnected = await ConnectorService.saveConnector(tenant, {
+      provider_id: "telegram",
+      credentials: { bot_token: token },
+    });
+    assert.strictEqual(db.findConnectedChannelForIngress(oldChannel!.id), undefined);
+    assert.ok(db.getConnectedChannels(tenant.tenant.id).some((c) => c.connector_id === reconnected.id));
+  });
+
   // -------------------------------------------------------------
   // SUITE 7: ENTERPRISE LIFECYCLE & INTEGRATIONS HUB SYNC
   // -------------------------------------------------------------

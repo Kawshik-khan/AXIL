@@ -143,8 +143,19 @@ export class ChannelService {
     const currentChannel = connectorId
       ? db.getConnectedChannels(tenantId).find((c) => c.connector_id === connectorId)
       : undefined;
-    const duplicate = db.findConnectedChannelsByProviderId("TELEGRAM", botId).find((c) => c.id !== currentChannel?.id);
-    if (duplicate) throw new ConflictError("This Telegram bot is already connected to a CommerceOS workspace.");
+    const duplicates = db.findConnectedChannelsByProviderId("TELEGRAM", botId).filter((c) => c.id !== currentChannel?.id);
+    for (const duplicate of duplicates) {
+      const linkedConnector = duplicate.connector_id
+        ? db.findConnectorById(duplicate.tenant_id, duplicate.connector_id)
+        : undefined;
+      // Older disconnects removed the connector but left its credential-free Telegram routing row behind. Reclaim
+      // only this tenant's provably orphaned connector-owned channel; ignore (but never mutate) another tenant's orphan.
+      if (duplicate.connector_id && !linkedConnector && duplicate.credentials_encrypted === "") {
+        if (duplicate.tenant_id === tenantId) db.deleteConnectedChannel(tenantId, duplicate.id);
+        continue;
+      }
+      throw new ConflictError("This Telegram bot is already connected to a CommerceOS workspace.");
+    }
     return botId;
   }
 
