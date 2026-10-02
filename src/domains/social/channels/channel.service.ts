@@ -137,13 +137,30 @@ export class ChannelService {
    * The channel a Telegram connector feeds: created when the connector is saved, reused afterwards. Telegram has one
    * webhook per bot, so the channel is routed by the connector id (/api/v1/connectors/<id>/webhook), not by an account id.
    */
+  public static assertTelegramBotAvailable(tenantId: string, connectorId: string | undefined, rawToken: string): string {
+    const botId = rawToken.trim().split(":")[0].trim();
+    if (!/^\d{3,20}$/.test(botId)) throw new BadRequestError("The Telegram bot token is malformed.");
+    const currentChannel = connectorId
+      ? db.getConnectedChannels(tenantId).find((c) => c.connector_id === connectorId)
+      : undefined;
+    const duplicate = db.findConnectedChannelsByProviderId("TELEGRAM", botId).find((c) => c.id !== currentChannel?.id);
+    if (duplicate) throw new ConflictError("This Telegram bot is already connected to a CommerceOS workspace.");
+    return botId;
+  }
+
   public static ensureChannelForTelegramConnector(tenantId: string, connector: { id: string; name: string; credentials_encrypted: string }): ConnectedChannel {
     const existing = db.getConnectedChannels(tenantId).find((c) => c.connector_id === connector.id);
-    if (existing) return existing;
     const creds = decryptCredential<Record<string, unknown>>(connector.credentials_encrypted);
     const rawToken = typeof creds.bot_token === "string" ? creds.bot_token.trim() : String(creds.bot_token ?? "").trim();
-    const botId = rawToken.split(":")[0].trim();
-    if (!/^\d{3,20}$/.test(botId)) throw new BadRequestError("The Telegram bot token is malformed.");
+    const botId = this.assertTelegramBotAvailable(tenantId, connector.id, rawToken);
+    if (existing) {
+      if (existing.provider_account_id === botId && existing.name === connector.name) return existing;
+      return db.updateConnectedChannel(tenantId, existing.id, {
+        provider_account_id: botId,
+        name: connector.name,
+        updated_at: new Date().toISOString(),
+      });
+    }
     assertWithinLimit(tenantId, "max_channels");
     const now = new Date().toISOString();
     return db.createConnectedChannel({
@@ -155,7 +172,8 @@ export class ChannelService {
       provider_account_id: botId,
       credentials_encrypted: "",
       connector_id: connector.id,
-      configuration: { auto_reply_enabled: true },
+      // Customer-initiated conversations are visible in the inbox; automated replies require an explicit later opt-in.
+      configuration: { auto_reply_enabled: false },
       last_sync_at: now,
       created_at: now,
       updated_at: now,

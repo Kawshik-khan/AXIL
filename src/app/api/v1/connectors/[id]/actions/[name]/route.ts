@@ -20,4 +20,5 @@ async function handlePOST(
   }
 }
 
-export const POST = withStore("POST", handlePOST);
+// The action can call Telegram; ConnectorService persists its small state changes in their own units afterward.
+export const POST = withStore("POST", handlePOST, { unit: false });

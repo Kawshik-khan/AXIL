@@ -245,6 +245,13 @@ export class ConnectorService {
       provider,
       parsed.credentials
     );
+    const existing = db.findConnectorByProvider(context.tenant.id, provider.id);
+    if (provider.id === "telegram") {
+      const botToken = typeof resolvedCredentials.bot_token === "string"
+        ? resolvedCredentials.bot_token
+        : String(resolvedCredentials.bot_token ?? "");
+      ChannelService.assertTelegramBotAvailable(context.tenant.id, existing?.id, botToken);
+    }
 
     // Encrypt sensitive credentials
     const credentialsToEncrypt: Record<string, unknown> = { ...resolvedCredentials };
@@ -275,7 +282,6 @@ export class ConnectorService {
       }
     }
 
-    const existing = db.findConnectorByProvider(context.tenant.id, provider.id);
     const now = new Date().toISOString();
     const keepHealth = Boolean(existing) && !secretsChanged;
 
@@ -533,6 +539,7 @@ export class ConnectorService {
     const connector = db.findConnectorById(context.tenant.id, connectorId);
     if (!connector) throw new NotFoundError(`Connector configuration '${connectorId}' not found.`);
     if (connector.provider_id !== "telegram") throw new BadRequestError("This connector has no setup actions.");
+    if (connector.enabled === false) throw new BadRequestError("Enable this Telegram connector before managing its webhook.");
     const credentials = decryptCredential<Record<string, unknown>>(connector.credentials_encrypted);
     const base = appBaseUrl();
     const webhookUrl = base ? `${base}/api/v1/connectors/${connector.id}/webhook` : null;
@@ -551,7 +558,21 @@ export class ConnectorService {
       if (!webhookUrl || !webhookUrl.startsWith("https://")) {
         throw new BadRequestError("APP_URL must be set to this app's public https address before Telegram's webhook can be registered.");
       }
-      const secret = typeof credentials.webhook_secret === "string" && credentials.webhook_secret ? credentials.webhook_secret : crypto.randomBytes(32).toString("base64url");
+      const secret = typeof credentials.webhook_secret === "string" && credentials.webhook_secret
+        ? credentials.webhook_secret
+        : crypto.randomBytes(32).toString("base64url");
+      // Save the secret before asking Telegram to use it. If Telegram accepts setWebhook but the following write
+      // fails, ingress can still authenticate the webhook and a retry uses the same secret.
+      if (credentials.webhook_secret !== secret) {
+        await db.unit(async () => {
+          db.saveConnector({
+            ...connector,
+            credentials_encrypted: encryptCredential({ ...credentials, webhook_secret: secret }),
+            updated_at: new Date().toISOString(),
+          });
+          return true;
+        }, () => true);
+      }
       await telegramCall(credentials, "setWebhook", {
         url: webhookUrl,
         secret_token: secret,
@@ -559,23 +580,26 @@ export class ConnectorService {
         max_connections: 20,
       });
       const now = new Date().toISOString();
-      const nextCredentials = { ...credentials, webhook_secret: secret };
-      db.saveConnector({
-        ...connector,
-        credentials_encrypted: encryptCredential(nextCredentials),
-        configuration: { ...connector.configuration, webhook_set_at: now },
-        updated_at: now,
-      });
-      db.createAuditLog({
-        id: `aud_${Date.now()}_connector_action_${randomSuffix()}`,
-        tenant_id: context.tenant.id,
-        actor_user_id: context.user.id,
-        action: "CONNECTOR_ACTION",
-        resource_type: "connector",
-        resource_id: connector.id,
-        metadata: { provider_id: connector.provider_id, connector_action: action },
-        created_at: now,
-      });
+      await db.unit(async () => {
+        const current = db.findConnectorById(context.tenant.id, connector.id);
+        if (!current) throw new NotFoundError(`Connector configuration '${connector.id}' not found.`);
+        db.saveConnector({
+          ...current,
+          configuration: { ...current.configuration, webhook_set_at: now },
+          updated_at: now,
+        });
+        db.createAuditLog({
+          id: `aud_${Date.now()}_connector_action_${randomSuffix()}`,
+          tenant_id: context.tenant.id,
+          actor_user_id: context.user.id,
+          action: "CONNECTOR_ACTION",
+          resource_type: "connector",
+          resource_id: connector.id,
+          metadata: { provider_id: connector.provider_id, connector_action: action },
+          created_at: now,
+        });
+        return true;
+      }, () => true);
       return { status: "WEBHOOK_SET", webhook_url: webhookUrl };
     }
 

@@ -90,25 +90,38 @@ export class TelegramAdapter implements IChannelProvider {
    * "normalize" workflow; tests/social-n8n-tests.ts runs both on the same samples.
    */
   public normalizeIncomingEvent(rawPayload: Record<string, unknown>, channelId: string): NormalizedIncomingMessage[] {
-    const updateId = String(rawPayload.update_id ?? "");
+    const updateId = rawPayload.update_id;
     const msg = rawPayload.message as
       | { message_id?: number; date?: number; text?: string; chat?: { id?: number | string; type?: string }; from?: { id?: number; first_name?: string; last_name?: string; username?: string; is_bot?: boolean } }
       | undefined;
-    if (!msg || !msg.from || msg.from.is_bot || !msg.chat || msg.chat.type !== "private") return [];
+    if (
+      !Number.isSafeInteger(updateId) ||
+      !msg ||
+      !msg.from ||
+      !Number.isSafeInteger(msg.from.id) ||
+      msg.from.is_bot ||
+      !msg.chat ||
+      msg.chat.type !== "private" ||
+      !(typeof msg.chat.id === "string" || Number.isSafeInteger(msg.chat.id)) ||
+      !Number.isSafeInteger(msg.message_id) ||
+      typeof msg.text !== "string"
+    ) return [];
     const name = [msg.from.first_name, msg.from.last_name].filter(Boolean).join(" ") || undefined;
     return [
       {
         channelType: "TELEGRAM",
         channelId,
-        externalEventId: updateId,
-        externalMessageId: String(msg.message_id ?? updateId),
+        externalEventId: String(updateId),
+        // Telegram message_id is only unique within one chat. Include update_id and chat.id so retries are
+        // idempotent and two customers with the same per-chat message_id do not collide.
+        externalMessageId: `${updateId}:${msg.chat.id}:${msg.message_id}`,
         externalConversationId: String(msg.chat.id),
         externalSenderId: String(msg.from.id),
         senderProfile: { displayName: name, username: msg.from.username },
         direction: "INBOUND",
-        messageType: msg.text ? "TEXT" : "UNKNOWN",
-        text: (msg.text ?? "").slice(0, 4096),
-        timestamp: new Date((msg.date ?? Math.floor(Date.now() / 1000)) * 1000).toISOString(),
+        messageType: "TEXT",
+        text: msg.text.slice(0, 4096),
+        timestamp: new Date((Number.isSafeInteger(msg.date) ? msg.date! : Math.floor(Date.now() / 1000)) * 1000).toISOString(),
         rawPayload,
       },
     ];

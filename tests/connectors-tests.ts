@@ -5,7 +5,7 @@ import { ConnectorService } from "@/domains/connectors/service";
 import { RequestContext } from "@/lib/context";
 import { encryptCredential, decryptCredential, maskSecret, looksLikeMaskedSecret } from "@/lib/security";
 import { RoleName, ROLE_PERMISSIONS, Permission } from "@/lib/permissions";
-import { ForbiddenError, BadRequestError } from "@/lib/errors";
+import { ForbiddenError, BadRequestError, ConflictError } from "@/lib/errors";
 import { setOutboundTransportForTesting } from "@/lib/outbound-http";
 
 const ANSI_GREEN = "\x1b[32m";
@@ -329,10 +329,12 @@ async function main() {
 
   // Live checks go through the SSRF-guarded outbound client; its transport is stubbed (no network in tests, FX-53)
   const fetchCalls: string[] = [];
+  const fetchBodies: Array<Record<string, unknown>> = [];
   let stubStatus = 200;
   let stubBody = "{}";
-  setOutboundTransportForTesting(async (url) => {
+  setOutboundTransportForTesting(async (url, options) => {
     fetchCalls.push(url.toString());
+    fetchBodies.push(options.body ? JSON.parse(String(options.body)) as Record<string, unknown> : {});
     return { status: stubStatus, headers: {}, body: stubBody, truncated: false, durationMs: 12 };
   });
 
@@ -470,7 +472,7 @@ async function main() {
   });
 
   await runTest("After save, Test/Save with the masked token reuse the stored secret (not the bullets)", async () => {
-    const token = "123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ_012345";
+    const token = "234567891:ABCdefGhIJKlmNoPQRsTUVwxyZ_012345";
     stubStatus = 200;
     stubBody = '{"ok":true,"result":{"id":123456789,"is_bot":true}}';
     const tenant = createMockContext("tenant_tg_mask_reuse");
@@ -545,7 +547,72 @@ async function main() {
       rotatedToken,
       "a replacement token must be stored as supplied"
     );
+    assert.strictEqual(db.getConnectedChannels(tenant.tenant.id).find((c) => c.connector_id === rotated.id)?.provider_account_id, "987654321");
     stubBody = "{}";
+  });
+
+  await runTest("A Telegram bot cannot be connected to a second tenant", async () => {
+    const duplicateTenant = createMockContext("tenant_tg_duplicate");
+    let rejected = false;
+    try {
+      await ConnectorService.saveConnector(duplicateTenant, {
+        provider_id: "telegram",
+        credentials: { bot_token: "123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ_012345" },
+      });
+    } catch (err) {
+      rejected = err instanceof ConflictError;
+    }
+    assert.strictEqual(rejected, true);
+    assert.strictEqual(db.findConnectorByProvider(duplicateTenant.tenant.id, "telegram"), undefined);
+  });
+
+  await runTest("Telegram webhook action persists a private secret and reports webhook state without exposing it", async () => {
+    const tenant = createMockContext("tenant_tg_webhook_action");
+    const saved = await ConnectorService.saveConnector(tenant, {
+      provider_id: "telegram",
+      credentials: { bot_token: "345678912:ABCdefGhIJKlmNoPQRsTUVwxyZ_012345" },
+    });
+    const previousAppUrl = process.env.APP_URL;
+    process.env.APP_URL = "https://commerceos.example";
+    try {
+      stubStatus = 200;
+      stubBody = '{"ok":true,"result":true}';
+      fetchBodies.length = 0;
+      const registered = await ConnectorService.runAction(tenant, saved.id, "set-webhook");
+      assert.deepStrictEqual(registered, {
+        status: "WEBHOOK_SET",
+        webhook_url: `https://commerceos.example/api/v1/connectors/${saved.id}/webhook`,
+      });
+
+      const storedRow = db.findConnectorById(tenant.tenant.id, saved.id);
+      assert.ok(storedRow);
+      const storedCredentials = decryptCredential<Record<string, string>>(storedRow.credentials_encrypted);
+      assert.ok(storedCredentials.webhook_secret);
+      assert.strictEqual(fetchBodies[0].secret_token, storedCredentials.webhook_secret);
+      assert.ok(!JSON.stringify(registered).includes(storedCredentials.webhook_secret));
+
+      const sameSecretAgain = await ConnectorService.runAction(tenant, saved.id, "set-webhook");
+      assert.strictEqual(
+        decryptCredential<Record<string, string>>(db.findConnectorById(tenant.tenant.id, saved.id)!.credentials_encrypted).webhook_secret,
+        storedCredentials.webhook_secret,
+        "re-registering uses the same secret"
+      );
+      assert.ok(!JSON.stringify(sameSecretAgain).includes(storedCredentials.webhook_secret));
+
+      stubBody = `{"ok":true,"result":{"url":"https://commerceos.example/api/v1/connectors/${saved.id}/webhook","pending_update_count":2}}`;
+      const info = await ConnectorService.runAction(tenant, saved.id, "webhook-info");
+      assert.strictEqual(info.webhook_matches_this_app, true);
+      assert.strictEqual(info.pending_update_count, 2);
+
+      process.env.APP_URL = "http://commerceos.example";
+      const callsBeforeInvalidUrl = fetchCalls.length;
+      await assert.rejects(() => ConnectorService.runAction(tenant, saved.id, "set-webhook"), /public https address/);
+      assert.strictEqual(fetchCalls.length, callsBeforeInvalidUrl, "HTTP APP_URL must not call Telegram setWebhook");
+    } finally {
+      if (previousAppUrl === undefined) delete process.env.APP_URL;
+      else process.env.APP_URL = previousAppUrl;
+      stubBody = "{}";
+    }
   });
 
   await runTest("Enterprise provider without a live check (Google Sheets) is NOT_VERIFIED with no latency; SAP is coming soon", async () => {

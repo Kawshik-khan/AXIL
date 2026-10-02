@@ -68,6 +68,8 @@ export default function ConnectorPage() {
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<TestConnectionResult | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
+  const [telegramActionBusy, setTelegramActionBusy] = useState(false);
+  const [telegramWebhookResult, setTelegramWebhookResult] = useState<{ success: boolean; message: string } | null>(null);
 
   // Guidance Drawer State
   const [drawerProvider, setDrawerProvider] = useState<ConnectorProviderDefinition | null>(null);
@@ -183,6 +185,7 @@ export default function ConnectorPage() {
     setSelectedProvider(provider);
     setTestResult(null);
     setTestError(null);
+    setTelegramWebhookResult(null);
 
     const existing = configMap.get(provider.id);
     const initialForm: Record<string, any> = {};
@@ -289,6 +292,45 @@ export default function ConnectorPage() {
       setTestError(err instanceof Error ? err.message : "Connection failed.");
     } finally {
       setIsTesting(false);
+    }
+  };
+
+  const handleTelegramWebhookAction = async (action: "set-webhook" | "webhook-info") => {
+    if (!selectedProvider || selectedProvider.id !== "telegram") return;
+    const connector = configMap.get(selectedProvider.id);
+    if (!connector) {
+      setTestError("Save the Telegram connector before setting up its webhook.");
+      return;
+    }
+
+    setTelegramActionBusy(true);
+    setTelegramWebhookResult(null);
+    setTestError(null);
+    try {
+      const res = await fetch(`/api/v1/connectors/${encodeURIComponent(connector.id)}/actions/${action}`, {
+        method: "POST",
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error?.message || "Telegram webhook action failed.");
+
+      const data = json.data || {};
+      if (action === "set-webhook") {
+        setTelegramWebhookResult({ success: true, message: "Webhook registered with Telegram." });
+      } else {
+        setTelegramWebhookResult({
+          success: Boolean(data.webhook_matches_this_app),
+          message: data.webhook_matches_this_app
+            ? `Webhook is active. Pending updates: ${Number(data.pending_update_count) || 0}.`
+            : data.webhook_set
+              ? "Telegram has a webhook, but it does not point to this CommerceOS app. Register this app's webhook."
+              : "Telegram has no webhook registered yet.",
+        });
+      }
+      await loadConnectors();
+    } catch (err) {
+      setTestError(err instanceof Error ? err.message : "Telegram webhook action failed.");
+    } finally {
+      setTelegramActionBusy(false);
     }
   };
 
@@ -1023,6 +1065,41 @@ export default function ConnectorPage() {
               })}
 
             {/* Test Banner Feedback */}
+            {selectedProvider.id === "telegram" && configMap.has(selectedProvider.id) && (
+              <div className={styles.testBanner}>
+                <div>
+                  <strong>Telegram webhook</strong>
+                  <p style={{ margin: "6px 0 0", color: "var(--color-text-secondary)" }}>
+                    Requires a public HTTPS APP_URL. The bot can receive private messages after the customer presses Start.
+                    Group and channel chats are not supported yet.
+                  </p>
+                  {telegramWebhookResult && (
+                    <p style={{ margin: "8px 0 0", color: telegramWebhookResult.success ? "var(--color-success)" : "var(--color-text-secondary)" }}>
+                      {telegramWebhookResult.message}
+                    </p>
+                  )}
+                </div>
+                <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    className={styles.guideButton}
+                    onClick={() => handleTelegramWebhookAction("webhook-info")}
+                    disabled={telegramActionBusy || isSaving || isTesting}
+                  >
+                    Check webhook
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.guideButton}
+                    onClick={() => handleTelegramWebhookAction("set-webhook")}
+                    disabled={telegramActionBusy || isSaving || isTesting}
+                  >
+                    {telegramActionBusy ? "Working..." : "Register webhook"}
+                  </button>
+                </div>
+              </div>
+            )}
+
             {testResult && (
               // Success styling only for a real, verified connection (FX-31)
               <div className={`${styles.testBanner} ${testResult.success ? styles.testBannerSuccess : styles.testBannerError}`}>

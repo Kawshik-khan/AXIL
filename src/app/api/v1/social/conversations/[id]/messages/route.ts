@@ -55,4 +55,5 @@ async function handlePOST(
 }
 
 export const GET = withStore("GET", handleGET);
-export const POST = withStore("POST", handlePOST);
+// OutboundMessageService commits queue/status changes in short units; provider calls must stay outside the store lock.
+export const POST = withStore("POST", handlePOST, { unit: false });

@@ -10,6 +10,7 @@ import { FacebookAdapter } from "@/domains/social/channels/adapters/facebook.ada
 import { InstagramAdapter } from "@/domains/social/channels/adapters/instagram.adapter";
 import { WhatsAppAdapter } from "@/domains/social/channels/adapters/whatsapp.adapter";
 import { WebsiteChatAdapter } from "@/domains/social/channels/adapters/website-chat.adapter";
+import { TelegramAdapter } from "@/domains/social/channels/adapters/telegram.adapter";
 import { BanglishNormalizer } from "@/domains/social/identity/banglish-normalizer";
 import { IdentityResolutionService } from "@/domains/social/identity/identity-resolution.service";
 import { ConversationStateMachine } from "@/domains/social/conversations/state-machine";
@@ -21,6 +22,11 @@ import { OutboundMessageService } from "@/domains/social/outbound/outbound-messa
 import { SocialOrderService } from "@/domains/social/commerce-integration/social-order.service";
 import { SocialEventService } from "@/domains/social/events/social-event.service";
 import { ChannelService } from "@/domains/social/channels/channel.service";
+import { ConnectorService } from "@/domains/connectors/service";
+import { OutboundTimeoutError, setOutboundTransportForTesting } from "@/lib/outbound-http";
+import { encryptCredential, decryptCredential } from "@/lib/security";
+import { AuthenticationError } from "@/lib/errors";
+import { POST as telegramConnectorWebhook } from "@/app/api/v1/connectors/[id]/webhook/route";
 import { RequestContext } from "@/lib/context";
 import { PERMISSIONS } from "@/lib/permissions";
 import { RbacService } from "@/domains/rbac/service";
@@ -201,6 +207,152 @@ export async function runSocialCommerceTests() {
     assert.strictEqual(deliveryAnalysis.extractedOrderNumber, "ORD-2026-1049");
   });
 
+  await runTest("Telegram receives private messages once and sends inbox replies to the stored chat", async () => {
+    const botToken = "123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ_012345";
+    const connector = await ConnectorService.saveConnector(contextA, {
+      provider_id: "telegram",
+      credentials: { bot_token: botToken, bot_username: "@CommerceOSPlanTestBot" },
+    });
+    const channel = db.getConnectedChannels(contextA.tenant.id).find((entry) => entry.connector_id === connector.id);
+    assert.ok(channel, "saving the tenant connector creates its Telegram channel");
+    assert.strictEqual(channel.configuration.auto_reply_enabled, false, "automatic replies stay off by default");
+
+    const adapter = new TelegramAdapter();
+    const webhookSecret = "test-only-webhook-secret";
+    assert.strictEqual(adapter.verifyWebhook("{}", null, { "x-telegram-bot-api-secret-token": webhookSecret }, { webhook_secret: webhookSecret }), true);
+    assert.strictEqual(adapter.verifyWebhook("{}", null, { "x-telegram-bot-api-secret-token": "wrong" }, { webhook_secret: webhookSecret }), false);
+    const storedConnector = db.findConnectorById(contextA.tenant.id, connector.id);
+    assert.ok(storedConnector);
+    const storedCredentials = decryptCredential<Record<string, unknown>>(storedConnector.credentials_encrypted);
+    db.saveConnector({
+      ...storedConnector,
+      credentials_encrypted: encryptCredential({ ...storedCredentials, webhook_secret: webhookSecret }),
+    });
+
+    const update = {
+      update_id: 10001,
+      message: {
+        message_id: 1,
+        date: Math.floor(Date.now() / 1000),
+        text: "Assalamu alaikum",
+        chat: { id: 501, type: "private" },
+        from: { id: 501, first_name: "Telegram" },
+      },
+    };
+    const normalized = adapter.normalizeIncomingEvent(update, channel.id);
+    assert.strictEqual(normalized.length, 1);
+    const previousN8nModeForIngress = process.env.SOCIAL_N8N_MODE;
+    process.env.SOCIAL_N8N_MODE = "off";
+    const requestFor = (secret: string) => new Request(`https://commerceos.example/api/v1/connectors/${connector.id}/webhook`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-telegram-bot-api-secret-token": secret },
+      body: JSON.stringify(update),
+    });
+    try {
+      await assert.rejects(
+        () => telegramConnectorWebhook(requestFor("wrong"), { params: Promise.resolve({ id: connector.id }) }),
+        (err: unknown) => err instanceof AuthenticationError,
+        "wrong webhook secret must fail before storing anything"
+      );
+      assert.strictEqual(
+        db.findMessageByExternalId(contextA.tenant.id, channel.id, normalized[0].externalMessageId),
+        undefined,
+        "rejected updates create no inbox message"
+      );
+
+      const acceptedResponse = await telegramConnectorWebhook(requestFor(webhookSecret), { params: Promise.resolve({ id: connector.id }) });
+      const accepted = await acceptedResponse.json();
+      assert.strictEqual(accepted.messagesProcessed, 1);
+      const duplicateResponse = await telegramConnectorWebhook(requestFor(webhookSecret), { params: Promise.resolve({ id: connector.id }) });
+      const duplicate = await duplicateResponse.json();
+      assert.strictEqual(duplicate.messagesProcessed, 0, "a retried update is not ingested twice");
+    } finally {
+      if (previousN8nModeForIngress === undefined) delete process.env.SOCIAL_N8N_MODE;
+      else process.env.SOCIAL_N8N_MODE = previousN8nModeForIngress;
+    }
+
+    const conversation = db.findConversationByExternalId(contextA.tenant.id, channel.id, "501");
+    assert.ok(conversation);
+    assert.strictEqual(conversation.unread_count, 1);
+    assert.strictEqual(db.findConversationById(contextA.tenant.id, conversation.id)?.unread_count, 1, "a retry does not inflate unread count");
+
+    const secondChat = adapter.normalizeIncomingEvent({
+      ...update,
+      update_id: 10002,
+      message: { ...update.message, chat: { id: 502, type: "private" }, from: { id: 502, first_name: "Second" } },
+    }, channel.id);
+    assert.strictEqual(secondChat.length, 1);
+    // A distinct private chat may reuse Telegram's per-chat message_id without colliding in this tenant.
+    const previousN8nModeForSecondChat = process.env.SOCIAL_N8N_MODE;
+    process.env.SOCIAL_N8N_MODE = "off";
+    try {
+      const secondResponse = await telegramConnectorWebhook(new Request(`https://commerceos.example/api/v1/connectors/${connector.id}/webhook`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-telegram-bot-api-secret-token": webhookSecret },
+        body: JSON.stringify({
+          ...update,
+          update_id: 10002,
+          message: { ...update.message, chat: { id: 502, type: "private" }, from: { id: 502, first_name: "Second" } },
+        }),
+      }), { params: Promise.resolve({ id: connector.id }) });
+      assert.strictEqual((await secondResponse.json()).messagesProcessed, 1);
+    } finally {
+      if (previousN8nModeForSecondChat === undefined) delete process.env.SOCIAL_N8N_MODE;
+      else process.env.SOCIAL_N8N_MODE = previousN8nModeForSecondChat;
+    }
+    assert.strictEqual(adapter.normalizeIncomingEvent({ ...update, message: { ...update.message, chat: { id: 503, type: "group" } } }, channel.id).length, 0);
+    assert.strictEqual(adapter.normalizeIncomingEvent({ ...update, message: { ...update.message, from: { id: 501, is_bot: true } } }, channel.id).length, 0);
+    assert.strictEqual(adapter.normalizeIncomingEvent({ update_id: "bad", message: update.message }, channel.id).length, 0);
+
+    const previousN8nMode = process.env.SOCIAL_N8N_MODE;
+    process.env.SOCIAL_N8N_MODE = "off";
+    let requestUrl = "";
+    let requestBody: Record<string, unknown> = {};
+    setOutboundTransportForTesting(async (url, options) => {
+      requestUrl = url.toString();
+      requestBody = JSON.parse(String(options.body || "{}"));
+      return {
+        status: 200,
+        headers: {},
+        body: JSON.stringify({ ok: true, result: { message_id: 77, date: Math.floor(Date.now() / 1000) } }),
+        truncated: false,
+        durationMs: 3,
+      };
+    });
+    try {
+      const reply = await OutboundMessageService.sendMessage(contextA, conversation.id, { text: "Wa alaikum assalam" });
+      assert.strictEqual(reply.status, "SENT");
+      assert.strictEqual(reply.external_message_id, "77");
+      assert.ok(requestUrl.includes(`/bot${botToken}/sendMessage`));
+      assert.strictEqual(requestBody.chat_id, "501", "recipient is read from the stored Telegram conversation");
+      assert.strictEqual(requestBody.text, "Wa alaikum assalam");
+
+      let timeoutCalls = 0;
+      setOutboundTransportForTesting(async () => {
+        timeoutCalls++;
+        throw new OutboundTimeoutError("api.telegram.org", 5_000);
+      });
+      const uncertain = await OutboundMessageService.sendMessage(contextA, conversation.id, {
+        text: "Please check this delivery",
+        idempotency_key: "telegram-timeout-once",
+      });
+      assert.strictEqual(uncertain.status, "FAILED", "an uncertain send is never reported as delivered");
+      assert.strictEqual(uncertain.retry_count, 1, "Telegram timeout is not automatically retried");
+      assert.strictEqual(timeoutCalls, 1);
+      assert.ok(!uncertain.failure_reason?.includes(botToken));
+      const retried = await OutboundMessageService.sendMessage(contextA, conversation.id, {
+        text: "Please check this delivery",
+        idempotency_key: "telegram-timeout-once",
+      });
+      assert.strictEqual(retried.id, uncertain.id);
+      assert.strictEqual(timeoutCalls, 1, "reusing an idempotency key cannot send a duplicate");
+    } finally {
+      setOutboundTransportForTesting(null);
+      if (previousN8nMode === undefined) delete process.env.SOCIAL_N8N_MODE;
+      else process.env.SOCIAL_N8N_MODE = previousN8nMode;
+    }
+  });
+
   // -------------------------------------------------------------
   // SUITE 3: CUSTOMER IDENTITY RESOLUTION & DEDUPLICATION
   // -------------------------------------------------------------
@@ -304,7 +456,7 @@ export async function runSocialCommerceTests() {
     activeConvA = convRes.conversation;
 
     assert.strictEqual(activeConvA.status, "OPEN");
-    assert.strictEqual(activeConvA.unread_count, 1);
+    assert.strictEqual(activeConvA.unread_count, 0, "A conversation without an inbound message starts with no unread items");
 
     // Simulate inbound message incrementing unread count
     await MessageService.processInboundMessage(contextA.tenant.id, activeConvA.id, {
@@ -320,7 +472,7 @@ export async function runSocialCommerceTests() {
     });
 
     const refreshedConv = db.findConversationById(contextA.tenant.id, activeConvA.id);
-    assert.strictEqual(refreshedConv?.unread_count, 2, "Unread count must increment to 2 on inbound message");
+    assert.strictEqual(refreshedConv?.unread_count, 1, "A new inbound message increments unread count exactly once");
 
     // Mark as read
     await ConversationService.markAsRead(contextA, activeConvA.id);

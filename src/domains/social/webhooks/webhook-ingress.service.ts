@@ -201,6 +201,12 @@ export class WebhookIngressService {
     let messagesProcessed = 0;
 
     for (const norm of normalizedMessages) {
+      // Check the channel-scoped provider event before touching customer or conversation timestamps/unread counts.
+      // Telegram retries webhook updates, and a duplicate must be a true no-op inside the tenant's store.
+      if (norm.externalMessageId && db.findMessageByExternalId(tenantId, channelId, norm.externalMessageId)) {
+        continue;
+      }
+
       // A. Identity Resolution (External user -> Canonical customer)
       const { customer } = await IdentityResolutionService.resolveCustomer(
         tenantId,

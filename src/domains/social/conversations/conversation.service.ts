@@ -63,16 +63,14 @@ export class ConversationService {
       if (existing.status === "RESOLVED" || existing.status === "CLOSED") {
         const reopened = db.updateConversation(tenantId, existing.id, {
           status: "OPEN",
-          unread_count: existing.unread_count + 1,
           last_message_at: new Date().toISOString(),
           last_inbound_at: new Date().toISOString(),
         });
         return { conversation: reopened, isNew: false };
       }
 
-      // Update timestamps and unread
+      // MessageService increments unread only after it confirms the provider message is not a duplicate.
       const updated = db.updateConversation(tenantId, existing.id, {
-        unread_count: existing.unread_count + 1,
         last_message_at: new Date().toISOString(),
         last_inbound_at: new Date().toISOString(),
       });
@@ -99,7 +97,7 @@ export class ConversationService {
       automation_paused: false,
       last_message_at: new Date().toISOString(),
       last_inbound_at: new Date().toISOString(),
-      unread_count: 1,
+      unread_count: 0,
       tags: ["NEW_CUSTOMER"],
       source,
       source_campaign: metadata?.sourceCampaign,

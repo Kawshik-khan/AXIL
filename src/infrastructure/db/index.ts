@@ -6430,7 +6430,10 @@ export class CommerceDatabase {
   public findMessageByExternalId(tenantId: string, channelId: string, externalMessageId: string): Message | undefined {
     // External message id is unique per channel
     return this.data.messages.find(
-      (m) => m.tenant_id === tenantId && m.external_message_id === externalMessageId
+      (m) =>
+        m.tenant_id === tenantId &&
+        m.external_message_id === externalMessageId &&
+        this.findConversationById(tenantId, m.conversation_id)?.channel_id === channelId
     );
   }
 
@@ -6441,9 +6444,14 @@ export class CommerceDatabase {
   }
 
   public createMessage(message: Message): Message {
-    // Idempotency guard: if external_message_id already exists in this tenant, return existing
+    // Provider message ids are unique within a conversation/channel, not across a tenant's channels.
     if (message.external_message_id) {
-      const existing = this.findMessageByExternalId(message.tenant_id, "", message.external_message_id);
+      const existing = this.data.messages.find(
+        (m) =>
+          m.tenant_id === message.tenant_id &&
+          m.conversation_id === message.conversation_id &&
+          m.external_message_id === message.external_message_id
+      );
       if (existing) return existing;
     }
     if (message.idempotency_key) {

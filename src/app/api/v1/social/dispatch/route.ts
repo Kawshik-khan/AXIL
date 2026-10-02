@@ -51,9 +51,22 @@ async function handlePOST(request: Request) {
   const identity = db.getCustomerIdentities(message.tenant_id, conversation.customer_id).find(
     (i) => i.channel_id === channel.id
   );
-  const recipientId = identity?.external_user_id || conversation.customer_id;
+  const recipientId = channel.type === "TELEGRAM"
+    ? conversation.external_conversation_id
+    : identity?.external_user_id || conversation.customer_id;
 
-  db.updateMessage(message.tenant_id, message_id, { status: "SENDING" });
+  const claim = await db.unit(async () => {
+    const current = db.findMessageForDispatch(message_id);
+    if (!current) throw new NotFoundError(`Message '${message_id}' not found.`);
+    if (current.status !== "QUEUED") return { claimed: false, status: current.status };
+    db.updateMessage(message.tenant_id, message_id, { status: "SENDING" });
+    return { claimed: true, status: "SENDING" };
+  }, () => true);
+  if (!claim.claimed) {
+    // n8n may redeliver a callback. A non-QUEUED message is never sent again, since the prior request's
+    // response may have been lost after Telegram accepted the message.
+    return NextResponse.json({ status: claim.status, message_id });
+  }
 
   try {
     let sendResult;
@@ -63,51 +76,46 @@ async function handlePOST(request: Request) {
       sendResult = await adapter.sendTextMessage(credentials, recipientId, message.text);
     }
 
-    const updated = db.updateMessage(message.tenant_id, message_id, {
-      status: "SENT",
-      external_message_id: sendResult.externalMessageId,
-      sent_at: new Date().toISOString(),
-      provider_timestamp: sendResult.providerTimestamp || new Date().toISOString(),
-    });
-
-    SocialEventService.emit({
-      tenantId: message.tenant_id,
-      eventType: "message.sent",
-      aggregateType: "message",
-      aggregateId: message_id,
-      actor: { type: "SYSTEM", id: "n8n" },
-      payload: {
-        messageId: message_id,
-        conversationId: message.conversation_id,
-        channelType: channel.type,
-        text: updated.text,
-        recipientId,
-      },
-    });
+    const updated = await db.unit(async () => {
+      const saved = db.updateMessage(message.tenant_id, message_id, {
+        status: "SENT",
+        external_message_id: sendResult.externalMessageId,
+        sent_at: new Date().toISOString(),
+        provider_timestamp: sendResult.providerTimestamp || new Date().toISOString(),
+      });
+      SocialEventService.emit({
+        tenantId: message.tenant_id,
+        eventType: "message.sent",
+        aggregateType: "message",
+        aggregateId: message_id,
+        actor: { type: "SYSTEM", id: "n8n" },
+        payload: { messageId: message_id, conversationId: message.conversation_id, channelType: channel.type, text: saved.text, recipientId },
+      });
+      return saved;
+    }, () => true);
 
     return NextResponse.json({ status: "SENT", message_id: message_id, external_message_id: sendResult.externalMessageId });
   } catch (err) {
-    const failedMsg = db.updateMessage(message.tenant_id, message_id, {
-      status: "FAILED",
-      failed_at: new Date().toISOString(),
-      failure_reason: err instanceof Error ? err.message : "Provider transmission failed",
-    });
-
-    SocialEventService.emit({
-      tenantId: message.tenant_id,
-      eventType: "message.failed",
-      aggregateType: "message",
-      aggregateId: message_id,
-      actor: { type: "SYSTEM", id: "n8n" },
-      payload: {
-        messageId: message_id,
-        error: failedMsg.failure_reason,
-      },
-    });
+    const failedMsg = await db.unit(async () => {
+      const saved = db.updateMessage(message.tenant_id, message_id, {
+        status: "FAILED",
+        failed_at: new Date().toISOString(),
+        failure_reason: err instanceof Error ? err.message : "Provider transmission failed",
+      });
+      SocialEventService.emit({
+        tenantId: message.tenant_id,
+        eventType: "message.failed",
+        aggregateType: "message",
+        aggregateId: message_id,
+        actor: { type: "SYSTEM", id: "n8n" },
+        payload: { messageId: message_id, error: saved.failure_reason },
+      });
+      return saved;
+    }, () => true);
 
     logger.warn("social.dispatch_failed", { message_id, error: err instanceof Error ? err.message : "Error" });
     return NextResponse.json({ status: "FAILED", message_id: message_id, error: failedMsg.failure_reason }, { status: 200 });
   }
 }
 
-export const POST = withStore("POST", handlePOST);
+export const POST = withStore("POST", handlePOST, { unit: false });

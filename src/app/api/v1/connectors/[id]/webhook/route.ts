@@ -96,10 +96,14 @@ async function handlePOST(
   const normalizedMessages = adapter.normalizeIncomingEvent(payload, channel.id);
   const receipts = adapter.parseDeliveryReceipts(payload);
 
-  const result = await WebhookIngressService.ingestNormalized(channel, normalizedMessages, receipts);
+  const result = await db.unit(
+    () => WebhookIngressService.ingestNormalized(channel, normalizedMessages, receipts),
+    () => true
+  );
 
   return NextResponse.json({ status: "EVENT_RECEIVED", ...result });
 }
 
 export const GET = withStore("GET", handleGET);
-export const POST = withStore("POST", handlePOST);
+// n8n forwarding is an external call; direct ingestion and its messages/events commit in a short unit afterward.
+export const POST = withStore("POST", handlePOST, { unit: false });
