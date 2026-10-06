@@ -82,6 +82,9 @@ export class OrderService {
       notes?: string;
       source?: CustomerSource;
       warehouse_id?: string;
+      /** Set by the customer agent only (ADR-111): the chat the order came from, not a customer typed in it. */
+      source_conversation_id?: string;
+      source_identity_id?: string;
     }
   ): Promise<Order> {
     RbacService.assertCan(context, PERMISSIONS.ORDERS_CREATE);
@@ -207,6 +210,8 @@ export class OrderService {
       coupon_code: pricing.applied_coupon,
       notes: payload.notes,
       source: payload.source || "MANUAL",
+      ...(payload.source_conversation_id ? { source_conversation_id: payload.source_conversation_id } : {}),
+      ...(payload.source_identity_id ? { source_identity_id: payload.source_identity_id } : {}),
       created_at: now,
       updated_at: now,
     };

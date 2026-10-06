@@ -245,6 +245,12 @@ export interface Order {
   coupon_code?: string;
   notes?: string;
   source: CustomerSource;
+  /**
+   * The conversation and channel identity an AI agent placed this order from (ADR-111). The customer agent finds a
+   * chat's orders through these, never through a phone number typed in the chat.
+   */
+  source_conversation_id?: string;
+  source_identity_id?: string;
   items?: OrderItem[];
   created_at: string;
   updated_at: string;

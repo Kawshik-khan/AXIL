@@ -698,3 +698,34 @@ export interface JevEvaluateResponse {
   tokens_evaluated: number;
 }
 
+
+// ==================== CUSTOMER AGENT (ADR-111, FX-73) ====================
+/**
+ * A price the customer agent showed in a conversation. An order is placed only from a QUOTED quote, after a later
+ * customer message says yes; one quote places at most one order.
+ */
+export interface CustomerQuote {
+  id: string;
+  tenant_id: string;
+  conversation_id: string;
+  items: Array<{ variant_id: string; quantity: number }>;
+  district: string;
+  zone: "INSIDE_DHAKA" | "OUTSIDE_DHAKA";
+  coupon_code?: string;
+  /** What the customer was shown, so the confirmation summary repeats exactly these numbers. */
+  lines: Array<{ name: string; sku: string; unit_price: number; quantity: number; line_total: number }>;
+  subtotal: number;
+  discount_total: number;
+  delivery_charge: number;
+  grand_total: number;
+  /** Customer messages in the conversation when the quote was first shown: a confirming "yes" must come after them. */
+  customer_msg_count_at_quote: number;
+  status: "QUOTED" | "PLACING" | "PLACED" | "STALE" | "EXPIRED";
+  /** The name, phone and address shown in the confirmation summary: placement uses exactly these. */
+  confirmation_details?: { customer_name: string; phone: string; address_line: string };
+  order_id?: string;
+  order_number?: string;
+  expires_at: string;
+  created_at: string;
+  updated_at: string;
+}

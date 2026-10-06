@@ -5,6 +5,7 @@ import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response"
 import { pricingOperationsService } from "@/domains/operations/services/pricing-operations.service";
 import { procurementService } from "@/domains/operations/services/procurement.service";
 import { parseOrThrow, readJson } from "@/lib/validation";
+import { requireStepUp } from "@/lib/step-up";
 import { withStore } from "@/lib/store-unit";
 
 // Strict body (ADR-104): `approved` is a real boolean, and only action types this route handles are accepted. An
@@ -28,6 +29,7 @@ async function handlePOST(
     const tenantId = context.tenant.id;
     const actionId = params.id;
     const { action_type, approved, reason } = parseOrThrow(Body, await readJson(request));
+    if (approved) requireStepUp(context, `APPROVE_${action_type}`); // a fresh authenticator code (FX-97 Part A)
 
     let result: unknown;
 

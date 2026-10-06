@@ -94,6 +94,16 @@ export interface UserRecord {
   /** Bumped to revoke every existing session of this user (FX-15). Missing means 1. */
   session_version?: number;
   last_login_at?: string;
+  /**
+   * Workspace authenticator (FX-97 Part A). Secrets are encrypted at rest; recovery codes are stored as SHA-256 hashes
+   * and each works once. None of these fields is ever returned by an API.
+   */
+  mfa_enabled?: boolean;
+  mfa_secret_encrypted?: string;
+  mfa_pending_secret_encrypted?: string;
+  mfa_last_step?: number;
+  mfa_enrolled_at?: string;
+  mfa_recovery_hashes?: string[];
   created_at: string;
   updated_at: string;
 }
@@ -193,6 +203,7 @@ import {
   AgentDefinition,
   TenantAIPolicy,
   AgentRun,
+  CustomerQuote,
   AgentToolCallRecord,
   AgentPrompt,
   PromptVersion,
@@ -416,6 +427,7 @@ export interface DatabaseSchema {
   agents: AgentDefinition[];
   agent_policies: TenantAIPolicy[];
   agent_runs: AgentRun[];
+  quotes: CustomerQuote[];
   agent_tool_calls: AgentToolCallRecord[];
   agent_prompts: AgentPrompt[];
   prompt_versions: PromptVersion[];
@@ -1115,6 +1127,7 @@ export class CommerceDatabase {
       agents: parsed.agents || [],
       agent_policies: parsed.agent_policies || [],
       agent_runs: parsed.agent_runs || [],
+      quotes: parsed.quotes || [],
       agent_tool_calls: parsed.agent_tool_calls || [],
       agent_prompts: parsed.agent_prompts || [],
       prompt_versions: parsed.prompt_versions || [],
@@ -1384,6 +1397,7 @@ export class CommerceDatabase {
       agents: [],
       agent_policies: [],
       agent_runs: [],
+      quotes: [],
       agent_tool_calls: [],
       agent_prompts: [],
       prompt_versions: [],
@@ -1772,6 +1786,14 @@ export class CommerceDatabase {
       await this.commitLocked(pg, touched === "all" ? undefined : touched, "unit");
       return result;
     }, lockWaitMs());
+  }
+
+  /**
+   * Whether the caller already runs inside a unit of work. Units aren't reentrant (a nested unit waits for the lock its
+   * own caller holds), so code that may run either inside a request or in a background job checks this first.
+   */
+  public isInUnit(): boolean {
+    return this.unitActive && unitContext.getStore() === this.unitToken;
   }
 
   /**
@@ -6832,6 +6854,29 @@ export class CommerceDatabase {
     return this.data.agent_runs.find((r) => r.tenant_id === tenantId && r.id === id);
   }
 
+  // Customer-agent quotes (ADR-111, FX-73): always looked up by workspace and conversation
+  public findQuote(tenantId: string, conversationId: string, id: string): CustomerQuote | undefined {
+    return this.data.quotes.find((q) => q.tenant_id === tenantId && q.conversation_id === conversationId && q.id === id);
+  }
+
+  public getConversationQuotes(tenantId: string, conversationId: string): CustomerQuote[] {
+    return this.data.quotes.filter((q) => q.tenant_id === tenantId && q.conversation_id === conversationId);
+  }
+
+  public createQuote(quote: CustomerQuote): CustomerQuote {
+    this.data.quotes.push(quote);
+    this.persist(["quotes"]);
+    return quote;
+  }
+
+  public updateQuote(tenantId: string, id: string, updates: Partial<Pick<CustomerQuote, "status" | "order_id" | "order_number" | "confirmation_details" | "customer_msg_count_at_quote">>): CustomerQuote {
+    const idx = this.data.quotes.findIndex((q) => q.tenant_id === tenantId && q.id === id);
+    if (idx === -1) throw new Error(`Quote ${id} not found`);
+    this.data.quotes[idx] = { ...this.data.quotes[idx], ...updates, updated_at: new Date().toISOString() };
+    this.persist(["quotes"]);
+    return this.data.quotes[idx];
+  }
+
   public createAgentRun(run: AgentRun): AgentRun {
     this.data.agent_runs.push(run);
     this.persist(["agent_runs"]);
@@ -8856,6 +8901,7 @@ export class CommerceDatabase {
       agents: [],
       agent_policies: [],
       agent_runs: [],
+      quotes: [],
       agent_tool_calls: [],
       agent_prompts: [],
       prompt_versions: [],

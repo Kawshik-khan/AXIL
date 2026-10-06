@@ -303,6 +303,9 @@ export interface StepUpPayload {
   verifiedAt: string;
 }
 
+/** Action prefix of workspace step-up tokens (FX-97 Part A); the platform console refuses them, the workspace requires it. */
+export const WORKSPACE_STEP_UP_PREFIX = "WORKSPACE:";
+
 export async function signStepUpToken(userId: string, action = "PRIVILEGED_ACTION", sv = 1): Promise<string> {
   return new SignJWT({
     userId,

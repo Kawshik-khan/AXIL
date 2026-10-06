@@ -121,6 +121,9 @@ services:
       #  "TIER_2_REASONING":{"promptCostPer1M":0.15,"cachedPromptCostPer1M":0.014,"completionCostPer1M":0.6}}
       - key: LLM_PRICING_JSON
         sync: false
+      # From this ISO date, privileged workspace approvals need a fresh authenticator code (FX-97 Part A)
+      - key: WORKSPACE_STEP_UP_ENFORCED_FROM
+        sync: false
       - key: N8N_HOST
         sync: false
       - key: COMMERCEOS_N8N_WEBHOOK_SECRET

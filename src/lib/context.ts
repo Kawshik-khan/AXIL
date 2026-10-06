@@ -27,6 +27,8 @@ export interface RequestContext {
   role: RoleName;
   permissions: Permission[];
   timestamp: string;
+  /** The user presented a valid workspace step-up token (a fresh authenticator code) with this request (FX-97 Part A). */
+  stepUpVerified?: boolean;
   /** Set when a platform operator is serving this request through a support session (FX-34); `user` is the operator. */
   impersonation?: {
     session_id: string;

@@ -9,6 +9,7 @@ import {
   PLATFORM_AUTH_COOKIE_NAME,
   verifyPlatformSessionToken,
   verifyStepUpToken,
+  WORKSPACE_STEP_UP_PREFIX,
 } from "@/lib/security";
 import { AuthService } from "@/domains/auth/service";
 import { ServiceTokenService, SERVICE_TOKEN_PREFIX } from "@/domains/automation/services/service-token.service";
@@ -133,6 +134,15 @@ export async function extractRequestContext(request: Request): Promise<RequestCo
       method: request.method,
       path: new URL(request.url).pathname,
     });
+  }
+
+  // Workspace step-up (FX-97 Part A): only a workspace-scoped token issued to this user for their current session.
+  // Never for a support session (the operator isn't the user) or a service token (no person to ask for a code).
+  const stepUpHeader = request.headers.get("x-step-up-token");
+  if (stepUpHeader && !impersonated && context.role !== "SERVICE") {
+    const user = db.findUserById(context.user.id);
+    const claims = user ? await verifyStepUpToken(stepUpHeader, user.id, user.session_version ?? 1) : null;
+    context.stepUpVerified = Boolean(claims?.action?.startsWith(WORKSPACE_STEP_UP_PREFIX));
   }
 
   // Enforced platform controls (FX-34): a paused workspace can still read, but changes nothing
@@ -310,7 +320,9 @@ export async function extractPlatformContext(request: Request): Promise<Platform
   let stepUpVerified = false;
   const stepUpHeader = request.headers.get("x-step-up-token");
   if (stepUpHeader) {
-    stepUpVerified = !!(await verifyStepUpToken(stepUpHeader, user.id, user.session_version ?? 1));
+    const claims = await verifyStepUpToken(stepUpHeader, user.id, user.session_version ?? 1);
+    // A workspace step-up token (enrolled with only the account password) never counts here (FX-97 Part A)
+    stepUpVerified = Boolean(claims && !claims.action?.startsWith(WORKSPACE_STEP_UP_PREFIX));
   }
 
   return {

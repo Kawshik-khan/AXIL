@@ -436,6 +436,36 @@ async function main() {
     assert.strictEqual(B.data.orders.find((x) => x.id === "ord_mw_1")?.notes, "from A", "B's memory holds the winner, not its own refused change");
   });
 
+  await runTest("a customer-agent quote claimed by two servers at once: exactly one PLACING wins, the other gets 409 (FX-73)", async () => {
+    const now = new Date().toISOString();
+    await A.unit(async () => {
+      A.createQuote({
+        id: "q_mw_1", tenant_id: "ten_mw", conversation_id: "conv_mw", items: [{ variant_id: "var_mw", quantity: 1 }], district: "Dhaka",
+        zone: "INSIDE_DHAKA", lines: [], subtotal: 100, discount_total: 0, delivery_charge: 60, grand_total: 160,
+        customer_msg_count_at_quote: 0, status: "QUOTED", expires_at: new Date(Date.now() + 60_000).toISOString(), created_at: now, updated_at: now,
+      });
+      return true;
+    }, commitAll);
+    await B.syncNow();
+    const claim = (server: CommerceDatabase, gate?: Promise<void>) =>
+      server.unit(async () => {
+        if (gate) await gate;
+        const q = server.findQuote("ten_mw", "conv_mw", "q_mw_1");
+        if (!q || q.status !== "QUOTED") return false;
+        server.updateQuote("ten_mw", "q_mw_1", { status: "PLACING" });
+        return true;
+      }, (claimed) => claimed);
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => (open = resolve));
+    const second = claim(B, gate); // B starts its unit, then waits while A claims
+    await new Promise((r) => setTimeout(r, 50));
+    assert.strictEqual(await claim(A), true, "the first claim wins");
+    open();
+    await assert.rejects(second, refusedIn("STORE_CONFLICT"));
+    const saved = await mwClient.query<{ status: string }>("SELECT data->>'status' AS status FROM commerceos.documents WHERE collection = 'quotes' AND id = 'q_mw_1'");
+    assert.strictEqual(saved.rows[0]?.status, "PLACING");
+  });
+
   await runTest("no lost writes: 30 concurrent read-modify-write requests on two servers (retrying on 409) all land", async () => {
     const bump = async (server: CommerceDatabase) => {
       for (let attempt = 0; attempt < 50; attempt++) {

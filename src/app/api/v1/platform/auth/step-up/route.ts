@@ -12,7 +12,8 @@ import { withStore } from "@/lib/store-unit";
 const Body = z
   .object({
     code: z.string().trim().regex(/^\d{6}$/, "Enter the 6-digit code from your authenticator."),
-    action: z.string().max(100).optional(),
+    // A plain action name: it can't take the workspace prefix ("WORKSPACE:"), so platform tokens never pass as workspace ones
+    action: z.string().regex(/^[A-Z0-9_]{1,60}$/).optional(),
   })
   .strict();
 

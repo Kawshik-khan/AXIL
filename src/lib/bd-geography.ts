@@ -45,22 +45,72 @@ export const BD_DIVISIONS: string[] = Array.from(new Set(BD_64_DISTRICTS.map((x)
 /** Older English spellings still common in addresses. */
 const ALIASES: Record<string, string> = {
   chittagong: "Chattogram",
+  chattagram: "Chattogram",
   barisal: "Barishal",
   comilla: "Cumilla",
   jessore: "Jashore",
   bogra: "Bogura",
   "coxs bazar": "Cox's Bazar",
   "cox bazar": "Cox's Bazar",
+  coxsbazar: "Cox's Bazar",
   "chapai nawabganj": "Chapainawabganj",
   netrakona: "Netrokona",
   jhalakathi: "Jhalokati",
+  jhalakati: "Jhalokati",
   maulvibazar: "Moulvibazar",
+  narayangonj: "Narayanganj",
+  kishorganj: "Kishoreganj",
+  laxmipur: "Lakshmipur",
+  khagrachari: "Khagrachhari",
+  mymensing: "Mymensingh",
 };
 
-const normalize = (name: string) => name.trim().toLowerCase().replace(/['’.]/g, "").replace(/\s+/g, " ");
-const BY_NAME = new Map(BD_64_DISTRICTS.map((x) => [normalize(x.district), x]));
+/**
+ * Bangla names of the 64 districts, with common alternative spellings (FX-75, audit F23). Customers writing in Bangla
+ * script couldn't get a delivery charge or place an order before this.
+ */
+export const BANGLA_DISTRICT_NAMES: Readonly<Record<string, readonly string[]>> = {
+  Dhaka: ["ঢাকা"], Gazipur: ["গাজীপুর", "গাজিপুর"], Narayanganj: ["নারায়ণগঞ্জ", "নারায়নগঞ্জ"], Narsingdi: ["নরসিংদী", "নরসিংদি"],
+  Tangail: ["টাঙ্গাইল", "টাংগাইল"], Kishoreganj: ["কিশোরগঞ্জ"], Manikganj: ["মানিকগঞ্জ"], Munshiganj: ["মুন্সীগঞ্জ", "মুন্সিগঞ্জ"],
+  Faridpur: ["ফরিদপুর"], Gopalganj: ["গোপালগঞ্জ"], Madaripur: ["মাদারীপুর", "মাদারিপুর"], Rajbari: ["রাজবাড়ী", "রাজবাড়ি"],
+  Shariatpur: ["শরীয়তপুর", "শরিয়তপুর"],
+  Chattogram: ["চট্টগ্রাম"], "Cox's Bazar": ["কক্সবাজার", "কক্স বাজার"], Cumilla: ["কুমিল্লা"], Feni: ["ফেনী", "ফেনি"],
+  Brahmanbaria: ["ব্রাহ্মণবাড়িয়া", "ব্রাহ্মনবাড়িয়া"], Noakhali: ["নোয়াখালী", "নোয়াখালি"], Lakshmipur: ["লক্ষ্মীপুর", "লক্ষীপুর"],
+  Chandpur: ["চাঁদপুর"], Khagrachhari: ["খাগড়াছড়ি"], Rangamati: ["রাঙ্গামাটি", "রাঙামাটি"], Bandarban: ["বান্দরবান"],
+  Rajshahi: ["রাজশাহী", "রাজশাহি"], Bogura: ["বগুড়া"], Pabna: ["পাবনা"], Sirajganj: ["সিরাজগঞ্জ"], Naogaon: ["নওগাঁ"],
+  Natore: ["নাটোর"], Chapainawabganj: ["চাঁপাইনবাবগঞ্জ", "চাপাইনবাবগঞ্জ"], Joypurhat: ["জয়পুরহাট"],
+  Khulna: ["খুলনা"], Jashore: ["যশোর"], Kushtia: ["কুষ্টিয়া"], Jhenaidah: ["ঝিনাইদহ"], Chuadanga: ["চুয়াডাঙ্গা", "চুয়াডাঙা"],
+  Meherpur: ["মেহেরপুর"], Magura: ["মাগুরা"], Narail: ["নড়াইল"], Satkhira: ["সাতক্ষীরা"], Bagerhat: ["বাগেরহাট"],
+  Barishal: ["বরিশাল"], Patuakhali: ["পটুয়াখালী", "পটুয়াখালি"], Bhola: ["ভোলা"], Pirojpur: ["পিরোজপুর"], Barguna: ["বরগুনা"],
+  Jhalokati: ["ঝালকাঠি", "ঝালকাঠী"],
+  Sylhet: ["সিলেট"], Moulvibazar: ["মৌলভীবাজার"], Habiganj: ["হবিগঞ্জ"], Sunamganj: ["সুনামগঞ্জ"],
+  Rangpur: ["রংপুর"], Dinajpur: ["দিনাজপুর"], Gaibandha: ["গাইবান্ধা"], Kurigram: ["কুড়িগ্রাম"], Lalmonirhat: ["লালমনিরহাট"],
+  Nilphamari: ["নীলফামারী", "নীলফামারি"], Panchagarh: ["পঞ্চগড়"], Thakurgaon: ["ঠাকুরগাঁও"],
+  Mymensingh: ["ময়মনসিংহ"], Jamalpur: ["জামালপুর"], Netrokona: ["নেত্রকোণা", "নেত্রকোনা"], Sherpur: ["শেরপুর"],
+};
 
-/** The district by name (case-insensitive, old spellings accepted), or undefined if it isn't one of the 64. */
+// NFC first: Bangla ড় / য় have two encodings (one code point, or a letter plus nukta) and both appear in typed text.
+// Then drop a trailing "district" word, punctuation and extra spaces.
+const normalize = (name: string) =>
+  name
+    .normalize("NFC")
+    .trim()
+    .toLowerCase()
+    .replace(/[।,;:!?]+$/u, "")
+    .replace(/\s*(?:জেলা|জেলার|district|zila|zilla)$/u, "")
+    .replace(/['’.]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+const BY_NAME = new Map(BD_64_DISTRICTS.map((x) => [normalize(x.district), x]));
+for (const [district, names] of Object.entries(BANGLA_DISTRICT_NAMES)) {
+  const spec = BY_NAME.get(normalize(district));
+  if (spec) for (const n of names) BY_NAME.set(normalize(n), spec);
+}
+
+/**
+ * The district by name (case-insensitive; old English spellings and Bangla names accepted), or undefined if it isn't one
+ * of the 64.
+ */
 export function findDistrict(name: string | null | undefined): DistrictSpec | undefined {
   if (!name) return undefined;
   const key = normalize(name);
