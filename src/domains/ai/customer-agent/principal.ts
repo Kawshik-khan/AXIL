@@ -80,6 +80,7 @@ const CAPABILITIES = {
   orders_create: [PERMISSIONS.ORDERS_CREATE, PERMISSIONS.CUSTOMERS_READ, PERMISSIONS.CUSTOMERS_CREATE],
   knowledge: [PERMISSIONS.AI_KNOWLEDGE_READ],
   handoff: [PERMISSIONS.SOCIAL_CONVERSATION_ASSIGN, PERMISSIONS.SOCIAL_MESSAGE_SEND],
+  send: [PERMISSIONS.SOCIAL_MESSAGE_SEND], // the reply itself, through the normal outbound path (FX-76)
 } as const satisfies Record<string, readonly Permission[]>;
 
 export type Capability = keyof typeof CAPABILITIES;

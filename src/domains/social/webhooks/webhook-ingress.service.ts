@@ -12,6 +12,7 @@ import { SocialEventService } from "../events/social-event.service";
 import { BadRequestError, AuthenticationError } from "@/lib/errors";
 import crypto from "crypto";
 import { forwardRawToN8n, isSocialChannel, socialN8nEnabled } from "../n8n/bridge";
+import { enqueueCustomerTurn } from "@/domains/ai/customer-agent/jobs";
 
 /** A stable id for a provider event, so n8n and CommerceOS can recognize a redelivery. */
 export function rawEventId(channelId: string, payload: Record<string, unknown>): string {
@@ -247,7 +248,13 @@ export class WebhookIngressService {
           });
         }
 
-        // E. Emit message.received event
+        // E. Customer agent: queue a turn (no-op unless the workspace has it on). The turn runs in the background
+        //    worker, never inside this request: the request holds the store lock (ADR-112, FX-76).
+        if (message.sender_type === "CUSTOMER") {
+          enqueueCustomerTurn(db.findConversationById(tenantId, conversation.id) ?? conversation, message.id);
+        }
+
+        // F. Emit message.received event
         SocialEventService.emit({
           tenantId,
           eventType: "message.received",

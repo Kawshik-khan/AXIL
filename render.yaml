@@ -116,6 +116,16 @@ services:
         sync: false
       - key: LLM_FALLBACK_API_KEY
         sync: false
+      # FX-79: a fallback needs its own model names; the concurrency limit is the provider plan's (Ollama Cloud Pro: 3)
+      - key: LLM_FALLBACK_MODEL_FAST
+        sync: false
+      - key: LLM_FALLBACK_MODEL_REASONING
+        sync: false
+      - key: LLM_MAX_CONCURRENCY
+        value: "3"
+      # Customer-agent job worker (ADR-112); idle unless a workspace has the agent flags on
+      - key: CUSTOMER_AGENT_WORKER
+        value: "1"
       # The active provider's real prices, or cost dashboards use placeholders (FX-70). Ollama Cloud gpt-oss:120b:
       # {"TIER_1_FAST":{"promptCostPer1M":0.15,"cachedPromptCostPer1M":0.014,"completionCostPer1M":0.6},
       #  "TIER_2_REASONING":{"promptCostPer1M":0.15,"cachedPromptCostPer1M":0.014,"completionCostPer1M":0.6}}

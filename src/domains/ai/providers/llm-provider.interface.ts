@@ -34,6 +34,8 @@ export interface LLMUsage {
   total_tokens: number;
   /** Part of prompt_tokens served from the provider's prompt cache (`prompt_tokens_details.cached_tokens`), if reported. */
   cached_tokens?: number;
+  /** Hidden reasoning tokens inside completion_tokens (`completion_tokens_details.reasoning_tokens`), if reported. */
+  reasoning_tokens?: number;
 }
 
 export interface LLMResponse {
@@ -49,6 +51,8 @@ export interface LLMProviderOptions {
   max_tokens?: number;
   timeout_ms?: number;
   model?: string;
+  /** Absolute time (epoch ms) by which the call, including waits and retries, must finish (FX-79). */
+  deadline_ms?: number;
 }
 
 export interface LLMProvider {

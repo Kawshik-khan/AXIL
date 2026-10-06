@@ -25,4 +25,9 @@ export async function loadStore(): Promise<void> {
     .ready()
     .then(async () => (await import("@/domains/enterprise/services/webhook-worker")).startWebhookWorker())
     .catch(() => undefined); // the store logs its own start-up failure
+  // Customer-agent turns (FX-76); nothing runs unless a workspace has the agent flags on
+  void db
+    .ready()
+    .then(async () => (await import("@/domains/ai/customer-agent/worker")).startCustomerAgentWorker())
+    .catch(() => undefined);
 }

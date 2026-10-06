@@ -9,6 +9,8 @@
 
 export type AgentType =
   | "SUPERVISOR"
+  /** The single customer-facing agent (ADR-111, FX-77): acts as the conversation, through its own nine tools. */
+  | "CUSTOMER_AGENT"
   | "CUSTOMER_SUPPORT"
   | "SALES"
   | "ORDER_ASSISTANT"
@@ -723,9 +725,34 @@ export interface CustomerQuote {
   status: "QUOTED" | "PLACING" | "PLACED" | "STALE" | "EXPIRED";
   /** The name, phone and address shown in the confirmation summary: placement uses exactly these. */
   confirmation_details?: { customer_name: string; phone: string; address_line: string };
+  /**
+   * The outbound message that actually delivered this quote or its summary to the customer (ADR-112). Placement needs
+   * it: a quote from a shadow turn or a failed send was never seen, so no "yes" can confirm it.
+   */
+  shown_message_id?: string;
   order_id?: string;
   order_number?: string;
   expires_at: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * One pending customer-agent turn per conversation (ADR-112, FX-76). A newer message moves the open job instead of
+ * adding another; a message arriving while the turn runs sets `rerun`.
+ */
+export interface AgentJob {
+  id: string;
+  tenant_id: string;
+  conversation_id: string;
+  status: "PENDING" | "RUNNING" | "DONE" | "FAILED" | "BLOCKED" | "CANCELLED";
+  /** Debounce: customers send bursts of short messages, so the turn waits until this time. */
+  not_before: string;
+  last_message_id: string;
+  attempts: number;
+  rerun?: boolean;
+  claimed_at?: string;
+  outcome?: string;
   created_at: string;
   updated_at: string;
 }

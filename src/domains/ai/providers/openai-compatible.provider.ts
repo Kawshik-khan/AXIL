@@ -5,6 +5,8 @@
  */
 import { AppError } from "@/lib/errors";
 import { OutboundTimeoutError, outboundRequest, type OutboundResponse } from "@/lib/outbound-http";
+import { logger } from "@/lib/logger";
+import { Semaphore, retryAfterMs, withRetries } from "./resilience";
 import type {
   LLMMessage,
   LLMProvider,
@@ -23,7 +25,13 @@ export interface OpenAICompatibleConfig {
   /** Sent as `dimensions` on embedding calls (providers that support shortened vectors). */
   embeddingDimensions?: number;
   models: { TIER_1_FAST: string; TIER_2_REASONING: string; TIER_3_EMBEDDING: string };
+  /** At most this many calls in flight to this provider (LLM_MAX_CONCURRENCY, FX-79). Unset: no limit. */
+  maxConcurrency?: number;
 }
+
+/** Default output bound for a chat call (FX-79): no turn can run away with tokens. */
+export const DEFAULT_MAX_TOKENS = 2048;
+const DEFAULT_CALL_BUDGET_MS = 30_000;
 
 interface WireToolCall {
   id?: string;
@@ -33,7 +41,13 @@ interface WireToolCall {
 interface WireResponse {
   model?: string;
   choices?: Array<{ message?: { content?: string | null; tool_calls?: WireToolCall[] } }>;
-  usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } };
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+    prompt_tokens_details?: { cached_tokens?: number };
+    completion_tokens_details?: { reasoning_tokens?: number };
+  };
   data?: Array<{ embedding?: number[] }>;
 }
 
@@ -64,19 +78,28 @@ function usageOf(data: WireResponse): LLMUsage {
   const prompt = data.usage?.prompt_tokens ?? 0;
   const completion = data.usage?.completion_tokens ?? 0;
   const cached = data.usage?.prompt_tokens_details?.cached_tokens;
+  const reasoning = data.usage?.completion_tokens_details?.reasoning_tokens;
   return {
     prompt_tokens: prompt,
     completion_tokens: completion,
     total_tokens: data.usage?.total_tokens ?? prompt + completion,
     ...(typeof cached === "number" && cached > 0 ? { cached_tokens: Math.min(cached, prompt) } : {}), // FX-70
+    ...(typeof reasoning === "number" && reasoning > 0 ? { reasoning_tokens: reasoning } : {}), // FX-79
   };
 }
 
 export class OpenAICompatibleProvider implements LLMProvider {
   public readonly providerName: string;
+  private readonly slots: Semaphore | null;
 
   constructor(private readonly cfg: OpenAICompatibleConfig) {
     this.providerName = cfg.name ?? "openai-compatible";
+    this.slots = cfg.maxConcurrency && cfg.maxConcurrency > 0 ? new Semaphore(cfg.maxConcurrency) : null;
+  }
+
+  /** Calls in flight right now (for tests and dashboards). */
+  public get inFlight(): number {
+    return this.slots?.inUse ?? 0;
   }
 
   public modelFor(tier: keyof OpenAICompatibleConfig["models"]): string {
@@ -97,12 +120,18 @@ export class OpenAICompatibleProvider implements LLMProvider {
       });
     } catch (err) {
       // Network errors name the provider's host (it can be internal): tenants see only that it failed (Phase 3 F3)
-      const code = err instanceof OutboundTimeoutError ? "timed out" : "could not be reached";
-      throw new AppError("LLM_PROVIDER_ERROR", `AI provider ${this.providerName} ${code}.`, 502);
+      const timedOut = err instanceof OutboundTimeoutError;
+      throw new AppError("LLM_PROVIDER_ERROR", `AI provider ${this.providerName} ${timedOut ? "timed out" : "could not be reached"}.`, 502, {
+        ...(timedOut ? { timedOut: true } : {}),
+      });
     }
     if (res.status < 200 || res.status >= 300) {
       // The provider's own error text can include account details; keep it short and out of tenant-facing messages
-      throw new AppError("LLM_PROVIDER_ERROR", `AI provider ${this.providerName} answered HTTP ${res.status}.`, 502, { status: res.status });
+      const wait = retryAfterMs(res.headers["retry-after"]);
+      throw new AppError("LLM_PROVIDER_ERROR", `AI provider ${this.providerName} answered HTTP ${res.status}.`, 502, {
+        status: res.status,
+        ...(wait !== undefined ? { retryAfterMs: wait } : {}),
+      });
     }
     try {
       return JSON.parse(res.body) as WireResponse;
@@ -114,19 +143,32 @@ export class OpenAICompatibleProvider implements LLMProvider {
   public async chat(messages: LLMMessage[], tools?: LLMToolDefinition[], options?: LLMProviderOptions): Promise<LLMResponse> {
     const started = Date.now();
     const model = options?.model ?? this.cfg.models.TIER_1_FAST;
-    const data = await this.post(
-      "/chat/completions",
-      {
-        model,
-        messages: messages.map(toWireMessage),
-        ...(tools?.length
-          ? { tools: tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } })) }
-          : {}),
-        temperature: options?.temperature ?? 0.2,
-        ...(options?.max_tokens ? { max_tokens: options.max_tokens } : {}),
-      },
-      options?.timeout_ms
-    );
+    // One deadline for the whole call: waiting for a slot, every attempt and every backoff count against it (FX-79)
+    const deadline = options?.deadline_ms ?? started + (options?.timeout_ms ?? this.cfg.timeoutMs ?? DEFAULT_CALL_BUDGET_MS);
+    const body = {
+      model,
+      messages: messages.map(toWireMessage),
+      ...(tools?.length
+        ? { tools: tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } })) }
+        : {}),
+      temperature: options?.temperature ?? 0.2,
+      max_tokens: options?.max_tokens ?? DEFAULT_MAX_TOKENS,
+    };
+    const release = this.slots ? await this.slots.acquire(deadline) : () => undefined;
+    let data: WireResponse;
+    try {
+      data = await withRetries(
+        deadline,
+        (remaining) => this.post("/chat/completions", body, Math.min(remaining, this.cfg.timeoutMs ?? DEFAULT_CALL_BUDGET_MS)),
+        (err) => {
+          const d = (err as { details?: { status?: number; retryAfterMs?: number; timedOut?: boolean } }).details ?? {};
+          return { status: d.status, retryAfterMs: d.retryAfterMs, timedOut: d.timedOut };
+        },
+        ({ waitMs, reason }) => logger.warn("llm.retry", { provider: this.providerName, reason, wait_ms: Math.round(waitMs) })
+      );
+    } finally {
+      release();
+    }
     const msg = data.choices?.[0]?.message ?? {};
     const toolCalls: LLMToolCall[] = (msg.tool_calls ?? [])
       .filter((tc) => tc.function?.name)

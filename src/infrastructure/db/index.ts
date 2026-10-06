@@ -204,6 +204,7 @@ import {
   TenantAIPolicy,
   AgentRun,
   CustomerQuote,
+  AgentJob,
   AgentToolCallRecord,
   AgentPrompt,
   PromptVersion,
@@ -428,6 +429,7 @@ export interface DatabaseSchema {
   agent_policies: TenantAIPolicy[];
   agent_runs: AgentRun[];
   quotes: CustomerQuote[];
+  agent_jobs: AgentJob[];
   agent_tool_calls: AgentToolCallRecord[];
   agent_prompts: AgentPrompt[];
   prompt_versions: PromptVersion[];
@@ -1128,6 +1130,7 @@ export class CommerceDatabase {
       agent_policies: parsed.agent_policies || [],
       agent_runs: parsed.agent_runs || [],
       quotes: parsed.quotes || [],
+      agent_jobs: parsed.agent_jobs || [],
       agent_tool_calls: parsed.agent_tool_calls || [],
       agent_prompts: parsed.agent_prompts || [],
       prompt_versions: parsed.prompt_versions || [],
@@ -1398,6 +1401,7 @@ export class CommerceDatabase {
       agent_policies: [],
       agent_runs: [],
       quotes: [],
+      agent_jobs: [],
       agent_tool_calls: [],
       agent_prompts: [],
       prompt_versions: [],
@@ -6850,6 +6854,15 @@ export class CommerceDatabase {
       .slice(0, options?.limit || 50);
   }
 
+  /** How many runs of one agent type started since a time (all of them, not a page): for rate limits. */
+  public countAgentRunsSince(tenantId: string, agentType: string, sinceIso: string, conversationId?: string): number {
+    let n = 0;
+    for (const r of this.data.agent_runs) {
+      if (r.tenant_id === tenantId && r.agent_type === agentType && r.started_at >= sinceIso && (!conversationId || r.conversation_id === conversationId)) n++;
+    }
+    return n;
+  }
+
   public findAgentRunById(tenantId: string, id: string): AgentRun | undefined {
     return this.data.agent_runs.find((r) => r.tenant_id === tenantId && r.id === id);
   }
@@ -6869,13 +6882,42 @@ export class CommerceDatabase {
     return quote;
   }
 
-  public updateQuote(tenantId: string, id: string, updates: Partial<Pick<CustomerQuote, "status" | "order_id" | "order_number" | "confirmation_details" | "customer_msg_count_at_quote">>): CustomerQuote {
+  public updateQuote(tenantId: string, id: string, updates: Partial<Pick<CustomerQuote, "status" | "order_id" | "order_number" | "confirmation_details" | "customer_msg_count_at_quote" | "shown_message_id">>): CustomerQuote {
     const idx = this.data.quotes.findIndex((q) => q.tenant_id === tenantId && q.id === id);
     if (idx === -1) throw new Error(`Quote ${id} not found`);
     this.data.quotes[idx] = { ...this.data.quotes[idx], ...updates, updated_at: new Date().toISOString() };
     this.persist(["quotes"]);
     return this.data.quotes[idx];
   }
+  // Customer-agent jobs (ADR-112, FX-76): one per conversation
+  public findAgentJob(tenantId: string, conversationId: string): AgentJob | undefined {
+    return this.data.agent_jobs.find((j) => j.tenant_id === tenantId && j.conversation_id === conversationId);
+  }
+
+  /**
+   * The oldest job ready to run in each workspace, oldest first (the worker claims one at a time in a unit of work).
+   * One per workspace, so a workspace with a large backlog can't push another's job out of the result.
+   */
+  public getDueAgentJobs(nowIso: string, staleClaimBeforeIso: string, limit = 20): AgentJob[] {
+    const oldest = new Map<string, AgentJob>();
+    for (const j of this.data.agent_jobs) {
+      const due = (j.status === "PENDING" && j.not_before <= nowIso) || (j.status === "RUNNING" && (j.claimed_at ?? "") < staleClaimBeforeIso);
+      if (!due) continue;
+      const current = oldest.get(j.tenant_id);
+      if (!current || j.not_before < current.not_before) oldest.set(j.tenant_id, j);
+    }
+    return [...oldest.values()].sort((a, b) => a.not_before.localeCompare(b.not_before)).slice(0, limit);
+  }
+
+  public saveAgentJob(job: AgentJob): AgentJob {
+    const idx = this.data.agent_jobs.findIndex((j) => j.tenant_id === job.tenant_id && j.id === job.id);
+    const saved = { ...job, updated_at: new Date().toISOString() };
+    if (idx === -1) this.data.agent_jobs.push(saved);
+    else this.data.agent_jobs[idx] = saved;
+    this.persist(["agent_jobs"]);
+    return saved;
+  }
+
 
   public createAgentRun(run: AgentRun): AgentRun {
     this.data.agent_runs.push(run);
@@ -8902,6 +8944,7 @@ export class CommerceDatabase {
       agent_policies: [],
       agent_runs: [],
       quotes: [],
+      agent_jobs: [],
       agent_tool_calls: [],
       agent_prompts: [],
       prompt_versions: [],

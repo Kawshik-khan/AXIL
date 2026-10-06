@@ -1,4 +1,4 @@
-import { IntegrationNotConfiguredError, BadRequestError, NotFoundError, FeatureNotEntitledError } from "@/lib/errors";
+import { AppError, IntegrationNotConfiguredError, BadRequestError, NotFoundError, FeatureNotEntitledError } from "@/lib/errors";
 import { randomSuffix } from "@/lib/ids";
 import { db } from "@/infrastructure/db";
 import { Message, MessageType } from "@/types/social";
@@ -30,10 +30,18 @@ export interface SendOutboundPayload {
 export class OutboundMessageService {
   private static readonly MAX_RETRIES = 4;
 
+  /**
+   * `asAgent` (the customer agent, FX-76): the message is the bot's (sender BOT). It never takes a chat back from people:
+   * after a handoff (automation paused) the mode and status stay as the handoff left them, and when staff replied after
+   * `agentTurnStartedAt`, or the chat was paused by anyone but this turn's own handoff, the bot's reply is refused
+ * (409 AGENT_SUPERSEDED, ADR-112).
+   * A person replying takes the conversation over (HUMAN mode, automation paused), as before.
+   */
   public static async sendMessage(
     context: RequestContext,
     conversationId: string,
-    payload: SendOutboundPayload
+    payload: SendOutboundPayload,
+    options: { asAgent?: boolean; agentTurnStartedAt?: string; agentHandedOff?: boolean } = {}
   ): Promise<Message> {
     const prepared = await db.unit(async () => {
       RbacService.assertCan(context, PERMISSIONS.SOCIAL_MESSAGE_SEND);
@@ -51,6 +59,18 @@ export class OutboundMessageService {
       if (!channel) throw new BadRequestError(`Connected channel '${conversation.channel_id}' not found or disconnected.`);
       assertNotKilled(context.tenant.id, "CHANNEL", channel.id, channel.type);
       if (!isFeatureEnabled("real_messaging", context.tenant.id)) throw new FeatureNotEntitledError("real_messaging");
+
+      if (options.asAgent && options.agentTurnStartedAt) {
+        const since = options.agentTurnStartedAt;
+        const staffReplied = db
+          .getMessages(context.tenant.id, conversationId, { limit: 50 })
+          .messages.some((m) => m.direction === "OUTBOUND" && m.sender_type === "AGENT" && m.message_type !== "INTERNAL_NOTE" && m.created_at >= since);
+        if (staffReplied) throw new AppError("AGENT_SUPERSEDED", "A team member replied during the agent's turn; the agent's reply was not sent.", 409);
+        // Paused by staff or another handoff while the turn ran: only this turn's own handoff acknowledgement may go out
+        if (conversation.automation_paused && !options.agentHandedOff) {
+          throw new AppError("AGENT_SUPERSEDED", "The conversation was taken over during the agent's turn; the agent's reply was not sent.", 409);
+        }
+      }
 
       const key = payload.idempotency_key || payload.client_message_id;
       if (key) {
@@ -73,7 +93,7 @@ export class OutboundMessageService {
         client_message_id: payload.client_message_id,
         idempotency_key: payload.idempotency_key,
         direction: "OUTBOUND",
-        sender_type: "AGENT",
+        sender_type: options.asAgent ? "BOT" : "AGENT",
         sender_id: context.user.id,
         message_type: payload.messageType || (payload.mediaUrl ? "IMAGE" : "TEXT"),
         text: payload.text || "",
@@ -86,13 +106,14 @@ export class OutboundMessageService {
       };
 
       db.createMessage(initialMessage);
+      // A handed-off chat keeps waiting for a person, even after the bot's "a team member will reply" message
+      const agentAfterHandoff = Boolean(options.asAgent && conversation.automation_paused);
       db.updateConversation(context.tenant.id, conversationId, {
-        automation_paused: true,
-        mode: "HUMAN",
-        status: conversation.status === "WAITING_AGENT" ? "WAITING_CUSTOMER" : conversation.status,
+        ...(options.asAgent ? (agentAfterHandoff ? {} : { mode: "AI" as const }) : { automation_paused: true, mode: "HUMAN" as const }),
+        status: !agentAfterHandoff && conversation.status === "WAITING_AGENT" ? "WAITING_CUSTOMER" : conversation.status,
         last_outbound_at: now,
         last_message_at: now,
-        unread_count: 0,
+        ...(options.asAgent ? {} : { unread_count: 0 }), // staff haven't read it just because the bot answered
       });
       return { channel, customerId: conversation.customer_id, externalConversationId: conversation.external_conversation_id, messageId: msgId };
     }, (result) => Boolean(result));

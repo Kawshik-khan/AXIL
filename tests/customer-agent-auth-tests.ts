@@ -18,7 +18,7 @@ import { searchTokens } from "@/domains/catalog/search-synonyms";
 import type { RequestContext } from "@/lib/context";
 import type { ChannelType, Message } from "@/types/social";
 import { principalFor, capabilityContext, canSeeOrder, type Capability, type CustomerAgentPrincipal } from "@/domains/ai/customer-agent/principal";
-import { isAffirmative } from "@/domains/ai/customer-agent/confirmation";
+import { customerMessages, isAffirmative } from "@/domains/ai/customer-agent/confirmation";
 import { CUSTOMER_TOOLS, CUSTOMER_TOOL_NAMES, runCustomerTool } from "@/domains/ai/customer-agent/tools";
 
 const GREEN = "\x1b[32m";
@@ -97,7 +97,7 @@ async function main() {
   const conversation = async (channelId: string, type: ChannelType, customerId?: string) => {
     seq++;
     const { conversation: c } = await ConversationService.findOrCreateConversation(tenantId, channelId, type, `ext_user_${seq}`, `ext_thread_${seq}`);
-    db.updateConversation(tenantId, c.id, { mode: "BOT", automation_paused: false, ...(customerId ? { customer_id: customerId } : {}) } as never);
+    db.updateConversation(tenantId, c.id, { mode: "AI", automation_paused: false, ...(customerId ? { customer_id: customerId } : {}) } as never);
     return principalFor(tenantId, c.id)!;
   };
   let msgSeq = 0;
@@ -110,9 +110,18 @@ async function main() {
       message_type: "TEXT", text, status: "DELIVERED", retry_count: 0, metadata: {}, created_at: t, updated_at: t,
     } as Message);
   };
+  // The worker marks a quote shown once the reply carrying it is delivered (ADR-112); these tests have no worker, so a
+  // quote or summary counts as delivered as soon as the tool returns it.
+  const shown = (pr: CustomerAgentPrincipal, quoteId: unknown, again = false) => {
+    const q = typeof quoteId === "string" ? db.findQuote(tenantId, pr.conversationId, quoteId) : undefined;
+    if (q && q.status === "QUOTED" && (again || !q.shown_message_id)) db.updateQuote(tenantId, q.id, { shown_message_id: `msg_shown_${q.id}`, customer_msg_count_at_quote: customerMessages(tenantId, pr.conversationId).length });
+  };
   const run = async (pr: CustomerAgentPrincipal, name: string, args: unknown): Promise<R> => {
     const out = await runCustomerTool(pr, name, args);
-    return out.result as R;
+    const result = out.result as R;
+    if (name === "quote_order" && result.quote_id) shown(pr, result.quote_id);
+    if (name === "place_order" && result.status === "CONFIRMATION_REQUIRED") shown(pr, (args as R).quote_id, true);
+    return result;
   };
   const variant = async (pr: CustomerAgentPrincipal, query: string, size: string) =>
     ((await run(pr, "search_products", { query })).results[0].variants as R[]).find((v) => v.size === size)!;

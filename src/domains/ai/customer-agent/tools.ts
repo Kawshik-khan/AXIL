@@ -228,6 +228,7 @@ async function quoteOrder(pr: CustomerAgentPrincipal, a: z.infer<typeof QuoteArg
     grand_total: pricing.grand_total,
     customer_msg_count_at_quote: sameAsEarlier?.customer_msg_count_at_quote ?? customerMessages(pr.tenantId, pr.conversationId).length,
     ...(sameAsEarlier?.confirmation_details ? { confirmation_details: sameAsEarlier.confirmation_details } : {}),
+    ...(sameAsEarlier?.shown_message_id ? { shown_message_id: sameAsEarlier.shown_message_id } : {}),
     status: "QUOTED",
     expires_at: new Date(now.getTime() + QUOTE_TTL_MS).toISOString(),
     created_at: now.toISOString(),
@@ -285,7 +286,8 @@ async function placeOrder(pr: CustomerAgentPrincipal, a: z.infer<typeof PlaceArg
     // summary and a new yes (the confirmation point moves to now).
     const shown = q.confirmation_details;
     const changed = Boolean(shown) && JSON.stringify(shown) !== JSON.stringify(details);
-    if (changed || !confirmedAfter(pr.tenantId, pr.conversationId, q.customer_msg_count_at_quote)) {
+    // A yes counts only after the customer was actually sent the quote (shown_message_id, set by the worker on delivery)
+    if (changed || !q.shown_message_id || !confirmedAfter(pr.tenantId, pr.conversationId, q.customer_msg_count_at_quote)) {
       db.updateQuote(pr.tenantId, q.id, {
         confirmation_details: details,
         ...(changed ? { customer_msg_count_at_quote: customerMessages(pr.tenantId, pr.conversationId).length } : {}),

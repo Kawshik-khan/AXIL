@@ -8,6 +8,7 @@ import { MockLLMProvider } from "./mock-llm.provider";
 import { OpenAICompatibleProvider, UnconfiguredProvider } from "./openai-compatible.provider";
 import { PlatformSafetyService } from "@/domains/platform/services/platform-safety.service";
 import { KillSwitchActiveError } from "@/lib/errors";
+import { LLM_BUSY, LLM_DEADLINE } from "./resilience";
 
 export type ModelTier = "TIER_1_FAST" | "TIER_2_REASONING" | "TIER_3_EMBEDDING";
 
@@ -52,6 +53,17 @@ const BDT_CONVERSION_RATE = Number(process.env.USD_BDT_RATE) > 0 ? Number(proces
 
 export type AiMode = "LIVE" | "DEMO" | "NOT_CONFIGURED";
 
+/**
+ * This server's share of a provider's concurrency limit (FX-79): the plan's limit (e.g. Ollama Cloud Pro = 3) divided
+ * by STORE_SERVER_COUNT, at least 1. Unset or invalid: no limit.
+ */
+function concurrencyShare(limit: string | undefined, env: NodeJS.ProcessEnv): number | undefined {
+  const total = Number(limit);
+  if (!Number.isInteger(total) || total <= 0) return undefined;
+  const servers = Number(env.STORE_SERVER_COUNT);
+  return Math.max(1, Math.floor(total / (Number.isInteger(servers) && servers > 0 ? servers : 1)));
+}
+
 export class ModelRouter {
   private static instance: ModelRouter;
   private primaryProvider: LLMProvider;
@@ -60,7 +72,7 @@ export class ModelRouter {
   private failureCount = 0;
   private circuitOpenUntil = 0;
   private readonly failureThreshold = 5;
-  private readonly circuitCooldownMs = 30000;
+  private readonly circuitCooldownMs = 60000; // FX-79: 5 consecutive primary failures open the circuit for 60 s
 
   /**
    * Providers come from the environment (FX-32, audit H14). This used to be the keyword mock as both primary and
@@ -94,7 +106,13 @@ export class ModelRouter {
         `LLM_MODEL_FAST is not set for AI provider ${env.LLM_PROVIDER_NAME || "at LLM_BASE_URL"}. Set the model names explicitly.`
       );
     } else if (env.LLM_BASE_URL) {
-      this.primaryProvider = new OpenAICompatibleProvider({ baseUrl: env.LLM_BASE_URL, apiKey: env.LLM_API_KEY, name: env.LLM_PROVIDER_NAME, models });
+      this.primaryProvider = new OpenAICompatibleProvider({
+        baseUrl: env.LLM_BASE_URL,
+        apiKey: env.LLM_API_KEY,
+        name: env.LLM_PROVIDER_NAME,
+        models,
+        maxConcurrency: concurrencyShare(env.LLM_MAX_CONCURRENCY, env),
+      });
     } else if (env.AI_DEMO_MODE === "1") {
       this.primaryProvider = new MockLLMProvider();
     } else {
@@ -111,9 +129,19 @@ export class ModelRouter {
           embeddingDimensions: Number.isInteger(dims) && dims > 0 ? dims : undefined,
         })
       : null;
-    this.fallbackProvider = env.LLM_FALLBACK_BASE_URL
-      ? new OpenAICompatibleProvider({ baseUrl: env.LLM_FALLBACK_BASE_URL, apiKey: env.LLM_FALLBACK_API_KEY, name: "fallback", models })
-      : null;
+    // A fallback is a second provider with its OWN model names (FX-79, audit F24: it used to be sent the primary's
+    // names, so it failed exactly when it was needed). Without LLM_FALLBACK_MODEL_FAST there is no fallback.
+    const fallbackFast = env.LLM_FALLBACK_MODEL_FAST?.trim() || "";
+    this.fallbackProvider =
+      env.LLM_FALLBACK_BASE_URL && fallbackFast
+        ? new OpenAICompatibleProvider({
+            baseUrl: env.LLM_FALLBACK_BASE_URL,
+            apiKey: env.LLM_FALLBACK_API_KEY,
+            name: env.LLM_FALLBACK_PROVIDER_NAME || "fallback",
+            models: { TIER_1_FAST: fallbackFast, TIER_2_REASONING: env.LLM_FALLBACK_MODEL_REASONING?.trim() || fallbackFast, TIER_3_EMBEDDING: "" },
+            maxConcurrency: concurrencyShare(env.LLM_FALLBACK_MAX_CONCURRENCY, env),
+          })
+        : null;
   }
 
   /** What's answering: LIVE (a real provider), DEMO (offline keyword mock) or NOT_CONFIGURED. */
@@ -215,19 +243,34 @@ export class ModelRouter {
     return { costUsd, costBdt };
   }
 
+  /** The model a given provider uses for a tier: each provider has its own names (FX-79, audit F24). */
+  private modelOf(provider: LLMProvider, tier: ModelTier): string {
+    if (provider instanceof OpenAICompatibleProvider) return provider.modelFor(tier);
+    return this.resolveModelName(tier);
+  }
+
+  /**
+   * One model call with routing. `deadlineMs` (absolute) bounds the whole call, waits and retries included; `maxTokens`
+   * bounds the output (FX-79).
+   */
   public async chatWithRouting(
     tier: ModelTier,
     messages: LLMMessage[],
-    tools?: LLMToolDefinition[]
+    tools?: LLMToolDefinition[],
+    options: { deadlineMs?: number; maxTokens?: number } = {}
   ): Promise<LLMResponse & { costUsd: number; costBdt: number; isFallback: boolean; provider: string; demo: boolean }> {
     const { provider, isFallback } = this.getActiveProvider(tier);
-    const modelName = this.resolveModelName(tier);
     if (PlatformSafetyService.isExecutionBlocked("PROVIDER", provider.providerName)) {
       throw new KillSwitchActiveError("PROVIDER", `AI provider ${provider.providerName} is paused by the platform.`); // FX-34
     }
+    const callOptions = (p: LLMProvider) => ({
+      model: this.modelOf(p, tier),
+      ...(options.deadlineMs ? { deadline_ms: options.deadlineMs } : {}),
+      ...(options.maxTokens ? { max_tokens: options.maxTokens } : {}),
+    });
 
     try {
-      const response = await provider.chat(messages, tools, { model: modelName });
+      const response = await provider.chat(messages, tools, callOptions(provider));
       this.recordSuccess();
       // The offline demo costs nothing; real usage is priced from the tokens the provider reports (FX-32)
       const { costUsd, costBdt } =
@@ -244,11 +287,13 @@ export class ModelRouter {
       };
     } catch (err) {
       if (this.getMode() === "NOT_CONFIGURED") throw err; // nothing to fall back to, and not a provider failure
-      this.recordFailure();
+      // Our own limits (no free slot, out of time) say nothing about the provider's health
+      const code = (err as { code?: string }).code;
+      if (code !== LLM_BUSY && code !== LLM_DEADLINE) this.recordFailure();
       // A second real provider, if configured; never the mock (FX-32)
       if (!isFallback && this.fallbackProvider && !PlatformSafetyService.isExecutionBlocked("PROVIDER", this.fallbackProvider.providerName)) {
         try {
-          const fallbackResponse = await this.fallbackProvider.chat(messages, tools, { model: modelName });
+          const fallbackResponse = await this.fallbackProvider.chat(messages, tools, callOptions(this.fallbackProvider));
           const { costUsd, costBdt } = this.calculateCost(
             tier,
             fallbackResponse.usage.prompt_tokens,
