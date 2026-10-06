@@ -139,6 +139,21 @@ export interface PlatformSettingVersionRecord {
   created_at: string;
 }
 
+/**
+ * Content-Security-Policy violation reports (FX-86), counted per day, directive and blocked origin; the browser's report
+ * itself (page URLs, samples) is not kept. Platform scope.
+ */
+export interface CspReportRecord {
+  /** `<day>|<directive>|<blocked origin>` */
+  id: string;
+  day: string;
+  directive: string;
+  blocked: string;
+  count: number;
+  first_seen_at: string;
+  last_seen_at: string;
+}
+
 export interface PlatformIncidentRecord {
   id: string;
   title: string;

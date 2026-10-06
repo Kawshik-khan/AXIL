@@ -209,13 +209,18 @@ export class WebhookIngressService {
       }
 
       // A. Identity Resolution (External user -> Canonical customer)
-      const { customer } = await IdentityResolutionService.resolveCustomer(
+      const resolved = await IdentityResolutionService.resolveCustomer(
         tenantId,
         channelId,
         channelType,
         norm.externalSenderId,
         norm.senderProfile
       );
+      // A number the provider proved belongs to the sender (Telegram own-contact share, FX-87)
+      const customer =
+        norm.verifiedPhone && channelType === "TELEGRAM"
+          ? await IdentityResolutionService.linkVerifiedPhone(tenantId, resolved.identity, norm.verifiedPhone)
+          : resolved.customer;
 
       // B. Conversation lookup or creation
       const { conversation, isNew } = await ConversationService.findOrCreateConversation(

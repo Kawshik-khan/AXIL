@@ -92,8 +92,17 @@ export class TelegramAdapter implements IChannelProvider {
   public normalizeIncomingEvent(rawPayload: Record<string, unknown>, channelId: string): NormalizedIncomingMessage[] {
     const updateId = rawPayload.update_id;
     const msg = rawPayload.message as
-      | { message_id?: number; date?: number; text?: string; chat?: { id?: number | string; type?: string }; from?: { id?: number; first_name?: string; last_name?: string; username?: string; is_bot?: boolean } }
+      | {
+          message_id?: number; date?: number; text?: string; chat?: { id?: number | string; type?: string };
+          from?: { id?: number; first_name?: string; last_name?: string; username?: string; is_bot?: boolean };
+          contact?: { phone_number?: string; user_id?: number };
+        }
       | undefined;
+    // FX-87: a shared contact. Only the sender's OWN contact (Telegram sets user_id to the account the number belongs to)
+    // proves the number; someone else's contact card is just a message.
+    const contact = msg?.contact;
+    const ownContact = Boolean(contact && typeof contact.phone_number === "string" && contact.user_id !== undefined && contact.user_id === msg?.from?.id);
+    const text = typeof msg?.text === "string" ? msg.text : contact ? (ownContact ? "[Shared their own phone number]" : "[Shared a contact]") : undefined;
     if (
       !Number.isSafeInteger(updateId) ||
       !msg ||
@@ -104,7 +113,7 @@ export class TelegramAdapter implements IChannelProvider {
       msg.chat.type !== "private" ||
       !(typeof msg.chat.id === "string" || Number.isSafeInteger(msg.chat.id)) ||
       !Number.isSafeInteger(msg.message_id) ||
-      typeof msg.text !== "string"
+      typeof text !== "string"
     ) return [];
     const name = [msg.from.first_name, msg.from.last_name].filter(Boolean).join(" ") || undefined;
     return [
@@ -120,7 +129,8 @@ export class TelegramAdapter implements IChannelProvider {
         senderProfile: { displayName: name, username: msg.from.username },
         direction: "INBOUND",
         messageType: "TEXT",
-        text: msg.text.slice(0, 4096),
+        text: text.slice(0, 4096),
+        ...(ownContact ? { verifiedPhone: String(contact!.phone_number).replace(/[^\d+]/g, "").slice(0, 20) } : {}),
         timestamp: new Date((Number.isSafeInteger(msg.date) ? msg.date! : Math.floor(Date.now() / 1000)) * 1000).toISOString(),
         rawPayload,
       },

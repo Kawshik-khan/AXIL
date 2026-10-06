@@ -15,8 +15,12 @@ import { PlatformSafetyService } from "@/domains/platform/services/platform-safe
 import { AgentHealthService } from "@/domains/platform/services/agent-health.service";
 import { RetentionService } from "@/domains/privacy/retention.service";
 import { KnowledgeService } from "@/domains/ai/rag/knowledge.service";
+import { CspReportService } from "@/domains/platform/services/csp-report.service";
 import type { TenantRecord } from "@/infrastructure/db";
 import type { JobRunRecord } from "@/types/commerce";
+import { localHour } from "@/lib/local-time";
+
+export { localHour };
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -26,16 +30,6 @@ interface JobDefinition {
   /** Length of one bucket: a job runs at most once per bucket. */
   cadenceMs: number;
   run(now: number): Promise<Record<string, unknown>>;
-}
-
-/** Hour of day (0–23) in a workspace's own timezone (default Asia/Dhaka). */
-export function localHour(tenant: Pick<TenantRecord, "timezone">, now: number): number {
-  const tz = tenant.timezone || "Asia/Dhaka";
-  try {
-    return Number(new Intl.DateTimeFormat("en-GB", { hour: "2-digit", hourCycle: "h23", timeZone: tz }).format(new Date(now)));
-  } catch {
-    return Number(new Intl.DateTimeFormat("en-GB", { hour: "2-digit", hourCycle: "h23", timeZone: "Asia/Dhaka" }).format(new Date(now)));
-  }
 }
 
 const localDate = (tenant: Pick<TenantRecord, "timezone">, at: number | string) =>
@@ -172,6 +166,7 @@ export const JOBS: Record<string, JobDefinition> = {
         outbox: { pending: pending.length, dead: outbox.filter((e) => e.status === "DEAD").length, oldest_pending_minutes: oldestPending ? Math.round((now - Date.parse(oldestPending)) / MINUTE) : null },
         automation_dead_letters_open: deadLetters,
         agent_alerts: alerts.map((a) => ({ title: a.title, severity: a.severity, detail: a.detail })),
+        csp: CspReportService.summary(now),
         healthy: alerts.length === 0 && outbox.every((e) => e.status !== "DEAD"),
       };
     },

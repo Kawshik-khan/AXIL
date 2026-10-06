@@ -37,7 +37,6 @@ jobs:
       # Provider profile under test (implementation plan §2a). Switching provider = changing these lines.
       LLM_PROVIDER_NAME: ollama-cloud
       LLM_BASE_URL: https://ollama.com/v1
-      LLM_API_KEY: ${{ secrets.OLLAMA_EVAL_API_KEY }}
       LLM_MODEL_FAST: gpt-oss:120b
       LLM_MODEL_REASONING: gpt-oss:120b
       LLM_PRICING_JSON: '{"TIER_1_FAST":{"promptCostPer1M":0.15,"cachedPromptCostPer1M":0.014,"completionCostPer1M":0.6}}'
@@ -50,10 +49,13 @@ jobs:
         if: github.event_name == 'pull_request'
         env:
           EVAL_CASES: G01,G03,G06,G19,G25,G28,G33,G37,G41,G44,G55,G59,R03,R04,R06,R07,R11,R12,R16,R21,R25,R26,R27,R35,R42,R43
+          LLM_API_KEY: ${{ secrets.OLLAMA_EVAL_API_KEY }}
         run: node tests/ts-runner.cjs ./tests/agent-evals/run-evals.ts | tee eval.log
       - name: Full suite (nightly / manual)
         if: github.event_name != 'pull_request'
         run: node tests/ts-runner.cjs ./tests/agent-evals/run-evals.ts | tee eval.log
+        env:
+          LLM_API_KEY: ${{ secrets.OLLAMA_EVAL_API_KEY }}
       - name: Gate
         run: node tests/agent-evals/check-thresholds.mjs "$(ls -d tests/agent-evals/results/live-* | tail -1)"
       # FX-82: Recall@2 ≥ 95% per language with real embeddings (nightly; synthetic policy text only)

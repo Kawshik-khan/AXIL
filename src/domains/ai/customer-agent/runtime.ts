@@ -240,7 +240,7 @@ export async function runCustomerTurn(pr: CustomerAgentPrincipal, opts: { budget
       current_step: handoff ? "HUMAN_HANDOFF" : "RESPOND", completed_at: new Date().toISOString(), latency_ms: Date.now() - started,
       input_tokens: promptTokens, output_tokens: completionTokens, estimated_cost_usd: costUsd, estimated_cost_bdt: costBdt,
       tool_calls_count: toolCalls.length, final_response: reply, model,
-      metadata: { trace_id: traceId, guards, cached_tokens: cachedTokens, calls, ...(handoffReason ? { handoff_reason: handoffReason } : {}) },
+      metadata: { trace_id: traceId, guards, cached_tokens: cachedTokens, calls, ...(handoffReason ? { handoff_reason: handoffReason } : {}), ...(opts.shadow ? { shadow: true } : {}) },
     });
     db.recordAIUsage({
       id: `usg_${randomUUID().slice(0, 16)}`, tenant_id: pr.tenantId, agent_run_id: runId, conversation_id: pr.conversationId,

@@ -4,9 +4,25 @@ Blueprint: [`render.yaml`](../render.yaml). Audit and plan: [`production-readine
 
 ## What is deployed
 
-One always-on Node web service (`next start`), region **oregon**, database on Neon (AWS us-east-2). The app holds the whole
-dataset in memory and syncs it from Postgres, so it is not a serverless workload and each instance needs RAM for the data.
-Nothing runs out of process yet (no worker, no cron); those arrive with the job queue (R1b).
+Two always-on Node web services (`next start`), region **oregon**, database on Neon (AWS us-east-2): `commerceos`
+(production) and `commerceos-staging` (FX-86: same settings, its own Neon branch, Qdrant collection, Upstash database and
+LLM/Gemini keys). The app holds the whole dataset in memory and syncs it from Postgres, so it is not a serverless workload
+and each instance needs RAM for the data. Background work (customer-agent jobs, the domain-event outbox, health alerts)
+runs inside the web process (`CUSTOMER_AGENT_WORKER`); scheduled jobs are triggered by n8n (`/api/v1/jobs/{job}/run`).
+
+**Staging setup (FX-86):**
+- Render: deploy the Blueprint; fill `commerceos-staging`'s `sync: false` variables with **staging** values only (a Neon
+  branch made from an **empty or seeded parent, never from production** (production holds customers' data and staff
+  password hashes), a separate Qdrant collection and Upstash database, an Ollama Cloud staging/eval key, a Gemini key, new
+  `JWT_SECRET` / `CREDENTIALS_ENCRYPTION_KEY` / `JOBS_TOKEN_SHA256`). Never copy production secrets across.
+- GitHub: repository variable `STAGING_BASE_URL`, secrets `STAGING_DEPLOY_HOOK_URL`, `STAGING_SMOKE_EMAIL`,
+  `STAGING_SMOKE_PASSWORD`; then `AGENT_EVAL_GATE=on` with the `evals` environment (see docs/customer-agent-rollout.md).
+  CI then deploys staging, smoke-tests it and runs the agent eval smoke before production.
+- Local development: point your local env file at the staging stores (never production ones).
+- Staging enforces the Content-Security-Policy (`CSP_ENFORCE=1`); production stays Report-Only until the monitoring job
+  reports `csp.ready_to_enforce` for a full week, then set `CSP_ENFORCE=1` on production and redeploy (the header is
+  built into the app at build time).
+- Restore rehearsal each quarter: docs/restore-log.md.
 
 > Oregon ↔ Ohio adds a coast-to-coast round trip (tens of ms) to every database call. Render's `ohio` region would remove
 > it; the region was kept as chosen. Revisit if write latency matters.

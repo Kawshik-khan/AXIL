@@ -10,6 +10,79 @@ import { BadRequestError } from "@/lib/errors";
 
 export class IdentityResolutionService {
   /**
+   * The provider proved this channel identity's phone number (FX-87: a Telegram own-contact share). The identity ends up
+   * on a customer whose phone IS that number, and only then is marked TELEGRAM_VERIFIED_CONTACT (which the customer agent
+   * treats like a WhatsApp number, VERIFIED_PHONE):
+   * - exactly one customer has the number: the identity and its chats move to them;
+   * - nobody has it: the identity's own customer takes the number if it was created for this profile and has no phone;
+   *   otherwise (a different phone, or a customer the identity was linked to by a claimed phone or email) the identity
+   *   and its chats move to a new customer with the number. A claim-linked customer is never kept;
+   * - several customers have it: nothing is verified or moved (staff decide), and the audit says so.
+   * Returns the customer the identity belongs to afterwards.
+   */
+  public static async linkVerifiedPhone(tenantId: string, identity: CustomerIdentity, rawPhone: string): Promise<Customer> {
+    const phone = CustomerService.normalizePhoneNumber(rawPhone);
+    const current = db.findCustomerById(tenantId, identity.customer_id);
+    const owners = db.data.customers.filter((c) => c.tenant_id === tenantId && c.phone === phone && Boolean(phone));
+    const claimLinked = ["PHONE_MATCH", "EMAIL_MATCH"].includes(String(identity.metadata?.resolution_strategy ?? ""));
+    const audit = (outcome: string, to?: string) =>
+      AuditService.log({
+        tenantId,
+        actorUserId: "system:identity",
+        action: "CHANNEL_PHONE_VERIFIED",
+        resourceType: "customer_identity",
+        resourceId: identity.id,
+        metadata: { channel_type: identity.channel_type, outcome, from_customer_id: identity.customer_id, to_customer_id: to ?? identity.customer_id },
+      });
+
+    if (owners.length > 1) {
+      audit("AMBIGUOUS_NOT_LINKED");
+      return current as Customer;
+    }
+    let target: Customer | undefined = owners[0];
+    let outcome = "LINKED_TO_EXISTING_CUSTOMER";
+    if (!target) {
+      if (current && !current.phone && !claimLinked && identity.metadata?.resolution_strategy === "NEW_PROFILE_CREATED") {
+        db.updateCustomer(tenantId, current.id, { phone });
+        target = { ...current, phone };
+        outcome = "PHONE_ADDED_TO_OWN_CUSTOMER";
+      } else {
+        const name = (identity.display_name || "Telegram customer").trim().split(/\s+/);
+        target = await CustomerService.createCustomer(
+          this.systemContext(tenantId),
+          { first_name: name[0] || "Telegram", last_name: name.slice(1).join(" ") || "(TE)", phone, source: "SOCIAL", notes: `Verified phone from ${identity.channel_type} contact share` },
+          { allowMissingPhone: false }
+        );
+        outcome = "MOVED_TO_NEW_CUSTOMER";
+      }
+    }
+    if (target.id !== identity.customer_id) {
+      // This chat's conversations follow the identity
+      const chats = db.data.conversations.filter((c) => c.tenant_id === tenantId && c.channel_id === identity.channel_id && c.customer_id === identity.customer_id);
+      for (const c of chats) db.updateConversation(tenantId, c.id, { customer_id: target.id });
+    }
+    db.updateCustomerIdentity(tenantId, identity.id, {
+      customer_id: target.id,
+      phone,
+      metadata: { ...identity.metadata, resolution_strategy: "TELEGRAM_VERIFIED_CONTACT", phone_verified_at: new Date().toISOString() },
+    });
+    audit(outcome, target.id);
+    return target;
+  }
+
+  private static systemContext(tenantId: string): RequestContext {
+    return {
+      requestId: `req_id_res_${Date.now()}_${randomSuffix()}`,
+      traceId: `trc_id_res_${Date.now()}_${randomSuffix()}`,
+      tenant: { id: tenantId, name: "Tenant Workspace", slug: "tenant", currency: "BDT", timezone: "Asia/Dhaka", language: "en", status: "ACTIVE" },
+      user: { id: "usr_system_identity", email: "system@commerceos.io", name: "Identity Resolution Engine", status: "ACTIVE" },
+      role: "OWNER",
+      permissions: Object.values(PERMISSIONS),
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  /**
    * Authoritatively resolve an incoming channel sender to a canonical CommerceOS Customer record
    */
   public static async resolveCustomer(

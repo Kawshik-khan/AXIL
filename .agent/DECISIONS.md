@@ -1530,7 +1530,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 
 ## ADR-113: Agent Quality, Privacy and Scheduled Work (AI fix plan Stage 3)
 
-- **Status**: Accepted (2026-10-07). Implements FX-80 to FX-85 and FX-99 Part B. (The plan reserved ADR-113 for payments; that decision becomes ADR-114 when FX-89 starts.)
+- **Status**: Accepted (2026-10-07). Implements FX-80 to FX-85 and FX-99 Part B. (The plan reserved ADR-113 for payments; that decision takes the next free number when FX-89 starts.)
 - **Decisions**:
   - **Evals test the production runtime.** One harness (`tests/agent-evals/harness.ts`) drives `runCustomerTurn`; offline in `npm test` with an adversarial scripted model (plumbing only), live in CI against the configured provider profile. Every result records prompt version, model, dataset hash and git SHA.
   - **Traces hold numbers, not text.** Per-call token, latency and tool-name records; no prompt or reply text in traces. The job id is the trace id.
@@ -1543,4 +1543,17 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
   - The live eval and retrieval gates need the `evals` environment secrets before they mean anything.
   - The super-admin agent-health view reads every workspace's runs (platform operators only, numbers only).
   - Alerts are platform incidents; there is no paging integration yet.
+
+## ADR-114: Launch Tooling: Staging, CSP Rollout and the Pilot (AI fix plan Stage 4)
+
+- **Status**: Accepted (2026-10-07). Implements the code side of FX-86 and FX-87; the rollout itself follows docs/customer-agent-rollout.md.
+- **Decisions**:
+  - **Staging mirrors production in `render.yaml`.** The staging service is generated from the production block, so a setting can't exist in one and not the other; only secrets differ (entered separately). Staging enforces the CSP first.
+  - **CSP goes enforcing on evidence.** Reports are counted (day, directive, origin; no URLs) and the monitoring job says when a week was clean; reports that couldn't be counted (rate-limited, over the daily cap) make the week not clean. `CSP_ENFORCE` is read when the app is built, so changing it on Render needs a redeploy.
+  - **The eval gate blocks deploys only when switched on** (`AGENT_EVAL_GATE=on`), so infrastructure deploys aren't blocked before the eval key exists; once on, a missing key fails the deploy. Every deploy job requires a push to `main` in this repository (a fork's PR from a branch named `main` also triggers CI), and the eval key is set only on the steps that call the model, never in `npm ci`'s environment.
+  - **Restore rehearsals are read-only checks on a branch**, never on production; the result is logged by hand.
+  - **Pilot hours are a shop setting**, enforced by the worker before any model call.
+  - **Telegram own-contact = verified phone.** Telegram sets the contact's `user_id` to the account the number belongs to, so a contact whose `user_id` is the sender's proves the number. The identity is marked verified only on a customer whose phone IS that number: the one customer who has it, its own profile customer if that has no phone, or else a new customer with the number. A customer the chat was linked to by a claimed phone or email is never kept, and when several customers share the number nothing is linked (staff decide). A typed number or another person's contact never links. Accepted risk, as with WhatsApp: a recycled or mistyped number gives its new holder that customer's orders.
+  - **Go/no-go is computed, not asserted.** Ratings, guards, latency and handoff queue age come from recorded data; what can't be measured is listed as a manual check.
+- **Consequences**: the launch checklist (§8 of the plan) still needs owner actions and calendar time; nothing in this ADR turns the agent on.
 

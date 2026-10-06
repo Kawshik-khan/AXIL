@@ -60,7 +60,9 @@ export function principalFor(tenantId: string, conversationId: string): Customer
   const linkedByClaim =
     conversation.channel_type !== "WHATSAPP" &&
     identities.some((i) => ["PHONE_MATCH", "EMAIL_MATCH"].includes(String(i.metadata?.resolution_strategy ?? "")));
-  const assurance = linkedByClaim ? "ANONYMOUS" : ASSURANCE[conversation.channel_type] ?? "ANONYMOUS";
+  // A Telegram account that shared its own contact has a phone number Telegram vouches for (FX-87)
+  const verifiedContact = identities.some((i) => i.metadata?.resolution_strategy === "TELEGRAM_VERIFIED_CONTACT");
+  const assurance = linkedByClaim ? "ANONYMOUS" : verifiedContact ? "VERIFIED_PHONE" : ASSURANCE[conversation.channel_type] ?? "ANONYMOUS";
   return {
     tenantId,
     tenantName: tenant.name,

@@ -23,6 +23,7 @@ import { Message, Conversation, QuickReply } from "@/types/social";
 import { Button } from "@/components/ui/Button/Button";
 import styles from "./SocialInbox.module.css";
 import { HandoffContextCard, isHandoffCard } from "./HandoffContextCard";
+import { ShadowDraftCard, isShadowDraft } from "./ShadowDraftCard";
 
 const STATUS_OPTIONS = [
   { value: "OPEN", label: "Open", color: "#10B981" },
@@ -419,6 +420,9 @@ export const ConversationThread: React.FC<ConversationThreadProps> = ({
             </div>
           );
         })}
+        {isShadowDraft(conversation.metadata?.agent_shadow_reply) && (
+          <ShadowDraftCard key={conversation.metadata.agent_shadow_reply.run_id} conversationId={conversation.id} draft={conversation.metadata.agent_shadow_reply} />
+        )}
       </div>
 
       {/* Composer Area */}

@@ -314,6 +314,11 @@ export interface NormalizedIncomingMessage {
   };
   timestamp: string;
   rawPayload: Record<string, unknown>;
+  /**
+   * A phone number the provider proves belongs to the sender (FX-87: Telegram's own-contact share, where the contact's
+   * user_id is the sender's). Never set from text the customer typed.
+   */
+  verifiedPhone?: string;
 }
 
 export interface OutboundWebhookDelivery {

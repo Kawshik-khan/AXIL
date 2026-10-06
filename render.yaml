@@ -146,5 +146,155 @@ services:
         sync: false
       - key: COMMERCEOS_N8N_WEBHOOK_TOKEN
         sync: false
+      # FX-86: "1" turns the Content-Security-Policy from Report-Only to enforcing. Switch it once the monitoring job
+      # (POST /api/v1/jobs/monitoring/run) reports csp.ready_to_enforce = true for a full week.
+      - key: CSP_ENFORCE
+        value: "0"
+      # Deliberately absent: DEV_AUTH_BYPASS, AI_DEMO_MODE, COMMERCEOS_FORCE_LOCK, SEED_ADMIN_PASSWORD.
+  # ── Staging (FX-86, audit F27) ─────────────────────────────────────────────────────────────────────────────────────
+  # Same build and settings as production, with its OWN stores and keys: a Neon branch (never the production database),
+  # its own Qdrant collection, Upstash database, LLM provider key (an Ollama Cloud staging/eval key) and Gemini key, a
+  # separate JWT_SECRET and CREDENTIALS_ENCRYPTION_KEY. CI deploys main here first (.github/workflows/deploy.yml), runs
+  # the smoke test and the agent eval smoke subset, and only then deploys production. Kill switches and the pilot
+  # flags are rehearsed here (docs/customer-agent-rollout.md).
+  - type: web
+    name: commerceos-staging
+    runtime: node
+    region: oregon
+    plan: starter
+    autoDeployTrigger: "off"
+    buildCommand: npm ci --include=dev && npm run build
+    # Runs once per deploy in the build environment, before the new version starts. A failure cancels the deploy and the
+    # running version keeps serving. Migrations must be backward compatible (docs/render-runbook.md, "Migrations").
+    preDeployCommand: npm run db:migrate
+    startCommand: npm run start
+    # Store and database only. The full check (GET /health/ready) also reports Qdrant, Redis and the LLM provider; it must not
+    # be the restart trigger, or a provider outage would restart a healthy instance in a loop.
+    healthCheckPath: /health/ready?scope=core
+    # Time to flush the store's pending writes on SIGTERM before Render kills the process.
+    maxShutdownDelaySeconds: 60
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NODE_ENV
+        value: production
+      # The store loads all data into memory: keep the V8 heap below the instance RAM (512 MB on starter). Raise both together.
+      - key: NODE_OPTIONS
+        value: --max-old-space-size=384
+      # Next.js's own SIGTERM handler exits as soon as connections close, which can beat the store's flush (its handler is in
+      # src/infrastructure/db/index.ts). With this set only the store's handler runs: flush pending writes, then exit.
+      - key: NEXT_MANUAL_SIG_HANDLE
+        value: "1"
+      - key: DATA_BACKEND
+        value: pg
+      # Render's load balancer sets X-Forwarded-For: rate limits key on the client address only with this on. Confirm on
+      # staging that the hop count yields the real client address.
+      - key: TRUST_PROXY
+        value: "1"
+      - key: TRUST_PROXY_HOPS
+        value: "1"
+      - key: STORE_POOL_MAX
+        value: "5"
+      # Which external services make /health/ready report not-ready when down (Postgres always does).
+      - key: READY_REQUIRED
+        value: qdrant,redis,llm
+      - key: DEFAULT_CURRENCY
+        value: BDT
+      - key: DEFAULT_TIMEZONE
+        value: Asia/Dhaka
+      - key: DEFAULT_LANGUAGE
+        value: en
+      # ---- secrets and endpoints: set in the dashboard ----
+      - key: APP_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: CREDENTIALS_ENCRYPTION_KEY
+        sync: false
+      # Direct (unpooled) URL: the pre-deploy migration needs it. The pooled URL is what the app uses.
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_URL_POOLED
+        sync: false
+      - key: STEADFAST_WEBHOOK_SECRET
+        sync: false
+      - key: PATHAO_WEBHOOK_SECRET
+        sync: false
+      - key: BKASH_WEBHOOK_SECRET
+        sync: false
+      - key: NAGAD_WEBHOOK_SECRET
+        sync: false
+      - key: META_APP_SECRET
+        sync: false
+      - key: META_VERIFY_TOKEN
+        sync: false
+      - key: QDRANT_URL
+        sync: false
+      - key: QDRANT_API_KEY
+        sync: false
+      - key: QDRANT_COLLECTION
+        sync: false
+      - key: UPSTASH_REDIS_REST_URL
+        sync: false
+      - key: UPSTASH_REDIS_REST_TOKEN
+        sync: false
+      - key: LLM_BASE_URL
+        sync: false
+      - key: LLM_API_KEY
+        sync: false
+      - key: LLM_PROVIDER_NAME
+        sync: false
+      - key: LLM_MODEL_FAST
+        sync: false
+      - key: LLM_MODEL_REASONING
+        sync: false
+      - key: LLM_EMBEDDING_MODEL
+        sync: false
+      - key: LLM_EMBEDDING_BASE_URL
+        sync: false
+      - key: LLM_EMBEDDING_API_KEY
+        sync: false
+      - key: LLM_EMBEDDING_PROVIDER_NAME
+        sync: false
+      - key: LLM_EMBEDDING_DIMENSIONS
+        sync: false
+      - key: LLM_FALLBACK_BASE_URL
+        sync: false
+      - key: LLM_FALLBACK_API_KEY
+        sync: false
+      # FX-79: a fallback needs its own model names; the concurrency limit is the provider plan's (Ollama Cloud Pro: 3)
+      - key: LLM_FALLBACK_MODEL_FAST
+        sync: false
+      - key: LLM_FALLBACK_MODEL_REASONING
+        sync: false
+      - key: LLM_MAX_CONCURRENCY
+        value: "1"
+      # Customer-agent job worker (ADR-112); idle unless a workspace has the agent flags on
+      - key: CUSTOMER_AGENT_WORKER
+        value: "1"
+      # FX-99 Part B: SHA-256 (hex) of the n8n job token; the token itself stays in n8n
+      - key: JOBS_TOKEN_SHA256
+        sync: false
+      # FX-83: customer message retention in days (owner decision; unset keeps everything)
+      - key: CUSTOMER_DATA_RETENTION_DAYS
+        sync: false
+      # The active provider's real prices, or cost dashboards use placeholders (FX-70). Ollama Cloud gpt-oss:120b:
+      # {"TIER_1_FAST":{"promptCostPer1M":0.15,"cachedPromptCostPer1M":0.014,"completionCostPer1M":0.6},
+      #  "TIER_2_REASONING":{"promptCostPer1M":0.15,"cachedPromptCostPer1M":0.014,"completionCostPer1M":0.6}}
+      - key: LLM_PRICING_JSON
+        sync: false
+      # From this ISO date, privileged workspace approvals need a fresh authenticator code (FX-97 Part A)
+      - key: WORKSPACE_STEP_UP_ENFORCED_FROM
+        sync: false
+      - key: N8N_HOST
+        sync: false
+      - key: COMMERCEOS_N8N_WEBHOOK_SECRET
+        sync: false
+      - key: COMMERCEOS_N8N_WEBHOOK_TOKEN
+        sync: false
+      # FX-86: "1" turns the Content-Security-Policy from Report-Only to enforcing. Switch it once the monitoring job
+      # (POST /api/v1/jobs/monitoring/run) reports csp.ready_to_enforce = true for a full week.
+      - key: CSP_ENFORCE
+        value: "1" # staging enforces first, so a violating change shows up here before production
       # Deliberately absent: DEV_AUTH_BYPASS, AI_DEMO_MODE, COMMERCEOS_FORCE_LOCK, SEED_ADMIN_PASSWORD.
 # Background worker and cron entries are added in R1b (job queue); nothing runs out of process yet.

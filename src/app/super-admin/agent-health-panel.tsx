@@ -30,11 +30,22 @@ interface AgentHealth {
   embeddings?: { calls: number; failures: number; failure_rate: number | null; since: string };
 }
 
+interface Rollout {
+  window_days: number;
+  shadow: { drafts: number; rated: number; usable: number; usable_share: number | null };
+  money_guard_triggers: number;
+  latency_p95_ms: number | null;
+  handoffs: { count: number; answered: number; queue_age_p95_min: number | null; unanswered_oldest_min: number | null };
+  go: Record<string, { ready: boolean; checks: Record<string, boolean> }>;
+  manual_checks: string[];
+}
+
 const dash = (v: number | null | undefined, unit = "") => (typeof v === "number" ? `${v.toLocaleString()}${unit}` : "—");
 const usd = (v: number) => `$${v.toFixed(4)}`;
 
 export function AgentHealthPanel() {
   const [health, setHealth] = useState<AgentHealth | null>(null);
+  const [rollout, setRollout] = useState<Rollout | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -46,6 +57,8 @@ export function AgentHealthPanel() {
       if (!res.ok) throw new Error(await readPlatformError(res, "Agent health couldn't be loaded."));
       const body = (await res.json()) as { data: AgentHealth };
       setHealth(body.data);
+      const ro = await platformFetch("/api/v1/platform/ai/agent-rollout");
+      if (ro.ok) setRollout(((await ro.json()) as { data: Rollout }).data);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -114,6 +127,29 @@ export function AgentHealthPanel() {
           {table("Escalation reasons", ["Reason", "Handoffs"], Object.entries(health.escalation_reasons).map(([k, v]) => [k, String(v)]), "No handoffs.")}
           {table("Cost per workspace (24 h)", ["Workspace", "Turns", "Cost"], health.cost_by_tenant.map((t) => [t.tenant_name, String(t.turns), usd(t.cost_usd)]), "No turns.")}
           {table("Cost per day", ["Day", "Cost"], health.cost_usd_by_day.map((d) => [d.day, usd(d.cost_usd)]), "No turns.")}
+          {rollout &&
+            Object.entries(rollout.go).map(([step, g]) =>
+              table(
+                `${step === "shadow_to_pilot" ? "Shadow → pilot" : "Pilot holds"}: ${g.ready ? "ready" : "not ready"} (last ${rollout.window_days} days)`,
+                ["Check", "Met"],
+                Object.entries(g.checks).map(([k, v]) => [k, v ? "yes" : "no"]),
+                "No checks."
+              )
+            )}
+          {rollout &&
+            table(
+              "Rollout numbers",
+              ["Measure", "Value"],
+              [
+                ["Shadow drafts rated (usable)", `${rollout.shadow.rated} of ${rollout.shadow.drafts} (${dash(rollout.shadow.usable_share, "%")})`],
+                ["Money-claim guard triggers", String(rollout.money_guard_triggers)],
+                ["Handoffs answered", `${rollout.handoffs.answered} of ${rollout.handoffs.count}`],
+                ["Handoff queue age p95", dash(rollout.handoffs.queue_age_p95_min, " min")],
+                ["Oldest unanswered handoff", dash(rollout.handoffs.unanswered_oldest_min, " min")],
+                ...rollout.manual_checks.map((m) => ["Manual check", m]),
+              ],
+              "No data."
+            )}
           {table("Turns per hour", ["Hour (UTC)", "Turns"], health.turns_per_hour.filter((h) => h.turns > 0).map((h) => [h.hour.slice(5, 16).replace("T", " "), String(h.turns)]), "No turns in the last 24 hours.")}
         </div>
       )}

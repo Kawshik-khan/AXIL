@@ -65,6 +65,7 @@ import {
   PlatformSecurityEventRecord,
   PlatformAnnouncementRecord,
   PlatformApiKeyRecord,
+  CspReportRecord,
 } from "@/types/platform";
 
 export interface TenantRecord {
@@ -447,6 +448,7 @@ export interface DatabaseSchema {
   agent_jobs: AgentJob[];
   domain_events: DomainEventOutboxRecord[];
   job_runs: JobRunRecord[];
+  csp_reports: CspReportRecord[];
   agent_tool_calls: AgentToolCallRecord[];
   agent_prompts: AgentPrompt[];
   prompt_versions: PromptVersion[];
@@ -1150,6 +1152,7 @@ export class CommerceDatabase {
       agent_jobs: parsed.agent_jobs || [],
       domain_events: parsed.domain_events || [],
       job_runs: parsed.job_runs || [],
+      csp_reports: parsed.csp_reports || [],
       agent_tool_calls: parsed.agent_tool_calls || [],
       agent_prompts: parsed.agent_prompts || [],
       prompt_versions: parsed.prompt_versions || [],
@@ -1423,6 +1426,7 @@ export class CommerceDatabase {
       agent_jobs: [],
       domain_events: [],
       job_runs: [],
+      csp_reports: [],
       agent_tool_calls: [],
       agent_prompts: [],
       prompt_versions: [],
@@ -5997,6 +6001,28 @@ export class CommerceDatabase {
     return this.data.domain_events;
   }
 
+  // ---- Content-Security-Policy reports (FX-86), platform scope
+  /** Adds one violation to its day/directive/origin counter. Returns false when the day already has too many distinct counters. */
+  public recordCspViolation(day: string, directive: string, blocked: string, at: string, overflowCounter = false): boolean {
+    const id = `${day}|${directive}|${blocked}`;
+    const existing = this.data.csp_reports.find((r) => r.id === id);
+    if (existing) {
+      existing.count++;
+      existing.last_seen_at = at;
+    } else {
+      if (!overflowCounter && this.data.csp_reports.filter((r) => r.day === day).length >= 500) return false;
+      this.data.csp_reports.push({ id, day, directive, blocked, count: 1, first_seen_at: at, last_seen_at: at });
+    }
+    this.persist(["csp_reports"]);
+    // The "couldn't count" counter is recorded on a request that then answers 429: keep it anyway
+    if (overflowCounter) this.keepEvenIfRequestFails("csp_reports", id);
+    return true;
+  }
+
+  public getCspReports(sinceDay: string): CspReportRecord[] {
+    return this.data.csp_reports.filter((r) => r.day >= sinceDay);
+  }
+
   // ---- Scheduled job runs (FX-99 Part B), platform scope
   public findJobRun(id: string): JobRunRecord | undefined {
     return this.data.job_runs.find((r) => r.id === id);
@@ -6972,6 +6998,21 @@ export class CommerceDatabase {
    */
   public getAgentRunsSinceAllTenants(agentType: string, sinceIso: string): AgentRun[] {
     return this.data.agent_runs.filter((r) => r.agent_type === agentType && r.started_at >= sinceIso);
+  }
+
+  /** Platform-wide: conversations handed off (FX-84 card) since a time, for the rollout queue-age numbers (FX-87). */
+  public getHandedOffConversationsSinceAllTenants(sinceIso: string): Conversation[] {
+    return this.data.conversations.filter((c) => {
+      const card = c.metadata?.handoff_card as { created_at?: string } | undefined;
+      return Boolean(card?.created_at && card.created_at >= sinceIso);
+    });
+  }
+
+  /** A conversation's first staff reply (not a note) after a time, if any. */
+  public firstStaffReplyAfter(tenantId: string, conversationId: string, afterIso: string): Message | undefined {
+    return this.data.messages
+      .filter((m) => m.tenant_id === tenantId && m.conversation_id === conversationId && m.direction === "OUTBOUND" && m.sender_type === "AGENT" && m.message_type !== "INTERNAL_NOTE" && m.created_at > afterIso)
+      .sort((a, b) => a.created_at.localeCompare(b.created_at))[0];
   }
 
   public getAgentToolCallsForRunsAllTenants(runIds: ReadonlySet<string>): AgentToolCallRecord[] {
@@ -9060,6 +9101,7 @@ export class CommerceDatabase {
       agent_jobs: [],
       domain_events: [],
       job_runs: [],
+      csp_reports: [],
       agent_tool_calls: [],
       agent_prompts: [],
       prompt_versions: [],

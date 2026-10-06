@@ -21,6 +21,9 @@ import { runCustomerTool } from "./tools";
 import { customerMessages } from "./confirmation";
 import { runCustomerTurn } from "./runtime";
 import { agentMode, channelAllowed } from "./jobs";
+import { chatMessages } from "./runtime";
+import { replyScript } from "./output";
+import { hourWithin, localHour } from "@/lib/local-time";
 import { quoteShownIn } from "./output";
 
 const INTERVAL_MS = 1_000;
@@ -109,6 +112,34 @@ async function markQuotesShown(job: AgentJob, turnStartedAt: string, messageId: 
   }, () => true);
 }
 
+/** The shop's agent hours (settings.customer_agent_hours, shop-local 0–24), or none: always on. */
+export function agentHours(tenantId: string): { start_hour: number; end_hour: number } | undefined {
+  const raw = (db.findTenantById(tenantId)?.settings as Record<string, unknown> | undefined)?.customer_agent_hours as { start_hour?: unknown; end_hour?: unknown } | undefined;
+  const ok = (n: unknown) => typeof n === "number" && Number.isInteger(n) && n >= 0 && n <= 24;
+  return raw && ok(raw.start_hour) && ok(raw.end_hour) && raw.start_hour !== raw.end_hour ? { start_hour: raw.start_hour as number, end_hour: raw.end_hour as number } : undefined;
+}
+
+const hh = (h: number) => `${String(h % 24).padStart(2, "0")}:00`;
+
+/** Hands the chat to the team and tells the customer when someone will answer (no model call). */
+async function outsideHours(job: AgentJob, pr: NonNullable<ReturnType<typeof principalFor>>, hours: { start_hour: number; end_hour: number }): Promise<Finish> {
+  const last = [...chatMessages(job.tenant_id, job.conversation_id, 5)].reverse().find((m) => m.sender_type === "CUSTOMER");
+  const handed = await runCustomerTool(pr, "handoff_to_human", { reason: "other", summary: `Message outside the agent's hours (${hh(hours.start_hour)}–${hh(hours.end_hour)}); please answer when the team is on.` });
+  const text =
+    replyScript(last?.text ?? "") === "bangla"
+      ? `ধন্যবাদ! আমাদের টিম ${hh(hours.start_hour)} থেকে ${hh(hours.end_hour)} পর্যন্ত উত্তর দেয়। টিমের একজন এখানে আপনাকে উত্তর দেবেন।`
+      : `Dhonnobad! Amader team ${hh(hours.start_hour)} theke ${hh(hours.end_hour)} porjonto reply dey. Team er ekjon ekhane apnake reply dibe.`;
+  // "A team member will reply" is only said when a team member really has the chat
+  if (!handed.ok) return { status: "BLOCKED", outcome: "OUTSIDE_HOURS_HANDOFF_FAILED" };
+  try {
+    await OutboundMessageService.sendMessage(capabilityContext(pr, "send"), job.conversation_id, { text, idempotency_key: `agent:${job.id}:${last?.id ?? job.last_message_id}:hours` }, { asAgent: true, agentHandedOff: true, traceId: job.id });
+  } catch (err) {
+    if (!(err instanceof AppError)) throw err;
+    return { status: "BLOCKED", outcome: `OUTSIDE_HOURS_SEND_REFUSED:${err.code}` };
+  }
+  return { status: "DONE", outcome: "OUTSIDE_HOURS" };
+}
+
 /** Runs one claimed job to its end. Exported for tests. */
 export async function runAgentJob(job: AgentJob): Promise<Finish> {
   const pr = principalFor(job.tenant_id, job.conversation_id);
@@ -136,6 +167,15 @@ export async function runAgentJob(job: AgentJob): Promise<Finish> {
   if (turnsSince(job.tenant_id, new Date(now - 60 * 60_000).toISOString()) >= TENANT_RUNS_PER_HOUR) {
     return { status: "PENDING", outcome: "TENANT_RATE_LIMIT", notBefore: new Date(now + DEFER_MS).toISOString() };
   }
+  // Pilot hours (FX-87): outside the shop's agent hours a person takes the chat, and the customer is told when
+  if (mode === "AUTONOMOUS") {
+    const hours = agentHours(job.tenant_id);
+    const tenant = db.findTenantById(job.tenant_id);
+    if (hours && tenant && !hourWithin(localHour(tenant, Date.now()), hours.start_hour, hours.end_hour)) {
+      return outsideHours(job, pr, hours);
+    }
+  }
+
   const budget = AgentPolicyService.checkBudget(job.tenant_id);
   if (!budget.withinBudget) {
     if (mode === "AUTONOMOUS") await handOff(job, "Automatic replies paused: the workspace's daily AI budget is used up.");
