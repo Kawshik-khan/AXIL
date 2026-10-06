@@ -1,4 +1,5 @@
 import { randomSuffix } from "@/lib/ids";
+import { redactToolPayload } from "@/lib/pii-mask";
 import fs from "fs";
 import path from "path";
 import os from "os";
@@ -40,6 +41,8 @@ import {
   PaymentStatus,
   FulfillmentStatus,
   DeliveryStatus,
+  DomainEventOutboxRecord,
+  JobRunRecord,
 } from "@/types/commerce";
 import {
   PlatformMembershipRecord,
@@ -169,6 +172,18 @@ export interface AutomationKillSwitchRecord {
   changed_by: string;
   updated_at: string;
 }
+
+/**
+ * Recorded event types automations react to, and the name they're delivered under (FX-99 Part B). `payment.claim_submitted`
+ * joins when FX-90 records it.
+ */
+export const OUTBOX_EVENT_TYPES: Readonly<Record<string, string>> = {
+  "order.created": "order.placed",
+  "order.delivered": "order.delivered",
+  "shipment.updated": "shipment.status_changed",
+  "inventory.low_stock": "inventory.low_stock",
+  "payment.claim_submitted": "payment.claim_submitted",
+};
 
 export interface AuditLogRecord {
   id: string;
@@ -430,6 +445,8 @@ export interface DatabaseSchema {
   agent_runs: AgentRun[];
   quotes: CustomerQuote[];
   agent_jobs: AgentJob[];
+  domain_events: DomainEventOutboxRecord[];
+  job_runs: JobRunRecord[];
   agent_tool_calls: AgentToolCallRecord[];
   agent_prompts: AgentPrompt[];
   prompt_versions: PromptVersion[];
@@ -1131,6 +1148,8 @@ export class CommerceDatabase {
       agent_runs: parsed.agent_runs || [],
       quotes: parsed.quotes || [],
       agent_jobs: parsed.agent_jobs || [],
+      domain_events: parsed.domain_events || [],
+      job_runs: parsed.job_runs || [],
       agent_tool_calls: parsed.agent_tool_calls || [],
       agent_prompts: parsed.agent_prompts || [],
       prompt_versions: parsed.prompt_versions || [],
@@ -1402,6 +1421,8 @@ export class CommerceDatabase {
       agent_runs: [],
       quotes: [],
       agent_jobs: [],
+      domain_events: [],
+      job_runs: [],
       agent_tool_calls: [],
       agent_prompts: [],
       prompt_versions: [],
@@ -5325,9 +5346,11 @@ export class CommerceDatabase {
     // Only now: a refused adjustment used to leave an empty stock row behind.
     if (isNewItem) this.data.inventory_items.push(item);
 
+    const availableBefore = isNewItem ? 0 : item.quantity_available;
     item.quantity_on_hand = newOnHand;
     item.quantity_available = newAvailable;
     item.updated_at = new Date().toISOString();
+    this.noteLowStock(tenantId, item, availableBefore);
 
     // Append-only stock movement record
     const movement: StockMovement = {
@@ -5374,9 +5397,11 @@ export class CommerceDatabase {
       );
     }
 
+    const availableBefore = item.quantity_available;
     item.quantity_reserved += params.quantity;
     item.quantity_available = item.quantity_on_hand - item.quantity_reserved;
     item.updated_at = new Date().toISOString();
+    this.noteLowStock(tenantId, item, availableBefore);
 
     // Unconfirmed orders hold stock for the tenant's setting (default 24 h, was a fixed 60 min); confirming extends it
     const holdSetting = Number((this.findTenantById(tenantId)?.settings as Record<string, unknown> | undefined)?.reservation_hold_minutes);
@@ -5917,8 +5942,86 @@ export class CommerceDatabase {
   // ==================== COMMERCE EVENTS ====================
   public recordEvent(event: CommerceEvent): CommerceEvent {
     this.data.events.push(event);
-    this.persist(["events"]);
+    // FX-99 Part B: events automations react to also get an outbox row, in the same unit of work as the change
+    const outboxType = OUTBOX_EVENT_TYPES[event.type];
+    if (outboxType && !this.data.domain_events.some((e) => e.id === event.id)) {
+      const now = new Date().toISOString();
+      this.data.domain_events.push({
+        id: event.id, tenant_id: event.tenant_id, type: outboxType, source_type: event.type, aggregate_type: event.aggregate_type,
+        aggregate_id: event.aggregate_id, actor_id: event.actor_id, correlation_id: event.correlation_id, occurred_at: event.timestamp,
+        // Phone numbers masked (FX-83): an automation resolves the recipient from the order id in CommerceOS
+        payload: redactToolPayload(event.payload as Record<string, unknown>), status: "PENDING", attempts: 0, next_attempt_at: now, created_at: now, updated_at: now,
+      });
+      this.persist(["events", "domain_events"]);
+    } else {
+      this.persist(["events"]);
+    }
     return event;
+  }
+
+  // ---- Domain-event outbox (FX-99 Part B)
+  /**
+   * Outbox rows ready to deliver: per aggregate only the oldest undelivered one (so events for one order arrive in
+   * order), PENDING and due, or DISPATCHING with a claim older than `staleClaimBeforeIso`. A DEAD row blocks its
+   * aggregate until someone resolves it (the monitoring job reports it): later events never overtake it.
+   */
+  public getDueDomainEvents(nowIso: string, staleClaimBeforeIso: string, limit = 20): DomainEventOutboxRecord[] {
+    const head = new Map<string, DomainEventOutboxRecord>();
+    for (const e of this.data.domain_events) {
+      if (e.status === "DISPATCHED") continue;
+      const key = `${e.tenant_id}|${e.aggregate_type}|${e.aggregate_id}`;
+      const current = head.get(key);
+      if (!current || e.occurred_at < current.occurred_at || (e.occurred_at === current.occurred_at && e.created_at < current.created_at)) head.set(key, e);
+    }
+    return [...head.values()]
+      .filter((e) => (e.status === "PENDING" && e.next_attempt_at <= nowIso) || (e.status === "DISPATCHING" && (e.claimed_at ?? "") < staleClaimBeforeIso))
+      .sort((a, b) => a.occurred_at.localeCompare(b.occurred_at))
+      .slice(0, limit);
+  }
+
+  public findDomainEvent(tenantId: string, id: string): DomainEventOutboxRecord | undefined {
+    return this.data.domain_events.find((e) => e.tenant_id === tenantId && e.id === id);
+  }
+
+  public saveDomainEvent(record: DomainEventOutboxRecord): DomainEventOutboxRecord {
+    const idx = this.data.domain_events.findIndex((e) => e.tenant_id === record.tenant_id && e.id === record.id);
+    const saved = { ...record, updated_at: new Date().toISOString() };
+    if (idx === -1) this.data.domain_events.push(saved);
+    else this.data.domain_events[idx] = saved;
+    this.persist(["domain_events"]);
+    return saved;
+  }
+
+  /** Every workspace's outbox rows (platform monitoring). */
+  public getAllDomainEvents(): readonly DomainEventOutboxRecord[] {
+    return this.data.domain_events;
+  }
+
+  // ---- Scheduled job runs (FX-99 Part B), platform scope
+  public findJobRun(id: string): JobRunRecord | undefined {
+    return this.data.job_runs.find((r) => r.id === id);
+  }
+
+  public saveJobRun(run: JobRunRecord): JobRunRecord {
+    const idx = this.data.job_runs.findIndex((r) => r.id === run.id);
+    if (idx === -1) this.data.job_runs.push(run);
+    else this.data.job_runs[idx] = run;
+    this.persist(["job_runs"]);
+    return run;
+  }
+
+  /**
+   * A low-stock event when an item's available quantity falls to or below its reorder point (FX-99 Part B). Only on
+   * the crossing, so a shop isn't told again at every sale.
+   */
+  private noteLowStock(tenantId: string, item: InventoryItem, availableBefore: number): void {
+    if (item.reorder_point > 0 && availableBefore > item.reorder_point && item.quantity_available <= item.reorder_point) {
+      this.recordEvent({
+        id: `evt_lowstock_${Date.now()}_${randomSuffix()}`, type: "inventory.low_stock", version: "1.0", tenant_id: tenantId,
+        aggregate_type: "inventory_item", aggregate_id: item.id, timestamp: new Date().toISOString(),
+        payload: { product_variant_id: item.product_variant_id, warehouse_id: item.warehouse_id, quantity_available: item.quantity_available, reorder_point: item.reorder_point },
+      });
+    }
   }
 
   /** Every workspace's events, in storage order (the outbound webhook outbox reads them in one pass). */
@@ -6863,6 +6966,18 @@ export class CommerceDatabase {
     return n;
   }
 
+  /**
+   * Platform-wide (every workspace): one agent type's runs started since a time, and their tool calls. Only for the
+   * super-admin agent-health view and its alerts (FX-81); tenant code uses the tenant-scoped getters.
+   */
+  public getAgentRunsSinceAllTenants(agentType: string, sinceIso: string): AgentRun[] {
+    return this.data.agent_runs.filter((r) => r.agent_type === agentType && r.started_at >= sinceIso);
+  }
+
+  public getAgentToolCallsForRunsAllTenants(runIds: ReadonlySet<string>): AgentToolCallRecord[] {
+    return this.data.agent_tool_calls.filter((c) => runIds.has(c.agent_run_id));
+  }
+
   public findAgentRunById(tenantId: string, id: string): AgentRun | undefined {
     return this.data.agent_runs.find((r) => r.tenant_id === tenantId && r.id === id);
   }
@@ -6948,6 +7063,12 @@ export class CommerceDatabase {
   }
 
   public createAgentToolCall(record: AgentToolCallRecord): AgentToolCallRecord {
+    // Stored diagnostics never keep a full phone number or street address (FX-83, audit F25), whoever records them
+    record = {
+      ...record,
+      input_arguments: redactToolPayload(record.input_arguments),
+      ...(record.sanitized_result !== undefined ? { sanitized_result: redactToolPayload(record.sanitized_result) } : {}),
+    };
     this.data.agent_tool_calls.push(record);
     this.persist(["agent_tool_calls"]);
     return record;
@@ -7019,25 +7140,8 @@ export class CommerceDatabase {
     return summary;
   }
 
-  // Customer Memory
-  public getCustomerMemory(tenantId: string, customerId: string): CustomerMemory | undefined {
-    return this.data.customer_memories.find(
-      (m) => m.tenant_id === tenantId && m.customer_id === customerId
-    );
-  }
+  // Customer memory (`customer_memories`) has no reader or writer since FX-85; the collection only loads old data.
 
-  public saveCustomerMemory(memory: CustomerMemory): CustomerMemory {
-    const idx = this.data.customer_memories.findIndex(
-      (m) => m.tenant_id === memory.tenant_id && m.customer_id === memory.customer_id
-    );
-    if (idx === -1) {
-      this.data.customer_memories.push(memory);
-    } else {
-      this.data.customer_memories[idx] = memory;
-    }
-    this.persist(["customer_memories"]);
-    return memory;
-  }
 
   // Knowledge Documents & Chunks
   public getKnowledgeDocuments(
@@ -7118,6 +7222,15 @@ export class CommerceDatabase {
     return this.data.knowledge_chunks.find(
       (c) => c.tenant_id === tenantId && c.id === chunkId
     );
+  }
+
+  /** Replaces one chunk's vector and embedding stamp (the FX-82 re-index job). */
+  public updateKnowledgeChunkEmbedding(tenantId: string, chunkId: string, embedding: number[], stamp: { embedding_model: string; dimensions?: number }): void {
+    const chunk = this.data.knowledge_chunks.find((c) => c.tenant_id === tenantId && c.id === chunkId);
+    if (!chunk) return;
+    chunk.embedding = embedding;
+    chunk.metadata = { ...chunk.metadata, embedding_model: stamp.embedding_model, dimensions: stamp.dimensions ?? embedding.length };
+    this.persist(["knowledge_chunks"]);
   }
 
   public findParentKnowledgeChunk(tenantId: string, parentChunkId: string): KnowledgeChunk | undefined {
@@ -8945,6 +9058,8 @@ export class CommerceDatabase {
       agent_runs: [],
       quotes: [],
       agent_jobs: [],
+      domain_events: [],
+      job_runs: [],
       agent_tool_calls: [],
       agent_prompts: [],
       prompt_versions: [],

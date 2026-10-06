@@ -127,9 +127,26 @@ export function sessionState(pr: CustomerAgentPrincipal, currentText: string): s
   return lines.join("\n");
 }
 
-function recordToolCall(pr: CustomerAgentPrincipal, runId: string, name: string, args: unknown, outcome: { ok: boolean; refused?: string; result: ToolResult }, ms: number) {
+/** One model call as recorded in `agent_runs.metadata.calls` (FX-81). Token counts only: no prompt or reply text. */
+export interface CallTrace {
+  trace_id: string;
+  kind: "agent";
+  model: string;
+  prompt_version: string;
+  prompt: number;
+  cached: number;
+  reasoning: number;
+  completion: number;
+  latency_ms: number;
+  queue_ms: number;
+  throttled: number;
+  tool_calls: string[];
+}
+
+function recordToolCall(pr: CustomerAgentPrincipal, runId: string, traceId: string, name: string, args: unknown, outcome: { ok: boolean; refused?: string; result: ToolResult }, ms: number) {
   db.createAgentToolCall({
     id: `tcall_${randomUUID().slice(0, 12)}`,
+    trace_id: traceId,
     tenant_id: pr.tenantId,
     agent_run_id: runId,
     conversation_id: pr.conversationId,
@@ -158,10 +175,11 @@ const shadowResult = (name: string) => ({
  * One turn for the latest customer message. `shadow`: the draft is produced for review but nothing the customer or the
  * team would see happens (no order, no handoff); the caller doesn't send the reply.
  */
-export async function runCustomerTurn(pr: CustomerAgentPrincipal, opts: { budgetMs?: number; shadow?: boolean } = {}): Promise<CustomerTurn> {
+export async function runCustomerTurn(pr: CustomerAgentPrincipal, opts: { budgetMs?: number; shadow?: boolean; traceId?: string } = {}): Promise<CustomerTurn> {
   const started = Date.now();
   const deadline = started + (opts.budgetMs ?? TURN_BUDGET_MS);
   const runId = `run_${randomUUID().slice(0, 16)}`;
+  const traceId = opts.traceId ?? runId; // the worker passes the job id
   const recent = chatMessages(pr.tenantId, pr.conversationId, HISTORY_MESSAGES + 1); // oldest first
   const last = recent[recent.length - 1];
   const empty = (status: CustomerTurn["status"]): CustomerTurn => ({ runId, status, reply: "", handoff: false, toolCalls: [], guards: [], answeredMessageId: last?.id });
@@ -202,6 +220,8 @@ export async function runCustomerTurn(pr: CustomerAgentPrincipal, opts: { budget
   let model = "unknown";
   let retriedShape = false;
   let retriedAmounts = false;
+  const calls: CallTrace[] = [];
+  let handoffReason: string | undefined;
 
   const handOff = async (reason: string, summary: string) => {
     if (handoff) return;
@@ -211,6 +231,7 @@ export async function runCustomerTurn(pr: CustomerAgentPrincipal, opts: { budget
     }
     const out = await runCustomerTool(pr, "handoff_to_human", { reason, summary });
     handoff = out.ok || handoff;
+    if (out.ok) handoffReason = reason;
   };
   const finish = (status: CustomerTurn["status"], reply: string): CustomerTurn => {
     const { costUsd, costBdt } = modelRouter.calculateCost("TIER_1_FAST", promptTokens, completionTokens, cachedTokens);
@@ -218,7 +239,8 @@ export async function runCustomerTurn(pr: CustomerAgentPrincipal, opts: { budget
       status: status === "COMPLETED" ? "COMPLETED" : status === "ESCALATED" ? "ESCALATED" : "FAILED",
       current_step: handoff ? "HUMAN_HANDOFF" : "RESPOND", completed_at: new Date().toISOString(), latency_ms: Date.now() - started,
       input_tokens: promptTokens, output_tokens: completionTokens, estimated_cost_usd: costUsd, estimated_cost_bdt: costBdt,
-      tool_calls_count: toolCalls.length, final_response: reply, model, metadata: { guards, cached_tokens: cachedTokens },
+      tool_calls_count: toolCalls.length, final_response: reply, model,
+      metadata: { trace_id: traceId, guards, cached_tokens: cachedTokens, calls, ...(handoffReason ? { handoff_reason: handoffReason } : {}) },
     });
     db.recordAIUsage({
       id: `usg_${randomUUID().slice(0, 16)}`, tenant_id: pr.tenantId, agent_run_id: runId, conversation_id: pr.conversationId,
@@ -236,6 +258,11 @@ export async function runCustomerTurn(pr: CustomerAgentPrincipal, opts: { budget
   try {
     for (let call = 0; call < MAX_MODEL_CALLS && Date.now() < deadline; call++) {
       const res = await modelRouter.chatWithRouting("TIER_1_FAST", messages, tools, { deadlineMs: deadline, maxTokens: 2048 });
+      calls.push({
+        trace_id: traceId, kind: "agent", model: res.model, prompt_version: PROMPT_VERSION, prompt: res.usage.prompt_tokens,
+        cached: res.usage.cached_tokens ?? 0, reasoning: res.usage.reasoning_tokens ?? 0, completion: res.usage.completion_tokens,
+        latency_ms: res.latency_ms, queue_ms: res.queue_ms ?? 0, throttled: res.throttled ?? 0, tool_calls: (res.tool_calls ?? []).map((t) => t.name),
+      });
       model = res.model;
       promptTokens += res.usage.prompt_tokens;
       completionTokens += res.usage.completion_tokens;
@@ -307,10 +334,13 @@ export async function runCustomerTurn(pr: CustomerAgentPrincipal, opts: { budget
         } else {
           outcome = await runCustomerTool(pr, tc.name, tc.arguments);
         }
-        recordToolCall(pr, runId, tc.name, tc.arguments, outcome, Date.now() - t0);
+        recordToolCall(pr, runId, traceId, tc.name, tc.arguments, outcome, Date.now() - t0);
         toolCalls.push({ name: tc.name, ok: outcome.ok, ...(outcome.refused ? { refused: outcome.refused } : {}) });
         toolResults.push(outcome.result);
-        if (tc.name === "handoff_to_human" && outcome.ok) handoff = true;
+        if (tc.name === "handoff_to_human" && outcome.ok) {
+          handoff = true;
+          handoffReason = String((tc.arguments as Record<string, unknown>)?.reason ?? "other");
+        }
         if (tc.name === "place_order" && outcome.result.status === "PLACED" && typeof outcome.result.order_number === "string") {
           placedOrderNumbers.push(outcome.result.order_number);
         }

@@ -22,6 +22,36 @@ export interface AgenticRagControllerOptions {
   confidenceThresholdLow?: number;  // Minimum confidence cutoff (default: 0.65)
   enableQueryExpansion?: boolean;   // Expand Banglish/Bangla terms (default: true)
   resolveParentContext?: boolean;   // Expand child to parent chunk (default: true)
+  minRerankScore?: number;          // Reranker cutoff (default 0.35); the customer agent passes 0 and decides relevance itself (FX-82)
+  rerankTopK?: number;              // Candidates kept after reranking (default: topK)
+}
+
+/**
+ * Bangla-script policy words → English (FX-82): a deterministic sub-query, so a Bangla question also matches English
+ * policy text. No LLM, no numbers: amounts come from tools, never from retrieval hints.
+ */
+const BANGLA_POLICY_TERMS: Array<[RegExp, string]> = [
+  [/ডেলিভারি|ডেলিভারী|পৌঁছাবে|পাঠাবেন|কুরিয়ার/u, "delivery"],
+  [/চার্জ|খরচ|ফি(?=[\s।?,!]|$)/u, "delivery charge"], // \b doesn't work next to Bangla letters
+  [/ঢাকার? বাইরে|বাইরে/u, "outside Dhaka"],
+  [/ঢাকার? (?:ভিতরে|মধ্যে)|ঢাকায়/u, "inside Dhaka"],
+  [/ফেরত|রিটার্ন|ফেরৎ/u, "return"],
+  [/বদল|এক্সচেঞ্জ|পরিবর্তন/u, "exchange"],
+  [/রিফান্ড|টাকা ফেরত/u, "refund"],
+  [/সাইজ|মাপ/u, "size guide chest inch"],
+  [/বিকাশ/u, "bKash payment"],
+  [/নগদ/u, "Nagad payment"],
+  [/ক্যাশ অন ডেলিভারি|হাতে হাতে|পণ্য হাতে পেয়ে/u, "cash on delivery"],
+  [/অগ্রিম|এডভান্স|অ্যাডভান্স/u, "advance payment"],
+  [/সময়|কতদিন|কত দিন|কবে/u, "delivery time days"],
+  [/খোলা|অফিস সময়|সাপোর্ট/u, "support hours"],
+  [/নষ্ট|ভাঙা|ছেঁড়া|ভুল পণ্য/u, "damaged product exchange"],
+];
+
+export function banglaSubQuery(query: string): string | undefined {
+  if (!/[\u0980-\u09FF]/u.test(query)) return undefined;
+  const terms = BANGLA_POLICY_TERMS.filter(([re]) => re.test(query)).map(([, en]) => en);
+  return terms.length ? [...new Set(terms)].join(" ") : undefined;
 }
 
 export class AgenticRagController {
@@ -143,8 +173,8 @@ export class AgenticRagController {
       query,
       aggregatedCandidates,
       {
-        topK,
-        minRerankScore: 0.35,
+        topK: options.rerankTopK ?? topK,
+        minRerankScore: options.minRerankScore ?? 0.35,
         resolveParentContext: resolveParent,
         deduplicateParents: true,
       }
@@ -283,15 +313,19 @@ export class AgenticRagController {
     const q = query.toLowerCase().trim();
     const expansions: Set<string> = new Set([q]);
 
-    // Shipping & Delivery expansions
+    // Bangla script → English policy words (FX-82)
+    const bn = banglaSubQuery(query);
+    if (bn) expansions.add(bn);
+
+    // Shipping & Delivery expansions. No amounts here: delivery fees come from tenant settings through tools (F26)
     if (/delivery|charge|khoroch|pathao|steadfast|dhaka/i.test(q)) {
       expansions.add("delivery charge inside and outside dhaka");
       expansions.add("shipping fees courier charges");
       if (/baire|outside|gram/i.test(q)) {
-        expansions.add("outside dhaka delivery fee 120");
+        expansions.add("outside dhaka delivery time and charge");
       }
       if (/vetore|inside|dhakar moddhe/i.test(q)) {
-        expansions.add("inside dhaka delivery charge 60");
+        expansions.add("inside dhaka delivery time and charge");
       }
     }
 
@@ -314,6 +348,7 @@ export class AgenticRagController {
       expansions.add("advance payment requirements bkash nagad");
     }
 
-    return Array.from(expansions).slice(0, 4);
+    // The original query and the Bangla sub-query always survive the cap
+    return Array.from(expansions).slice(0, bn ? 5 : 4);
   }
 }

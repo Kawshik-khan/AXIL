@@ -39,6 +39,7 @@ import {
 } from "lucide-react";
 import { platformFetch, readPlatformError, PLATFORM_LOGIN_PATH } from "./platform-client";
 import styles from "./super-admin.module.css";
+import { AgentHealthPanel } from "./agent-health-panel";
 
 type OperationalTab =
   | "OVERVIEW"
@@ -47,6 +48,7 @@ type OperationalTab =
   | "ENTITLEMENTS"
   | "AUTOMATIONS"
   | "HEALTH"
+  | "AGENTS"
   | "SAFETY"
   | "SECURITY"
   | "AUDIT"
@@ -533,6 +535,7 @@ export default function SuperAdminPage() {
     { id: "ENTITLEMENTS", label: "Feature Quotas", icon: <Sliders size={20} strokeWidth={2} /> },
     { id: "AUTOMATIONS", label: "n8n & Automations", icon: <Workflow size={20} strokeWidth={2} /> },
     { id: "HEALTH", label: "Incidents & Health", icon: <Activity size={20} strokeWidth={2} /> },
+    { id: "AGENTS", label: "Agent Health", icon: <Bot size={20} strokeWidth={2} /> },
     { id: "SAFETY", label: "Kill Switch", icon: <ShieldAlert size={20} strokeWidth={2} /> },
     { id: "SECURITY", label: "Impersonation & Security", icon: <UserCheck size={20} strokeWidth={2} /> },
     { id: "AUDIT", label: "Forensic Ledger", icon: <ScrollText size={20} strokeWidth={2} /> },
@@ -674,6 +677,7 @@ export default function SuperAdminPage() {
               {activeTab === "ENTITLEMENTS" && "Centralized Entitlements & Quotas"}
               {activeTab === "AUTOMATIONS" && "Automations & n8n Worker Fleet"}
               {activeTab === "HEALTH" && "System Health & Incident Command"}
+              {activeTab === "AGENTS" && "Customer Agent Health"}
               {activeTab === "SAFETY" && "Platform Safety & Emergency Kill Switch"}
               {activeTab === "SECURITY" && "Security Posture & Support Impersonation"}
               {activeTab === "AUDIT" && "Immutable Forensic Audit Ledger"}
@@ -686,6 +690,7 @@ export default function SuperAdminPage() {
               {activeTab === "ENTITLEMENTS" && "Platform feature gates, usage enforcement, and authorized tenant overrides."}
               {activeTab === "AUTOMATIONS" && "n8n worker cluster telemetry, execution queues, and Dead-Letter Queue (DLQ) operations."}
               {activeTab === "HEALTH" && "Infrastructure node health, live outage reporting, and SEV1-SEV4 incident response."}
+              {activeTab === "AGENTS" && "Turns, latency, cost, guard triggers and handoffs of the customer agent across every workspace, from recorded runs."}
               {activeTab === "SAFETY" && "Emergency operational stops with typed confirmation and scoped kill switches."}
               {activeTab === "SECURITY" && "Zero-trust operator RBAC, dual-actor support impersonation, and MFA enforcement."}
               {activeTab === "AUDIT" && "Tamper-evident forensic audit ledger with before/after state diffs and SHA-256 exports."}
@@ -1673,6 +1678,8 @@ export default function SuperAdminPage() {
             </div>
           </div>
         )}
+
+        {activeTab === "AGENTS" && <AgentHealthPanel />}
 
         {/* ============================================================
             TAB 9: FORENSIC AUDIT LEDGER

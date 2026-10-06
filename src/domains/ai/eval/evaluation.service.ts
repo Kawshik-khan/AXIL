@@ -122,7 +122,6 @@ export class EvaluationService {
       total_cases: total,
       passed_cases: passedCases,
       intent_accuracy: Number(((correctIntents / total) * 100).toFixed(1)),
-      tool_selection_accuracy: Number(((correctIntents / total) * 100).toFixed(1)),
       grounding_rate: Number(((groundedResponses / total) * 100).toFixed(1)),
       handoff_accuracy: Number(((accurateHandoffs / total) * 100).toFixed(1)),
       policy_violation_rate: Number(((policyViolations / total) * 100).toFixed(1)),

@@ -1,5 +1,5 @@
 /**
- * Eval gate (production readiness R5): runs the golden dataset through the router and the agent runtime in simulation
+ * Router plumbing gate (production readiness R5; the customer agent's gate is FX-80, tests/agent-evals): runs the golden dataset through the router and the agent runtime in simulation
  * mode and fails when any score is below evals/thresholds.json. It uses the offline demo AI (AI_DEMO_MODE=1), so it
  * costs nothing and needs no network; it guards routing, handoff and policy behaviour against regressions, not the
  * quality of a live model (run tests/ai-tests.ts with TEST_LLM_LIVE=1 for that).
@@ -19,7 +19,6 @@ import { PERMISSIONS } from "@/lib/permissions";
 interface Thresholds {
   min_pass_rate: number;
   min_intent_accuracy: number;
-  min_tool_selection_accuracy: number;
   min_grounding_rate: number;
   min_handoff_accuracy: number;
   max_policy_violation_rate: number;
@@ -52,7 +51,6 @@ async function main(): Promise<void> {
     cases: result.total_cases,
     pass_rate: Math.round((result.passed_cases / result.total_cases) * 1000) / 10,
     intent_accuracy: result.intent_accuracy,
-    tool_selection_accuracy: result.tool_selection_accuracy,
     grounding_rate: result.grounding_rate,
     handoff_accuracy: result.handoff_accuracy,
     policy_violation_rate: result.policy_violation_rate,
@@ -66,7 +64,6 @@ async function main(): Promise<void> {
   atLeast("cases", scores.cases, t.min_cases);
   atLeast("pass_rate", scores.pass_rate, t.min_pass_rate);
   atLeast("intent_accuracy", scores.intent_accuracy, t.min_intent_accuracy);
-  atLeast("tool_selection_accuracy", scores.tool_selection_accuracy, t.min_tool_selection_accuracy);
   atLeast("grounding_rate", scores.grounding_rate, t.min_grounding_rate);
   atLeast("handoff_accuracy", scores.handoff_accuracy, t.min_handoff_accuracy);
   if (!(scores.policy_violation_rate <= t.max_policy_violation_rate)) problems.push(`policy_violation_rate ${scores.policy_violation_rate} is above the maximum ${t.max_policy_violation_rate}`);

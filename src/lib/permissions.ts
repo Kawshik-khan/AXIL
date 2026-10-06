@@ -46,6 +46,8 @@ export const PERMISSIONS = {
   CUSTOMERS_READ: "customers.read",
   CUSTOMERS_CREATE: "customers.create",
   CUSTOMERS_UPDATE: "customers.update",
+  /** Erase a customer's personal data (FX-83). Owner only: no other role lists it. */
+  CUSTOMERS_ERASE: "customers.erase",
 
   // Orders
   ORDERS_READ: "orders.read",

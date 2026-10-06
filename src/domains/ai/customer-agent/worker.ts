@@ -4,7 +4,8 @@
  * reply goes out through the normal outbound path, so the kill switches, channel policy and rate limits all apply.
  * Several servers are safe: the claim is a version-checked write, and the send is idempotent per job and message.
  * Each pass takes at most one job per workspace, so one busy (or abusive) workspace can't starve the others.
- * `CUSTOMER_AGENT_WORKER=0` turns it off on a server.
+ * The same loop delivers the domain-event outbox (FX-99 Part B) and checks agent-health alerts (FX-81).
+ * `CUSTOMER_AGENT_WORKER=0` turns all of it off on a server.
  */
 import { db } from "@/infrastructure/db";
 import { logger } from "@/lib/logger";
@@ -13,6 +14,8 @@ import { assertNotKilled } from "@/lib/safety-gate";
 import type { AgentJob } from "@/types/ai";
 import { OutboundMessageService } from "@/domains/social/outbound/outbound-message.service";
 import { AgentPolicyService } from "@/domains/ai/policy/agent-policy.service";
+import { AgentHealthService } from "@/domains/platform/services/agent-health.service";
+import { dispatchOutboxOnce } from "@/domains/automation/outbox/dispatcher";
 import { capabilityContext, principalFor } from "./principal";
 import { runCustomerTool } from "./tools";
 import { customerMessages } from "./confirmation";
@@ -35,6 +38,9 @@ const DEFER_MS = 60_000;
 const SCAN_LIMIT = 200;
 const TURNS_PER_PASS = 5;
 const DELIVERED = new Set(["SENT", "QUEUED", "DELIVERED", "READ"]);
+/** Health alerts (FX-81) are checked once a minute per server; incidents are deduplicated by title. */
+const ALERT_INTERVAL_MS = 60_000;
+let lastAlertCheck = 0;
 
 let timer: ReturnType<typeof setInterval> | null = null;
 let running = false;
@@ -138,7 +144,7 @@ export async function runAgentJob(job: AgentJob): Promise<Finish> {
 
   const shadow = mode === "SHADOW";
   const turnStartedAt = new Date().toISOString();
-  const turn = await runCustomerTurn(pr, { shadow });
+  const turn = await runCustomerTurn(pr, { shadow, traceId: job.id });
   if (!turn.reply) return { status: "DONE", outcome: turn.status };
 
   if (shadow) {
@@ -163,7 +169,7 @@ export async function runAgentJob(job: AgentJob): Promise<Finish> {
       job.conversation_id,
       // Keyed on the message this turn answered, so a message that arrived after the claim gets one reply, not two
       { text: turn.reply, idempotency_key: `agent:${job.id}:${turn.answeredMessageId ?? job.last_message_id}` },
-      { asAgent: true, agentTurnStartedAt: turnStartedAt, agentHandedOff: turn.handoff }
+      { asAgent: true, agentTurnStartedAt: turnStartedAt, agentHandedOff: turn.handoff, traceId: job.id }
     );
     if (DELIVERED.has(sent.status)) await markQuotesShown(job, turnStartedAt, sent.id, turn.reply);
     return { status: "DONE", outcome: `${turn.status}:${sent.status}` };
@@ -219,8 +225,15 @@ export function startCustomerAgentWorker(): void {
     if (running) return; // a turn takes seconds: never overlap passes
     running = true;
     runAgentJobsOnce()
-      .then((s) => {
+      .then(async (s) => {
         if (s.claimed) logger.info("customer_agent.worker_pass", s);
+        // Domain-event outbox (FX-99 Part B): same worker, same never-overlap rule
+        const o = await dispatchOutboxOnce();
+        if (o.delivered || o.failed || o.dead) logger.info("outbox.dispatch_pass", o);
+        if (Date.now() - lastAlertCheck >= ALERT_INTERVAL_MS) {
+          lastAlertCheck = Date.now();
+          await db.unit(async () => AgentHealthService.raiseAlerts(), () => true);
+        }
       })
       .catch((err: unknown) => logger.warn("customer_agent.worker_failed", { error: (err as Error).message }))
       .finally(() => {

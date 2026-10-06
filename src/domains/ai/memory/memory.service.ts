@@ -1,12 +1,12 @@
 import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 4: Conversation & Customer Memory Service
- * Manages rolling multi-turn summaries and structured customer preferences.
+ * Manages rolling multi-turn summaries. (Customer memory was read but never written; removed in FX-85, audit F20.)
  * Invariant: Memory is never treated as authoritative commerce state.
  */
 
 import { db } from "@/infrastructure/db";
-import { ConversationSummary, CustomerMemory, CanonicalIntent } from "@/types/ai";
+import { ConversationSummary, CanonicalIntent } from "@/types/ai";
 import { modelRouter } from "@/domains/ai/providers/model-router";
 
 export class MemoryService {
@@ -66,42 +66,5 @@ export class MemoryService {
     };
 
     return db.saveConversationSummary(summary);
-  }
-
-  /**
-   * Retrieves structured customer memory
-   */
-  public static getCustomerMemory(tenantId: string, customerId: string): CustomerMemory | undefined {
-    return db.getCustomerMemory(tenantId, customerId);
-  }
-
-  /**
-   * Updates safe customer preferences
-   */
-  public static updateCustomerMemory(
-    tenantId: string,
-    customerId: string,
-    patch: Partial<CustomerMemory>
-  ): CustomerMemory {
-    const existing = db.getCustomerMemory(tenantId, customerId);
-    const memory: CustomerMemory = {
-      id: existing?.id || `cmem_${Date.now()}_${randomSuffix()}`,
-      tenant_id: tenantId,
-      customer_id: customerId,
-      preferred_language: patch.preferred_language || existing?.preferred_language || "bn",
-      preferred_channel: patch.preferred_channel || existing?.preferred_channel,
-      product_interests: Array.from(
-        new Set([...(existing?.product_interests || []), ...(patch.product_interests || [])])
-      ),
-      communication_preferences: {
-        ...(existing?.communication_preferences || {}),
-        ...(patch.communication_preferences || {}),
-      },
-      notes: patch.notes || existing?.notes || [],
-      created_at: existing?.created_at || new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-
-    return db.saveCustomerMemory(memory);
   }
 }

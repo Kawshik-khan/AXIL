@@ -44,6 +44,10 @@ export interface LLMResponse {
   usage: LLMUsage;
   model: string;
   latency_ms: number;
+  /** Time spent waiting for a concurrency slot before the first attempt (FX-79/FX-81), if the provider limits it. */
+  queue_ms?: number;
+  /** HTTP 429 answers retried within this call (FX-81). */
+  throttled?: number;
 }
 
 export interface LLMProviderOptions {

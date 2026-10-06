@@ -50,11 +50,7 @@ export class ContextBuilder {
     // Layer 2: Rolling Conversation Summary
     const summary = MemoryService.getConversationSummary(tenantId, options.conversationId);
 
-    // Layer 3: Customer Memory & Preferences
-    let customerMemory = undefined;
-    if (customerId) {
-      customerMemory = MemoryService.getCustomerMemory(tenantId, customerId);
-    }
+    // (Layer 3, customer memory, was removed in FX-85: nothing ever wrote it, so it only ever read nothing.)
 
     // Layer 4: Relevant Commerce State (Recent customer orders)
     let recentOrders: Array<{ id: string; order_number: string; status: string; total_amount: number; created_at: string }> = [];
@@ -79,7 +75,6 @@ export class ContextBuilder {
       channel_type: channelType,
       recent_messages: chronologicalMessages,
       summary,
-      customer_memory: customerMemory,
       retrieved_knowledge,
       recent_orders: recentOrders,
       policy,
@@ -116,16 +111,6 @@ export class ContextBuilder {
       sections.push(
         `=== CONVERSATION SUMMARY ===\n${agentContext.summary.summary_text}\n` +
         `Key Facts: ${agentContext.summary.key_facts.join("; ")}`
-      );
-    }
-
-    // Customer Context
-    if (agentContext.customer_memory) {
-      const mem = agentContext.customer_memory;
-      sections.push(
-        `=== CUSTOMER CONTEXT ===\n` +
-        `Preferred Language: ${mem.preferred_language || "bn/en"}\n` +
-        `Interests: ${mem.product_interests?.join(", ") || "General"}`
       );
     }
 

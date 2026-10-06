@@ -21,6 +21,11 @@ import { ChunkingService } from "./chunking.service";
 import { EmbeddingService } from "./embedding.service";
 import { AgenticRagController } from "./agentic-rag.controller";
 import { BadRequestError, NotFoundError } from "@/lib/errors";
+import { logger } from "@/lib/logger";
+import crypto from "crypto";
+
+const contentHash = (title: string, content: string) =>
+  crypto.createHash("sha256").update(`${title.trim()}\n${content.replace(/\r\n/g, "\n").trim()}`).digest("hex");
 
 export class KnowledgeService {
   /**
@@ -51,7 +56,10 @@ export class KnowledgeService {
   }
 
   /**
-   * Ingest and index new store policy or guide into Qdrant
+   * Ingest a store policy or guide (FX-82): the content hash decides what happens.
+   * - Same title, same content as an existing document: nothing changes, the existing document comes back.
+   * - Same title, changed content: that document's chunks are replaced and its version goes up.
+   * - New title: a new document.
    */
   public static async ingestDocument(
     context: RequestContext,
@@ -62,6 +70,7 @@ export class KnowledgeService {
       file_format?: KnowledgeDocument["file_format"];
       tags?: string[];
       language?: "bn" | "en" | "mixed";
+      customer_visible?: boolean;
     }
   ): Promise<KnowledgeDocument> {
     RbacService.assertCan(context, PERMISSIONS.AI_KNOWLEDGE_MANAGE);
@@ -74,97 +83,62 @@ export class KnowledgeService {
     }
 
     const tenantId = context.tenant.id;
-    const docId = `kdoc_${Date.now()}_${randomSuffix()}`;
+    const title = payload.title.trim();
+    const hash = contentHash(title, payload.raw_content);
+    const existing = db
+      .getKnowledgeDocuments(tenantId)
+      .find((d) => d.title.trim().toLowerCase() === title.toLowerCase() && d.status !== "ARCHIVED");
+    if (existing && existing.content_hash === hash && existing.status === "ACTIVE" && (payload.customer_visible === undefined || existing.customer_visible === payload.customer_visible)) return existing;
 
-    // 1. Create Document in PROCESSING state
-    const document: KnowledgeDocument = {
-      id: docId,
-      tenant_id: tenantId,
-      title: payload.title.trim(),
-      document_type: payload.document_type,
-      file_format: payload.file_format || "MARKDOWN",
-      raw_content: payload.raw_content,
-      status: "PROCESSING",
-      version: 1,
-      chunk_count: 0,
-      language: payload.language || "mixed",
-      tags: payload.tags || [],
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-    db.createKnowledgeDocument(document);
+    const now = new Date().toISOString();
+    let document: KnowledgeDocument;
+    if (existing) {
+      document = db.updateKnowledgeDocument(tenantId, existing.id, {
+        raw_content: payload.raw_content,
+        document_type: payload.document_type,
+        file_format: payload.file_format || existing.file_format,
+        language: payload.language || existing.language,
+        tags: payload.tags || existing.tags,
+        status: "PROCESSING",
+        version: existing.version + 1,
+        content_hash: hash,
+        ...(payload.customer_visible !== undefined ? { customer_visible: payload.customer_visible } : {}),
+        processing_error: undefined,
+      })!;
+    } else {
+      document = {
+        id: `kdoc_${Date.now()}_${randomSuffix()}`,
+        tenant_id: tenantId,
+        title,
+        document_type: payload.document_type,
+        file_format: payload.file_format || "MARKDOWN",
+        raw_content: payload.raw_content,
+        status: "PROCESSING",
+        version: 1,
+        chunk_count: 0,
+        language: payload.language || "mixed",
+        tags: payload.tags || [],
+        content_hash: hash,
+        ...(payload.customer_visible !== undefined ? { customer_visible: payload.customer_visible } : {}),
+        created_at: now,
+        updated_at: now,
+      };
+      db.createKnowledgeDocument(document);
+    }
 
     try {
-      // 2. Hierarchical Parent-Child Chunking
-      const { parentChunks, childChunks } = ParentChildChunkingService.chunkDocumentHierarchically(
-        tenantId,
-        docId,
-        payload.raw_content,
-        {
-          document_title: payload.title.trim(),
-          document_type: payload.document_type,
-          version: 1,
-          language: payload.language || "mixed",
-        }
-      );
-
-      // 3. Dense Vector Embeddings for Child Chunks
-      const childTexts = childChunks.map((c) => `${c.section_heading}\n${c.content}`);
-      const childEmbeddings = await EmbeddingService.embedBatch(childTexts);
-      childChunks.forEach((c, idx) => {
-        c.embedding = childEmbeddings[idx] || new Array(1536).fill(0);
-      });
-
-      // 4. Save both Parent and Child Chunks locally in DB
-      const allChunks = [...parentChunks, ...childChunks];
-      db.saveKnowledgeChunks(tenantId, docId, allChunks);
-
-      // 5. Upsert child chunks to Qdrant if configured
-      try {
-        const { isQdrantConfigured, upsertChunks } = await import("@/infrastructure/qdrant/client");
-        if (isQdrantConfigured(tenantId)) {
-          await upsertChunks(
-            tenantId,
-            childChunks.map((c) => ({
-              id: c.id,
-              values: c.embedding,
-              metadata: {
-                tenant_id: tenantId,
-                document_id: docId,
-                document_title: payload.title,
-                document_type: payload.document_type,
-                section_heading: c.section_heading || "General",
-                chunk_index: c.chunk_index,
-                version: 1,
-                language: payload.language || "mixed",
-                content: c.content,
-                parent_chunk_id: c.parent_chunk_id || "",
-              },
-            }))
-          );
-        }
-      } catch (pcErr) {
-        console.warn("[Qdrant] Ingestion warning, fallback used:", pcErr);
-      }
-
-      // 6. Transition to ACTIVE
-      const updated = db.updateKnowledgeDocument(tenantId, docId, {
-        status: "ACTIVE",
-        chunk_count: allChunks.length,
-      });
-
-      return updated || document;
-    } catch (err: any) {
-      db.updateKnowledgeDocument(tenantId, docId, {
+      return await this.indexDocument(tenantId, document);
+    } catch (err) {
+      db.updateKnowledgeDocument(tenantId, document.id, {
         status: "DRAFT",
-        processing_error: err.message || "Failed to process and embed document.",
+        processing_error: err instanceof Error ? err.message : "Failed to process and embed document.",
       });
       throw err;
     }
   }
 
   /**
-   * Reindex existing document using Hierarchical Parent-Child Chunking
+   * Re-chunks and re-embeds an existing document as a new version.
    */
   public static async reindexDocument(
     context: RequestContext,
@@ -175,69 +149,134 @@ export class KnowledgeService {
     if (!doc) {
       throw new NotFoundError(`Knowledge document '${documentId}' not found.`);
     }
-
     if (!doc.raw_content) {
       throw new BadRequestError("Document has no raw content to reindex.");
     }
+    const bumped = db.updateKnowledgeDocument(context.tenant.id, doc.id, { version: doc.version + 1, processing_error: undefined })!;
+    return this.indexDocument(context.tenant.id, bumped);
+  }
 
-    const newVersion = doc.version + 1;
-    const { parentChunks, childChunks } = ParentChildChunkingService.chunkDocumentHierarchically(
-      context.tenant.id,
-      doc.id,
-      doc.raw_content,
-      {
-        document_title: doc.title,
-        document_type: doc.document_type,
-        version: newVersion,
-        language: doc.language,
-      }
-    );
-
-    const childTexts = childChunks.map((c) => `${c.section_heading}\n${c.content}`);
-    const childEmbeddings = await EmbeddingService.embedBatch(childTexts);
-    childChunks.forEach((c, idx) => {
-      c.embedding = childEmbeddings[idx] || new Array(1536).fill(0);
+  /**
+   * Chunks, embeds and stores one document at its current version; every chunk is stamped with the version's time,
+   * the source and the embedding model (FX-82). Replaces the document's previous chunks.
+   */
+  private static async indexDocument(tenantId: string, doc: KnowledgeDocument): Promise<KnowledgeDocument> {
+    const { parentChunks, childChunks } = ParentChildChunkingService.chunkDocumentHierarchically(tenantId, doc.id, doc.raw_content ?? "", {
+      document_title: doc.title,
+      document_type: doc.document_type,
+      version: doc.version,
+      language: doc.language,
     });
+    const childEmbeddings = await EmbeddingService.embedBatch(childChunks.map((c) => `${c.section_heading}\n${c.content}`));
+    const stamp = EmbeddingService.currentStamp();
+    const versionAt = new Date().toISOString();
+    childChunks.forEach((c, idx) => {
+      c.embedding = childEmbeddings[idx];
+    });
+    const allChunks = [...parentChunks, ...childChunks].map((c) => ({
+      ...c,
+      metadata: {
+        ...c.metadata,
+        updated_at: versionAt,
+        source: `${doc.document_type}:${doc.title}`,
+        ...(c.chunk_type === "PARENT" ? {} : { embedding_model: stamp.embedding_model, dimensions: stamp.dimensions ?? c.embedding.length }),
+      },
+    }));
+    db.saveKnowledgeChunks(tenantId, doc.id, allChunks);
 
-    const allChunks = [...parentChunks, ...childChunks];
-    db.saveKnowledgeChunks(context.tenant.id, doc.id, allChunks);
-
-    // 5. Upsert child chunks to Qdrant if configured
     try {
-      const { isQdrantConfigured, upsertChunks } = await import("@/infrastructure/qdrant/client");
-      if (isQdrantConfigured(context.tenant.id)) {
+      const { isQdrantConfigured, upsertChunks, deleteDocumentVectors } = await import("@/infrastructure/qdrant/client");
+      if (isQdrantConfigured(tenantId)) {
+        await deleteDocumentVectors(tenantId, doc.id); // a changed document leaves no stale vectors behind
         await upsertChunks(
-          context.tenant.id,
-          childChunks.map((c) => ({
-            id: c.id,
-            values: c.embedding,
-            metadata: {
-              tenant_id: context.tenant.id,
-              document_id: doc.id,
-              document_title: doc.title,
-              document_type: doc.document_type,
-              section_heading: c.section_heading || "General",
-              chunk_index: c.chunk_index,
-              version: newVersion,
-              language: doc.language || "mixed",
-              content: c.content,
-              parent_chunk_id: c.parent_chunk_id || "",
-            },
-          }))
+          tenantId,
+          allChunks
+            .filter((c) => c.chunk_type !== "PARENT")
+            .map((c) => ({
+              id: c.id,
+              values: c.embedding,
+              metadata: {
+                tenant_id: tenantId,
+                document_id: doc.id,
+                document_title: doc.title,
+                document_type: doc.document_type,
+                section_heading: c.section_heading || "General",
+                chunk_index: c.chunk_index,
+                version: doc.version,
+                language: doc.language || "mixed",
+                content: c.content,
+                parent_chunk_id: c.parent_chunk_id || "",
+              },
+            }))
         );
       }
-    } catch (pcErr) {
-      console.warn("[Qdrant] Reindex warning:", pcErr);
+    } catch (err) {
+      logger.warn("rag.qdrant_upsert_failed", { tenant_id: tenantId, document_id: doc.id, error: err instanceof Error ? err.message : "error" });
     }
 
-    const updated = db.updateKnowledgeDocument(context.tenant.id, doc.id, {
-      version: newVersion,
-      chunk_count: allChunks.length,
-      status: "ACTIVE",
-      processing_error: undefined,
-    });
+    return db.updateKnowledgeDocument(tenantId, doc.id, { status: "ACTIVE", chunk_count: allChunks.length, processing_error: undefined })!;
+  }
 
-    return updated!;
+  /**
+   * Re-index job (FX-82): re-embeds chunks whose embedding model or vector size differs from the current configuration,
+   * in batches with a pause between them. Every workspace, or one. Returns what it did.
+   */
+  public static async reembedStaleChunks(options: { tenantId?: string; batchSize?: number; pauseMs?: number; maxChunks?: number } = {}): Promise<{ checked: number; reembedded: number; failed: number }> {
+    const stamp = EmbeddingService.currentStamp();
+    const batchSize = options.batchSize ?? 20;
+    const tenants = options.tenantId ? [options.tenantId] : db.getTenants().map((t) => t.id);
+    const stats = { checked: 0, reembedded: 0, failed: 0 };
+    for (const tenantId of tenants) {
+      const stale = db
+        .getAllTenantKnowledgeChunks(tenantId)
+        .filter((c) => c.chunk_type !== "PARENT")
+        .filter((c) => c.metadata.embedding_model !== stamp.embedding_model || (stamp.dimensions !== undefined && c.metadata.dimensions !== stamp.dimensions));
+      stats.checked += stale.length;
+      for (let i = 0; i < stale.length; i += batchSize) {
+        for (const c of stale.slice(i, i + batchSize)) {
+          if (options.maxChunks !== undefined && stats.reembedded + stats.failed >= options.maxChunks) return stats;
+          try {
+            const vector = await EmbeddingService.embedText(`${c.section_heading}\n${c.content}`);
+            db.updateKnowledgeChunkEmbedding(tenantId, c.id, vector, stamp);
+            stats.reembedded++;
+          } catch {
+            stats.failed++; // counted by EmbeddingService too
+          }
+        }
+        if (options.pauseMs && i + batchSize < stale.length) await new Promise((r) => setTimeout(r, options.pauseMs));
+      }
+    }
+    return stats;
+  }
+
+  /**
+   * The customer agent's policy search (FX-82, audit F13): the top 2 distinct ACTIVE documents, each as its best chunk
+   * plus that chunk's parent section, with no score cutoff. The agent decides what is relevant; the text is untrusted.
+   */
+  public static async searchPolicyDocuments(
+    tenantId: string,
+    query: string,
+    maxDocuments = 2
+  ): Promise<Array<{ document_id: string; title: string; section: string; updated_at?: string; text: string }>> {
+    const res = await AgenticRagController.execute(tenantId, query, {
+      topK: 10,
+      rerankTopK: 10,
+      minRerankScore: 0,
+      resolveParentContext: true,
+      enableQueryExpansion: true,
+    });
+    const out: Array<{ document_id: string; title: string; section: string; updated_at?: string; text: string }> = [];
+    const seen = new Set<string>();
+    for (const c of res.citations) {
+      if (seen.has(c.document_id)) continue;
+      const doc = db.findKnowledgeDocumentById(tenantId, c.document_id);
+      if (!doc || doc.status !== "ACTIVE" || doc.customer_visible === false) continue; // staff-only documents never reach customers
+      seen.add(c.document_id);
+      const parent = c.parent_content && !c.parent_content.includes(c.content_snippet) ? `${c.content_snippet}\n\n${c.parent_content}` : c.parent_content || c.content_snippet;
+      out.push({ document_id: doc.id, title: doc.title, section: c.section, updated_at: db.findKnowledgeChunkById(tenantId, c.chunk_id)?.metadata.updated_at ?? doc.updated_at, text: parent });
+      if (out.length >= maxDocuments) break;
+    }
+    return out;
   }
 
   /**

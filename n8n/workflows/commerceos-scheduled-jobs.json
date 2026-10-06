@@ -1,0 +1,622 @@
+{
+  "name": "CommerceOS — Scheduled jobs (FX-99 Part B)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 30
+            }
+          ]
+        }
+      },
+      "id": "sched-courier-poll",
+      "name": "Schedule: courier-poll",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        200
+      ],
+      "notes": "Every 30 minutes"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($vars.COMMERCEOS_API_BASE_URL || $env.COMMERCEOS_API_BASE_URL) }}/api/v1/jobs/courier-poll/run",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "value": "=courier-poll:{{ $now.toISO() }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "neverError": false
+            }
+          }
+        }
+      },
+      "id": "call-courier-poll",
+      "name": "Run job: courier-poll",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        520,
+        200
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "CommerceOS Jobs Token"
+        }
+      },
+      "notes": "Header Auth credential: name Authorization, value 'Bearer <job token>'. CommerceOS stores only its SHA-256 (JOBS_TOKEN_SHA256)."
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "sched-daily-report",
+      "name": "Schedule: daily-report",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        380
+      ],
+      "notes": "Hourly (shops at 9 PM local)"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($vars.COMMERCEOS_API_BASE_URL || $env.COMMERCEOS_API_BASE_URL) }}/api/v1/jobs/daily-report/run",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "value": "=daily-report:{{ $now.toISO() }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "neverError": false
+            }
+          }
+        }
+      },
+      "id": "call-daily-report",
+      "name": "Run job: daily-report",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        520,
+        380
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "CommerceOS Jobs Token"
+        }
+      },
+      "notes": "Header Auth credential: name Authorization, value 'Bearer <job token>'. CommerceOS stores only its SHA-256 (JOBS_TOKEN_SHA256)."
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "sched-low-stock",
+      "name": "Schedule: low-stock",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        560
+      ],
+      "notes": "Hourly (shops at 8 AM local)"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($vars.COMMERCEOS_API_BASE_URL || $env.COMMERCEOS_API_BASE_URL) }}/api/v1/jobs/low-stock/run",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "value": "=low-stock:{{ $now.toISO() }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "neverError": false
+            }
+          }
+        }
+      },
+      "id": "call-low-stock",
+      "name": "Run job: low-stock",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        520,
+        560
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "CommerceOS Jobs Token"
+        }
+      },
+      "notes": "Header Auth credential: name Authorization, value 'Bearer <job token>'. CommerceOS stores only its SHA-256 (JOBS_TOKEN_SHA256)."
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 4
+            }
+          ]
+        }
+      },
+      "id": "sched-rto-followup",
+      "name": "Schedule: rto-followup",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        740
+      ],
+      "notes": "Daily"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($vars.COMMERCEOS_API_BASE_URL || $env.COMMERCEOS_API_BASE_URL) }}/api/v1/jobs/rto-followup/run",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "value": "=rto-followup:{{ $now.toISO() }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "neverError": false
+            }
+          }
+        }
+      },
+      "id": "call-rto-followup",
+      "name": "Run job: rto-followup",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        520,
+        740
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "CommerceOS Jobs Token"
+        }
+      },
+      "notes": "Header Auth credential: name Authorization, value 'Bearer <job token>'. CommerceOS stores only its SHA-256 (JOBS_TOKEN_SHA256)."
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "weeksInterval": 1,
+              "triggerAtDay": [
+                6
+              ],
+              "triggerAtHour": 4
+            }
+          ]
+        }
+      },
+      "id": "sched-cod-reconciliation",
+      "name": "Schedule: cod-reconciliation",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        920
+      ],
+      "notes": "Weekly (Saturday)"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($vars.COMMERCEOS_API_BASE_URL || $env.COMMERCEOS_API_BASE_URL) }}/api/v1/jobs/cod-reconciliation/run",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "value": "=cod-reconciliation:{{ $now.toISO() }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "neverError": false
+            }
+          }
+        }
+      },
+      "id": "call-cod-reconciliation",
+      "name": "Run job: cod-reconciliation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        520,
+        920
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "CommerceOS Jobs Token"
+        }
+      },
+      "notes": "Header Auth credential: name Authorization, value 'Bearer <job token>'. CommerceOS stores only its SHA-256 (JOBS_TOKEN_SHA256)."
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "id": "sched-monitoring",
+      "name": "Schedule: monitoring",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        1100
+      ],
+      "notes": "Every 5 minutes"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($vars.COMMERCEOS_API_BASE_URL || $env.COMMERCEOS_API_BASE_URL) }}/api/v1/jobs/monitoring/run",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "value": "=monitoring:{{ $now.toISO() }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "neverError": false
+            }
+          }
+        }
+      },
+      "id": "call-monitoring",
+      "name": "Run job: monitoring",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        520,
+        1100
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "CommerceOS Jobs Token"
+        }
+      },
+      "notes": "Header Auth credential: name Authorization, value 'Bearer <job token>'. CommerceOS stores only its SHA-256 (JOBS_TOKEN_SHA256)."
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 20
+            }
+          ]
+        }
+      },
+      "id": "sched-retention-purge",
+      "name": "Schedule: retention-purge",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        1280
+      ],
+      "notes": "Nightly"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($vars.COMMERCEOS_API_BASE_URL || $env.COMMERCEOS_API_BASE_URL) }}/api/v1/jobs/retention-purge/run",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "value": "=retention-purge:{{ $now.toISO() }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "neverError": false
+            }
+          }
+        }
+      },
+      "id": "call-retention-purge",
+      "name": "Run job: retention-purge",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        520,
+        1280
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "CommerceOS Jobs Token"
+        }
+      },
+      "notes": "Header Auth credential: name Authorization, value 'Bearer <job token>'. CommerceOS stores only its SHA-256 (JOBS_TOKEN_SHA256)."
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 21
+            }
+          ]
+        }
+      },
+      "id": "sched-knowledge-reindex",
+      "name": "Schedule: knowledge-reindex",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        1460
+      ],
+      "notes": "Nightly"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($vars.COMMERCEOS_API_BASE_URL || $env.COMMERCEOS_API_BASE_URL) }}/api/v1/jobs/knowledge-reindex/run",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "value": "=knowledge-reindex:{{ $now.toISO() }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "neverError": false
+            }
+          }
+        }
+      },
+      "id": "call-knowledge-reindex",
+      "name": "Run job: knowledge-reindex",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        520,
+        1460
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "CommerceOS Jobs Token"
+        }
+      },
+      "notes": "Header Auth credential: name Authorization, value 'Bearer <job token>'. CommerceOS stores only its SHA-256 (JOBS_TOKEN_SHA256)."
+    }
+  ],
+  "connections": {
+    "Schedule: courier-poll": {
+      "main": [
+        [
+          {
+            "node": "Run job: courier-poll",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule: daily-report": {
+      "main": [
+        [
+          {
+            "node": "Run job: daily-report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule: low-stock": {
+      "main": [
+        [
+          {
+            "node": "Run job: low-stock",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule: rto-followup": {
+      "main": [
+        [
+          {
+            "node": "Run job: rto-followup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule: cod-reconciliation": {
+      "main": [
+        [
+          {
+            "node": "Run job: cod-reconciliation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule: monitoring": {
+      "main": [
+        [
+          {
+            "node": "Run job: monitoring",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule: retention-purge": {
+      "main": [
+        [
+          {
+            "node": "Run job: retention-purge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule: knowledge-reindex": {
+      "main": [
+        [
+          {
+            "node": "Run job: knowledge-reindex",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "all"
+  },
+  "meta": {
+    "description": "n8n holds the clock; CommerceOS picks the workspaces and recipients. Each node POSTs /api/v1/jobs/<job>/run; the response lists what to deliver (connect delivery nodes after each call, e.g. Telegram for daily-report and monitoring)."
+  }
+}

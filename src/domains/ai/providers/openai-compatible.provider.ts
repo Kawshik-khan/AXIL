@@ -106,6 +106,11 @@ export class OpenAICompatibleProvider implements LLMProvider {
     return this.cfg.models[tier];
   }
 
+  /** The `dimensions` sent on embedding calls, if configured (FX-82 chunk stamp). */
+  public get embeddingDimensions(): number | undefined {
+    return this.cfg.embeddingDimensions;
+  }
+
   private async post(path: string, body: unknown, timeoutMs = this.cfg.timeoutMs ?? 30_000): Promise<WireResponse> {
     // The base URL is platform configuration (LLM_BASE_URL), so a local Ollama/vLLM works; limits still apply
     let res: OutboundResponse;
@@ -154,7 +159,10 @@ export class OpenAICompatibleProvider implements LLMProvider {
       temperature: options?.temperature ?? 0.2,
       max_tokens: options?.max_tokens ?? DEFAULT_MAX_TOKENS,
     };
+    const queuedAt = Date.now();
     const release = this.slots ? await this.slots.acquire(deadline) : () => undefined;
+    const queueMs = Date.now() - queuedAt;
+    let throttled = 0;
     let data: WireResponse;
     try {
       data = await withRetries(
@@ -164,7 +172,10 @@ export class OpenAICompatibleProvider implements LLMProvider {
           const d = (err as { details?: { status?: number; retryAfterMs?: number; timedOut?: boolean } }).details ?? {};
           return { status: d.status, retryAfterMs: d.retryAfterMs, timedOut: d.timedOut };
         },
-        ({ waitMs, reason }) => logger.warn("llm.retry", { provider: this.providerName, reason, wait_ms: Math.round(waitMs) })
+        ({ waitMs, reason }) => {
+          if (reason === "HTTP 429") throttled++;
+          logger.warn("llm.retry", { provider: this.providerName, reason, wait_ms: Math.round(waitMs) });
+        }
       );
     } finally {
       release();
@@ -179,6 +190,8 @@ export class OpenAICompatibleProvider implements LLMProvider {
       usage: usageOf(data),
       model: data.model ?? model,
       latency_ms: Date.now() - started,
+      queue_ms: queueMs,
+      throttled,
     };
   }
 

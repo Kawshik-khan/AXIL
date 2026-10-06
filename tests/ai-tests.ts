@@ -359,7 +359,7 @@ If the shoe size does not fit, we provide free size replacement within Dhaka. Ou
     const redacted = PIIRedactionService.redactText(input);
 
     assert.ok(!redacted.includes("01712345678"));
-    assert.ok(redacted.includes("0171****678"));
+    assert.ok(redacted.includes("********678") && !redacted.includes("0171"), "only the last 3 digits stay (FX-83)");
     assert.ok(!redacted.includes("tanvir@gmail.com"));
     assert.ok(redacted.includes("ta***@gmail.com"));
     assert.ok(!redacted.includes("4111222233334444"));

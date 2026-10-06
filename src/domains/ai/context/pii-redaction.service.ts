@@ -3,6 +3,8 @@
  * Redacts sensitive customer data before LLM dispatch without corrupting Commerce Core records.
  */
 
+import { maskPhone } from "@/lib/pii-mask";
+
 export class PIIRedactionService {
   /**
    * Redacts phone numbers, emails, and transaction credentials from raw text.
@@ -12,15 +14,8 @@ export class PIIRedactionService {
 
     let redacted = text;
 
-    // 1. Redact Bangladeshi Phone Numbers (+8801XXXXXXXXX or 01XXXXXXXXX)
-    // Preserves prefix (e.g. 0171) and last 3 digits for operational identification
-    redacted = redacted.replace(
-      /(\+?880\s?|0)(1[3-9]\d)[-.\s]?(\d{4})[-.\s]?(\d{3})/g,
-      (match, country, prefix, mid, last) => {
-        const countryCode = country.trim() ? country.trim() : "";
-        return `${countryCode}${prefix}****${last}`;
-      }
-    );
+    // 1. Bangladeshi phone numbers (+8801XXXXXXXXX or 01XXXXXXXXX): everything masked except the last 3 digits (FX-83)
+    redacted = redacted.replace(/(\+?880\s?|0)(1[3-9]\d)[-.\s]?(\d{4})[-.\s]?(\d{3})/g, (match) => maskPhone(match));
 
     // 2. Redact Email Addresses (user@example.com -> u***@example.com)
     redacted = redacted.replace(

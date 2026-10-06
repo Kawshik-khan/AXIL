@@ -22,6 +22,7 @@ import {
 import { Message, Conversation, QuickReply } from "@/types/social";
 import { Button } from "@/components/ui/Button/Button";
 import styles from "./SocialInbox.module.css";
+import { HandoffContextCard, isHandoffCard } from "./HandoffContextCard";
 
 const STATUS_OPTIONS = [
   { value: "OPEN", label: "Open", color: "#10B981" },
@@ -326,6 +327,9 @@ export const ConversationThread: React.FC<ConversationThreadProps> = ({
 
       {/* Message Stream */}
       <div ref={streamContainerRef} className={styles.messageStream}>
+        {conversation.automation_paused && isHandoffCard(conversation.metadata?.handoff_card) && (
+          <HandoffContextCard card={conversation.metadata.handoff_card} />
+        )}
         {isLoadingMessages && (
           <div style={{ textAlign: "center", color: "var(--color-text-muted)", fontSize: "0.8125rem" }}>
             Loading message stream...

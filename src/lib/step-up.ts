@@ -29,3 +29,16 @@ export function requireStepUp(context: RequestContext, action: string): void {
   }
   throw new StepUpRequiredError("Enter a code from your authenticator app to confirm this action.");
 }
+
+/**
+ * Step-up with no grace period, for actions that can't be undone (customer erasure, FX-83): always needs a fresh
+ * authenticator code, whatever WORKSPACE_STEP_UP_ENFORCED_FROM says.
+ */
+export function requireStepUpAlways(context: RequestContext, action: string): void {
+  if (context.stepUpVerified) return;
+  const user = db.findUserById(context.user.id);
+  if (!user?.mfa_enabled) {
+    throw new AppError("MFA_ENROLLMENT_REQUIRED", "Set up an authenticator app (Settings → Security) before doing this.", 403, { action });
+  }
+  throw new StepUpRequiredError("Enter a code from your authenticator app to confirm this action.");
+}

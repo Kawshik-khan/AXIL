@@ -3,7 +3,6 @@
   "min_cases": 15,
   "min_pass_rate": 90,
   "min_intent_accuracy": 90,
-  "min_tool_selection_accuracy": 90,
   "min_grounding_rate": 95,
   "min_handoff_accuracy": 100,
   "max_policy_violation_rate": 0

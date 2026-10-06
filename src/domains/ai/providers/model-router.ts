@@ -316,6 +316,15 @@ export class ModelRouter {
     }
   }
 
+  /** What embeddings are made with now (FX-82): chunks stamped differently are re-embedded by the re-index job. */
+  public embeddingStamp(): { embedding_model: string; dimensions?: number } {
+    const provider = this.embeddingProvider ?? this.primaryProvider;
+    if (provider instanceof OpenAICompatibleProvider) {
+      return { embedding_model: `${provider.providerName}/${provider.modelFor("TIER_3_EMBEDDING")}`, dimensions: provider.embeddingDimensions };
+    }
+    return { embedding_model: provider.providerName };
+  }
+
   public async generateEmbedding(text: string): Promise<number[]> {
     const provider = this.embeddingProvider ?? this.getActiveProvider("TIER_3_EMBEDDING").provider;
     if (PlatformSafetyService.isExecutionBlocked("PROVIDER", provider.providerName)) {

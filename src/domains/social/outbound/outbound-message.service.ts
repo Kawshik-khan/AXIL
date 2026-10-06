@@ -41,7 +41,7 @@ export class OutboundMessageService {
     context: RequestContext,
     conversationId: string,
     payload: SendOutboundPayload,
-    options: { asAgent?: boolean; agentTurnStartedAt?: string; agentHandedOff?: boolean } = {}
+    options: { asAgent?: boolean; agentTurnStartedAt?: string; agentHandedOff?: boolean; traceId?: string } = {}
   ): Promise<Message> {
     const prepared = await db.unit(async () => {
       RbacService.assertCan(context, PERMISSIONS.SOCIAL_MESSAGE_SEND);
@@ -100,7 +100,7 @@ export class OutboundMessageService {
         status: "QUEUED",
         reply_to_message_id: payload.replyToMessageId,
         retry_count: 0,
-        metadata: { agent_name: context.user.name, agent_email: context.user.email, channel_type: channel.type },
+        metadata: { agent_name: context.user.name, agent_email: context.user.email, channel_type: channel.type, ...(options.traceId ? { trace_id: options.traceId } : {}) },
         created_at: now,
         updated_at: now,
       };

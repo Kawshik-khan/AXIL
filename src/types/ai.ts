@@ -283,6 +283,8 @@ export interface AgentToolCallRecord {
   duration_ms: number;
   error_message?: string;
   idempotency_key?: string;
+  /** The customer-agent job that ran this call (FX-81): joins jobs, runs, tool calls and the sent message. */
+  trace_id?: string;
   created_at: string;
 }
 
@@ -368,7 +370,6 @@ export interface AgentContext {
     created_at: string;
   }>;
   summary?: ConversationSummary;
-  customer_memory?: CustomerMemory;
   retrieved_knowledge: RetrievalCitation[];
   recent_orders?: Array<{
     id: string;
@@ -418,6 +419,10 @@ export interface KnowledgeDocument {
   language: "bn" | "en" | "mixed";
   tags: string[];
   processing_error?: string;
+  /** sha256 of title + content (FX-82): an identical upload is skipped, a changed one replaces the chunks. */
+  content_hash?: string;
+  /** false: staff-only (internal SOPs, supplier terms); the customer agent's policy search never returns it. */
+  customer_visible?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -443,6 +448,11 @@ export interface KnowledgeChunk {
     version: number;
     language: string;
     parent_heading?: string;
+    /** FX-82: when the document version this chunk belongs to was written, where it came from, and what embedded it. */
+    updated_at?: string;
+    source?: string;
+    embedding_model?: string;
+    dimensions?: number;
   };
   created_at: string;
 }
@@ -639,7 +649,6 @@ export interface EvaluationResult {
   total_cases: number;
   passed_cases: number;
   intent_accuracy: number;
-  tool_selection_accuracy: number;
   grounding_rate: number;
   handoff_accuracy: number;
   policy_violation_rate: number;

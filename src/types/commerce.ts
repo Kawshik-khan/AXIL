@@ -377,6 +377,48 @@ export interface CommerceEvent<T = Record<string, unknown>> {
   payload: T;
 }
 
+/**
+ * Outbox row for a domain event automations react to (FX-99 Part B). Written in the same unit of work as the change
+ * (through `db.recordEvent`), delivered to the automation router by the worker outside the store lock: at least once,
+ * in order per aggregate, then DEAD after 5 failed attempts. `id` is the source event's id (dedup key).
+ */
+export interface DomainEventOutboxRecord {
+  id: string;
+  tenant_id: string;
+  /** The automation-facing name, e.g. "order.placed" for a recorded "order.created". */
+  type: string;
+  source_type: string;
+  aggregate_type: string;
+  aggregate_id: string;
+  actor_id?: string;
+  correlation_id?: string;
+  occurred_at: string;
+  payload: Record<string, unknown>;
+  status: "PENDING" | "DISPATCHING" | "DISPATCHED" | "DEAD";
+  attempts: number;
+  next_attempt_at: string;
+  claimed_at?: string;
+  dispatched_at?: string;
+  last_error?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** One run of a scheduled job per time bucket (FX-99 Part B); a second call for the same bucket replays the result. */
+export interface JobRunRecord {
+  /** `<job>:<bucket>` */
+  id: string;
+  tenant_id?: undefined;
+  job: string;
+  bucket: string;
+  status: "RUNNING" | "DONE" | "FAILED";
+  idempotency_key?: string;
+  result?: Record<string, unknown>;
+  error?: string;
+  started_at: string;
+  finished_at?: string;
+}
+
 export interface WebhookSubscription {
   id: string;
   tenant_id: string;

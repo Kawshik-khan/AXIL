@@ -10,3 +10,4 @@ export * from "./services/platform-incident.service";
 export * from "./services/platform-settings.service";
 export * from "./services/platform-feature-flag.service";
 export * from "./services/platform-analytics.service";
+export * from "./services/agent-health.service";

@@ -44,3 +44,5 @@ coverage/
 .CommerceOS_IEEE_Project_Proposal.docx
 .CommerceOS_IEEE_Project_Proposal.tex
 .AUDIT_REPORT_2026-09-27.md
+# Live agent-eval results (FX-80): uploaded as CI artifacts, not committed
+tests/agent-evals/results/

@@ -3,6 +3,7 @@
  * conversation's customer through a capability context. None moves money, changes a price or reads another customer's
  * data. Results are plain data the model reads; errors are structured so the model can recover or hand off.
  */
+import { customerAgentCardContext } from "./handoff-card";
 import { z } from "zod";
 import { randomUUID } from "crypto";
 import { db } from "@/infrastructure/db";
@@ -370,15 +371,13 @@ async function getOrderStatus(pr: CustomerAgentPrincipal, a: z.infer<typeof Orde
 }
 
 async function searchPolicy(pr: CustomerAgentPrincipal, a: z.infer<typeof PolicyArgs>): Promise<ToolResult> {
-  const res = await KnowledgeService.queryAgenticRag(pr.tenantId, a.query, { topK: 3 });
-  if (res.confidence_level === "LOW" || !res.citations.length) {
-    return { results: [], note: "No matching policy. Don't guess; offer the team." };
-  }
-  const seen = new Set<string>();
-  const results = res.citations
-    .filter((c) => !seen.has(c.chunk_id) && Boolean(seen.add(c.chunk_id)))
-    .map((c) => ({ source: `${c.document_title} > ${c.section}`, text_untrusted: (c.parent_content || c.content_snippet).slice(0, 700) }));
-  return { results };
+  // FX-82: the two closest distinct documents, no score cutoff; the model judges relevance and may say there's no answer
+  const docs = await KnowledgeService.searchPolicyDocuments(pr.tenantId, a.query, 2);
+  if (!docs.length) return { results: [], note: "This shop has no policy documents. Don't guess; offer the team." };
+  return {
+    results: docs.map((d) => ({ source: `${d.title} > ${d.section}`, updated_at: d.updated_at, text_untrusted: d.text.slice(0, 1200) })),
+    note: "These are the closest documents, not necessarily an answer. If they don't answer the question, say so and offer the team.",
+  };
 }
 
 async function handoffToHuman(pr: CustomerAgentPrincipal, a: z.infer<typeof HandoffArgs>): Promise<ToolResult> {
@@ -386,7 +385,7 @@ async function handoffToHuman(pr: CustomerAgentPrincipal, a: z.infer<typeof Hand
   const result = await new RequestHumanHandoffTool().execute(
     capabilityContext(pr, "handoff"),
     { reason: a.reason, summary: a.summary, priority: urgent ? "HIGH" : "NORMAL" },
-    { conversationId: pr.conversationId }
+    { conversationId: pr.conversationId, card: customerAgentCardContext(pr, a.reason) }
   );
   return result as ToolResult;
 }

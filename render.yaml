@@ -126,6 +126,12 @@ services:
       # Customer-agent job worker (ADR-112); idle unless a workspace has the agent flags on
       - key: CUSTOMER_AGENT_WORKER
         value: "1"
+      # FX-99 Part B: SHA-256 (hex) of the n8n job token; the token itself stays in n8n
+      - key: JOBS_TOKEN_SHA256
+        sync: false
+      # FX-83: customer message retention in days (owner decision; unset keeps everything)
+      - key: CUSTOMER_DATA_RETENTION_DAYS
+        sync: false
       # The active provider's real prices, or cost dashboards use placeholders (FX-70). Ollama Cloud gpt-oss:120b:
       # {"TIER_1_FAST":{"promptCostPer1M":0.15,"cachedPromptCostPer1M":0.014,"completionCostPer1M":0.6},
       #  "TIER_2_REASONING":{"promptCostPer1M":0.15,"cachedPromptCostPer1M":0.014,"completionCostPer1M":0.6}}

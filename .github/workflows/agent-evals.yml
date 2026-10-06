@@ -1,0 +1,87 @@
+# Live agent eval gate (FX-80, audit F12). The offline plumbing suite runs in ci.yml as part of `npm test`.
+# PRs that touch the agent run a 26-case smoke subset; the nightly run does every case. Both run against the provider
+# profile below, with an eval key kept in the `evals` environment, never the production key.
+name: Agent evals
+
+on:
+  pull_request:
+    paths:
+      - "src/domains/ai/**"
+      - "src/domains/catalog/**"
+      - "src/domains/orders/**"
+      - "src/domains/pricing/**"
+      - "tests/agent-evals/**"
+      - "render.yaml"
+  schedule:
+    - cron: "30 21 * * *" # 03:30 Asia/Dhaka
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: agent-evals-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  live:
+    name: Golden + red-team on the configured model
+    # Forks never get the eval key
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    environment: evals
+    env:
+      TEST_LLM_LIVE: "1"
+      # Provider profile under test (implementation plan §2a). Switching provider = changing these lines.
+      LLM_PROVIDER_NAME: ollama-cloud
+      LLM_BASE_URL: https://ollama.com/v1
+      LLM_API_KEY: ${{ secrets.OLLAMA_EVAL_API_KEY }}
+      LLM_MODEL_FAST: gpt-oss:120b
+      LLM_MODEL_REASONING: gpt-oss:120b
+      LLM_PRICING_JSON: '{"TIER_1_FAST":{"promptCostPer1M":0.15,"cachedPromptCostPer1M":0.014,"completionCostPer1M":0.6}}'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version-file: .nvmrc, cache: npm }
+      - run: npm ci
+      - name: Smoke subset (PR)
+        if: github.event_name == 'pull_request'
+        env:
+          EVAL_CASES: G01,G03,G06,G19,G25,G28,G33,G37,G41,G44,G55,G59,R03,R04,R06,R07,R11,R12,R16,R21,R25,R26,R27,R35,R42,R43
+        run: node tests/ts-runner.cjs ./tests/agent-evals/run-evals.ts | tee eval.log
+      - name: Full suite (nightly / manual)
+        if: github.event_name != 'pull_request'
+        run: node tests/ts-runner.cjs ./tests/agent-evals/run-evals.ts | tee eval.log
+      - name: Gate
+        run: node tests/agent-evals/check-thresholds.mjs "$(ls -d tests/agent-evals/results/live-* | tail -1)"
+      # FX-82: Recall@2 ≥ 95% per language with real embeddings (nightly; synthetic policy text only)
+      - name: Retrieval eval (nightly / manual)
+        if: github.event_name != 'pull_request'
+        env:
+          EVAL_REAL_EMBEDDINGS: "1"
+          LLM_EMBEDDING_BASE_URL: https://generativelanguage.googleapis.com/v1beta/openai
+          LLM_EMBEDDING_API_KEY: ${{ secrets.GEMINI_EVAL_API_KEY }}
+          LLM_EMBEDDING_MODEL: gemini-embedding-001
+          LLM_EMBEDDING_DIMENSIONS: "1536"
+        run: node tests/ts-runner.cjs ./tests/agent-evals/retrieval-eval.ts
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-eval-results
+          path: tests/agent-evals/results/
+          retention-days: 30
+      - name: Comment summary on the PR
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require("fs");
+            const root = "tests/agent-evals/results";
+            const dir = fs.existsSync(root) ? fs.readdirSync(root).filter((d) => d.startsWith("live-")).sort().pop() : null;
+            if (!dir) return;
+            const s = JSON.parse(fs.readFileSync(`${root}/${dir}/summary.json`, "utf8"));
+            const body = "### Agent eval (smoke)\n```json\n" + JSON.stringify(s, null, 2).slice(0, 60000) + "\n```";
+            await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number, body });

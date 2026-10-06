@@ -33,6 +33,8 @@ const IngestBody = z
       .optional(),
     tags: z.array(z.string().max(64)).max(20).optional(),
     language: z.enum(["bn", "en", "mixed"]).optional(),
+    /** false: staff-only; the customer agent never quotes it (FX-82 review) */
+    customer_visible: z.boolean().optional(),
   })
   .strict();
 
@@ -48,6 +50,7 @@ async function handlePOST(request: Request) {
       file_format: body.file_format ? TEXT_FORMATS[body.file_format as keyof typeof TEXT_FORMATS] : "MARKDOWN",
       tags: body.tags,
       language: body.language,
+      customer_visible: body.customer_visible,
     });
 
     return apiSuccess(doc, undefined, 201);

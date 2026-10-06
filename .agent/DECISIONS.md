@@ -1527,3 +1527,20 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
   - Per-identity and per-day order limits don't exist yet.
   - The worker polls every second per server; with Postgres the claim is a version-checked write, so two servers can't run one job twice, but a server that dies mid-turn delays that chat by up to 5 minutes.
   - Website chat replies are recorded FAILED until the widget can receive messages.
+
+## ADR-113: Agent Quality, Privacy and Scheduled Work (AI fix plan Stage 3)
+
+- **Status**: Accepted (2026-10-07). Implements FX-80 to FX-85 and FX-99 Part B. (The plan reserved ADR-113 for payments; that decision becomes ADR-114 when FX-89 starts.)
+- **Decisions**:
+  - **Evals test the production runtime.** One harness (`tests/agent-evals/harness.ts`) drives `runCustomerTurn`; offline in `npm test` with an adversarial scripted model (plumbing only), live in CI against the configured provider profile. Every result records prompt version, model, dataset hash and git SHA.
+  - **Traces hold numbers, not text.** Per-call token, latency and tool-name records; no prompt or reply text in traces. The job id is the trace id.
+  - **The agent judges relevance.** Policy search always returns the two closest documents (labelled untrusted, with a note that they may not answer); no score cutoff hides a weakly matching but correct document. Recall@2 replaces the plan's Recall@3 because the tool returns two documents, and the "irrelevant document injected" metric counts an irrelevant document ranked first.
+  - **Erasure anonymises, it doesn't delete the books.** Orders keep amounts, items and status; everything that identifies the person is removed or deleted, then an allow-list of free-text collections (events, outbox, webhook/automation logs, tickets, leads, analytics events, chats) is swept for their phone forms, email and full name as whole tokens, replacing only the matched text. Single-word names are never swept. It always needs a fresh step-up (no grace period) and a reason. The suppression list is kept.
+  - **Retention of chats is the owner's call.** Diagnostics are purged on fixed periods; messages and runs only when `CUSTOMER_DATA_RETENTION_DAYS` is set.
+  - **Outbox in the store's event write.** `db.recordEvent` adds the outbox row for the event types automations use, so it shares the change's unit of work without touching every caller; the worker delivers outside the lock. A kill-switch cancellation counts as delivered.
+  - **Platform job token.** One credential that only reaches `/api/v1/jobs/*`; the server keeps its SHA-256. Jobs pick workspaces and recipients; n8n only holds the clock. One run per job and time bucket.
+- **Consequences**:
+  - The live eval and retrieval gates need the `evals` environment secrets before they mean anything.
+  - The super-admin agent-health view reads every workspace's runs (platform operators only, numbers only).
+  - Alerts are platform incidents; there is no paging integration yet.
+
