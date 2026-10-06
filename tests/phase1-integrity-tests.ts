@@ -676,7 +676,8 @@ async function main() {
     return route.POST(new Request(`${BASE}/automation/actions/notifications/send`, {
       method: "POST",
       headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json", "idempotency-key": uid("idem") },
-      body: JSON.stringify({ channel: "SMS", recipient: "+8801811000001", message: "Your order shipped" }),
+      // The recipient comes from a record in the workspace, never from the body (F33)
+      body: JSON.stringify({ channel: "SMS", user_id: shop.user.id, message: "Your order shipped" }),
     }));
   };
   let serviceToken = "";
@@ -692,7 +693,10 @@ async function main() {
   });
 
   await runTest("the token works for its scope and nothing else", async () => {
-    assert.strictEqual((await notify(serviceToken)).status, 200);
+    // Authenticated and allowed; the action then says honestly that nothing was sent (424, F33), never DELIVERED
+    const sent = await notify(serviceToken);
+    assert.strictEqual(sent.status, 424);
+    assert.strictEqual(((await sent.json()) as { error: { code: string } }).error.code, "INTEGRATION_NOT_CONFIGURED");
     const inventory = (await import("@/app/api/v1/automation/actions/inventory/adjust/route")) as Route;
     const res = await inventory.POST(new Request(`${BASE}/automation/actions/inventory/adjust`, {
       method: "POST",
@@ -905,7 +909,7 @@ async function main() {
     const creator = await member(tenantId, "ADMIN");
     const created = await createToken(creator.token, { name: "creator-bound", scopes: ["notifications.send"] });
     const { token } = ((await created.json()) as { data: { token: string } }).data;
-    assert.strictEqual((await notify(token)).status, 200);
+    assert.strictEqual((await notify(token)).status, 424, "accepted, then honestly not sent (F33)");
     db.updateMembershipStatus(tenantId, creator.id, "SUSPENDED");
     assert.strictEqual((await notify(token)).status, 401);
   });

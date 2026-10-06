@@ -1,7 +1,7 @@
-import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 4: AI Copilot Service
- * Powers interactive AI reply generation and draft action approval for human operators.
+ * Powers interactive AI reply generation for human operators. It only suggests: a suggestion never writes
+ * (FX-69; the old approveAction, which ran any tool name it was given, is gone — FX-67).
  */
 
 import { db } from "@/infrastructure/db";
@@ -9,13 +9,13 @@ import { RequestContext } from "@/lib/context";
 import { RbacService } from "@/domains/rbac/service";
 import { PERMISSIONS } from "@/lib/permissions";
 import { AgentRuntime } from "../runtime/agent-runtime";
-import { toolRegistry } from "../tools/tool-registry";
-import { BadRequestError, NotFoundError } from "@/lib/errors";
+import { BadRequestError } from "@/lib/errors";
 
 export interface CopilotSuggestionResult {
   suggestion: string;
   suggested_reply: string;
-  confidence: number;
+  /** No calibrated confidence exists yet, so none is reported (FX-69; it used to be a constant 0.95). */
+  confidence: number | null;
   intent: string;
   agent_type: string;
   citations: Array<{ title: string; section: string }>;
@@ -44,7 +44,7 @@ export class CopilotService {
       throw new BadRequestError("Cannot generate Copilot suggestion without customer messages.");
     }
 
-    // Run agent in simulation mode with copilot flag (does not deliver outbound message)
+    // Run agent in simulation mode with copilot flag: nothing is sent, and the agent only gets read-only tools (FX-69)
     const result = await AgentRuntime.run(context, {
       conversationId,
       messageText: lastCustomerMsg.text,
@@ -55,7 +55,7 @@ export class CopilotService {
     return {
       suggestion: result.finalResponse,
       suggested_reply: result.finalResponse,
-      confidence: 0.95,
+      confidence: null,
       intent: result.intent,
       agent_type: result.agentType,
       citations: result.citations.map((c) => ({
@@ -66,32 +66,4 @@ export class CopilotService {
     };
   }
 
-  /**
-   * Approves and executes an AI proposed action (e.g. creating an order draft)
-   */
-  public static async approveAction(
-    context: RequestContext,
-    params: {
-      conversationId: string;
-      actionName: string;
-      arguments: Record<string, unknown>;
-    }
-  ): Promise<{ success: boolean; result: any }> {
-    RbacService.assertCan(context, PERMISSIONS.AI_RUN);
-
-    const convo = db.findConversationById(context.tenant.id, params.conversationId);
-    if (!convo) {
-      throw new NotFoundError(`Conversation '${params.conversationId}' not found.`);
-    }
-
-    const runId = `capp_${Date.now()}_${randomSuffix()}`;
-    const exec = await toolRegistry.executeTool(context, {
-      toolName: params.actionName,
-      arguments: params.arguments,
-      agentRunId: runId,
-      conversationId: params.conversationId,
-    });
-
-    return exec;
-  }
 }

@@ -33,7 +33,7 @@ interface WireToolCall {
 interface WireResponse {
   model?: string;
   choices?: Array<{ message?: { content?: string | null; tool_calls?: WireToolCall[] } }>;
-  usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+  usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } };
   data?: Array<{ embedding?: number[] }>;
 }
 
@@ -63,7 +63,13 @@ function toWireMessage(m: LLMMessage): Record<string, unknown> {
 function usageOf(data: WireResponse): LLMUsage {
   const prompt = data.usage?.prompt_tokens ?? 0;
   const completion = data.usage?.completion_tokens ?? 0;
-  return { prompt_tokens: prompt, completion_tokens: completion, total_tokens: data.usage?.total_tokens ?? prompt + completion };
+  const cached = data.usage?.prompt_tokens_details?.cached_tokens;
+  return {
+    prompt_tokens: prompt,
+    completion_tokens: completion,
+    total_tokens: data.usage?.total_tokens ?? prompt + completion,
+    ...(typeof cached === "number" && cached > 0 ? { cached_tokens: Math.min(cached, prompt) } : {}), // FX-70
+  };
 }
 
 export class OpenAICompatibleProvider implements LLMProvider {
@@ -159,6 +165,10 @@ export class OpenAICompatibleProvider implements LLMProvider {
   }
 
   public async embed(text: string): Promise<number[]> {
+    if (!this.cfg.models.TIER_3_EMBEDDING) {
+      // No vendor default (FX-88): a wrong model name would silently fail or return vectors of another size
+      throw new AppError("AI_PROVIDER_NOT_CONFIGURED", `LLM_EMBEDDING_MODEL is not set for AI provider ${this.providerName}.`, 424);
+    }
     const data = await this.post("/embeddings", { model: this.cfg.models.TIER_3_EMBEDDING, input: text, ...(this.cfg.embeddingDimensions ? { dimensions: this.cfg.embeddingDimensions } : {}) });
     const embedding = data.data?.[0]?.embedding;
     if (!embedding?.length) throw new AppError("LLM_PROVIDER_ERROR", `AI provider ${this.providerName} returned no embedding.`, 502);
@@ -172,12 +182,11 @@ export class OpenAICompatibleProvider implements LLMProvider {
  */
 export class UnconfiguredProvider implements LLMProvider {
   public readonly providerName = "not-configured";
+  constructor(
+    private readonly reason = "No AI provider is configured. Set LLM_BASE_URL (and LLM_API_KEY), or AI_DEMO_MODE=1 for the offline demo."
+  ) {}
   private refuse(): never {
-    throw new AppError(
-      "AI_PROVIDER_NOT_CONFIGURED",
-      "No AI provider is configured. Set LLM_BASE_URL (and LLM_API_KEY), or AI_DEMO_MODE=1 for the offline demo.",
-      424
-    );
+    throw new AppError("AI_PROVIDER_NOT_CONFIGURED", this.reason, 424);
   }
   public async chat(): Promise<LLMResponse> {
     return this.refuse();

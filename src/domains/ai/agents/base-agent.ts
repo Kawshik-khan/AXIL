@@ -20,6 +20,8 @@ export interface AgentExecutionResult {
   handoffReason?: string;
   promptTokens: number;
   completionTokens: number;
+  /** Part of promptTokens the provider served from its cache (FX-70). */
+  cachedPromptTokens: number;
   latencyMs: number;
   model: string;
 }
@@ -39,8 +41,12 @@ export abstract class BaseAgent {
     context: RequestContext,
     agentContext: AgentContext,
     inputQuery: string,
-    runId: string
+    runId: string,
+    /** Narrows the agent's tools for this run, e.g. the read-only copilot set (FX-69). Never widens them. */
+    options?: { toolSubset?: readonly string[] }
   ): Promise<AgentExecutionResult> {
+    const subset = options?.toolSubset;
+    const tools: readonly string[] = subset ? this.allowedTools.filter((t) => subset.includes(t)) : this.allowedTools;
     // Monthly AI runs against the plan (FX-34 step 2); not gated unless the plan or an override sets ai_monthly_runs
     if (!(await PlatformEntitlementService.can(context.tenant.id, "ai_monthly_runs"))) {
       throw new FeatureNotEntitledError("ai_monthly_runs");
@@ -60,12 +66,13 @@ export abstract class BaseAgent {
       { role: "user", content: inputQuery },
     ];
 
-    const llmToolDefs = toolRegistry.getLLMToolDefinitions(this.allowedTools);
+    const llmToolDefs = toolRegistry.getLLMToolDefinitions(tools);
 
     let iterations = 0;
     let totalToolCalls = 0;
     let promptTokens = 0;
     let completionTokens = 0;
+    let cachedPromptTokens = 0;
     let handoffRequired = false;
     let handoffReason: string | undefined = undefined;
     let finalResponse = "";
@@ -86,6 +93,7 @@ export abstract class BaseAgent {
       const response = await modelRouter.chatWithRouting(this.modelTier, messages, llmToolDefs);
       promptTokens += response.usage.prompt_tokens;
       completionTokens += response.usage.completion_tokens;
+      cachedPromptTokens += response.usage.cached_tokens ?? 0;
 
       // 2. Check for Tool Invocations
       if (response.tool_calls && response.tool_calls.length > 0) {
@@ -122,10 +130,11 @@ export abstract class BaseAgent {
             arguments: tc.arguments,
             agentRunId: runId,
             conversationId: agentContext.conversation_id,
+            allowedTools: tools, // enforced by the registry, whatever name the model returned (FX-67)
           });
 
           // Check if tool triggered human handoff
-          if (tc.name === "request_human_handoff" || (toolResult.result && toolResult.result.handoff_successful)) {
+          if ((tc.name === "request_human_handoff" && toolResult.success) || (toolResult.result && toolResult.result.handoff_successful)) {
             handoffRequired = true;
             handoffReason = tc.arguments.reason as string || "Human handoff requested by agent.";
           }
@@ -164,6 +173,7 @@ export abstract class BaseAgent {
       handoffReason,
       promptTokens,
       completionTokens,
+      cachedPromptTokens,
       latencyMs: Date.now() - startTime,
       model: modelRouter.resolveModelName(this.modelTier),
     };

@@ -1197,7 +1197,7 @@ async function main() {
     db.savePlatformFeatureFlag({ id: "flag_enterprise", key: "enterprise", description: "Enterprise module", is_enabled_globally: false, percentage_rollout: 100, scope: "TENANT", tenant_allowlist: [], rules: {}, created_at: nowIso(), updated_at: nowIso() });
     try {
       await assert.rejects(
-        toolRegistry.executeTool(ownerCtx, { toolName: new ResolveSemanticMetricTool().name, arguments: { metric_key: "gross_revenue" }, agentRunId: "run_p3", conversationId: "conv_p3" }),
+        toolRegistry.executeTool(ownerCtx, { toolName: new ResolveSemanticMetricTool().name, arguments: { metric_key: "gross_revenue" }, agentRunId: "run_p3", conversationId: "conv_p3", allowedTools: [new ResolveSemanticMetricTool().name] }),
         (e: Error & { code?: string }) => e.code === "FEATURE_NOT_ENTITLED"
       );
     } finally {

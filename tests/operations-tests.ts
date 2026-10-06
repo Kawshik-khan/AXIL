@@ -329,7 +329,7 @@ export async function runOperationsTests() {
       created_at: new Date().toISOString(),
     });
 
-    const execution = pricingOperationsService.executePriceChange(tenantId, req.id, "test_operator");
+    const execution = pricingOperationsService.executePriceChange(tenantId, req.id, "test_operator", { actorType: "USER", approvedNow: true });
     assert.strictEqual(execution.status, "SUCCESS");
     assert.strictEqual(execution.new_price, 2350);
 
@@ -456,6 +456,7 @@ export async function runOperationsTests() {
       transactionId: "8N7A6C5D4E",
       amount: 2600,
       actor: "test_reconciler",
+      actorType: "USER",
     });
 
     assert.strictEqual(recon.matched, true);

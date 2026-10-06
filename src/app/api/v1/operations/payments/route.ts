@@ -37,6 +37,7 @@ async function handlePOST(request: Request) {
       transactionId: body.transaction_id,
       amount: body.amount,
       actor: context.user.id,
+      actorType: "USER",
     });
 
     if (!reconciled.matched) {

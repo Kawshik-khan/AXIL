@@ -527,13 +527,13 @@ export class CheckFrequencyCapTool implements IAgentTool<any> {
   }
 }
 
-// 13. ScheduleCampaignTool
+// 13. ScheduleCampaignTool (marketing.write like the schedule route: FX-68; was analytics.read)
 export class ScheduleCampaignTool implements IAgentTool<{ campaign_id: string; scheduled_start: string }> {
   public readonly name = "schedule_campaign";
   public readonly description = "Schedule an approved campaign for future execution.";
   public readonly category = "MARKETING";
   public readonly riskLevel: ToolRiskLevel = "MEDIUM_RISK";
-  public readonly requiredPermission = PERMISSIONS.ANALYTICS_READ;
+  public readonly requiredPermission = PERMISSIONS.MARKETING_WRITE;
   public readonly requiresConfirmation = false;
   public readonly schema = z.object({ campaign_id: z.string(), scheduled_start: z.string() });
   public readonly idempotent = true;
@@ -566,12 +566,13 @@ export class ScheduleCampaignTool implements IAgentTool<{ campaign_id: string; s
 }
 
 // 14. SendCampaignTool
+// Sending reaches every customer in the audience: the same permission as the execute route (FX-68; was analytics.read)
 export class SendCampaignTool implements IAgentTool<{ campaign_id: string }> {
   public readonly name = "send_campaign";
   public readonly description = "Execute an approved campaign across target audience recipients.";
   public readonly category = "MARKETING";
   public readonly riskLevel: ToolRiskLevel = "HIGH_RISK";
-  public readonly requiredPermission = PERMISSIONS.ANALYTICS_READ;
+  public readonly requiredPermission = PERMISSIONS.MARKETING_WRITE;
   public readonly requiresConfirmation = true;
   public readonly schema = z.object({ campaign_id: z.string() });
   public readonly idempotent = false;

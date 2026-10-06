@@ -32,6 +32,8 @@ export interface LLMUsage {
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
+  /** Part of prompt_tokens served from the provider's prompt cache (`prompt_tokens_details.cached_tokens`), if reported. */
+  cached_tokens?: number;
 }
 
 export interface LLMResponse {

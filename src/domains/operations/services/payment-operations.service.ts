@@ -6,6 +6,7 @@ import { randomSuffix } from "@/lib/ids";
  */
 
 import { db } from "@/infrastructure/db";
+import { ForbiddenError } from "@/lib/errors";
 import { PaymentOperation, PaymentException } from "@/types/operations";
 import { Payment } from "@/types/commerce";
 
@@ -72,8 +73,13 @@ export class PaymentOperationsService {
       transactionId: string;
       amount: number;
       actor: string;
+      /** A typed TrxID proves nothing by itself, so manual verification is staff-only (FX-68, audit F03). */
+      actorType: "USER" | "AGENT";
     }
   ): { matched: boolean; payment?: Payment; error?: string } {
+    if (params.actorType !== "USER") {
+      throw new ForbiddenError("Manual payment verification is done by staff, not by AI agents.");
+    }
     // Same rules as PaymentService.verifyPayment (FX-11): normalized single-use TrxIDs, no re-verifying a PAID
     // payment, and the order is PAID only when verified payments cover its total.
     const transactionId = String(params.transactionId ?? "").trim().toUpperCase();

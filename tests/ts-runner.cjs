@@ -34,10 +34,12 @@ for (const envFile of [".env.local", ".env"]) {
 }
 
 // Test suites use the offline demo AI and never a live model, even when .env.local configures one (FX-32).
-// Set TEST_LLM_LIVE=1 to run them against the configured provider on purpose.
+// Set TEST_LLM_LIVE=1 to run them against the configured provider on purpose. Blanked, not deleted: an empty value
+// stays empty in child processes, which a deleted one wouldn't (the env loader above refills unset variables).
 if (process.env.NODE_ENV === "test" && process.env.TEST_LLM_LIVE !== "1") {
-  delete process.env.LLM_BASE_URL;
-  delete process.env.LLM_FALLBACK_BASE_URL;
+  for (const key of ["LLM_BASE_URL", "LLM_FALLBACK_BASE_URL", "LLM_EMBEDDING_BASE_URL", "LLM_EMBEDDING_API_KEY", "TYPESAFE_API_KEY"]) {
+    process.env[key] = "";
+  }
   process.env.AI_DEMO_MODE = "1";
 }
 
@@ -45,6 +47,20 @@ if (process.env.NODE_ENV === "test" && process.env.TEST_LLM_LIVE !== "1") {
 // (COMMERCEOS_TEST_PG=1) uses an in-memory PGlite database instead.
 if (process.env.NODE_ENV === "test") {
   delete process.env.DATA_BACKEND;
+}
+
+// Nor do they reach any other live service from .env.local (testing rule 4): Neon, Qdrant, Upstash, Pinecone and n8n
+// are blanked (empty, so child processes keep them empty too). Only the `npm run test:db` suites keep them; a live
+// model run (TEST_LLM_LIVE=1) doesn't bring the databases back.
+const LIVE_SERVICE_VARS = [
+  "DATABASE_URL", "DATABASE_URL_POOLED", "QDRANT_URL", "QDRANT_API_KEY", "UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN",
+  "PINECONE_API_KEY", "N8N_HOST", "COMMERCEOS_N8N_BASE_URL", "COMMERCEOS_N8N_WEBHOOK_TOKEN", "COMMERCEOS_N8N_WEBHOOK_SECRET",
+  "COMMERCEOS_N8N_CALLBACK_TOKEN",
+];
+const liveSuites = (require(path.join(ROOT, "package.json")).scripts["test:db"] || "").match(/tests\/[\w.-]+\.ts/g) || [];
+const suiteArg = (process.argv[2] || "").replace(/\\/g, "/");
+if (process.env.NODE_ENV === "test" && !liveSuites.some((s) => suiteArg.endsWith(s))) {
+  for (const key of LIVE_SERVICE_VARS) process.env[key] = "";
 }
 
 // Handle module resolution for @/*

@@ -92,7 +92,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Extract checkout session and consent details\nconst input = $input.first().json;\nconst event = input.event || input.body || input;\nconst payload = event.payload || {};\n\nconst customerPhone = payload.customer_phone || payload.phone;\nconst checkoutId = payload.checkout_id || event.aggregate_id;\nconst cartValue = Number(payload.subtotal || 0);\n\nif (!customerPhone) {\n  throw new Error('VALIDATION_ERROR: Missing customer_phone for abandoned checkout recovery');\n}\n\nreturn [{\n  json: {\n    tenant_id: event.tenant_id,\n    checkout_id: checkoutId,\n    customer_phone: customerPhone,\n    cart_value: cartValue,\n    correlation_id: `recov_${checkoutId}`,\n    idempotency_key: `idemp_cart_recov_${checkoutId}`,\n    notification_payload: {\n      channel: 'WhatsApp',\n      recipient: customerPhone,\n      template_code: 'ABANDONED_CART_RECOVERY',\n      body: `You left items in your cart! Complete your order now and enjoy special free delivery.`,\n      order_id: checkoutId\n    }\n  }\n}];"
+        "jsCode": "// Abandoned checkout -> reminder request for CommerceOS (FX-99 Part A contract). CommerceOS resolves the recipient from\n// an order in this workspace: n8n never sends phone numbers. A checkout that isn't linked to an order can't be addressed\n// yet; customer recipients come with automation sending (FX-99 Part B).\nconst input = $input.first().json;\nconst body = input.body || input;\nconst event = body.event || body;\nconst payload = event.payload || {};\nconst checkoutId = payload.checkout_id || event.aggregate_id;\nconst orderId = payload.order_id;\nif (!orderId) {\n  throw new Error('NOT_SUPPORTED: this checkout has no order_id; abandoned-checkout reminders to customers need FX-99 Part B');\n}\nreturn [{\n  json: {\n    correlation_id: `recov_${checkoutId}`,\n    idempotency_key: `idemp_cart_recov_${checkoutId}`,\n    notification_payload: { channel: 'WHATSAPP', template_code: 'ABANDONED_CART_RECOVERY', order_id: orderId }\n  }\n}];"
       },
       "id": "validate-and-format-recovery",
       "name": "Validate & Format Recovery",
@@ -106,7 +106,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ ($vars.COMMERCEOS_API_BASE_URL || $env.COMMERCEOS_API_BASE_URL) || 'http://localhost:3000' }}/api/v1/automation/actions/notifications/send",
+        "url": "https://axil.onrender.com/api/v1/automation/actions/notifications/send",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
@@ -119,10 +119,6 @@
             {
               "name": "Idempotency-Key",
               "value": "={{ $json.idempotency_key }}"
-            },
-            {
-              "name": "Content-Type",
-              "value": "application/json"
             }
           ]
         },
@@ -131,9 +127,11 @@
         "jsonBody": "={{ JSON.stringify($json.notification_payload) }}",
         "options": {
           "timeout": 10000,
-          "retry": {
-            "maxRetries": 3,
-            "retryInterval": 1000
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
           }
         }
       },
@@ -156,7 +154,7 @@
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({ success: true, verified: true, message: 'Recovery notification dispatched', timestamp: new Date().toISOString() }) }}",
+        "responseBody": "={{ JSON.stringify({ success: true, status: 'SENT', data: $json.data, correlation_id: $('Validate & Format Recovery').first().json.correlation_id, timestamp: new Date().toISOString() }) }}",
         "options": {
           "responseCode": 200
         }
@@ -166,8 +164,121 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
+        2100,
+        204
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// CommerceOS answers (FX-99 Part A): 2xx = sent; 424 INTEGRATION_NOT_CONFIGURED = nothing was sent (expected until\n// automation sending exists); anything else, or no answer, is a failure.\nconst r = $input.first().json;\nconst status = Number(r.statusCode || 0);\nconst body = r.body && typeof r.body === 'object' ? r.body : {};\nconst code = (body.error && body.error.code) || (r.error ? 'N8N_CALL_ERROR' : null);\nlet outcome = 'FAILED';\nif (status >= 200 && status < 300) outcome = 'SENT';\nelse if (status === 424) outcome = 'NOT_SENT';\nreturn [{ json: { outcome, http_status: status || null, error_code: code, data: body.data ?? null } }];"
+      },
+      "id": "abandoned-checkout-recovery-classify",
+      "name": "Classify CommerceOS Answer",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
         1620,
         300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "sent-check",
+              "leftValue": "={{ $json.outcome }}",
+              "rightValue": "SENT",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "sent-check-node",
+      "name": "Sent?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1860,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "not-sent-check",
+              "leftValue": "={{ $json.outcome }}",
+              "rightValue": "NOT_SENT",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "not-sent-check-node",
+      "name": "Not Sent Yet?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2100,
+        428
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, status: 'NOT_SENT', reason: 'CommerceOS has no automation sending channel yet (FX-99 Part B); nothing was sent', correlation_id: $('Validate & Format Recovery').first().json.correlation_id, timestamp: new Date().toISOString() }) }}",
+        "options": {
+          "responseCode": 424
+        }
+      },
+      "id": "abandoned-checkout-recovery-not-sent",
+      "name": "Respond Not Sent",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2340,
+        364
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, status: 'FAILED', http_status: $json.http_status, error_code: $json.error_code, correlation_id: $('Validate & Format Recovery').first().json.correlation_id, timestamp: new Date().toISOString() }) }}",
+        "options": {
+          "responseCode": 502
+        }
+      },
+      "id": "abandoned-checkout-recovery-failure",
+      "name": "Respond Failure",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2340,
+        524
       ]
     }
   ],
@@ -198,7 +309,7 @@
       "main": [
         [
           {
-            "node": "Respond Recovery Success",
+            "node": "Classify CommerceOS Answer",
             "type": "main",
             "index": 0
           }
@@ -228,6 +339,53 @@
         [
           {
             "node": "Respond Unauthorized",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify CommerceOS Answer": {
+      "main": [
+        [
+          {
+            "node": "Sent?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sent?": {
+      "main": [
+        [
+          {
+            "node": "Respond Recovery Success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Not Sent Yet?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Not Sent Yet?": {
+      "main": [
+        [
+          {
+            "node": "Respond Not Sent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Failure",
             "type": "main",
             "index": 0
           }

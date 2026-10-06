@@ -35,7 +35,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ ($vars.COMMERCEOS_API_BASE_URL || $env.COMMERCEOS_API_BASE_URL) || 'http://localhost:3000' }}/api/v1/automation/webhooks/{{ $json.provider.toLowerCase() }}",
+        "url": "={{ ($vars.COMMERCEOS_API_BASE_URL || $env.COMMERCEOS_API_BASE_URL) }}/api/v1/automation/webhooks/{{ $json.provider.toLowerCase() }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,

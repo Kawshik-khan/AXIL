@@ -503,7 +503,7 @@ If the shoe size does not fit, we provide free size replacement within Dhaka. Ou
 
     const suggestion = await CopilotService.generateSuggestion(contextA, conversation.id);
     assert.ok(suggestion.suggested_reply);
-    assert.ok(suggestion.confidence >= 0.70);
+    assert.strictEqual(suggestion.confidence, null, "no made-up confidence (FX-69)");
     assert.ok(suggestion.suggested_reply.includes("120") || suggestion.suggested_reply.includes("১০০") || suggestion.suggested_reply.includes("১২০") || suggestion.suggested_reply.includes("charge"));
   });
 

@@ -105,7 +105,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// 2. Prepare Context, Correlation, and Authoritative Idempotency Key\nconst validated = $input.first().json;\n\n// Deterministic idempotency key per event and side-effecting task\nconst idempotencyKey = `n8n_ord_notif_${validated.event_id}`;\n\n// Format recipient and message safely without exposing unneeded PII\nconst payload = validated.payload;\nconst recipientPhone = payload.customer_phone || payload.phone;\nif (!recipientPhone) throw new Error('VALIDATION_ERROR: the order has no customer phone; nothing to send');\nconst grandTotal = payload.grand_total || 0;\nconst orderNumber = payload.order_number || validated.aggregate_id;\n\nconst notificationPayload = {\n  template_code: 'ORDER_CONFIRMATION_SMS',\n  channel: 'SMS',\n  recipient: recipientPhone,\n  customer_phone: recipientPhone,\n  order_id: validated.aggregate_id,\n  order_number: orderNumber,\n  body: `Your order #${orderNumber} of BDT ${grandTotal} has been received and is being processed.`,\n  metadata: {\n    event_id: validated.event_id,\n    tenant_id: validated.tenant_id,\n    orchestrator: 'n8n'\n  }\n};\n\nreturn [{\n  json: {\n    tenant_id: validated.tenant_id,\n    correlation_id: validated.correlation_id,\n    causation_id: validated.causation_id,\n    idempotency_key: idempotencyKey,\n    notification_payload: notificationPayload\n  }\n}];"
+        "jsCode": "// Builds the notification request for CommerceOS (FX-99 Part A contract). The recipient is the order's customer,\n// resolved by CommerceOS from order_id in this workspace: n8n never sends phone numbers.\nconst v = $input.first().json;\nconst orderId = v.aggregate_id;\nif (!orderId) throw new Error('VALIDATION_ERROR: order.created has no aggregate_id');\nreturn [{\n  json: {\n    correlation_id: v.correlation_id,\n    causation_id: v.causation_id,\n    idempotency_key: `n8n_ord_notif_${v.event_id}`,\n    notification_payload: { channel: 'SMS', template_code: 'ORDER_CONFIRMATION', order_id: orderId }\n  }\n}];"
       },
       "id": "prepare-context-idempotency",
       "name": "Prepare Context & Idempotency",
@@ -119,7 +119,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ ($vars.COMMERCEOS_API_BASE_URL || $env.COMMERCEOS_API_BASE_URL) || 'http://localhost:3000' }}/api/v1/automation/actions/notifications/send",
+        "url": "https://axil.onrender.com/api/v1/automation/actions/notifications/send",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
@@ -134,16 +134,8 @@
               "value": "={{ $json.causation_id }}"
             },
             {
-              "name": "X-Tenant-ID",
-              "value": "={{ $json.tenant_id }}"
-            },
-            {
               "name": "Idempotency-Key",
               "value": "={{ $json.idempotency_key }}"
-            },
-            {
-              "name": "Content-Type",
-              "value": "application/json"
             }
           ]
         },
@@ -152,9 +144,11 @@
         "jsonBody": "={{ JSON.stringify($json.notification_payload) }}",
         "options": {
           "timeout": 10000,
-          "retry": {
-            "maxRetries": 3,
-            "retryInterval": 1000
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
           }
         }
       },
@@ -176,39 +170,8 @@
     },
     {
       "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict"
-          },
-          "conditions": [
-            {
-              "id": "verified-check",
-              "leftValue": "={{ $json.data.verified }}",
-              "rightValue": true,
-              "operator": {
-                "type": "boolean",
-                "operation": "equals"
-              }
-            }
-          ],
-          "combinator": "and"
-        }
-      },
-      "id": "verify-execution-result",
-      "name": "Verify Execution Result",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2,
-      "position": [
-        1860,
-        300
-      ]
-    },
-    {
-      "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({ success: true, verified: true, status: 'COMPLETED', data: $json.data, correlation_id: $('Prepare Context & Idempotency').first().json.correlation_id, timestamp: new Date().toISOString() }) }}",
+        "responseBody": "={{ JSON.stringify({ success: true, status: 'SENT', data: $json.data, correlation_id: $('Prepare Context & Idempotency').first().json.correlation_id, timestamp: new Date().toISOString() }) }}",
         "options": {
           "responseCode": 200
         }
@@ -218,16 +181,112 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
+        2340,
+        204
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// CommerceOS answers (FX-99 Part A): 2xx = sent; 424 INTEGRATION_NOT_CONFIGURED = nothing was sent (expected until\n// automation sending exists); anything else, or no answer, is a failure.\nconst r = $input.first().json;\nconst status = Number(r.statusCode || 0);\nconst body = r.body && typeof r.body === 'object' ? r.body : {};\nconst code = (body.error && body.error.code) || (r.error ? 'N8N_CALL_ERROR' : null);\nlet outcome = 'FAILED';\nif (status >= 200 && status < 300) outcome = 'SENT';\nelse if (status === 424) outcome = 'NOT_SENT';\nreturn [{ json: { outcome, http_status: status || null, error_code: code, data: body.data ?? null } }];"
+      },
+      "id": "order-created-notification-classify",
+      "name": "Classify CommerceOS Answer",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1860,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "sent-check",
+              "leftValue": "={{ $json.outcome }}",
+              "rightValue": "SENT",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "sent-check-node",
+      "name": "Verify Execution Result",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
         2100,
-        200
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "not-sent-check",
+              "leftValue": "={{ $json.outcome }}",
+              "rightValue": "NOT_SENT",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "not-sent-check-node",
+      "name": "Not Sent Yet?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2340,
+        428
       ]
     },
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({ success: false, verified: false, status: 'FAILED', error: 'CommerceOS API action rejected or unverified', correlation_id: $('Prepare Context & Idempotency').first().json.correlation_id, timestamp: new Date().toISOString() }) }}",
+        "responseBody": "={{ JSON.stringify({ success: false, status: 'NOT_SENT', reason: 'CommerceOS has no automation sending channel yet (FX-99 Part B); nothing was sent', correlation_id: $('Prepare Context & Idempotency').first().json.correlation_id, timestamp: new Date().toISOString() }) }}",
         "options": {
-          "responseCode": 422
+          "responseCode": 424
+        }
+      },
+      "id": "order-created-notification-not-sent",
+      "name": "Respond Not Sent",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2580,
+        364
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, status: 'FAILED', http_status: $json.http_status, error_code: $json.error_code, correlation_id: $('Prepare Context & Idempotency').first().json.correlation_id, timestamp: new Date().toISOString() }) }}",
+        "options": {
+          "responseCode": 502
         }
       },
       "id": "respond-failure",
@@ -235,8 +294,8 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
-        2100,
-        420
+        2580,
+        524
       ]
     }
   ],
@@ -278,7 +337,7 @@
       "main": [
         [
           {
-            "node": "Verify Execution Result",
+            "node": "Classify CommerceOS Answer",
             "type": "main",
             "index": 0
           }
@@ -296,7 +355,7 @@
         ],
         [
           {
-            "node": "Respond Failure",
+            "node": "Not Sent Yet?",
             "type": "main",
             "index": 0
           }
@@ -326,6 +385,35 @@
         [
           {
             "node": "Respond Unauthorized",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify CommerceOS Answer": {
+      "main": [
+        [
+          {
+            "node": "Verify Execution Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Not Sent Yet?": {
+      "main": [
+        [
+          {
+            "node": "Respond Not Sent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Failure",
             "type": "main",
             "index": 0
           }

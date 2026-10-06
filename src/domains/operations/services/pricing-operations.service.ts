@@ -1,4 +1,4 @@
-import { AppError } from "@/lib/errors";
+import { AppError, ConflictError, ForbiddenError } from "@/lib/errors";
 import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 8: Autonomous Pricing Operations Service
@@ -182,13 +182,52 @@ export class PricingOperationsService {
   /**
    * Executes an approved or scheduled price change in Commerce Core
    */
+  /**
+   * Rejects a price change that hasn't run, so a later approval or retry can't execute it (FX-68 review). Staff only.
+   */
+  public rejectPriceChange(tenantId: string, requestId: string, actor: string, reason?: string): PriceChangeRequest {
+    const request = db.getPriceChangeRequests(tenantId).find((r) => r.id === requestId);
+    if (!request) throw new AppError("NOT_FOUND", `Price change request not found: ${requestId}`, 404);
+    if (request.status !== "SCHEDULED" && request.status !== "PENDING_APPROVAL") {
+      throw new ConflictError(`This price change is ${request.status}; only a scheduled or pending change can be rejected.`, {
+        status: request.status,
+      });
+    }
+    const updated = db.updatePriceChangeRequest(tenantId, request.id, { status: "REJECTED" });
+    db.createAuditLog({
+      id: `aud_price_rej_${Date.now()}_${randomSuffix()}`,
+      tenant_id: tenantId,
+      actor_user_id: actor,
+      action: "PRICE_CHANGE_REJECTED",
+      resource_type: "price_change_request",
+      resource_id: request.id,
+      metadata: { reason: reason ?? null, previous_status: request.status },
+      created_at: new Date().toISOString(),
+    });
+    return updated;
+  }
+
+  /**
+   * The service enforces its own rules, whoever calls it (FX-68, audit F06): only staff execute a price change, a
+   * request runs once, and one waiting for approval runs only from the approval itself (`approvedNow`).
+   */
   public executePriceChange(
     tenantId: string,
     requestId: string,
-    actor: string
+    actor: string,
+    options: { actorType: "USER" | "AGENT"; approvedNow?: boolean }
   ): PriceChangeExecution {
+    if (options.actorType !== "USER") {
+      throw new ForbiddenError("Price changes are executed by staff, not by AI agents.");
+    }
     const request = db.getPriceChangeRequests(tenantId).find((r) => r.id === requestId);
     if (!request) throw new AppError("NOT_FOUND", `Price change request not found: ${requestId}`, 404);
+    const runnable = request.status === "SCHEDULED" || (request.status === "PENDING_APPROVAL" && options.approvedNow === true);
+    if (!runnable) {
+      throw new ConflictError(`This price change is ${request.status}; only a scheduled or just-approved change can run.`, {
+        status: request.status,
+      });
+    }
 
     const variant = db.findVariantById(tenantId, request.product_variant_id);
     if (!variant) throw new AppError("NOT_FOUND", `Product variant not found: ${request.product_variant_id}`, 404);

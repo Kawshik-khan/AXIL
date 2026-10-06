@@ -92,7 +92,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Extract inventory low stock domain event\nconst input = $input.first().json;\nconst event = input.event || input.body || input;\nconst payload = event.payload || {};\n\nconst sku = payload.sku || 'SKU-UNKNOWN';\nconst available = payload.available_quantity || 0;\nconst threshold = payload.low_stock_threshold || 5;\n\nreturn [{\n  json: {\n    event_id: event.id,\n    tenant_id: event.tenant_id,\n    sku: sku,\n    product_name: payload.product_name || 'Item',\n    available_quantity: available,\n    low_stock_threshold: threshold,\n    correlation_id: `inv_alert_${sku}_${Date.now()}`,\n    idempotency_key: `idemp_inv_low_${sku}_${event.id}`,\n    notification_payload: {\n      channel: 'SMS',\n      // The operator's number is configuration (n8n environment), never a hard-coded number\n      recipient: ($vars.COMMERCEOS_OPERATOR_ALERT_PHONE || $env.COMMERCEOS_OPERATOR_ALERT_PHONE) || (() => { throw new Error('CONFIG_ERROR: set COMMERCEOS_OPERATOR_ALERT_PHONE in the n8n environment'); })(),\n      template_code: 'LOW_STOCK_OPERATOR_ALERT',\n      body: `CRITICAL: SKU ${sku} has only ${available} units remaining (Threshold: ${threshold}). Please replenish.`\n    }\n  }\n}];"
+        "jsCode": "// Low stock -> staff alert request for CommerceOS (FX-99 Part A contract). The recipient is a staff member of this\n// workspace, given by CommerceOS user id: n8n never sends phone numbers.\n// Set OPERATOR_USER_ID to the CommerceOS user id (usr_...) of the staff member to alert, or send notify_user_id in the event.\nconst OPERATOR_USER_ID = '';\nconst input = $input.first().json;\nconst body = input.body || input;\nconst event = body.event || body;\nconst payload = event.payload || {};\nconst userId = payload.notify_user_id || OPERATOR_USER_ID;\nif (!userId) {\n  throw new Error(\"CONFIG_ERROR: set OPERATOR_USER_ID in the 'Prepare Alert Payload' node (a CommerceOS staff user id)\");\n}\nconst sku = payload.sku || 'SKU-UNKNOWN';\nconst available = Number(payload.available_quantity ?? 0);\nconst threshold = Number(payload.low_stock_threshold ?? 5);\nreturn [{\n  json: {\n    correlation_id: `inv_alert_${sku}_${event.id}`,\n    idempotency_key: `idemp_inv_low_${sku}_${event.id}`,\n    notification_payload: {\n      channel: 'SMS',\n      template_code: 'LOW_STOCK_OPERATOR_ALERT',\n      user_id: userId,\n      message: `Low stock: ${sku} has ${available} units left (threshold ${threshold}).`\n    }\n  }\n}];"
       },
       "id": "prepare-alert-payload",
       "name": "Prepare Alert Payload",
@@ -106,7 +106,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ ($vars.COMMERCEOS_API_BASE_URL || $env.COMMERCEOS_API_BASE_URL) || 'http://localhost:3000' }}/api/v1/automation/actions/notifications/send",
+        "url": "https://axil.onrender.com/api/v1/automation/actions/notifications/send",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
@@ -119,10 +119,6 @@
             {
               "name": "Idempotency-Key",
               "value": "={{ $json.idempotency_key }}"
-            },
-            {
-              "name": "Content-Type",
-              "value": "application/json"
             }
           ]
         },
@@ -131,9 +127,11 @@
         "jsonBody": "={{ JSON.stringify($json.notification_payload) }}",
         "options": {
           "timeout": 10000,
-          "retry": {
-            "maxRetries": 3,
-            "retryInterval": 1000
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
           }
         }
       },
@@ -156,7 +154,7 @@
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({ success: true, verified: true, message: 'Low stock operator alert sent', data: $json }) }}",
+        "responseBody": "={{ JSON.stringify({ success: true, status: 'SENT', data: $json.data, correlation_id: $('Prepare Alert Payload').first().json.correlation_id, timestamp: new Date().toISOString() }) }}",
         "options": {
           "responseCode": 200
         }
@@ -166,8 +164,121 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
+        2100,
+        204
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// CommerceOS answers (FX-99 Part A): 2xx = sent; 424 INTEGRATION_NOT_CONFIGURED = nothing was sent (expected until\n// automation sending exists); anything else, or no answer, is a failure.\nconst r = $input.first().json;\nconst status = Number(r.statusCode || 0);\nconst body = r.body && typeof r.body === 'object' ? r.body : {};\nconst code = (body.error && body.error.code) || (r.error ? 'N8N_CALL_ERROR' : null);\nlet outcome = 'FAILED';\nif (status >= 200 && status < 300) outcome = 'SENT';\nelse if (status === 424) outcome = 'NOT_SENT';\nreturn [{ json: { outcome, http_status: status || null, error_code: code, data: body.data ?? null } }];"
+      },
+      "id": "inventory-low-stock-alert-classify",
+      "name": "Classify CommerceOS Answer",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
         1620,
         300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "sent-check",
+              "leftValue": "={{ $json.outcome }}",
+              "rightValue": "SENT",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "sent-check-node",
+      "name": "Sent?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1860,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "not-sent-check",
+              "leftValue": "={{ $json.outcome }}",
+              "rightValue": "NOT_SENT",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "not-sent-check-node",
+      "name": "Not Sent Yet?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2100,
+        428
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, status: 'NOT_SENT', reason: 'CommerceOS has no automation sending channel yet (FX-99 Part B); nothing was sent', correlation_id: $('Prepare Alert Payload').first().json.correlation_id, timestamp: new Date().toISOString() }) }}",
+        "options": {
+          "responseCode": 424
+        }
+      },
+      "id": "inventory-low-stock-alert-not-sent",
+      "name": "Respond Not Sent",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2340,
+        364
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, status: 'FAILED', http_status: $json.http_status, error_code: $json.error_code, correlation_id: $('Prepare Alert Payload').first().json.correlation_id, timestamp: new Date().toISOString() }) }}",
+        "options": {
+          "responseCode": 502
+        }
+      },
+      "id": "inventory-low-stock-alert-failure",
+      "name": "Respond Failure",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2340,
+        524
       ]
     }
   ],
@@ -198,7 +309,7 @@
       "main": [
         [
           {
-            "node": "Respond Low Stock Success",
+            "node": "Classify CommerceOS Answer",
             "type": "main",
             "index": 0
           }
@@ -228,6 +339,53 @@
         [
           {
             "node": "Respond Unauthorized",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify CommerceOS Answer": {
+      "main": [
+        [
+          {
+            "node": "Sent?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sent?": {
+      "main": [
+        [
+          {
+            "node": "Respond Low Stock Success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Not Sent Yet?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Not Sent Yet?": {
+      "main": [
+        [
+          {
+            "node": "Respond Not Sent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Failure",
             "type": "main",
             "index": 0
           }

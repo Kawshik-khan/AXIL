@@ -575,8 +575,11 @@ export const ConversationThread: React.FC<ConversationThreadProps> = ({
               >
                 <Sparkles size={14} color="#059669" />
                 <span>
-                  AI COPILOT DRAFT ({copilotSuggestion.intent} •{" "}
-                  {(copilotSuggestion.confidence * 100).toFixed(0)}% confidence)
+                  AI COPILOT DRAFT ({copilotSuggestion.intent}
+                  {typeof copilotSuggestion.confidence === "number"
+                    ? ` • ${(copilotSuggestion.confidence * 100).toFixed(0)}% confidence`
+                    : ""}
+                  )
                 </span>
               </div>
               <button

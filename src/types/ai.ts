@@ -571,6 +571,8 @@ export interface AIUsageRecord {
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
+  /** Prompt tokens the provider served from its cache (billed at the cached rate); 0 when it reports none (FX-70). */
+  cached_tokens?: number;
   estimated_cost_usd: number;
   estimated_cost_bdt: number;
   currency: string;

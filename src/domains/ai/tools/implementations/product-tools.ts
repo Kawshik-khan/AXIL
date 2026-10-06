@@ -181,15 +181,23 @@ export class CheckInventoryTool implements IAgentTool<z.infer<typeof CheckInvent
     };
   }
 
+  /**
+   * Stock comes only from inventory rows (FX-71, audit F05). A product with no inventory row is not "in stock", and a
+   * size or colour the product doesn't come in is reported as such, never answered with the stock of every variant.
+   */
   public async execute(context: RequestContext, input: z.infer<typeof CheckInventoryInputSchema>) {
     const inventoryLevels = await InventoryService.getInventoryLevels(context);
 
     let matched = inventoryLevels;
+    let productName: string | undefined;
     if (input.product_id) {
       const product = db.findProductById(context.tenant.id, input.product_id);
-      if (product) {
-        matched = matched.filter((i) => i.product_name.toLowerCase().includes(product.name.toLowerCase()));
+      if (!product) {
+        return { available: false, quantity: 0, status: "PRODUCT_NOT_FOUND", message: "No product with that id exists." };
       }
+      productName = product.name;
+      const variantIds = new Set(db.getProductVariants(context.tenant.id, product.id).map((v) => v.id));
+      matched = matched.filter((i) => variantIds.has(i.product_variant_id));
     } else if (input.product_query) {
       const q = input.product_query.toLowerCase();
       matched = matched.filter(
@@ -197,38 +205,40 @@ export class CheckInventoryTool implements IAgentTool<z.infer<typeof CheckInvent
       );
     }
 
+    if (matched.length === 0) {
+      const product = productName ?? db.getProducts(context.tenant.id, { search: input.product_query, limit: 1 }).products[0]?.name;
+      return {
+        ...(product ? { product_name: product } : {}),
+        available: false,
+        quantity: 0,
+        status: "OUT_OF_STOCK",
+        message: product
+          ? `${product} has no stock record, so it can't be confirmed as available.`
+          : "No stock matching your criteria was found in inventory.",
+      };
+    }
+
     if (input.variant_attributes && Object.keys(input.variant_attributes).length > 0) {
       const requestedVals = Object.values(input.variant_attributes).map((v) => v.toLowerCase());
       const filteredByVariant = matched.filter((i) =>
         requestedVals.some((val) => i.variant_title.toLowerCase().includes(val))
       );
-      if (filteredByVariant.length > 0) {
-        matched = filteredByVariant;
-      }
-    }
-
-    if (matched.length === 0) {
-      const products = db.getProducts(context.tenant.id, { search: input.product_query, limit: 1 }).products;
-      if (products.length > 0) {
+      if (filteredByVariant.length === 0) {
         return {
-          product_name: products[0].name,
-          available: true,
-          quantity: 15,
-          status: "IN_STOCK",
-          message: `${products[0].name} is in stock.`,
+          product_name: matched[0].product_name,
+          available: false,
+          quantity: 0,
+          status: "SIZE_NOT_OFFERED",
+          offered: Array.from(new Set(matched.map((i) => i.variant_title))),
+          message: "That size or option isn't offered for this product.",
         };
       }
-      return {
-        available: false,
-        quantity: 0,
-        status: "OUT_OF_STOCK",
-        message: "No stock matching your criteria was found in inventory.",
-      };
+      matched = filteredByVariant;
     }
 
+    const stockStatus = (qty: number) => (qty > 5 ? "IN_STOCK" : qty > 0 ? "LOW_STOCK" : "OUT_OF_STOCK");
     const totalAvailable = matched.reduce((acc, item) => acc + Math.max(0, item.quantity_available), 0);
     const inStock = totalAvailable > 0;
-    const status = totalAvailable > 5 ? "IN_STOCK" : totalAvailable > 0 ? "LOW_STOCK" : "OUT_OF_STOCK";
 
     return {
       product_name: matched[0].product_name,
@@ -236,7 +246,12 @@ export class CheckInventoryTool implements IAgentTool<z.infer<typeof CheckInvent
       sku: matched[0].sku,
       available: inStock,
       quantity: totalAvailable,
-      status,
+      status: stockStatus(totalAvailable),
+      // Per variant, so "size 42?" is answered for size 42 only; quantities above 10 aren't disclosed exactly
+      variants: matched.map((i) => {
+        const qty = Math.max(0, i.quantity_available);
+        return { variant_title: i.variant_title, sku: i.sku, stock_status: stockStatus(qty), available_qty: Math.min(qty, 10) };
+      }),
       message: inStock
         ? `Currently available in stock (quantity: ${totalAvailable}).`
         : "Currently out of stock.",

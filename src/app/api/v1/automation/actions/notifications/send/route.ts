@@ -1,92 +1,50 @@
+import { z } from "zod";
 import { RbacService } from "@/domains/rbac/service";
 import { PERMISSIONS } from "@/lib/permissions";
-import { randomSuffix } from "@/lib/ids";
-import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
-import { IdempotencyService } from "@/domains/automation/services/idempotency.service";
+import { extractRequestContext, apiError } from "@/lib/api-response";
 import { db } from "@/infrastructure/db";
-import { BadRequestError } from "@/lib/errors";
+import { BadRequestError, IntegrationNotConfiguredError, NotFoundError } from "@/lib/errors";
+import { parseOrThrow, readJson } from "@/lib/validation";
 import { withStore } from "@/lib/store-unit";
+
+/**
+ * Automation notification action (called by n8n with a service token).
+ *
+ * It used to record `notification.sent` and answer `DELIVERED, verified: true` without sending anything, to any phone
+ * number in the body (FX-99 Part A, audit F33). Now the recipient comes only from a record in this workspace (an
+ * order's customer or a staff member), never from the body, and the action says plainly that nothing was sent: no
+ * sending channel is wired for automations yet (WhatsApp Cloud is FX-50; automation sending is FX-99 Part B).
+ */
+const Body = z
+  .object({
+    channel: z.enum(["SMS", "WHATSAPP", "TELEGRAM", "EMAIL"]),
+    template_code: z.string().min(1).max(100).optional(),
+    message: z.string().min(1).max(1000).optional(),
+    order_id: z.string().min(1).max(100).optional(),
+    user_id: z.string().min(1).max(100).optional(),
+  })
+  .strict()
+  .refine((b) => Boolean(b.order_id) !== Boolean(b.user_id), { message: "Give exactly one of order_id or user_id." })
+  .refine((b) => Boolean(b.template_code || b.message), { message: "Give a template_code or a message." });
 
 async function handlePOST(request: Request) {
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.NOTIFICATIONS_SEND); // was unguarded (FX-18)
-    const idempotencyKey =
-      request.headers.get("idempotency-key") ||
-      request.headers.get("x-idempotency-key");
-
+    const idempotencyKey = request.headers.get("idempotency-key") || request.headers.get("x-idempotency-key");
     if (!idempotencyKey) {
       throw new BadRequestError("Idempotency-Key header is strictly required for automated notifications.");
     }
+    const body = parseOrThrow(Body, await readJson(request));
 
-    const correlationId = request.headers.get("x-correlation-id") || `corr_${Date.now()}_${randomSuffix()}`;
-    const causationId = request.headers.get("x-causation-id") || undefined;
-    const body = await request.json();
+    // The recipient is resolved inside this workspace only
+    if (body.order_id) {
+      if (!db.findOrderById(context.tenant.id, body.order_id)) throw new NotFoundError("Order", body.order_id);
+    } else if (body.user_id) {
+      if (!db.findMembership(context.tenant.id, body.user_id)) throw new NotFoundError("Staff member", body.user_id);
+    }
 
-    const { data, isCached } = await IdempotencyService.executeIdempotent(
-      context.tenant.id,
-      idempotencyKey,
-      "AUTOMATION_NOTIFICATION_SEND",
-      body,
-      async () => {
-        const notifId = `notif_${Date.now()}_${randomSuffix()}`;
-        const now = new Date().toISOString();
-
-        // Authoritative validation
-        const channel = body.channel || "SMS";
-        const recipient = body.recipient || body.customer_phone || body.operator_phone;
-        const message = body.message || body.body || `Order update notification for ${body.order_number || body.order_id}`;
-
-        if (!recipient) {
-          throw new BadRequestError("Recipient phone number or email is required for notification.");
-        }
-
-        // Record canonical domain event
-        db.recordEvent({
-          id: `evt_notif_${Date.now()}_${randomSuffix()}`,
-          type: "notification.sent",
-          version: "1.0",
-          tenant_id: context.tenant.id,
-          aggregate_type: "notification",
-          aggregate_id: notifId,
-          actor_id: context.user.id,
-          correlation_id: correlationId,
-          timestamp: now,
-          payload: {
-            notification_id: notifId,
-            channel,
-            recipient,
-            template_code: body.template_code,
-            order_id: body.order_id,
-          },
-        });
-
-        // Audit log
-        db.createAutomationAuditLog({
-          id: `aud_notif_${Date.now()}_${randomSuffix()}`,
-          tenant_id: context.tenant.id,
-          actor_id: context.user.id,
-          action: "NOTIFICATION_DISPATCHED",
-          resource_type: "notification",
-          resource_id: notifId,
-          metadata: { channel, recipient, correlation_id: correlationId },
-          timestamp: now,
-        });
-
-        return {
-          notification_id: notifId,
-          recipient,
-          channel,
-          status: "DELIVERED",
-          verified: true,
-          correlation_id: correlationId,
-          causation_id: causationId,
-          timestamp: now,
-        };
-      }
-    );
-
-    return apiSuccess(data, { is_cached: isCached });
+    throw new IntegrationNotConfiguredError(`Automation ${body.channel} notifications`, "no sending channel is wired for automations yet");
   } catch (err) {
     return apiError(err);
   }

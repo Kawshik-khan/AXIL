@@ -30,12 +30,13 @@ export class AutomationRouterService {
     const automations = db.getAutomations(tenantId);
     const results: RoutedExecutionSummary[] = [];
 
-    // Filter active automations that match this event type
+    // Active automations whose workflow is triggered by exactly this event type. `trigger_type === "EVENT"` used to
+    // match every event, so one event fired all of a workspace's event automations (FX-99 Part A).
     const matchingAutomations = automations.filter((a) => {
       if (!a.enabled || a.status !== "ACTIVE") return false;
       const workflow = db.findAutomationWorkflowById(tenantId, a.workflow_id);
       if (!workflow) return false;
-      return workflow.trigger === event.type || a.trigger_type === "EVENT";
+      return workflow.trigger === event.type;
     });
 
     for (const automation of matchingAutomations) {

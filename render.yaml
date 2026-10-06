@@ -116,6 +116,11 @@ services:
         sync: false
       - key: LLM_FALLBACK_API_KEY
         sync: false
+      # The active provider's real prices, or cost dashboards use placeholders (FX-70). Ollama Cloud gpt-oss:120b:
+      # {"TIER_1_FAST":{"promptCostPer1M":0.15,"cachedPromptCostPer1M":0.014,"completionCostPer1M":0.6},
+      #  "TIER_2_REASONING":{"promptCostPer1M":0.15,"cachedPromptCostPer1M":0.014,"completionCostPer1M":0.6}}
+      - key: LLM_PRICING_JSON
+        sync: false
       - key: N8N_HOST
         sync: false
       - key: COMMERCEOS_N8N_WEBHOOK_SECRET

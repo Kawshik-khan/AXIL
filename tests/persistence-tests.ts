@@ -36,8 +36,8 @@ function workerEnv(dataDir: string, opts: { readOnly?: boolean } = {}): NodeJS.P
   const env: NodeJS.ProcessEnv = { ...process.env, NODE_ENV: "development", COMMERCEOS_DATA_DIR: dataDir, PERSIST_DEBOUNCE_MS: "250" };
   if (opts.readOnly) env.PERSIST_TEST_CAPTURE_EXIT = "1";
   else delete env.PERSIST_TEST_CAPTURE_EXIT;
-  delete env.DATABASE_URL;
-  delete env.UPSTASH_REDIS_REST_URL;
+  // Blank, not delete: the test runner refills unset variables from .env.local, which can select the real Postgres.
+  for (const key of ["DATA_BACKEND", "DATABASE_URL", "DATABASE_URL_POOLED", "UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN", "QDRANT_URL"]) env[key] = "";
   return env;
 }
 

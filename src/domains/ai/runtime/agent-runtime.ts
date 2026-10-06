@@ -25,6 +25,8 @@ import { ProductInfoAgent } from "../agents/product-info.agent";
 
 // Safety & Tools
 import { RequestHumanHandoffTool } from "../tools/implementations/human-tools";
+import { COPILOT_READ_ONLY_TOOLS } from "../tools/tool-access";
+import { PromptRegistry } from "../prompts/prompt-registry";
 
 export interface AgentRunOptions {
   conversationId: string;
@@ -133,7 +135,7 @@ export class AgentRuntime {
       status: "RUNNING",
       current_step: "RECEIVE",
       model: "pending",
-      prompt_version: "1.0.0",
+      prompt_version: "pending", // set from the agent's prompt template once the agent is chosen (FX-70)
       started_at: new Date().toISOString(),
       latency_ms: 0,
       input_tokens: 0,
@@ -165,17 +167,20 @@ export class AgentRuntime {
 
     // Check if classification requires immediate human handoff
     if (classification.requires_human || classification.confidence < policy.confidence_threshold_low) {
-      const handoffTool = new RequestHumanHandoffTool();
-      await handoffTool.execute(
-        context,
-        {
-          reason: `Router handoff: ${classification.intent} (confidence: ${classification.confidence})`,
-          summary: options.messageText,
-          priority: "NORMAL",
-          suggested_action: "Review customer message and respond manually.",
-        },
-        { conversationId: options.conversationId }
-      );
+      // A copilot suggestion never writes (FX-69): the staff member is already handling the conversation.
+      if (!options.isCopilot) {
+        const handoffTool = new RequestHumanHandoffTool();
+        await handoffTool.execute(
+          context,
+          {
+            reason: `Router handoff: ${classification.intent} (confidence: ${classification.confidence})`,
+            summary: options.messageText,
+            priority: "NORMAL",
+            suggested_action: "Review customer message and respond manually.",
+          },
+          { conversationId: options.conversationId }
+        );
+      }
 
       const latency = Date.now() - startTime;
       db.updateAgentRun(tenantId, runId, {
@@ -192,14 +197,15 @@ export class AgentRuntime {
         intent: classification.intent,
         agentType: targetAgentType,
         finalResponse: "আমি একজন কাস্টমার সাপোর্ট প্রতিনিধির সাথে আপনাকে যুক্ত করে দিচ্ছি। অনুগ্রহ করে কিছুক্ষণ অপেক্ষা করুন।",
-        toolCallsCount: 1,
+        toolCallsCount: options.isCopilot ? 0 : 1,
         handoffRequired: true,
         handoffReason: `Low confidence (${classification.confidence}) or sensitive intent (${classification.intent})`,
         isCopilotSuggestion: false,
         citations: [],
-        tokensUsed: 120,
-        costUsd: 0.0001,
-        costBdt: 0.012,
+        // No agent model call happened on this path; the router's own usage isn't measured yet (FX-69, FX-81)
+        tokensUsed: 0,
+        costUsd: 0,
+        costBdt: 0,
         latencyMs: latency,
       };
     }
@@ -207,8 +213,8 @@ export class AgentRuntime {
     // ----------------------------------------------------
     // STEP 3: PLAN & SELECT AGENT
     // ----------------------------------------------------
-    db.updateAgentRun(tenantId, runId, { current_step: "PLAN" });
     const agent = this.resolveAgent(targetAgentType);
+    db.updateAgentRun(tenantId, runId, { current_step: "PLAN", prompt_version: PromptRegistry.getTemplate(agent.agentType).version });
 
     // ----------------------------------------------------
     // STEP 4: RETRIEVE KNOWLEDGE (RAG)
@@ -246,7 +252,9 @@ export class AgentRuntime {
 
     let executionResult;
     try {
-      executionResult = await agent.execute(context, agentContext, options.messageText, runId);
+      executionResult = await agent.execute(context, agentContext, options.messageText, runId, {
+        toolSubset: options.isCopilot ? COPILOT_READ_ONLY_TOOLS : undefined, // "Suggest" only reads (FX-69)
+      });
     } catch (err: any) {
       const latency = Date.now() - startTime;
       db.updateAgentRun(tenantId, runId, {
@@ -322,7 +330,8 @@ export class AgentRuntime {
     const { costUsd, costBdt } = modelRouter.calculateCost(
       agent.modelTier,
       executionResult.promptTokens,
-      executionResult.completionTokens
+      executionResult.completionTokens,
+      executionResult.cachedPromptTokens
     );
 
     const runStatus = executionResult.handoffRequired ? "ESCALATED" : "COMPLETED";
@@ -352,18 +361,22 @@ export class AgentRuntime {
       prompt_tokens: executionResult.promptTokens,
       completion_tokens: executionResult.completionTokens,
       total_tokens: executionResult.promptTokens + executionResult.completionTokens,
+      cached_tokens: executionResult.cachedPromptTokens,
       estimated_cost_usd: costUsd,
       estimated_cost_bdt: costBdt,
       currency: "BDT",
       timestamp: new Date().toISOString(),
     });
 
-    // Update conversation multi-turn summary in background if conversation is active
-    MemoryService.updateConversationSummary(
-      tenantId,
-      options.conversationId,
-      classification.intent
-    ).catch(() => {});
+    // Update conversation multi-turn summary in background if conversation is active (not for a copilot suggestion,
+    // which writes nothing to the conversation: FX-69)
+    if (!options.isCopilot) {
+      MemoryService.updateConversationSummary(
+        tenantId,
+        options.conversationId,
+        classification.intent
+      ).catch(() => {});
+    }
 
     return {
       runId,

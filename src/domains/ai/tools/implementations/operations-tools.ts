@@ -284,10 +284,12 @@ export class ExecutePriceChangeTool implements IAgentTool<z.infer<typeof Execute
   }
 
   public async execute(context: RequestContext, input: z.infer<typeof ExecutePriceChangeInputSchema>): Promise<any> {
+    // An AI tool (FX-68): never offered to a model, and refused by the service if it ever runs
     const execution = pricingOperationsService.executePriceChange(
       context.tenant.id,
       input.request_id,
-      context.user?.id || "agent_system"
+      context.user?.id || "agent_system",
+      { actorType: "AGENT" }
     );
     return execution;
   }
@@ -438,6 +440,7 @@ export class VerifyPaymentTransactionTool implements IAgentTool<z.infer<typeof V
       transactionId: input.trx_id,
       amount: input.expected_amount,
       actor: context.user?.id || "agent_system",
+      actorType: "AGENT", // never offered to a model (FX-68), and refused by the service if it ever runs
     });
     return match;
   }

@@ -7,7 +7,20 @@ This guide details how to import, configure, and activate the production workflo
 ## Pre-requisites
 
 1. **Running n8n Instance**: Pinned to **n8n v1.76.0** or higher.
-2. **Environment Variable Configured**: `COMMERCEOS_API_BASE_URL` set in n8n host environment (e.g. `https://api.commerceos.com.bd` or `http://localhost:3000` for local testing).
+> **Notification workflows (FX-99 Part A, 2026-10-06; live on commerceos.app.n8n.cloud the same day):**
+> `/api/v1/automation/actions/notifications/send` takes `{ channel, template_code | message, order_id | user_id }` only
+> (CommerceOS resolves the recipient; n8n never sends phone numbers), and answers 424 "Nothing was sent" until automation
+> sending exists (FX-99 Part B). The order-created, abandoned-checkout and low-stock workflows follow this contract and
+> answer CommerceOS with 200 SENT, 424 NOT_SENT or 502 FAILED (never a 2xx for a message that wasn't sent).
+> - They call `https://axil.onrender.com` directly (n8n Cloud has no `$env`, and Variables need a paid plan): change the
+>   HTTP node URL if your CommerceOS address differs.
+> - Attach a Header Auth credential "CommerceOS API" (`Authorization: Bearer cos_svc_…`, a CommerceOS service token with
+>   `notifications.send`) to each HTTP node.
+> - Low stock: set `OPERATOR_USER_ID` (a CommerceOS staff user id) in "Prepare Alert Payload".
+> - Abandoned checkout: only checkouts with an `order_id` can be addressed until FX-99 Part B.
+> - The Facebook-comment workflow still sends the old body and gets 400.
+
+2. **Environment Variable Configured**: `COMMERCEOS_API_BASE_URL` set in n8n host environment (e.g. `https://api.commerceos.com.bd` or `http://localhost:3000` for local testing). Required: the workflows have no fallback address, so a missing value makes the call fail instead of quietly going to `localhost` (FX-99 Part A).
 3. **CommerceOS API Token / Session Key**: Obtained from CommerceOS Settings or Developer Platform (`/enterprise/developer`).
 
 ---

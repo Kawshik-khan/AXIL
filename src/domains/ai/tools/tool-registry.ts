@@ -11,6 +11,7 @@ import { RbacService } from "@/domains/rbac/service";
 import { db } from "@/infrastructure/db";
 import { AppError, BadRequestError, ForbiddenError, NotFoundError } from "@/lib/errors";
 import { LLMToolDefinition } from "@/domains/ai/providers/llm-provider.interface";
+import { LLM_FORBIDDEN_TOOLS, llmCallableTools } from "./tool-access";
 
 // Tool implementations
 import { SearchProductsTool, GetProductTool, CheckInventoryTool } from "./implementations/product-tools";
@@ -214,11 +215,10 @@ export class ToolRegistry {
     return this.listTools().filter((t) => t.category === category);
   }
 
-  public getLLMToolDefinitions(allowedToolNames?: string[]): LLMToolDefinition[] {
-    const list = Array.from(this.tools.values());
-    const filtered = allowedToolNames && allowedToolNames.length > 0
-      ? list.filter((t) => allowedToolNames.includes(t.name))
-      : list;
+  /** The definitions offered to a model: only the agent's own tools, never a forbidden one. An empty list offers none. */
+  public getLLMToolDefinitions(allowedToolNames: readonly string[]): LLMToolDefinition[] {
+    const callable = llmCallableTools(allowedToolNames ?? []); // an untyped caller without a list gets no tools
+    const filtered = Array.from(this.tools.values()).filter((t) => callable.includes(t.name));
 
     return filtered.map((t) => {
       const def = t.getDefinition();
@@ -231,7 +231,8 @@ export class ToolRegistry {
   }
 
   /**
-   * Direct Tool Execution Convenience Helper
+   * Direct Tool Execution Convenience Helper. The caller names the tool itself (no model chose it), so the allowlist is
+   * that one tool; the forbidden tools stay refused here too.
    */
   public async execute(
     context: RequestContext,
@@ -245,6 +246,7 @@ export class ToolRegistry {
       agentRunId: options?.agentRunId || `run_direct_${Date.now()}_${randomSuffix()}`,
       conversationId: options?.conversationId || `conv_direct_${Date.now()}_${randomSuffix()}`,
       idempotencyKey: options?.idempotencyKey,
+      allowedTools: [toolName],
     });
     if (!res.success) {
       throw new AppError("VALIDATION_ERROR", res.error || "Tool validation failed", 400);
@@ -264,9 +266,33 @@ export class ToolRegistry {
       agentRunId: string;
       conversationId: string;
       idempotencyKey?: string;
+      /** The calling agent's tool list. Required: there is no default, so no caller can skip it (FX-67). */
+      allowedTools: readonly string[];
     }
   ): Promise<{ success: boolean; result: any; error?: string }> {
     const startTime = Date.now();
+
+    // 0. Allowlist first, before the tool is even looked up: a model can return any tool name (FX-67, FX-68; audit F01)
+    // `?? []`: an untyped caller that omits the list gets a refusal, not a crash
+    if (!llmCallableTools(params.allowedTools ?? []).includes(params.toolName)) {
+      const reason = LLM_FORBIDDEN_TOOLS.has(params.toolName)
+        ? `Tool '${params.toolName}' can't be called by an AI agent; staff use its own screen.`
+        : `Tool '${params.toolName}' is not allowed for this agent.`;
+      db.createAgentToolCall({
+        id: `tcall_${Date.now()}_${randomSuffix()}`,
+        tenant_id: context.tenant.id,
+        agent_run_id: params.agentRunId,
+        conversation_id: params.conversationId,
+        tool_name: params.toolName,
+        input_arguments: params.arguments,
+        status: "POLICY_REJECTED",
+        duration_ms: Date.now() - startTime,
+        error_message: reason,
+        created_at: new Date().toISOString(),
+      });
+      return { success: false, result: null, error: `TOOL_NOT_ALLOWED: ${reason}` }; // the model sees it and can recover
+    }
+
     const tool = this.getTool(params.toolName);
 
     if (!tool) {

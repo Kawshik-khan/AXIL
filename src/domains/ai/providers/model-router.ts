@@ -14,9 +14,15 @@ export type ModelTier = "TIER_1_FAST" | "TIER_2_REASONING" | "TIER_3_EMBEDDING";
 export interface ModelPricing {
   promptCostPer1M: number;
   completionCostPer1M: number;
+  /** Price of prompt tokens served from the provider's cache; defaults to promptCostPer1M (no cache discount). FX-70 */
+  cachedPromptCostPer1M?: number;
 }
 
-/** Default prices per 1M tokens (USD). Override with LLM_PRICING_JSON, e.g. {"TIER_1_FAST":{"promptCostPer1M":0.15,"completionCostPer1M":0.6}}. */
+/**
+ * Placeholder prices per 1M tokens (USD), used only when LLM_PRICING_JSON is unset. Set LLM_PRICING_JSON to the active
+ * provider's real prices (render.yaml does), e.g. {"TIER_1_FAST":{"promptCostPer1M":0.15,"cachedPromptCostPer1M":0.014,
+ * "completionCostPer1M":0.6}}.
+ */
 const DEFAULT_TIER_PRICING: Record<ModelTier, ModelPricing> = {
   TIER_1_FAST: {
     promptCostPer1M: 0.075,
@@ -76,12 +82,18 @@ export class ModelRouter {
   /** (Re)builds the providers from an environment; also resets the circuit breaker. */
   public configure(env: NodeJS.ProcessEnv): void {
     this.resetCircuitBreakers();
+    // Model names come only from configuration (FX-88, audit F24): a vendor default would send, say, "gpt-4o" to
+    // Ollama Cloud. The reasoning tier may reuse the fast model; nothing else is guessed.
     const models = {
-      TIER_1_FAST: env.LLM_MODEL_FAST || "gpt-4o-mini",
-      TIER_2_REASONING: env.LLM_MODEL_REASONING || env.LLM_MODEL_FAST || "gpt-4o",
-      TIER_3_EMBEDDING: env.LLM_EMBEDDING_MODEL || "text-embedding-3-small",
+      TIER_1_FAST: env.LLM_MODEL_FAST?.trim() || "",
+      TIER_2_REASONING: env.LLM_MODEL_REASONING?.trim() || env.LLM_MODEL_FAST?.trim() || "",
+      TIER_3_EMBEDDING: env.LLM_EMBEDDING_MODEL?.trim() || "",
     };
-    if (env.LLM_BASE_URL) {
+    if (env.LLM_BASE_URL && !models.TIER_1_FAST) {
+      this.primaryProvider = new UnconfiguredProvider(
+        `LLM_MODEL_FAST is not set for AI provider ${env.LLM_PROVIDER_NAME || "at LLM_BASE_URL"}. Set the model names explicitly.`
+      );
+    } else if (env.LLM_BASE_URL) {
       this.primaryProvider = new OpenAICompatibleProvider({ baseUrl: env.LLM_BASE_URL, apiKey: env.LLM_API_KEY, name: env.LLM_PROVIDER_NAME, models });
     } else if (env.AI_DEMO_MODE === "1") {
       this.primaryProvider = new MockLLMProvider();
@@ -184,14 +196,19 @@ export class ModelRouter {
     return "not-configured";
   }
 
+  /** `cachedPromptTokens` is the part of `promptTokens` the provider served from its cache, billed at the cached rate. */
   public calculateCost(
     tierOrModel: ModelTier | string,
     promptTokens: number,
-    completionTokens: number
+    completionTokens: number,
+    cachedPromptTokens = 0
   ): { costUsd: number; costBdt: number } {
     const prices = tierPricing();
     const pricing = prices[tierOrModel as ModelTier] || prices.TIER_1_FAST;
-    const promptCost = (promptTokens / 1_000_000) * pricing.promptCostPer1M;
+    const cached = Math.min(Math.max(0, cachedPromptTokens), promptTokens);
+    const cachedRate = pricing.cachedPromptCostPer1M ?? pricing.promptCostPer1M;
+    const promptCost =
+      ((promptTokens - cached) / 1_000_000) * pricing.promptCostPer1M + (cached / 1_000_000) * cachedRate;
     const completionCost = (completionTokens / 1_000_000) * pricing.completionCostPer1M;
     const costUsd = Number((promptCost + completionCost).toFixed(6));
     const costBdt = Number((costUsd * BDT_CONVERSION_RATE).toFixed(4));
@@ -215,7 +232,7 @@ export class ModelRouter {
       // The offline demo costs nothing; real usage is priced from the tokens the provider reports (FX-32)
       const { costUsd, costBdt } =
         this.getMode() === "LIVE"
-          ? this.calculateCost(tier, response.usage.prompt_tokens, response.usage.completion_tokens)
+          ? this.calculateCost(tier, response.usage.prompt_tokens, response.usage.completion_tokens, response.usage.cached_tokens)
           : { costUsd: 0, costBdt: 0 };
       return {
         ...response,
@@ -235,7 +252,8 @@ export class ModelRouter {
           const { costUsd, costBdt } = this.calculateCost(
             tier,
             fallbackResponse.usage.prompt_tokens,
-            fallbackResponse.usage.completion_tokens
+            fallbackResponse.usage.completion_tokens,
+            fallbackResponse.usage.cached_tokens
           );
           return {
             ...fallbackResponse,
