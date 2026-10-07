@@ -51,7 +51,6 @@ export default function LearningAndModelsPage() {
           <h1>
             <GraduationCap size={28} color="#c7f900" />
             Learning & Models Center
-            <span className={styles.headerBadge}>Phase 10</span>
           </h1>
           <p className={styles.headerSubtitle}>
             Continuous learning pipeline with mandatory Shadow → Canary → Governance stages; zero unvetted model self-modification.

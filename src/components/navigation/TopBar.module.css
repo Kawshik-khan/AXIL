@@ -116,58 +116,6 @@
   gap: 10px;
 }
 
-.platformBadge {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 14px;
-  background: #111827;
-  color: var(--color-lime-primary, #C7F900);
-  border: 1px solid rgba(0, 0, 0, 0.1);
-  border-radius: 9999px;
-  font-weight: 700;
-  font-size: 12px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-  transition: all 0.15s ease;
-  text-decoration: none;
-  cursor: pointer;
-}
-
-.platformBadge:hover {
-  background: #000000;
-  transform: translateY(-1px);
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18);
-}
-
-.aiIndicator {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 14px;
-  background: rgba(199, 249, 0, 0.16);
-  border: 1px solid rgba(199, 249, 0, 0.45);
-  border-radius: 9999px;
-  font-size: 12px;
-  font-weight: 600;
-  color: #111827;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
-}
-
-.aiDot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--color-lime-primary, #c7f900);
-  box-shadow: 0 0 6px var(--color-lime-primary, #c7f900);
-  animation: pulse 2s infinite;
-}
-
-@keyframes pulse {
-  0% { opacity: 0.6; }
-  50% { opacity: 1; }
-  100% { opacity: 0.6; }
-}
-
 .iconButton {
   position: relative;
   width: 40px;

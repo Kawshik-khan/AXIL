@@ -76,20 +76,6 @@ export const TopBar: React.FC<TopBarProps> = ({
       </div>
 
       <div className={styles.rightSection}>
-        <Link
-          href="/super-admin"
-          className={styles.platformBadge}
-          title="Switch to SaaS Platform Control Plane (Super Admin Scope)"
-        >
-          <Shield size={13} />
-          <span>Platform Control</span>
-        </Link>
-
-        <div className={styles.aiIndicator} title="✦ CommerceOS Agent Gateway Active">
-          <span className={styles.aiDot} />
-          <span>✦ AI Ready</span>
-        </div>
-
         <button className={styles.iconButton} aria-label="Notifications" title="System Alerts">
           <Bell size={18} />
           <span className={styles.notificationBadge} />
@@ -113,17 +99,6 @@ export const TopBar: React.FC<TopBarProps> = ({
                 <p style={{ fontWeight: 600, fontSize: "13px" }}>{userName}</p>
                 <p style={{ fontSize: "11px", color: "var(--color-text-muted)" }}>Role: {userRole}</p>
               </div>
-              <div className={styles.dropdownDivider} />
-              <Link
-                href="/super-admin"
-                className={styles.dropdownItem}
-                onClick={() => setIsDropdownOpen(false)}
-                role="menuitem"
-                style={{ fontWeight: 600 }}
-              >
-                <Shield size={16} />
-                <span>SaaS Control Plane (Platform)</span>
-              </Link>
               <div className={styles.dropdownDivider} />
               <Link
                 href="/settings"

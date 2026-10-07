@@ -133,7 +133,6 @@ export default function AutonomousAgentsPage() {
           <h1>
             <Bot size={28} color="#c7f900" />
             Agent Control Center
-            <span className={styles.headerBadge}>Phase 10</span>
           </h1>
           <p className={styles.headerSubtitle}>
             Specialized autonomous agents collaborating via structured inter-agent protocols with individual risk controls.

@@ -118,7 +118,6 @@ export default function AutonomousControlTowerPage() {
             <h1>
               <Sparkles size={28} color="#c7f900" />
               Autonomous Control Tower
-              <span className={styles.headerBadge}>Phase 10</span>
             </h1>
             <p className={styles.headerSubtitle}>Cross-domain convergence layer and unified autonomous operations</p>
           </div>
@@ -168,7 +167,6 @@ export default function AutonomousControlTowerPage() {
           <h1>
             <Sparkles size={28} color="#c7f900" />
             Autonomous Control Tower
-            <span className={styles.headerBadge}>Phase 10</span>
           </h1>
           <p className={styles.headerSubtitle}>
             Unifying Commerce, Social, Intelligence, Growth, Operations, and Enterprise into one governed autonomous operating system.

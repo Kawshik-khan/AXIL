@@ -21,7 +21,6 @@ import {
   LogOut,
   Rocket,
   Cpu,
-  Building2,
   PlugZap,
 } from "lucide-react";
 import styles from "./FloatingNav.module.css";
@@ -44,7 +43,6 @@ const DOCK_ROUTES: DockRoute[] = [
   { label: "Conversations", href: "/conversations", icon: <MessageSquareText size={20} strokeWidth={2} />, badge: "Omni" },
   { label: "Growth", href: "/growth", icon: <Rocket size={20} strokeWidth={2} />, badge: "P7" },
   { label: "Operations", href: "/operations", icon: <Cpu size={20} strokeWidth={2} />, badge: "P8" },
-  { label: "Enterprise", href: "/enterprise", icon: <Building2 size={20} strokeWidth={2} />, badge: "P9" },
   { label: "Autonomous", href: "/autonomous", icon: <Sparkles size={20} strokeWidth={2} />, badge: "P10" },
   { label: "Marketing", href: "/marketing", icon: <Megaphone size={20} strokeWidth={2} /> },
   { label: "Analytics", href: "/analytics", icon: <BarChart3 size={20} strokeWidth={2} /> },

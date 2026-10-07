@@ -60,7 +60,6 @@ export default function AutonomousSystemHealthPage() {
           <h1>
             <Activity size={28} color="#c7f900" />
             Platform Health Dashboard
-            <span className={styles.headerBadge}>Phase 10</span>
           </h1>
           <p className={styles.headerSubtitle}>
             11-dimension holistic telemetry, SLO error budget burn rates, and automated anomaly diagnostics.

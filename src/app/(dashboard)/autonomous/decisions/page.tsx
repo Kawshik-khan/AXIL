@@ -99,7 +99,6 @@ export default function AutonomousDecisionsPage() {
           <h1>
             <Scale size={28} color="#c7f900" />
             Autonomous Decision Center
-            <span className={styles.headerBadge}>Phase 10</span>
           </h1>
           <p className={styles.headerSubtitle}>
             Full inspectability of multi-objective decisions, simulation tradeoffs, policy assertions, and human approval gates.

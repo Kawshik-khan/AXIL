@@ -77,7 +77,6 @@ export default function BusinessObjectivesPage() {
           <h1>
             <Target size={28} color="#c7f900" />
             Business Objective Center
-            <span className={styles.headerBadge}>Phase 10</span>
           </h1>
           <p className={styles.headerSubtitle}>
             Strategic business goal hierarchy with KPI progress tracking, autonomous constraint monitoring, and risk forecasting.

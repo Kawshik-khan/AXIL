@@ -75,7 +75,6 @@ export default function GovernanceAndSafetyPage() {
           <h1>
             <ShieldAlert size={28} color="#c7f900" />
             Governance & Safety Center
-            <span className={styles.headerBadge}>Phase 10</span>
           </h1>
           <p className={styles.headerSubtitle}>
             Non-negotiable autonomous safety boundaries, emergency kill switches, and human authority control planes.
