@@ -41,7 +41,7 @@ jobs:
       LLM_MODEL_REASONING: gpt-oss:120b
       LLM_PRICING_JSON: '{"TIER_1_FAST":{"promptCostPer1M":0.15,"cachedPromptCostPer1M":0.014,"completionCostPer1M":0.6}}'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with: { node-version-file: .nvmrc, cache: npm }
       - run: npm ci

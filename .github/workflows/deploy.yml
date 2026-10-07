@@ -26,7 +26,7 @@ jobs:
     environment: staging
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
       - uses: actions/setup-node@v4
@@ -71,7 +71,7 @@ jobs:
       LLM_MODEL_REASONING: gpt-oss:120b
       EVAL_CASES: G01,G03,G06,G19,G25,G28,G33,G37,G41,G44,G55,G59,R03,R04,R06,R07,R11,R12,R16,R21,R25,R26,R27,R35,R42,R43
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
       - uses: actions/setup-node@v4
@@ -95,7 +95,7 @@ jobs:
     environment: production # add required reviewers here for a manual approval step
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
       - uses: actions/setup-node@v4
