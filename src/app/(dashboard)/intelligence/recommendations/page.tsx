@@ -44,7 +44,7 @@ export default function RecommendationsPage() {
         body: JSON.stringify({ context: { origin: "RECOMMENDATIONS_VIEW" } }),
       });
       if (res.ok) {
-        alert("Action submitted to Phase 5 Approval Engine!");
+        alert("Action sent for approval.");
         loadRecs();
       } else {
         alert("Failed to submit proposal.");
@@ -64,7 +64,7 @@ export default function RecommendationsPage() {
             <Sparkles size={24} color="#C7F900" /> Explainable Recommendations & Decisions
           </h1>
           <p className={styles.headerSubtitle}>
-            Evidence-backed proposals with explicit impact forecasts, trade-off warnings, and Phase 5 policy bridging.
+            Evidence-backed proposals with explicit impact forecasts, trade-off warnings, and approval routing.
           </p>
         </div>
         <button className={styles.secondaryBtn} onClick={loadRecs}>

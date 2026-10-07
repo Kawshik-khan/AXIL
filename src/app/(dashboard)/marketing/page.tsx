@@ -316,7 +316,7 @@ export default function MarketingPage() {
             <Megaphone size={28} color="var(--color-lime-primary, #C7F900)" /> Marketing & Campaigns
           </h1>
           <p className={styles.headerSubtitle}>
-            Phase 8 Advanced Agents: WhatsApp cart recovery, audience cohort segmentation, rate-limited broadcasts & multi-touch attribution
+            WhatsApp cart recovery, audience cohort segmentation, rate-limited broadcasts & multi-touch attribution
           </p>
         </div>
         <div className={styles.headerActions}>
@@ -738,7 +738,7 @@ export default function MarketingPage() {
                 <ShieldCheck size={24} color="#657e00" />
                 <div>
                   <div style={{ fontWeight: 700, fontSize: "14px", color: "var(--color-text-primary, #202124)" }}>
-                    Phase 8 Human-in-the-Loop Approval Safeguard Active
+                    Human-in-the-Loop Approval Safeguard Active
                   </div>
                   <div style={{ fontSize: "12px", color: "var(--color-text-secondary, #70736F)" }}>
                     Broadcasting to &gt;50 customers, budget &gt;৳5,000, or discount &gt;15% requires explicit merchant approval. Outbound messages capped at 20 msgs/second.

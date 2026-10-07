@@ -51,7 +51,7 @@ export default function IntelligenceExecutivePage() {
         body: JSON.stringify({ context: { source: "EXECUTIVE_DASHBOARD" } }),
       });
       if (res.ok) {
-        alert("Decision proposed successfully and submitted to Phase 5 Approval Engine!");
+        alert("Decision proposed and sent for approval.");
         loadData();
       } else {
         alert("Failed to propose decision.");

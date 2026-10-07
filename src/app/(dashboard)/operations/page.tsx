@@ -145,7 +145,6 @@ export default function OperationsOverviewPage() {
           <h1>
             <Cpu size={28} color="var(--color-lime-primary, #C7F900)" />
             Autonomous Operations Engine
-            <span className={styles.headerBadge}>Phase 8</span>
           </h1>
           <p className={styles.headerSubtitle}>
             Continuous Policy-Governed Autonomous Orchestration & Digital Twin Control Plane

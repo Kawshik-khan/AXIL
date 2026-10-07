@@ -169,7 +169,6 @@ export default function WorkflowsPage() {
             <h1 style={{ fontSize: "1.75rem", fontWeight: 700, color: "#fff", margin: 0 }}>
               Autonomous Multi-Agent Orchestration
             </h1>
-            <Badge variant="active">Phase 5</Badge>
           </div>
           <p style={{ color: "#9ca3af", margin: "0.25rem 0 0 0", fontSize: "0.95rem" }}>
             Supervisor Task Planner, Deterministic DAG Verification, and Human-in-the-Loop Control

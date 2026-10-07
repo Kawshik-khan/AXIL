@@ -116,7 +116,6 @@ export default function AgentsRegistryPage() {
             <h1 style={{ fontSize: "1.75rem", fontWeight: 700, color: "#fff", margin: 0 }}>
               Agent Capability Registry & Autonomy Policies
             </h1>
-            <Badge variant="active">Phase 5</Badge>
           </div>
           <p style={{ color: "#9ca3af", margin: "0.25rem 0 0 0", fontSize: "0.95rem" }}>
             Configure individual agent autonomy levels, safety thresholds, and emergency kill switches.

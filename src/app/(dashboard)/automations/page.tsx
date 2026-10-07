@@ -275,7 +275,6 @@ export default function AutomationsHubPage() {
           <h1>
             <Workflow size={32} color="#c7f900" />
             Automations & n8n Hub
-            <span className={styles.headerBadge}>Phase 6 Production</span>
           </h1>
           <p className={styles.headerSubtitle}>
             Governed event routing, n8n orchestration, cryptographic webhooks, and authoritative idempotency.
