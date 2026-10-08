@@ -80,11 +80,13 @@ export default function MarketingPage() {
         throw new Error("Failed to load marketing data from server");
       }
 
-      const overviewJson = await overviewRes.json();
-      const cartsJson = await cartsRes.json();
-      const audJson = await audRes.json();
-      const cmpJson = await cmpRes.json();
-      const attJson = await attRes.json();
+      const [overviewJson, cartsJson, audJson, cmpJson, attJson] = await Promise.all([
+        overviewRes.json(),
+        cartsRes.json(),
+        audRes.json(),
+        cmpRes.json(),
+        attRes.json(),
+      ]);
 
       setRequestId(overviewJson.meta?.request_id || "req_mkt_default");
       setOverview(overviewJson.data);

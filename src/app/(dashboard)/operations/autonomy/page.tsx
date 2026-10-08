@@ -44,8 +44,10 @@ export default function OperationsAutonomyPage() {
       if (bRes.status === 401 || pRes.status === 401) throw new Error("UNAUTHORIZED");
       if (bRes.status === 403 || pRes.status === 403) throw new Error("NO_PERMISSION");
 
-      const bJson = await bRes.json();
-      const pJson = await pRes.json();
+      const [bJson, pJson] = await Promise.all([
+        bRes.json(),
+        pRes.json(),
+      ]);
 
       if (!bRes.ok) throw new Error(bJson.error?.message || "Failed to load autonomy budget");
       if (!pRes.ok) throw new Error(pJson.error?.message || "Failed to load provider circuits");

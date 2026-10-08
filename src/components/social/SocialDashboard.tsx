@@ -43,9 +43,11 @@ export const SocialDashboard: React.FC = () => {
         fetch("/api/v1/social/quick-replies"),
       ]);
 
-      const mData = await mRes.json();
-      const chData = await chRes.json();
-      const qrData = await qrRes.json();
+      const [mData, chData, qrData] = await Promise.all([
+        mRes.json(),
+        chRes.json(),
+        qrRes.json(),
+      ]);
 
       if (mData.data) setMetrics(mData.data.metrics);
       if (chData.data) setChannels(chData.data.channels);
