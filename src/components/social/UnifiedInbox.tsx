@@ -79,13 +79,21 @@ export const UnifiedInbox: React.FC<UnifiedInboxProps> = ({
     }
   };
 
-  // Counts for pills
+  // Counts for pills (optimized with single pass and memoization)
   const totalCount = conversations.length;
-  const unreadCount = conversations.filter((c) => c.unread_count > 0).length;
-  const waCount = conversations.filter((c) => c.channel_type === "WHATSAPP").length;
-  const fbCount = conversations.filter((c) => c.channel_type === "FACEBOOK_MESSENGER").length;
-  const igCount = conversations.filter((c) => c.channel_type === "INSTAGRAM").length;
-  const webCount = conversations.filter((c) => c.channel_type === "WEBSITE_CHAT").length;
+  const { unreadCount, waCount, fbCount, igCount, webCount } = React.useMemo(() => {
+    let unread = 0, wa = 0, fb = 0, ig = 0, web = 0;
+    for (let i = 0; i < conversations.length; i++) {
+      const c = conversations[i];
+      if (c.unread_count > 0) unread++;
+
+      if (c.channel_type === "WHATSAPP") wa++;
+      else if (c.channel_type === "FACEBOOK_MESSENGER") fb++;
+      else if (c.channel_type === "INSTAGRAM") ig++;
+      else if (c.channel_type === "WEBSITE_CHAT") web++;
+    }
+    return { unreadCount: unread, waCount: wa, fbCount: fb, igCount: ig, webCount: web };
+  }, [conversations]);
 
   return (
     <div className={styles.conversationsPanel}>
