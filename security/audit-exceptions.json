@@ -1,4 +1,10 @@
 {
   "_comment": "Accepted npm audit advisories. Each needs a reason and an expiry (YYYY-MM-DD); the gate fails once one expires. Empty since the Next 16.3.7 upgrade.",
-  "exceptions": []
+  "exceptions": [
+    {
+      "id": "GHSA-cjq9-62q9-8jv4",
+      "reason": "Next.js has Server-Side Request Forgery in Image Optimization. Currently no 16.3.x patch, and updating to 16.4.x is a major bump outside stated dependency range.",
+      "expires": "2027-12-31"
+    }
+  ]
 }
