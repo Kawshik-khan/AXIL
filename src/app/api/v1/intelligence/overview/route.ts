@@ -9,6 +9,7 @@ import { opportunityDetectorService } from "@/domains/intelligence/services/oppo
 import { riskDetectorService } from "@/domains/intelligence/services/risk-detector.service";
 import { recommendationService } from "@/domains/intelligence/services/recommendation.service";
 import { withStore } from "@/lib/store-unit";
+import { COMMERCE_ANALYTICS_COLLECTIONS } from "@/infrastructure/db/tenant-rows";
 
 /** Read-only (FX-21): stored snapshots while fresh, otherwise computed for this request. Never writes. */
 async function handleGET(request: Request) {
@@ -63,4 +64,4 @@ async function handleGET(request: Request) {
   }
 }
 
-export const GET = withStore("GET", handleGET);
+export const GET = withStore("GET", handleGET, { tenantRows: { collections: COMMERCE_ANALYTICS_COLLECTIONS, permission: PERMISSIONS.ANALYTICS_READ } });

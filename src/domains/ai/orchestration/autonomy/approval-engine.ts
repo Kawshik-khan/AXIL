@@ -5,6 +5,7 @@ import { db } from "@/infrastructure/db";
 import { workflowEngine } from "../engine/workflow-engine";
 import { autonomyPolicyService } from "./autonomy-policy.service";
 import { approvalBindingMismatch } from "./approval-binding";
+import { loadOrderRows } from "@/infrastructure/db/tenant-rows";
 
 export interface ApprovalResolutionResult {
   success: boolean;
@@ -16,6 +17,9 @@ export interface ApprovalResolutionResult {
 export class ApprovalEngine {
   /** Atomically approves one pending request only if the exact task, policy and target state still match. */
   public async approveAction(tenantId: string, approvalId: string, approvedBy: string): Promise<ApprovalResolutionResult> {
+    // Zero-hydration: the order the approval is bound to, for the target-state check
+    const pending = db.getApprovalRequestById(tenantId, approvalId);
+    if (pending?.target_entity_type === "ORDER" && pending.target_entity_id) await loadOrderRows(tenantId, [pending.target_entity_id]);
     const outcome = await db.unit(async () => {
       const approval = db.getApprovalRequestById(tenantId, approvalId);
       if (!approval) throw new NotFoundError("Approval request", approvalId);

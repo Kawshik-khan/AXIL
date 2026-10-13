@@ -13,6 +13,7 @@ import { OrderStateMachine } from "@/domains/orders/order-state-machine";
 import { BadRequestError, NotFoundError } from "@/lib/errors";
 import { orderRepository } from "./order.repository";
 import { RtoScoringService } from "@/domains/rto/rto-scoring.service";
+import { loadCustomerRows, loadOrderRows, loadTenantRows, loadTenantRowsWhere } from "@/infrastructure/db/tenant-rows";
 
 export class OrderService {
   public static async listOrders(
@@ -49,7 +50,8 @@ export class OrderService {
         has_more: res.pagination.has_more,
       };
     }
-    return db.getOrders(context.tenant.id, { ...options, limit: options?.limit ?? 50 }); // one page; analytics use getAllOrders
+    // One page (SQL under zero-hydration); analytics use getAllOrders
+    return (await orderRepository.listOrders(context.tenant.id, { ...options, limit: options?.limit ?? 50 })) as any;
   }
 
   /**
@@ -74,7 +76,7 @@ export class OrderService {
     orderId: string
   ): Promise<Order & { customer_name: string; customer_phone: string }> {
     RbacService.assertCan(context, PERMISSIONS.ORDERS_READ);
-    const order = (await orderRepository.findById(context.tenant.id, orderId)) ?? db.findOrderById(context.tenant.id, orderId);
+    const order = await orderRepository.findById(context.tenant.id, orderId);
     if (!order) {
       throw new NotFoundError(`Order '${orderId}' not found.`);
     }
@@ -157,6 +159,7 @@ export class OrderService {
 
     // 3. Resolve warehouse for inventory allocation
     // This workspace's warehouse only; there used to be a hard-coded "wh_dhaka_main" fallback (FX-36 M11)
+    await loadTenantRows(context.tenant.id, ["warehouses"]); // zero-hydration: this workspace's warehouses
     const tenantWarehouses = db.getWarehouses(context.tenant.id);
     if (payload.warehouse_id && !tenantWarehouses.some((w) => w.id === payload.warehouse_id)) {
       throw new BadRequestError("That warehouse isn't one of this workspace's.");
@@ -167,7 +170,7 @@ export class OrderService {
     }
 
     const orderId = `ord_${Date.now()}_${randomSuffix()}`;
-    const orderNumber = db.generateOrderNumber(context.tenant.id);
+    const orderNumber = db.generateOrderNumber(context.tenant.id, await orderRepository.highestOrderNumber(context.tenant.id));
     const now = new Date().toISOString();
 
     // 4. Atomically reserve inventory for all items
@@ -241,10 +244,12 @@ export class OrderService {
       updated_at: now,
     };
 
+    await loadCustomerRows(context.tenant.id, [customer.id]); // zero-hydration: the customer's order totals change
     const createdOrder = db.createOrder(newOrder, orderItems);
 
     // 7. Increment coupon usage if used
     if (pricing.applied_coupon) {
+      await loadTenantRowsWhere(context.tenant.id, "coupons", { field: "code", values: [pricing.applied_coupon] });
       db.incrementCouponUsage(context.tenant.id, pricing.applied_coupon);
     }
 
@@ -302,6 +307,7 @@ export class OrderService {
     RbacService.assertCan(context, PERMISSIONS.ORDERS_UPDATE);
 
     const order = await this.getOrderById(context, orderId);
+    await loadOrderRows(context.tenant.id, [orderId]); // zero-hydration: the rows the status change reads and changes
 
     // One writer for status: state machine, reservations and events live there (FX-35)
     const updated = OrderLifecycleService.advance(

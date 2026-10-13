@@ -5,6 +5,7 @@ import { RequestContext } from "@/lib/context";
 import { RbacService } from "@/domains/rbac/service";
 import { PERMISSIONS } from "@/lib/permissions";
 import { NotFoundError, ConflictError, ValidationError } from "@/lib/errors";
+import { loadOrderRows } from "@/infrastructure/db/tenant-rows";
 
 export class PaymentService {
   public static async listPayments(
@@ -27,6 +28,7 @@ export class PaymentService {
   ): Promise<Payment> {
     RbacService.assertCan(context, PERMISSIONS.ORDERS_WRITE);
 
+    await loadOrderRows(context.tenant.id, [payload.order_id]); // zero-hydration: the order's rows this flow reads and changes
     const order = db.findOrderById(context.tenant.id, payload.order_id);
     if (!order) {
       throw new NotFoundError(`Order '${payload.order_id}' not found.`);
@@ -133,6 +135,7 @@ export class PaymentService {
       throw new ConflictError("This transaction ID is already attached to another payment.", { payment_id: reused.id });
     }
 
+    await loadOrderRows(context.tenant.id, [payment.order_id]); // zero-hydration: the order's rows this flow reads and changes
     const order = db.findOrderById(context.tenant.id, payment.order_id);
     if (!order) {
       throw new NotFoundError(`Order '${payment.order_id}' not found.`);

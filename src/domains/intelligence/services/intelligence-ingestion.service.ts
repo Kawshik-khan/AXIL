@@ -28,6 +28,22 @@ export class IntelligenceIngestionService {
   /**
    * Ingests a commerce domain event into the analytical layer with idempotency protection
    */
+  /** An event with this id or idempotency key is stored (in memory, or in Postgres under zero-hydration). */
+  private async alreadyIngested(tenantId: string, eventId: string, idempotencyKey: string): Promise<boolean> {
+    const client = db.isCollectionHydrated("analytics_events") ? null : db.getSqlClient();
+    if (!client) {
+      return db
+        .getAnalyticsEvents(tenantId)
+        .some((e) => e.id === eventId || (e.payload?.idempotency_key === idempotencyKey && idempotencyKey));
+    }
+    const res = await client.query(
+      `SELECT 1 FROM commerceos.documents WHERE collection = 'analytics_events' AND tenant_id = $1
+         AND (id = $2 OR data->'payload'->>'idempotency_key' = $3) LIMIT 1`,
+      [tenantId, eventId, idempotencyKey]
+    );
+    return res.rowCount > 0;
+  }
+
   public async ingestEvent(event: DomainEventInput): Promise<IngestionResult> {
     if (!event.tenant_id) {
       throw new Error("Cannot ingest event: tenant_id is required.");
@@ -39,10 +55,9 @@ export class IntelligenceIngestionService {
     const idempotencyKey = event.idempotency_key || event.id;
 
     // 1. Check idempotency
-    const existingEvents = db.getAnalyticsEvents(event.tenant_id);
     // The store is the only record of what was ingested: a per-process cache disagreed with other servers and kept
     // an event whose request was undone (ADR-109)
-    const isDuplicate = existingEvents.some((e) => e.id === event.id || (e.payload?.idempotency_key === idempotencyKey && idempotencyKey));
+    const isDuplicate = await this.alreadyIngested(event.tenant_id, event.id, idempotencyKey);
 
     if (isDuplicate) {
       return {

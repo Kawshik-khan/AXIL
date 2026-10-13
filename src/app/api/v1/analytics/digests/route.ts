@@ -2,6 +2,8 @@ import { z } from "zod";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { analyticsService } from "@/domains/analytics/analytics.service";
 import { withStore } from "@/lib/store-unit";
+import { COMMERCE_ANALYTICS_COLLECTIONS } from "@/infrastructure/db/tenant-rows";
+import { PERMISSIONS } from "@/lib/permissions";
 
 const GenerateDigestSchema = z.object({
   period_type: z.enum(["DAILY", "WEEKLY", "MONTHLY"]).default("DAILY"),
@@ -34,4 +36,4 @@ async function handlePOST(request: Request) {
 }
 
 export const GET = withStore("GET", handleGET);
-export const POST = withStore("POST", handlePOST);
+export const POST = withStore("POST", handlePOST, { tenantRows: { collections: COMMERCE_ANALYTICS_COLLECTIONS, permission: PERMISSIONS.ANALYTICS_READ } });

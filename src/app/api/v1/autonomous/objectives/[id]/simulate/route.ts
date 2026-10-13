@@ -4,6 +4,7 @@ import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { strategyEngineService } from "@/domains/autonomous/services";
 import { withStore } from "@/lib/store-unit";
+import { OPERATIONS_COLLECTIONS } from "@/infrastructure/db/tenant-rows";
 
 async function handlePOST(
   request: Request,
@@ -50,4 +51,4 @@ async function handlePOST(
   }
 }
 
-export const POST = withStore("POST", handlePOST);
+export const POST = withStore("POST", handlePOST, { tenantRows: { collections: OPERATIONS_COLLECTIONS, permission: PERMISSIONS.STRATEGY_MANAGE } });

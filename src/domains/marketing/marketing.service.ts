@@ -21,6 +21,8 @@ import { contentService } from "@/domains/growth/services/content.service";
 import { consentService, frequencyCappingService } from "@/domains/growth/services/consent.service";
 import { marketingChannelService } from "@/domains/growth/services/marketing-channel.service";
 import { attributionService } from "@/domains/growth/services/attribution.service";
+import { loadCustomerRows } from "@/infrastructure/db/tenant-rows";
+import { orderRepository } from "@/domains/orders/order.repository";
 
 export interface EnrichedAbandonedCart extends AbandonedCartRecoveryItem {
   customer?: {
@@ -148,6 +150,7 @@ export class MarketingService {
       throw new Error(`Cart ${cartId} is already recovered.`);
     }
 
+    await loadCustomerRows(tenantId, [cart.customer_id]); // zero-hydration: the customer read here
     const customer = db.findCustomerById(tenantId, cart.customer_id);
     if (!customer) {
       throw new AppError("NOT_FOUND", `Customer not found: ${cart.customer_id}`, 404);
@@ -187,7 +190,7 @@ export class MarketingService {
     }
 
     // 3. Duplicate protection: Ensure no order was placed after cart creation
-    const recentOrders = db.getAllOrders(tenantId, { hydrate: true }).filter((o) => o.customer_id === customer.id);
+    const recentOrders = (await orderRepository.listOrders(tenantId, { customer_id: customer.id, limit: 500 })).orders; // newest first
     const cartTime = new Date(cart.abandoned_at).getTime();
     const placedAfter = recentOrders.some((o) => new Date(o.created_at).getTime() >= cartTime);
     if (placedAfter) {

@@ -25,6 +25,7 @@ import {
   PERMISSIONS,
   PLATFORM_ROLE_PERMISSIONS,
 } from "@/lib/permissions";
+import { loadTenantRows } from "@/infrastructure/db/tenant-rows";
 
 export function apiSuccess<T>(data: T, meta?: Record<string, unknown>, status = 200) {
   return NextResponse.json(
@@ -153,6 +154,10 @@ export async function extractRequestContext(request: Request): Promise<RequestCo
       throw new FeatureNotEntitledError(flag);
     }
   }
+  // Zero-hydration: what the route declared its handler reads synchronously (withStore's tenantRows), for the session's
+  // tenant only, from Postgres into this request's working set; skipped for a caller the handler will refuse
+  const declared = db.declaredTenantRows();
+  if (declared && context.permissions.includes(declared.permission)) await loadTenantRows(context.tenant.id, declared.collections);
   return context;
 }
 

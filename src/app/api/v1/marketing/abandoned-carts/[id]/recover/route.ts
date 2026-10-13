@@ -4,6 +4,7 @@ import { z } from "zod";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { marketingService } from "@/domains/marketing/marketing.service";
 import { withStore } from "@/lib/store-unit";
+import { loadOrderRows } from "@/infrastructure/db/tenant-rows";
 
 const RecoverSchema = z.object({
   order_id: z.string().min(1, "Order ID is required"),
@@ -20,6 +21,7 @@ async function handlePOST(
     const body = await request.json();
     const validated = RecoverSchema.parse(body);
 
+    await loadOrderRows(context.tenant.id, [validated.order_id]); // zero-hydration: the order's rows this flow reads and changes
     const cart = marketingService.markCartRecovered({
       tenantId: context.tenant.id,
       cartId: params.id,

@@ -11,6 +11,8 @@ import {
   VerificationMethod,
   VerificationStatus,
 } from "@/types/orchestration";
+import { loadOrderRows } from "@/infrastructure/db/tenant-rows";
+import { inventoryRepository } from "@/domains/inventory/inventory.repository";
 
 export interface VerificationRequest {
   taskId: string;
@@ -34,6 +36,7 @@ export class VerifierAgent {
     // 1. Order Creation / Draft Assertion
     if (req.claimedOutput.order_id || req.claimedOutput.order_number) {
       const orderId = (req.claimedOutput.order_id || req.claimedOutput.id) as string;
+      await loadOrderRows(req.tenantId, [orderId]); // zero-hydration: the order's rows this flow reads and changes
       const order = db.findOrderById(req.tenantId, orderId);
 
       if (order && order.tenant_id === req.tenantId) {
@@ -82,7 +85,7 @@ export class VerifierAgent {
     if (req.claimedOutput.variant_id && req.claimedOutput.available_quantity !== undefined) {
       const variantId = req.claimedOutput.variant_id as string;
       const claimedQty = req.claimedOutput.available_quantity as number;
-      const invItems = db.getInventory(req.tenantId).filter(
+      const invItems = (await inventoryRepository.getStockLevels(req.tenantId)).filter(
         (i) => i.product_variant_id === variantId
       );
       const actualQty = invItems.reduce((acc: number, i) => acc + i.quantity_available, 0);

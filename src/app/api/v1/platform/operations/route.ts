@@ -9,6 +9,7 @@ import { providerHealthService } from "@/domains/operations/services/provider-he
 import { exceptionManagementService } from "@/domains/operations/services/exception-management.service";
 import { operationsWorkflowService } from "@/domains/operations/services/operations-workflow.service";
 import { AppError } from "@/lib/errors";
+import { OPERATIONS_COLLECTIONS, loadTenantRows } from "@/infrastructure/db/tenant-rows";
 
 const TriggerWorkflowSchema = z.object({
   action: z.literal("TRIGGER_WORKFLOW"),
@@ -69,6 +70,7 @@ async function handleGET(request: Request) {
     let receipts: unknown[] = [];
 
     if (selectedTenantId) {
+      await loadTenantRows(selectedTenantId, OPERATIONS_COLLECTIONS); // zero-hydration: what the twin reads (read-only)
       twin = operationalTwinService.getDigitalTwin(selectedTenantId);
       budget = operationalBudgetService.getBudget(selectedTenantId);
       providers = providerHealthService.getProviderHealthMap(selectedTenantId);
@@ -114,6 +116,8 @@ async function handlePOST(request: Request) {
     switch (body.action) {
       case "TRIGGER_WORKFLOW": {
         let result: unknown;
+        // Zero-hydration: the workspace's rows the operations workflows read and change
+        if (body.tenant_id) await loadTenantRows(body.tenant_id, OPERATIONS_COLLECTIONS);
         switch (body.workflow_type) {
           case "LOW_STOCK_REPLENISHMENT":
           case "STOCKOUT_REORDER":

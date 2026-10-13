@@ -7,6 +7,7 @@ import { randomSuffix } from "@/lib/ids";
  */
 
 import { db } from "@/infrastructure/db";
+import { loadTenantRows } from "@/infrastructure/db/tenant-rows";
 import { RequestContext } from "@/lib/context";
 import { RbacService } from "@/domains/rbac/service";
 import { PERMISSIONS } from "@/lib/permissions";
@@ -68,6 +69,7 @@ export class AnalyticsService {
 
     const tenantId = context.tenant.id;
     const refunds = db.getRefunds(tenantId);
+    await loadTenantRows(tenantId, ["products", "product_variants"]); // zero-hydration: unit costs from SQL
     const costs = this.unitCosts(tenantId);
 
     const { startMs, endMs, intervalDays } = this.resolveDateRange(preset);

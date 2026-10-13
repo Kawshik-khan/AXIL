@@ -8,6 +8,7 @@ import { GlobalRepository } from '@/infrastructure/db/base-repository';
 import { query, queryOne, execute } from '@/infrastructure/neon/client';
 import { db, UserRecord, MembershipRecord, InvitationRecord, AuditLogRecord } from '@/infrastructure/db';
 import { RoleName } from '@/lib/permissions';
+import { AuditService } from '@/domains/audit/service';
 
 export class UserRepository extends GlobalRepository<UserRecord> {
   constructor() {
@@ -213,14 +214,9 @@ export class UserRepository extends GlobalRepository<UserRecord> {
     return rows[0] || log;
   }
 
+  /** The store's audit logs, newest first: memory, or commerceos.audit_logs under zero-hydration (AuditService). */
   async findAuditLogs(tenantId: string, limit: number = 50): Promise<AuditLogRecord[]> {
-    if (!this.isNeonConfigured()) {
-      return db.findAuditLogs(tenantId, limit);
-    }
-    return query<AuditLogRecord>(
-      `SELECT * FROM audit_logs WHERE tenant_id = $1 ORDER BY created_at DESC LIMIT $2`,
-      [tenantId, limit]
-    );
+    return (await AuditService.getLogsForTenant(tenantId, limit)).logs;
   }
 }
 

@@ -5,6 +5,7 @@ import { withStore } from "@/lib/store-unit";
 import { db } from "@/infrastructure/db";
 import { NotFoundError } from "@/lib/errors";
 import { RtoScoringService } from "@/domains/rto/rto-scoring.service";
+import { orderRepository } from "@/domains/orders/order.repository";
 
 interface RouteParams {
   params: { orderId: string };
@@ -15,7 +16,7 @@ async function handleGET(request: Request, { params }: RouteParams) {
     const ctx = await extractRequestContext(request);
     RbacService.assertCan(ctx, PERMISSIONS.ORDERS_READ);
 
-    const order = db.findOrderById(ctx.tenant.id, params.orderId);
+    const order = await orderRepository.findById(ctx.tenant.id, params.orderId);
     if (!order) {
       throw new NotFoundError("Order", params.orderId);
     }

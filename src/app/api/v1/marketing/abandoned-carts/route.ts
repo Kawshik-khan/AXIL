@@ -4,6 +4,7 @@ import { z } from "zod";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { marketingService } from "@/domains/marketing/marketing.service";
 import { withStore } from "@/lib/store-unit";
+import { COMMERCE_ANALYTICS_COLLECTIONS } from "@/infrastructure/db/tenant-rows";
 
 const CreateCartSchema = z.object({
   customer_id: z.string().min(1, "Customer ID is required"),
@@ -49,5 +50,5 @@ async function handlePOST(request: Request) {
   }
 }
 
-export const GET = withStore("GET", handleGET);
-export const POST = withStore("POST", handlePOST);
+export const GET = withStore("GET", handleGET, { tenantRows: { collections: COMMERCE_ANALYTICS_COLLECTIONS, permission: PERMISSIONS.MARKETING_READ } });
+export const POST = withStore("POST", handlePOST, { tenantRows: { collections: COMMERCE_ANALYTICS_COLLECTIONS, permission: PERMISSIONS.MARKETING_WRITE } });

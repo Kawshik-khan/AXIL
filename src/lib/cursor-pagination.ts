@@ -138,3 +138,15 @@ export function sliceForCursor<T extends { id: string; created_at: string }>(
     total: items.length,
   };
 }
+
+/** A requested page size as a SQL LIMIT: a whole number from 1 to 500 (50 when missing or not a number). */
+export function pageLimit(limit: number | undefined): number {
+  const n = Math.trunc(Number(limit));
+  return Number.isFinite(n) && n >= 1 ? Math.min(n, 500) : 50;
+}
+
+/** A requested offset as a SQL OFFSET: a whole number from 0. */
+export function pageOffset(offset: number | undefined): number {
+  const n = Math.trunc(Number(offset));
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}

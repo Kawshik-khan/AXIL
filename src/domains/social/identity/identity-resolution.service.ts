@@ -8,6 +8,7 @@ import { RequestContext } from "@/lib/context";
 import { AuditService } from "@/domains/audit/service";
 import { PERMISSIONS } from "@/lib/permissions";
 import { BadRequestError } from "@/lib/errors";
+import { loadCustomerRows, loadTenantRowsWhere } from "@/infrastructure/db/tenant-rows";
 
 export class IdentityResolutionService {
   /**
@@ -23,6 +24,9 @@ export class IdentityResolutionService {
    */
   public static async linkVerifiedPhone(tenantId: string, identity: CustomerIdentity, rawPhone: string): Promise<Customer> {
     const phone = CustomerService.normalizePhoneNumber(rawPhone);
+    // Zero-hydration: the identity and its customer, read and changed below
+    await loadTenantRowsWhere(tenantId, "customer_identities", { field: "id", values: [identity.id] });
+    await loadCustomerRows(tenantId, [identity.customer_id]);
     const current = db.findCustomerById(tenantId, identity.customer_id);
     const owners = await customerRepository.findAllByPhone(tenantId, phone);
     const claimLinked = ["PHONE_MATCH", "EMAIL_MATCH"].includes(String(identity.metadata?.resolution_strategy ?? ""));
@@ -99,6 +103,9 @@ export class IdentityResolutionService {
     }
   ): Promise<{ customer: Customer; identity: CustomerIdentity; isNewCustomer: boolean }> {
     // 1. Priority 1: Check existing verified channel identity for this tenant
+    // Zero-hydration: this sender's identities and their customers from Postgres (indexed by external user id)
+    const known = await loadTenantRowsWhere(tenantId, "customer_identities", { field: "external_user_id", values: [externalUserId] });
+    await loadCustomerRows(tenantId, known.map((i) => String(i.customer_id)));
     const existingIdentity = db.findCustomerIdentity(tenantId, channelId, externalUserId);
     if (existingIdentity) {
       const customer = db.findCustomerById(tenantId, existingIdentity.customer_id);
@@ -230,10 +237,11 @@ export class IdentityResolutionService {
     customerId: string,
     identityId: string
   ): Promise<CustomerIdentity> {
+    await loadCustomerRows(context.tenant.id, [customerId]); // zero-hydration: the rows read and changed here
     const customer = db.findCustomerById(context.tenant.id, customerId);
     if (!customer) throw new BadRequestError("Customer not found.");
 
-    const identities = db.getCustomerIdentities(context.tenant.id);
+    const identities = (await loadTenantRowsWhere(context.tenant.id, "customer_identities", { field: "id", values: [identityId] })) as unknown as CustomerIdentity[];
     const target = identities.find((i) => i.id === identityId);
     if (!target) throw new BadRequestError("Identity record not found.");
 

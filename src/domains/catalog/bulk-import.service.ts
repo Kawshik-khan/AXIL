@@ -16,6 +16,7 @@ import { ProductService } from "./product.service";
 import { CategoryService } from "./category.service";
 import { CsvParser } from "@/lib/csv-parser";
 import { assertWithinLimit } from "@/lib/safety-gate";
+import { loadTenantRows } from "@/infrastructure/db/tenant-rows";
 
 export class BulkImportService {
   /**
@@ -43,7 +44,9 @@ export class BulkImportService {
     let updatedCount = 0;
 
     // Resolve tenant primary warehouse
-    const tenantWarehouses = db.data.warehouses.filter((w) => w.tenant_id === context.tenant.id);
+    // Zero-hydration: the workspace's catalog and stock from Postgres for this import (SKU and slug matching, updates)
+    await loadTenantRows(context.tenant.id, ["products", "product_variants", "inventory_items", "warehouses"]);
+    const tenantWarehouses = db.getWarehouses(context.tenant.id);
     // Only this workspace's warehouses: this used to fall back to another tenant's first warehouse (FX-36 M11)
     if (options?.warehouse_id && !tenantWarehouses.some((w) => w.id === options.warehouse_id)) {
       throw new NotFoundError("Warehouse", options.warehouse_id);

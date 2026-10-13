@@ -8,6 +8,7 @@ import { randomSuffix } from "@/lib/ids";
 import { BaseRepository } from '@/infrastructure/db/base-repository';
 import { query, queryOne, execute, withTransaction } from '@/infrastructure/neon/client';
 import { db } from '@/infrastructure/db';
+import { loadTenantRows } from '@/infrastructure/db/tenant-rows';
 import {
   InventoryItem,
   StockMovement,
@@ -24,6 +25,29 @@ export class InventoryRepository extends BaseRepository<InventoryItem & Record<s
 
   private isNeonConfigured(): boolean {
     return Boolean(process.env.DATABASE_URL);
+  }
+
+  /**
+   * Stock levels with product name, SKU and variant title, from the store: memory, or this tenant's rows read from
+   * Postgres under zero-hydration (loaded for the current request). What InventoryService and the analytics read.
+   */
+  async getStockLevels(
+    tenantId: string,
+    options?: { warehouse_id?: string; low_stock_only?: boolean }
+  ): Promise<(InventoryItem & { product_name: string; sku: string; variant_title: string })[]> {
+    await loadTenantRows(tenantId, ["inventory_items", "product_variants", "products"]);
+    return db.getInventory(tenantId, options);
+  }
+
+  /** The tenant's latest stock movements, newest first (db.getStockMovements; SQL under zero-hydration). */
+  async recentStockMovements(tenantId: string, limit = 50): Promise<StockMovement[]> {
+    const client = db.isCollectionHydrated("stock_movements") ? null : db.getSqlClient();
+    if (!client) return db.getStockMovements(tenantId, limit);
+    const res = await client.query<{ data: StockMovement | string }>(
+      `SELECT data FROM commerceos.stock_movements WHERE tenant_id = $1 ORDER BY created_at DESC NULLS LAST, seq DESC LIMIT $2`,
+      [tenantId, limit]
+    );
+    return res.rows.map((r) => (typeof r.data === "string" ? JSON.parse(r.data) : r.data) as StockMovement);
   }
 
   async getInventoryLevels(

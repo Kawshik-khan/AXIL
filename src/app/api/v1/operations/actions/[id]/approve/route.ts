@@ -7,6 +7,7 @@ import { procurementService } from "@/domains/operations/services/procurement.se
 import { parseOrThrow, readJson } from "@/lib/validation";
 import { requireStepUp } from "@/lib/step-up";
 import { withStore } from "@/lib/store-unit";
+import { OPERATIONS_COLLECTIONS } from "@/infrastructure/db/tenant-rows";
 
 // Strict body (ADR-104): `approved` is a real boolean, and only action types this route handles are accepted. An
 // unknown type used to answer "APPROVED" while doing nothing (FX-68 security review).
@@ -50,4 +51,4 @@ async function handlePOST(
   }
 }
 
-export const POST = withStore("POST", handlePOST);
+export const POST = withStore("POST", handlePOST, { tenantRows: { collections: OPERATIONS_COLLECTIONS, permission: PERMISSIONS.OPERATIONS_APPROVE } });

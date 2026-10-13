@@ -124,7 +124,8 @@ export async function runWorkflowWorkerOnce(): Promise<void> {
   if (activePass) return activePass;
   const pass = (async () => {
     const jobs = db.getDueWorkflowJobs(new Date().toISOString(), MAX_PER_PASS, lastServedTenantId);
-    for (const job of jobs) await processJob(job.id, job.tenant_id);
+    // Each job with its own scope for zero-hydration rows (outside any request)
+    for (const job of jobs) await db.withFreshTenantReads(() => processJob(job.id, job.tenant_id));
     if (jobs.length) lastServedTenantId = jobs[jobs.length - 1].tenant_id;
   })();
   activePass = pass;

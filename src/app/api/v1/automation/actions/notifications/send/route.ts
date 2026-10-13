@@ -6,6 +6,7 @@ import { db } from "@/infrastructure/db";
 import { BadRequestError, IntegrationNotConfiguredError, NotFoundError } from "@/lib/errors";
 import { parseOrThrow, readJson } from "@/lib/validation";
 import { withStore } from "@/lib/store-unit";
+import { orderRepository } from "@/domains/orders/order.repository";
 
 /**
  * Automation notification action (called by n8n with a service token).
@@ -39,7 +40,7 @@ async function handlePOST(request: Request) {
 
     // The recipient is resolved inside this workspace only
     if (body.order_id) {
-      if (!db.findOrderById(context.tenant.id, body.order_id)) throw new NotFoundError("Order", body.order_id);
+      if (!(await orderRepository.findById(context.tenant.id, body.order_id))) throw new NotFoundError("Order", body.order_id);
     } else if (body.user_id) {
       if (!db.findMembership(context.tenant.id, body.user_id)) throw new NotFoundError("Staff member", body.user_id);
     }

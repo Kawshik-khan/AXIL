@@ -14,12 +14,14 @@ import { orderRepository } from '@/domains/orders/order.repository';
 import { randomSuffix } from '@/lib/ids';
 import { logger } from '@/lib/logger';
 import { NotFoundError } from '@/lib/errors';
-import { Customer } from '@/types/commerce';
+import { Customer, CustomerAddress } from '@/types/commerce';
 import {
   encodeCursor,
   decodeCursor,
   buildKeysetClause,
   sliceForCursor,
+  pageLimit,
+  pageOffset,
   type CursorPaginatedResult,
 } from '@/lib/cursor-pagination';
 
@@ -52,7 +54,52 @@ export class CustomerRepository extends BaseRepository<Customer> {
     );
     const row = rowRes.rows[0];
     if (!row?.data) return null;
-    return parseJsonData<Customer>(row.data);
+    return (await this.withAddresses(client, tenantId, [parseJsonData<Customer>(row.data)]))[0];
+  }
+
+  /** Customers with their addresses, as db.findCustomerById / db.getCustomers return them. */
+  private async withAddresses(client: SqlExecutor, tenantId: string, customers: Customer[]): Promise<Customer[]> {
+    if (customers.length === 0) return [];
+    const res = await client.query<{ customer_id: string; data: CustomerAddress | string }>(
+      `SELECT customer_id, data FROM commerceos.customer_addresses WHERE tenant_id = $1 AND customer_id = ANY($2::text[]) ORDER BY seq`,
+      [tenantId, customers.map((c) => c.id)]
+    );
+    const byCustomer = new Map<string, CustomerAddress[]>();
+    for (const r of res.rows) {
+      const list = byCustomer.get(r.customer_id) ?? [];
+      list.push(parseJsonData<CustomerAddress>(r.data));
+      byCustomer.set(r.customer_id, list);
+    }
+    return customers.map((c) => ({ ...c, addresses: byCustomer.get(c.id) ?? [] }));
+  }
+
+  /**
+   * One page of customers, newest first, with addresses: db.getCustomers, in SQL under zero-hydration (search on
+   * first name, last name, phone or email).
+   */
+  async listCustomers(
+    tenantId: string,
+    options: { search?: string; limit: number; offset?: number }
+  ): Promise<{ customers: Customer[]; total: number }> {
+    const client = this.getClient();
+    if (!client) return db.getCustomers(tenantId, options);
+    const params: unknown[] = [tenantId];
+    let where = `tenant_id = $1`;
+    const q = options.search?.toLowerCase().trim().slice(0, 200);
+    if (q) {
+      params.push(`%${q.replace(/[\\%_]/g, (m) => `\\${m}`)}%`);
+      const p = `$${params.length}`;
+      where += ` AND (lower(data->>'first_name') LIKE ${p} OR lower(data->>'last_name') LIKE ${p} OR phone LIKE ${p} OR email_key LIKE ${p})`;
+    }
+    const countRes = await client.query<{ n: string }>(`SELECT count(*)::text AS n FROM commerceos.customers WHERE ${where}`, params);
+    params.push(pageLimit(options.limit), pageOffset(options.offset));
+    const rowsRes = await client.query<{ data: Customer | string }>(
+      `SELECT data FROM commerceos.customers WHERE ${where}
+       ORDER BY created_at DESC NULLS LAST, id DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params
+    );
+    const customers = await this.withAddresses(client, tenantId, rowsRes.rows.map((r) => parseJsonData<Customer>(r.data)));
+    return { customers, total: Number(countRes.rows[0]?.n ?? 0) };
   }
 
   async findByPhone(tenantId: string, phone: string): Promise<Customer | null> {

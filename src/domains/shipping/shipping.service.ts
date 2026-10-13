@@ -11,6 +11,7 @@ import { RequestContext } from "@/lib/context";
 import { RbacService } from "@/domains/rbac/service";
 import { PERMISSIONS } from "@/lib/permissions";
 import { BadRequestError, NotFoundError, ValidationError, ConflictError } from "@/lib/errors";
+import { loadOrderRows } from "@/infrastructure/db/tenant-rows";
 
 export class ShippingService {
   /**
@@ -90,6 +91,7 @@ export class ShippingService {
   ): Promise<Shipment> {
     RbacService.assertCan(context, PERMISSIONS.SHIPMENTS_CREATE);
 
+    await loadOrderRows(context.tenant.id, [payload.order_id]); // zero-hydration: the order's rows this flow reads and changes
     const order = db.findOrderById(context.tenant.id, payload.order_id);
     if (!order) {
       throw new NotFoundError(`Order '${payload.order_id}' not found.`);
@@ -183,6 +185,7 @@ export class ShippingService {
     const orderTarget =
       targetStatus === "DELIVERED" ? "DELIVERED" : ["PICKED_UP", "IN_TRANSIT", "OUT_FOR_DELIVERY"].includes(targetStatus) ? "SHIPPED" : null;
     if (orderTarget) {
+      await loadOrderRows(context.tenant.id, [shipment.order_id]); // zero-hydration: the order's rows this flow reads and changes
       const order = db.findOrderById(context.tenant.id, shipment.order_id);
       if (order && order.status !== orderTarget && !(orderTarget === "SHIPPED" && order.status === "DELIVERED")) {
         // Moving the order (and marking COD paid) is an order change, not only a shipment one (security review)

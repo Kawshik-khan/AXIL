@@ -1,5 +1,6 @@
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
-import { db } from "@/infrastructure/db";
+import { readTenantRows } from "@/infrastructure/db/tenant-rows";
+import type { CustomerIdentity } from "@/types/social";
 import { IdentityResolutionService } from "@/domains/social/identity/identity-resolution.service";
 import { RbacService } from "@/domains/rbac/service";
 import { PERMISSIONS } from "@/lib/permissions";
@@ -13,7 +14,7 @@ async function handleGET(
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.CUSTOMERS_READ);
-    const identities = db.getCustomerIdentities(context.tenant.id, params.id);
+    const identities = await readTenantRows<CustomerIdentity>("customer_identities", context.tenant.id, { field: "customer_id", values: [params.id] });
     return apiSuccess({ identities });
   } catch (err) {
     return apiError(err);

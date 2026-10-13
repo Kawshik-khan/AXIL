@@ -20,6 +20,8 @@ import type { TenantRecord } from "@/infrastructure/db";
 import type { JobRunRecord } from "@/types/commerce";
 import { orderRepository } from "@/domains/orders/order.repository";
 import { localHour } from "@/lib/local-time";
+import { inventoryRepository } from "@/domains/inventory/inventory.repository";
+import { loadOrderRows } from "@/infrastructure/db/tenant-rows";
 
 export { localHour };
 
@@ -77,7 +79,7 @@ export const JOBS: Record<string, JobDefinition> = {
           const ordersInWindow = await orderRepository.findInWindow(t.id, fromTime, toTime);
           const orders = ordersInWindow.filter((o) => localDate(t, o.created_at) === today);
           const live = orders.filter((o) => o.status !== "CANCELLED");
-          const low = db.getInventory(t.id).filter((i) => i.reorder_point > 0 && i.quantity_available <= i.reorder_point).length;
+          const low = (await inventoryRepository.getStockLevels(t.id)).filter((i) => i.reorder_point > 0 && i.quantity_available <= i.reorder_point).length;
           const revenue = live.reduce((n, o) => n + o.grand_total, 0);
           const pendingCount = (await orderRepository.countByTenant(t.id, "PENDING")) || 0;
           return {
@@ -101,8 +103,9 @@ export const JOBS: Record<string, JobDefinition> = {
   "low-stock": {
     cadenceMs: HOUR,
     async run(now) {
-      const tenants = dueTenants()
-        .filter((t) => localHour(t, now) === 8)
+      const due = dueTenants().filter((t) => localHour(t, now) === 8);
+      for (const t of due) await inventoryRepository.getStockLevels(t.id); // zero-hydration: each shop's stock and catalog
+      const tenants = due
         .map((t) => ({
           tenant_id: t.id,
           proposals: db
@@ -141,7 +144,13 @@ export const JOBS: Record<string, JobDefinition> = {
     cadenceMs: 7 * DAY,
     async run(now) {
       const since = new Date(now - 7 * DAY).toISOString();
-      const tenants = dueTenants()
+      const due = dueTenants();
+      for (const t of due) {
+        // Zero-hydration: the delivered orders checked below
+        const delivered = db.getShipments(t.id).filter((x) => x.status === "DELIVERED" && (x.delivered_at ?? x.updated_at) >= since);
+        await loadOrderRows(t.id, delivered.map((s) => s.order_id));
+      }
+      const tenants = due
         .map((t) => {
           const byCourier = new Map<string, { orders: number; amount_bdt: number; order_ids: string[] }>();
           for (const s of db.getShipments(t.id).filter((x) => x.status === "DELIVERED" && (x.delivered_at ?? x.updated_at) >= since)) {
@@ -169,6 +178,7 @@ export const JOBS: Record<string, JobDefinition> = {
       const oldestPending = pending.reduce<string | null>((m, e) => (!m || e.occurred_at < m ? e.occurred_at : m), null);
       const deadLetters = db.getTenants().reduce((n, t) => n + db.getAutomationDeadLetters(t.id).filter((d) => d.status !== "RESOLVED").length, 0);
       const alerts = AgentHealthService.evaluateAlerts(now);
+      await CspReportService.load(now); // zero-hydration: the week's CSP counters
       return {
         outbox: { pending: pending.length, dead: outbox.filter((e) => e.status === "DEAD").length, oldest_pending_minutes: oldestPending ? Math.round((now - Date.parse(oldestPending)) / MINUTE) : null },
         automation_dead_letters_open: deadLetters,

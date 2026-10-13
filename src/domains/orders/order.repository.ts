@@ -18,6 +18,8 @@ import {
   decodeCursor,
   buildKeysetClause,
   sliceForCursor,
+  pageLimit,
+  pageOffset,
   type CursorPaginatedResult,
 } from '@/lib/cursor-pagination';
 
@@ -54,40 +56,7 @@ export class OrderRepository extends BaseRepository<Order> {
     const row = rowRes.rows[0];
     if (!row?.data) return null;
 
-    const order = parseJsonData<Order>(row.data);
-    const itemRows = await client.query<{ data: OrderItem | string }>(
-      `SELECT data FROM commerceos.order_items WHERE tenant_id = $1 AND order_id = $2`,
-      [tenantId, id]
-    );
-
-    let customerName = (order as any).customer_name;
-    let customerPhone = (order as any).customer_phone;
-
-    if (order.customer_id && (!customerName || !customerPhone)) {
-      const custRes = await client.query<{ data: { first_name?: string; last_name?: string; full_name?: string; phone?: string } | string }>(
-        `SELECT data FROM commerceos.customers WHERE tenant_id = $1 AND id = $2 LIMIT 1`,
-        [tenantId, order.customer_id]
-      );
-      const custRow = custRes.rows[0];
-      if (custRow?.data) {
-        const custData = parseJsonData<{ first_name?: string; last_name?: string; full_name?: string; phone?: string }>(custRow.data);
-        customerName =
-          custData.full_name ||
-          `${custData.first_name || ''} ${custData.last_name || ''}`.trim();
-        customerPhone = custData.phone;
-      }
-    }
-
-    return {
-      ...order,
-      subtotal: Number(order.subtotal || 0),
-      shipping_total: Number(order.shipping_total || (order as any).delivery_charge || 0),
-      discount_total: Number(order.discount_total || (order as any).discount || 0),
-      grand_total: Number(order.grand_total || (order as any).total || 0),
-      items: itemRows.rows.map((i) => parseJsonData<OrderItem>(i.data)),
-      customer_name: customerName,
-      customer_phone: customerPhone,
-    };
+    return (await this.presentRows(client, tenantId, [parseJsonData<Order>(row.data)]))[0];
   }
 
   async findByOrderNumber(
@@ -109,40 +78,73 @@ export class OrderRepository extends BaseRepository<Order> {
     const row = rowRes.rows[0];
     if (!row?.data) return null;
 
-    const order = parseJsonData<Order>(row.data);
-    const itemRows = await client.query<{ data: OrderItem | string }>(
-      `SELECT data FROM commerceos.order_items WHERE tenant_id = $1 AND order_id = $2`,
-      [tenantId, order.id]
-    );
+    return (await this.presentRows(client, tenantId, [parseJsonData<Order>(row.data)]))[0];
+  }
 
-    let customerName = (order as any).customer_name;
-    let customerPhone = (order as any).customer_phone;
-
-    if (order.customer_id && (!customerName || !customerPhone)) {
-      const custRes = await client.query<{ data: { first_name?: string; last_name?: string; full_name?: string; phone?: string } | string }>(
-        `SELECT data FROM commerceos.customers WHERE tenant_id = $1 AND id = $2 LIMIT 1`,
-        [tenantId, order.customer_id]
-      );
-      const custRow = custRes.rows[0];
-      if (custRow?.data) {
-        const custData = parseJsonData<{ first_name?: string; last_name?: string; full_name?: string; phone?: string }>(custRow.data);
-        customerName =
-          custData.full_name ||
-          `${custData.first_name || ''} ${custData.last_name || ''}`.trim();
-        customerPhone = custData.phone;
-      }
+  /**
+   * Orders read from SQL in the shape the in-memory store gives them (db.presentOrder: items, delivery_address,
+   * customer_name/phone), with their items and customers fetched in two queries.
+   */
+  private async presentRows(
+    client: SqlExecutor,
+    tenantId: string,
+    rows: Order[]
+  ): Promise<(Order & { customer_name: string; customer_phone: string; delivery_address?: any })[]> {
+    if (rows.length === 0) return [];
+    const orderIds = rows.map((o) => o.id);
+    const customerIds = [...new Set(rows.map((o) => o.customer_id).filter(Boolean))];
+    const [itemRes, custRes] = await Promise.all([
+      client.query<{ order_id: string; data: OrderItem | string }>(
+        `SELECT order_id, data FROM commerceos.order_items WHERE tenant_id = $1 AND order_id = ANY($2::text[]) ORDER BY seq`,
+        [tenantId, orderIds]
+      ),
+      customerIds.length
+        ? client.query<{ data: Customer | string }>(
+            `SELECT data FROM commerceos.customers WHERE tenant_id = $1 AND id = ANY($2::text[])`,
+            [tenantId, customerIds]
+          )
+        : Promise.resolve({ rows: [] as { data: Customer | string }[], rowCount: 0 }),
+    ]);
+    const itemsByOrder = new Map<string, OrderItem[]>();
+    for (const r of itemRes.rows) {
+      const list = itemsByOrder.get(r.order_id) ?? [];
+      list.push(parseJsonData<OrderItem>(r.data));
+      itemsByOrder.set(r.order_id, list);
     }
+    const customersById = new Map<string, Customer>();
+    for (const r of custRes.rows) {
+      const c = parseJsonData<Customer>(r.data);
+      customersById.set(c.id, c);
+    }
+    return rows.map((order) =>
+      db.presentOrder(
+        {
+          ...order,
+          subtotal: Number(order.subtotal || 0),
+          shipping_total: Number(order.shipping_total || (order as any).delivery_charge || 0),
+          discount_total: Number(order.discount_total || (order as any).discount || 0),
+          grand_total: Number(order.grand_total || (order as any).total || 0),
+        },
+        itemsByOrder.get(order.id) ?? [],
+        customersById.get(order.customer_id)
+      )
+    );
+  }
 
-    return {
-      ...order,
-      subtotal: Number(order.subtotal || 0),
-      shipping_total: Number(order.shipping_total || (order as any).delivery_charge || 0),
-      discount_total: Number(order.discount_total || (order as any).discount || 0),
-      grand_total: Number(order.grand_total || (order as any).total || 0),
-      items: itemRows.rows.map((i) => parseJsonData<OrderItem>(i.data)),
-      customer_name: customerName,
-      customer_phone: customerPhone,
-    };
+  /**
+   * Zero-hydration, for a workspace without an order counter yet: the highest number in its order numbers
+   * ("ORD-2026-000042" → 42), so numbering continues past orders already issued. Undefined when orders are in memory
+   * or the counter exists (db.generateOrderNumber reads those itself).
+   */
+  async highestOrderNumber(tenantId: string): Promise<number | undefined> {
+    const client = this.getClient();
+    if (!client || db.data.order_sequences?.[tenantId] !== undefined) return undefined;
+    const res = await client.query<{ n: string | null }>(
+      `SELECT max((substring(order_number from '-([0-9]+)$'))::bigint)::text AS n FROM commerceos.orders WHERE tenant_id = $1`,
+      [tenantId]
+    );
+    const n = Number(res.rows[0]?.n ?? 0);
+    return Number.isFinite(n) ? n : 0;
   }
 
   async countByTenant(tenantId: string, status?: string): Promise<number> {
@@ -932,6 +934,9 @@ export class OrderRepository extends BaseRepository<Order> {
       };
     }
 
+    const client = this.getClient();
+    if (client) return this.listPageSql(client, tenantId, { ...options, limit: options?.limit ?? 50 });
+
     const res = db.getOrders(tenantId, {
       status: options?.status,
       payment_status: options?.payment_status,
@@ -945,6 +950,46 @@ export class OrderRepository extends BaseRepository<Order> {
       orders: res.orders as any,
       total: res.total,
     };
+  }
+
+  /** db.getOrders in SQL: same filters ("ALL" means none), search on order number or the customer's name and phone. */
+  private async listPageSql(
+    client: SqlClient,
+    tenantId: string,
+    options: { status?: string; payment_status?: string; customer_id?: string; search?: string; limit: number; offset?: number }
+  ): Promise<{ orders: (Order & { customer_name: string; customer_phone: string })[]; total: number }> {
+    const params: unknown[] = [tenantId];
+    let where = `o.tenant_id = $1`;
+    if (options.status && options.status !== "ALL") {
+      params.push(options.status);
+      where += ` AND o.status = $${params.length}`;
+    }
+    if (options.payment_status && options.payment_status !== "ALL") {
+      params.push(options.payment_status);
+      where += ` AND o.payment_status = $${params.length}`;
+    }
+    if (options.customer_id) {
+      params.push(options.customer_id);
+      where += ` AND o.customer_id = $${params.length}`;
+    }
+    const q = options.search?.toLowerCase().trim().slice(0, 200);
+    if (q) {
+      params.push(`%${q.replace(/[\\%_]/g, (m) => `\\${m}`)}%`);
+      const p = `$${params.length}`;
+      where += ` AND (lower(o.order_number) LIKE ${p} OR EXISTS (
+        SELECT 1 FROM commerceos.customers c WHERE c.tenant_id = o.tenant_id AND c.id = o.customer_id
+          AND (lower(trim(coalesce(c.data->>'first_name', '') || ' ' || coalesce(c.data->>'last_name', ''))) LIKE ${p}
+               OR c.phone LIKE ${p})))`;
+    }
+    const countRes = await client.query<{ n: string }>(`SELECT count(*)::text AS n FROM commerceos.orders o WHERE ${where}`, params);
+    params.push(pageLimit(options.limit), pageOffset(options.offset));
+    const rowsRes = await client.query<{ data: Order | string }>(
+      `SELECT o.data FROM commerceos.orders o WHERE ${where}
+       ORDER BY o.created_at DESC NULLS LAST, o.id DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params
+    );
+    const orders = await this.presentRows(client, tenantId, rowsRes.rows.map((r) => parseJsonData<Order>(r.data)));
+    return { orders, total: Number(countRes.rows[0]?.n ?? 0) };
   }
 
   async createOrder(order: Order, items?: OrderItem[]): Promise<Order> {
@@ -971,7 +1016,7 @@ export class OrderRepository extends BaseRepository<Order> {
       const row = res.rows[0];
       if (row?.data) {
         const updated = parseJsonData<Order>(row.data);
-        if (db.data?.orders && Array.isArray(db.data.orders)) {
+        if (db.isCollectionHydrated("orders")) {
           const idx = db.data.orders.findIndex((o) => o.tenant_id === tenantId && o.id === orderId);
           if (idx !== -1) {
             db.data.orders[idx].status = status;
@@ -1093,7 +1138,7 @@ export class OrderRepository extends BaseRepository<Order> {
     }
 
     // Also sanitize in-memory orders if memory store is active (dual-mode / fallback)
-    if (db.data?.orders && Array.isArray(db.data.orders)) {
+    if (db.isCollectionHydrated("orders")) {
       let memCount = 0;
       for (const o of db.data.orders) {
         if (o.tenant_id !== tenantId || o.customer_id !== customerId) continue;

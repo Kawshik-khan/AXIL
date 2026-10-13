@@ -6,6 +6,7 @@ import { NotFoundError, BadRequestError } from "@/lib/errors";
 import { OrderLifecycleService } from "@/domains/orders/order-lifecycle.service";
 import { OrderRtoEvaluationRecord } from "@/types/rto";
 import { randomSuffix } from "@/lib/ids";
+import { loadOrderRows } from "@/infrastructure/db/tenant-rows";
 
 export class AdvanceFeeService {
   /**
@@ -26,6 +27,7 @@ export class AdvanceFeeService {
   }> {
     RbacService.assertCan(context, PERMISSIONS.ORDERS_WRITE);
 
+    await loadOrderRows(context.tenant.id, [orderId]); // zero-hydration: the order's rows this flow reads and changes
     const order = db.findOrderById(context.tenant.id, orderId);
     if (!order) {
       throw new NotFoundError("Order", orderId);
@@ -94,6 +96,7 @@ export class AdvanceFeeService {
     amountBdt = 120,
     actorUserId = "system"
   ): Promise<OrderRtoEvaluationRecord | undefined> {
+    await loadOrderRows(tenantId, [orderId]); // zero-hydration: the order's rows this flow reads and changes
     const order = db.findOrderById(tenantId, orderId);
     if (!order) {
       throw new NotFoundError("Order", orderId);

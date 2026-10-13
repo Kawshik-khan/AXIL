@@ -13,6 +13,7 @@ import { campaignService } from "./campaign.service";
 import { offerService } from "./offer.service";
 import { growthIntelligenceService } from "./growth-intelligence.service";
 import { experimentService } from "./experiment.service";
+import { COMMERCE_ANALYTICS_COLLECTIONS, loadTenantRows } from "@/infrastructure/db/tenant-rows";
 
 export interface WorkflowExecutionResult {
   workflow_type: string;
@@ -27,6 +28,7 @@ export class GrowthWorkflowService {
    * Workflow 1: New Customer Welcome Journey
    */
   public async runNewCustomerWelcomeJourney(tenantId: string, customerId: string): Promise<WorkflowExecutionResult> {
+    await loadTenantRows(tenantId, ["customers", "customer_addresses", "orders", "order_items"]); // zero-hydration: lifecycle reads
     const cust = db.findCustomerById(tenantId, customerId);
     if (!cust) throw new AppError("NOT_FOUND", `Customer not found: ${customerId}`, 404);
 
@@ -126,6 +128,7 @@ export class GrowthWorkflowService {
    * Workflow 5: Post-Delivery Cross-Sell
    */
   public async runPostDeliveryCrossSell(tenantId: string, orderId: string): Promise<WorkflowExecutionResult> {
+    await loadTenantRows(tenantId, COMMERCE_ANALYTICS_COLLECTIONS); // zero-hydration: the order and the catalog it recommends from
     const order = db.findOrderById(tenantId, orderId);
     if (!order) throw new AppError("NOT_FOUND", `Order not found: ${orderId}`, 404);
 

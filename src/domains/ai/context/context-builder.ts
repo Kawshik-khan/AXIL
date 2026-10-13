@@ -15,6 +15,7 @@ import {
 import { PIIRedactionService } from "./pii-redaction.service";
 import { MemoryService } from "../memory/memory.service";
 import { PricingService } from "@/domains/pricing/pricing.service";
+import { orderRepository } from "@/domains/orders/order.repository";
 
 export interface BuildContextOptions {
   conversationId: string;
@@ -77,10 +78,12 @@ export class ContextBuilder {
       created_at: string;
     }> = [];
     if (customerId) {
-      const orders = db.getOrders(tenantId, {
-        customer_id: customerId,
-        limit: 3,
-      }).orders;
+      const orders = (
+        await orderRepository.listOrders(tenantId, {
+          customer_id: customerId,
+          limit: 3,
+        })
+      ).orders;
       recentOrders = orders.map((o) => ({
         id: o.id,
         order_number: o.order_number,

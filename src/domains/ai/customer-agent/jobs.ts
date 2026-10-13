@@ -27,10 +27,13 @@ export function strictFlag(key: string, tenantId: string): boolean {
 function kickWorker(): void {
   if (process.env.NODE_ENV === "test") return;
   void import("./worker").then((m) => {
-    m.startCustomerAgentWorker();
-    setTimeout(() => {
-      void m.runAgentJobsOnce().catch(() => undefined);
-    }, DEBOUNCE_MS + 200);
+    // Outside the request's zero-hydration scope: the worker's timers must not inherit (and keep alive) its rows
+    db.outsideTenantReads(() => {
+      m.startCustomerAgentWorker();
+      setTimeout(() => {
+        void m.runAgentJobsOnce().catch(() => undefined);
+      }, DEBOUNCE_MS + 200);
+    });
   }).catch(() => undefined);
 }
 

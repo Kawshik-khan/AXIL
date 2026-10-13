@@ -22,6 +22,7 @@ import type { CustomerQuote } from "@/types/ai";
 import type { Order, Product } from "@/types/commerce";
 import { canSeeOrder, capabilityContext, visibleOrders, findVisibleOrders, type CustomerAgentPrincipal } from "./principal";
 import { confirmedAfter, customerMessages } from "./confirmation";
+import { loadOrderRows, loadTenantRows } from "@/infrastructure/db/tenant-rows";
 
 export type ToolResult = Record<string, unknown>;
 
@@ -181,7 +182,7 @@ async function searchProducts(pr: CustomerAgentPrincipal, a: z.infer<typeof Sear
 }
 
 async function getProduct(pr: CustomerAgentPrincipal, a: z.infer<typeof ProductArgs>): Promise<ToolResult> {
-  const p = (await productRepository.findById(pr.tenantId, a.product_id)) ?? db.findProductById(pr.tenantId, a.product_id);
+  const p = await productRepository.findById(pr.tenantId, a.product_id);
   if (!p || p.status !== "ACTIVE") return { error: "NOT_FOUND", message: "No product with that id in this shop." };
   // The merchant's text: data for the model, never instructions (F22)
   return { ...productView(pr.tenantId, p), description_untrusted: (p.description ?? "").slice(0, 500) };
@@ -379,6 +380,7 @@ async function getMyOrders(pr: CustomerAgentPrincipal): Promise<ToolResult> {
   if (!orders.length) {
     return { orders: [], message: "No orders are linked to this chat. If they need an existing order, hand off to the team." };
   }
+  await loadOrderRows(pr.tenantId, orders.map((o) => o.id)); // zero-hydration: their items
   return { orders: orders.map((o) => orderView(pr.tenantId, o)) };
 }
 
@@ -388,6 +390,7 @@ async function getOrderStatus(pr: CustomerAgentPrincipal, a: z.infer<typeof Orde
   const order = await orderRepository.findByOrderNumber(pr.tenantId, ref);
   // Someone else's order gets exactly the answer a missing one does: no existence oracle (F02)
   if (!order || !canSeeOrder(pr, order)) return notFound;
+  await loadOrderRows(pr.tenantId, [order.id]); // zero-hydration: its items
   return { found: true, ...orderView(pr.tenantId, order) };
 }
 
@@ -517,6 +520,7 @@ export const CUSTOMER_TOOLS: Record<string, CustomerTool> = {
 };
 
 export const CUSTOMER_TOOL_NAMES = Object.keys(CUSTOMER_TOOLS);
+const CATALOG_TOOLS = new Set(["search_products", "get_product", "quote_order"]);
 
 /**
  * Runs one tool call for the customer agent: only the tools above, only with arguments their strict schema accepts.
@@ -536,7 +540,12 @@ export async function runCustomerTool(
     return { ok: false, refused: "INVALID_ARGS", result: { error: "INVALID_ARGUMENTS", issues: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`) } };
   }
   try {
-    const result = await tool.run(pr, parsed.data as never);
+    // A scope for zero-hydration rows (the worker runs outside a request); nested in a request's, it shares it
+    const result = await db.withTenantReads(async () => {
+      // The shop's catalog and stock, for the tools that search, show, price or check stock (read-only)
+      if (CATALOG_TOOLS.has(name)) await loadTenantRows(pr.tenantId, ["products", "product_variants", "inventory_items", "warehouses"]);
+      return tool.run(pr, parsed.data as never);
+    });
     return { ok: !result.error, result };
   } catch (err) {
     // Internal error text stays in the log: the model could repeat it to the customer

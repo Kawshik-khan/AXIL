@@ -26,6 +26,7 @@ import { chatMessages } from "./runtime";
 import { replyScript } from "./output";
 import { hourWithin, localHour } from "@/lib/local-time";
 import { quoteShownIn } from "./output";
+import { loadCustomerRows } from "@/infrastructure/db/tenant-rows";
 
 const INTERVAL_MS = 1_000;
 /** A claim older than this belongs to a server that died mid-turn; the job is taken again (a turn takes under a minute). */
@@ -89,9 +90,18 @@ async function finish(job: AgentJob, result: Finish): Promise<void> {
 
 /** Pass the chat to the team (outside any unit: the handoff tool commits its own changes). */
 async function handOff(job: AgentJob, summary: string): Promise<void> {
-  const pr = principalFor(job.tenant_id, job.conversation_id);
-  if (!pr) return;
-  await runCustomerTool(pr, "handoff_to_human", { reason: "other", summary });
+  await db.withFreshTenantReads(async () => {
+    await loadChatCustomer(job);
+    const pr = principalFor(job.tenant_id, job.conversation_id);
+    if (!pr) return;
+    await runCustomerTool(pr, "handoff_to_human", { reason: "other", summary });
+  });
+}
+
+/** Zero-hydration: the chat's customer and channel identities from Postgres, which principalFor reads. */
+async function loadChatCustomer(job: AgentJob): Promise<void> {
+  const customerId = db.findConversationById(job.tenant_id, job.conversation_id)?.customer_id;
+  if (customerId) await loadCustomerRows(job.tenant_id, [customerId]);
 }
 
 const turnsSince = (tenantId: string, sinceIso: string, conversationId?: string) =>
@@ -142,8 +152,15 @@ async function outsideHours(job: AgentJob, pr: NonNullable<ReturnType<typeof pri
   return { status: "DONE", outcome: "OUTSIDE_HOURS" };
 }
 
-/** Runs one claimed job to its end. Exported for tests. */
+/** Runs one claimed job to its end, with its own scope for zero-hydration rows. Exported for tests. */
 export async function runAgentJob(job: AgentJob): Promise<Finish> {
+  return db.withFreshTenantReads(async () => {
+    await loadChatCustomer(job);
+    return runLoadedAgentJob(job);
+  });
+}
+
+async function runLoadedAgentJob(job: AgentJob): Promise<Finish> {
   const pr = principalFor(job.tenant_id, job.conversation_id);
   if (!pr) return { status: "BLOCKED", outcome: "INACTIVE_WORKSPACE_OR_CHANNEL" };
   const conversation = db.findConversationById(job.tenant_id, job.conversation_id);

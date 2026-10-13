@@ -1,6 +1,6 @@
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { CustomerService } from "@/domains/customers/customer.service";
-import { db } from "@/infrastructure/db";
+import { orderRepository } from "@/domains/orders/order.repository";
 import { withStore } from "@/lib/store-unit";
 
 async function handleGET(
@@ -11,7 +11,7 @@ async function handleGET(
   try {
     const context = await extractRequestContext(request);
     const customer = await CustomerService.getCustomerById(context, params.id);
-    const orders = db.getOrders(context.tenant.id, { customer_id: params.id, limit: 100 });
+    const orders = await orderRepository.listOrders(context.tenant.id, { customer_id: params.id, limit: 100 });
 
     return apiSuccess({
       customer,

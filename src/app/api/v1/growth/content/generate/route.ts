@@ -4,6 +4,7 @@ import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { contentService } from "@/domains/growth/services/content.service";
 import { withStore } from "@/lib/store-unit";
+import { COMMERCE_ANALYTICS_COLLECTIONS } from "@/infrastructure/db/tenant-rows";
 
 async function handlePOST(request: Request) {
   try {
@@ -28,4 +29,4 @@ async function handlePOST(request: Request) {
   }
 }
 
-export const POST = withStore("POST", handlePOST);
+export const POST = withStore("POST", handlePOST, { tenantRows: { collections: [...COMMERCE_ANALYTICS_COLLECTIONS, "coupons"], permission: PERMISSIONS.MARKETING_WRITE } });

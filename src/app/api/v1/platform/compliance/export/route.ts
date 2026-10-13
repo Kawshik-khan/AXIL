@@ -6,6 +6,7 @@ import { PlatformAuditService } from "@/domains/platform/services/platform-audit
 import { db } from "@/infrastructure/db";
 import { NotFoundError } from "@/lib/errors";
 import { withStore } from "@/lib/store-unit";
+import { loadTenantRows } from "@/infrastructure/db/tenant-rows";
 
 const ExportBody = z
   .object({
@@ -23,7 +24,8 @@ async function handlePOST(request: Request) {
     const tenant = db.findTenantById(body.tenant_id);
     if (!tenant) throw new NotFoundError("Tenant", body.tenant_id);
 
-    // Collect tenant entities (read-only bundle)
+    // Collect tenant entities (read-only bundle); zero-hydration: this tenant's rows from Postgres
+    await loadTenantRows(tenant.id, ["orders", "products", "product_variants", "customers", "customer_addresses"]);
     const orders = db.getAllOrders(tenant.id);
     const products = db.getAllProducts(tenant.id);
     const customers = db.getAllCustomers(tenant.id);

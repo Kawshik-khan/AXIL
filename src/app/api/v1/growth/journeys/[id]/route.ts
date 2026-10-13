@@ -6,6 +6,7 @@ import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { db } from "@/infrastructure/db";
 import { withStore } from "@/lib/store-unit";
+import { COMMERCE_ANALYTICS_COLLECTIONS } from "@/infrastructure/db/tenant-rows";
 
 // FX-12: status changes go through the pause/resume routes; counters are server-side.
 const JourneyPatch = z
@@ -60,4 +61,4 @@ async function handlePUT(
 }
 
 export const GET = withStore("GET", handleGET);
-export const PUT = withStore("PUT", handlePUT);
+export const PUT = withStore("PUT", handlePUT, { tenantRows: { collections: COMMERCE_ANALYTICS_COLLECTIONS, permission: PERMISSIONS.MARKETING_WRITE } });

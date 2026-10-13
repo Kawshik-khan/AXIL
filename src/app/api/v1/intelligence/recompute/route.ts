@@ -5,6 +5,7 @@ import { enforceRateLimit, MINUTE } from "@/lib/rate-limit";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { intelligenceRecomputeService } from "@/domains/intelligence/services/intelligence-recompute.service";
 import { withStore } from "@/lib/store-unit";
+import { OPERATIONS_COLLECTIONS } from "@/infrastructure/db/tenant-rows";
 
 /**
  * Recomputes and stores every intelligence snapshot for the caller's workspace (FX-21). Intelligence GETs never
@@ -31,4 +32,4 @@ async function handlePOST(request: Request) {
   }
 }
 
-export const POST = withStore("POST", handlePOST);
+export const POST = withStore("POST", handlePOST, { tenantRows: { collections: [...OPERATIONS_COLLECTIONS, "analytics_events"], permission: PERMISSIONS.ANALYTICS_MANAGE } });

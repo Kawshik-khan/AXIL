@@ -1,6 +1,8 @@
 import { db } from "@/infrastructure/db";
 import { RequestContext } from "@/lib/context";
-import { Order, OrderStatus } from "@/types/commerce";
+import { Customer, Order, OrderStatus } from "@/types/commerce";
+import { customerRepository } from "@/domains/customers/customer.repository";
+import { orderRepository } from "@/domains/orders/order.repository";
 import {
   NetworkDeliveryReputationRecord,
   OrderRtoEvaluationRecord,
@@ -38,7 +40,8 @@ export class RtoScoringService {
     customerPhone?: string,
     options?: { persist?: boolean }
   ): Promise<OrderRtoEvaluationRecord> {
-    const rawPhone = customerPhone || this.resolveOrderPhone(context.tenant.id, order);
+    const customer = order.customer_id ? await customerRepository.findById(context.tenant.id, order.customer_id) : null;
+    const rawPhone = customerPhone || this.resolveOrderPhone(context.tenant.id, order, customer);
     const phoneHash = rawPhone ? hashPhoneForReputation(rawPhone) : "";
 
     // 1. Resolve Tenant Configuration (or defaults)
@@ -68,7 +71,7 @@ export class RtoScoringService {
 
     // 3. Returning customer exemption check with this specific tenant
     if (settings.exempt_returning_customers && order.customer_id) {
-      const pastOrders = db.getOrders(context.tenant.id, { customer_id: order.customer_id, limit: 50 });
+      const pastOrders = await orderRepository.listOrders(context.tenant.id, { customer_id: order.customer_id, limit: 50 });
       const hasDelivered = pastOrders.orders.some((o) => o.id !== order.id && o.status === "DELIVERED");
       if (hasDelivered) {
         networkRiskScore = Math.max(5, networkRiskScore - 30);
@@ -260,10 +263,11 @@ export class RtoScoringService {
 
   // ==================== INTERNAL RISK HELPERS ====================
 
-  private static resolveOrderPhone(tenantId: string, order: Order): string {
+  /** `customer`: already read by the caller (undefined: looked up in the store here). */
+  private static resolveOrderPhone(tenantId: string, order: Order, customer?: Customer | null): string {
     if (order.customer_id) {
-      const customer = db.findCustomerById(tenantId, order.customer_id);
-      if (customer?.phone) return normalizePhoneNumber(customer.phone);
+      const found = customer === undefined ? db.findCustomerById(tenantId, order.customer_id) : customer;
+      if (found?.phone) return normalizePhoneNumber(found.phone);
     }
     const anyCustomerPhone = (order as any).customer_phone || (order as any).shipping_address?.phone;
     return anyCustomerPhone ? normalizePhoneNumber(anyCustomerPhone) : "";

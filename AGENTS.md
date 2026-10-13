@@ -55,6 +55,9 @@ src/domains/platform/services/       PlatformAuthorizationService, entitlements,
 src/domains/ai/                      agents, policy, tools/tool-registry.ts, prompts, rag, eval
 src/infrastructure/db/index.ts       The store (~9.8k lines — grep it, never read whole); getAll* for analytics, paged getters need a limit.
                                      DATA_BACKEND=pg: Postgres is the system of record (await db.ready() in scripts)
+src/infrastructure/db/tenant-rows.ts Zero-hydration reads: readTenantRows (awaited), loadTenantRows / loadOrderRows / ... (one tenant's
+                                     rows into the request's working set for the store's sync methods; changes commit version-checked).
+                                     Routes declare what their handler scans with withStore(..., { tenantRows: [...] })
 src/infrastructure/store/            Postgres persistence: pg-store.ts (load, diff, version-checked writes, change-log sync), store-schema.ts
                                      (collection → table), migrations.ts (runner), backfill.ts (backfill + verify)
 src/infrastructure/db/migrations/    006_align_domain_model.sql (schema `commerceos`), 007_multi_writer.sql, 008_apply_changes.sql; legacy/ = old 001-005, never run

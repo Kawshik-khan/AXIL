@@ -6,6 +6,7 @@ import { enforceRateLimit, MINUTE } from "@/lib/rate-limit";
 import { parseOrThrow, readJson } from "@/lib/validation";
 import { InsightsCoachService } from "@/domains/social/insights/insights-coach.service";
 import { withStore } from "@/lib/store-unit";
+import { COMMERCE_ANALYTICS_COLLECTIONS } from "@/infrastructure/db/tenant-rows";
 
 const Body = z.object({ days: z.union([z.literal(7), z.literal(14), z.literal(30), z.literal(90)]).default(30) }).strict();
 
@@ -23,4 +24,4 @@ async function handlePOST(request: Request) {
   }
 }
 
-export const POST = withStore("POST", handlePOST);
+export const POST = withStore("POST", handlePOST, { tenantRows: { collections: COMMERCE_ANALYTICS_COLLECTIONS, permission: PERMISSIONS.MARKETING_READ } });

@@ -14,6 +14,7 @@ import { assertNotKilled, isFeatureEnabled } from "@/lib/safety-gate";
 import { enqueueSendInN8n, isSocialChannel, socialN8nEnabled } from "../n8n/bridge";
 import { logger } from "@/lib/logger";
 import { TelegramApiError } from "../channels/adapters/telegram.adapter";
+import { loadCustomerRows } from "@/infrastructure/db/tenant-rows";
 
 export interface SendOutboundPayload {
   text: string;
@@ -162,6 +163,7 @@ export class OutboundMessageService {
     }
 
     // Resolve external recipient ID (e.g. PSID, Phone, WhatsApp ID)
+    await loadCustomerRows(context.tenant.id, [customerId]); // zero-hydration: the customer and identities read here
     const identity = db.getCustomerIdentities(context.tenant.id, customerId).find(
       (i) => i.channel_id === channel.id
     );

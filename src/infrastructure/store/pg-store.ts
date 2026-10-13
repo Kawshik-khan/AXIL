@@ -51,6 +51,13 @@ interface PendingRow {
   expected: number | null;
 }
 
+/** A row of a collection left out of memory, saved with the next commit (PgStorePersistence.withQueuedRows). */
+export interface QueuedRow {
+  row: Record<string, unknown>;
+  /** The version it was read with; null for a new row. */
+  expected: number | null;
+}
+
 interface CollectionChanges {
   collection: string;
   core: CoreTable | undefined;
@@ -744,6 +751,8 @@ export class PgStorePersistence {
   /** After COMMIT: the written rows (with their new versions) become the baseline. */
   private commit(changes: ChangeSet, versions: Map<string, Map<string, number>>): void {
     for (const c of changes.collections) {
+      // Collections left out of memory keep no baseline either: their rows are only ever inserted (withInserts)
+      if (this.unhydratedCollections.has(c.collection)) continue;
       const committed = this.committed.get(c.collection) ?? new Map<string, Committed>();
       const v = versions.get(c.collection);
       for (const row of c.upserts) committed.set(row.id, { json: row.json, version: v?.get(row.id) ?? 1 });
@@ -773,6 +782,42 @@ export class PgStorePersistence {
     };
   }
 
+  /**
+   * `changes` plus rows saved in collections left out of memory (zero-hydration): an audit log a request wrote, an order
+   * it changed. `expected: null` inserts (a row another server created with the same id is a conflict, never an
+   * overwrite); a version updates the row only while Postgres still has that version (else StoreConflictError).
+   */
+  static withQueuedRows(changes: ChangeSet, rows: ReadonlyMap<string, Iterable<QueuedRow>>): ChangeSet {
+    const added: CollectionChanges[] = [];
+    for (const [collection, list] of rows) {
+      const core = coreTableFor(collection);
+      const out: CollectionChanges = { collection, core, upserts: [], deletes: [] };
+      for (const { row, expected } of list) {
+        const id = recordId(collection, row);
+        if (id === null) {
+          changes.unwritable.push({ collection, id: "", op: "upsert", reason: "MISSING_ID" });
+          continue;
+        }
+        let serialized: { json: string; sanitized: boolean };
+        try {
+          serialized = serializeRecord(row);
+        } catch {
+          changes.unwritable.push({ collection, id, op: "upsert", reason: "NOT_SERIALIZABLE" });
+          continue;
+        }
+        if (serialized.sanitized) changes.sanitizedRows++;
+        out.upserts.push({ id, tenantId: tenantOf(core, row, id), createdAt: rowTime(row), json: serialized.json, expected });
+      }
+      if (out.upserts.length) added.push(out);
+    }
+    if (!added.length) return changes;
+    return {
+      ...changes,
+      collections: [...changes.collections, ...added],
+      rowCount: changes.rowCount + added.reduce((n, c) => n + c.upserts.length, 0),
+    };
+  }
+
   // ---- Rollback ----------------------------------------------------------------------------------------------------
 
   /**
@@ -781,6 +826,7 @@ export class PgStorePersistence {
    */
   restore(data: Record<string, unknown>, changes: ChangeSet): void {
     for (const c of changes.collections) {
+      if (this.unhydratedCollections.has(c.collection)) continue; // not in memory: nothing to put back
       const list = data[c.collection];
       if (!Array.isArray(list)) continue;
       const committed = this.committed.get(c.collection);

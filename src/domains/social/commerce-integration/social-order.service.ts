@@ -7,6 +7,7 @@ import { OrderService } from "@/domains/orders/order.service";
 import { ProductService } from "@/domains/catalog/product.service";
 import { MessageService } from "../messages/message.service";
 import { BadRequestError, NotFoundError } from "@/lib/errors";
+import { loadCustomerRows } from "@/infrastructure/db/tenant-rows";
 
 export interface CreateSocialOrderPayload {
   conversation_id: string;
@@ -44,6 +45,7 @@ export class SocialOrderService {
       throw new NotFoundError(`Conversation '${payload.conversation_id}' not found.`);
     }
 
+    await loadCustomerRows(context.tenant.id, [conversation.customer_id]); // zero-hydration: the customer and identities read here
     const customer = db.findCustomerById(context.tenant.id, conversation.customer_id);
     if (!customer) {
       throw new BadRequestError(`Customer record for conversation '${payload.conversation_id}' not found.`);

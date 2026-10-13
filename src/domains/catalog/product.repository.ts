@@ -16,6 +16,8 @@ import {
   decodeCursor,
   buildKeysetClause,
   sliceForCursor,
+  pageLimit,
+  pageOffset,
   type CursorPaginatedResult,
 } from '@/lib/cursor-pagination';
 
@@ -338,7 +340,9 @@ export class ProductRepository extends BaseRepository<Product> {
       };
     }
 
-    // Default offset path
+    // Default offset path (SQL under zero-hydration)
+    const client = this.getClient();
+    if (client) return this.listPageSql(client, tenantId, { ...options, limit: options?.limit ?? 50 });
     const res = db.getProducts(tenantId, {
       category_id: options?.category_id,
       status: options?.status,
@@ -351,6 +355,51 @@ export class ProductRepository extends BaseRepository<Product> {
       products: res.products,
       total: res.total,
     };
+  }
+
+  /**
+   * db.getProducts in SQL: newest first with variants; status "ALL" means any; search matches name, SKU and slug as one
+   * phrase, or every word of it.
+   */
+  private async listPageSql(
+    client: SqlClient,
+    tenantId: string,
+    options: { category_id?: string; status?: string; search?: string; limit: number; offset?: number }
+  ): Promise<{ products: Product[]; total: number }> {
+    const params: unknown[] = [tenantId];
+    let where = `tenant_id = $1`;
+    if (options.category_id) {
+      params.push(options.category_id);
+      where += ` AND category_id = $${params.length}`;
+    }
+    if (options.status && options.status !== "ALL") {
+      params.push(options.status);
+      where += ` AND status = $${params.length}`;
+    }
+    const q = options.search?.toLowerCase().trim().slice(0, 200);
+    if (q) {
+      const like = (text: string) => {
+        params.push(`%${text.replace(/[\\%_]/g, (m) => `\\${m}`)}%`);
+        return `$${params.length}`;
+      };
+      const haystack = `lower(coalesce(data->>'name', '') || ' ' || coalesce(data->>'sku', '') || ' ' || coalesce(data->>'slug', ''))`;
+      const words = q.split(/\s+/).filter(Boolean).slice(0, 8); // a bounded number of LIKE clauses
+      const phrase = `${haystack} LIKE ${like(q)}`;
+      where +=
+        words.length > 1
+          ? ` AND (${phrase} OR (${words.map((w) => `${haystack} LIKE ${like(w)}`).join(" AND ")}))`
+          : ` AND ${phrase}`;
+    }
+    const countRes = await client.query<{ n: string }>(`SELECT count(*)::text AS n FROM commerceos.products WHERE ${where}`, params);
+    params.push(pageLimit(options.limit), pageOffset(options.offset));
+    const rowsRes = await client.query<{ data: Product | string }>(
+      `SELECT data FROM commerceos.products WHERE ${where}
+       ORDER BY created_at DESC NULLS LAST, id DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params
+    );
+    const page = rowsRes.rows.map((r) => parseJsonData<Product>(r.data));
+    const variants = await this.findVariantsByProductIds(tenantId, page.map((p) => p.id));
+    return { products: page.map((p) => ({ ...p, variants: variants.get(p.id) ?? [] })), total: Number(countRes.rows[0]?.n ?? 0) };
   }
 
   async createProduct(product: Product, initialStock = 0): Promise<Product> {

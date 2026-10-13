@@ -14,6 +14,7 @@ import {
 } from "@/types/growth";
 import { segmentEngineService } from "./audience.service";
 import { marketingChannelService } from "./marketing-channel.service";
+import { loadCustomerRows } from "@/infrastructure/db/tenant-rows";
 
 export class JourneyEngineService {
   /**
@@ -131,7 +132,8 @@ export class JourneyEngineService {
     let actionResult: Record<string, unknown> = { executed: true };
     if (currentStep.type === "ACTION") {
       if (currentStep.config.action_type === "SEND_MESSAGE" && currentStep.config.channel) {
-        const cust = db.findCustomerById(tenantId, enrollment.customer_id);
+        await loadCustomerRows(tenantId, [enrollment.customer_id]); // zero-hydration: the customer read here
+    const cust = db.findCustomerById(tenantId, enrollment.customer_id);
         const recipient = cust?.phone || cust?.email || enrollment.customer_id;
 
         const res = await marketingChannelService.dispatchMessage({

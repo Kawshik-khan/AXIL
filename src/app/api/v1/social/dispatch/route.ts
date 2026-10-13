@@ -7,6 +7,7 @@ import { BadRequestError, NotFoundError } from "@/lib/errors";
 import { withStore } from "@/lib/store-unit";
 import { SocialEventService } from "@/domains/social/events/social-event.service";
 import { logger } from "@/lib/logger";
+import { loadCustomerRows } from "@/infrastructure/db/tenant-rows";
 
 /**
  * n8n -> CommerceOS: deliver a stored message now (connector plan C3).
@@ -48,6 +49,7 @@ async function handlePOST(request: Request) {
   const credentials = ChannelService.getDecryptedCredentials(channel);
 
   // Resolve external recipient ID
+  await loadCustomerRows(message.tenant_id, [conversation.customer_id]); // zero-hydration: the customer and identities read here
   const identity = db.getCustomerIdentities(message.tenant_id, conversation.customer_id).find(
     (i) => i.channel_id === channel.id
   );

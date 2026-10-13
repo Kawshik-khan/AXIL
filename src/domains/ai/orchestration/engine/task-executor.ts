@@ -23,6 +23,8 @@ import { AppError, isAppError } from '@/lib/errors';
 import { workflowBudgetService } from './workflow-budget.service';
 import { autonomyPolicyService } from '../autonomy/autonomy-policy.service';
 import { approvalBindingMismatch, approvalDigest, approvalPayloadDigest, captureApprovalTargetState } from '../autonomy/approval-binding';
+import { loadOrderRows } from "@/infrastructure/db/tenant-rows";
+import { inventoryRepository } from "@/domains/inventory/inventory.repository";
 
 /**
  * What system- and event-started workflows may do (FX-19, audit M12). They have no human creator, and the agents
@@ -132,6 +134,10 @@ export class TaskExecutor {
     cancellationSignal?: AbortSignal,
   ): Promise<TaskExecutionResult> {
     const tenantId = task.tenant_id;
+    // Zero-hydration: the order this task acts on (approval binding, verification, lifecycle changes)
+    const targetOrderId = (task.input?.order_id as string | undefined) ||
+      (task.input?.target_entity_type === "ORDER" ? (task.input.target_entity_id as string | undefined) : undefined);
+    if (targetOrderId) await loadOrderRows(tenantId, [targetOrderId]);
 
     const initialWorkflow = db.getWorkflowById(tenantId, task.workflow_id);
     const initialTask = db.getTaskById(tenantId, task.id) || task;
@@ -615,6 +621,7 @@ export class TaskExecutor {
       case "INVENTORY": {
         const variantId = (task.input.variant_id as string) || (contextEntities?.variant_id as string | undefined);
         if (!variantId) throw new AppError("VALIDATION_ERROR", "Inventory task requires an authoritative variant_id.", 400);
+        await inventoryRepository.getStockLevels(task.tenant_id); // zero-hydration: the stock rows checked here
         const stockResult = inventoryAgent.checkStock(mockContext, variantId);
         return {
           variant_id: variantId,
