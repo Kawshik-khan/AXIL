@@ -820,6 +820,42 @@ async function main() {
   });
 
   // ---------------------------------------------------------------------------
+  console.log(`\n${ANSI_BOLD}Customer detail: order history needs orders.read${ANSI_RESET}`);
+
+  await runTest("GET /customers/:id shows order history only to roles that may read orders (MARKETING gets null)", async () => {
+    const now = new Date().toISOString();
+    const customer = await CustomerService.createCustomer(
+      { ...(await extractRequestContext(new Request(`${BASE}/api/v1/customers`, { headers: { authorization: `Bearer ${tenantA.token}` } }))) },
+      { first_name: "History", last_name: "Check", phone: "01733445566" }
+    );
+    db.createOrder({
+      id: `ord_hist_${crypto.randomUUID().slice(0, 8)}`, tenant_id: tenantA.tenant.id, order_number: `ORD-HIST-${Date.now()}`, customer_id: customer.id,
+      status: "PENDING", currency: "BDT", subtotal: 100, discount_total: 0, shipping_total: 0, tax_total: 0, grand_total: 100,
+      payment_method: "COD", payment_status: "PENDING", fulfillment_status: "UNFULFILLED", source: "MANUAL", created_at: now, updated_at: now,
+    } as never, []);
+    const marketerId = `usr_mkt_${crypto.randomUUID().slice(0, 8)}`;
+    db.createUser({ id: marketerId, email: `${marketerId}@shop-a.test`, name: "Marketer", password_hash: "!disabled", status: "ACTIVE", created_at: now, updated_at: now });
+    db.createMembership({ id: `mem_${marketerId}`, tenant_id: tenantA.tenant.id, user_id: marketerId, role: "MARKETING", created_at: now, updated_at: now });
+    const marketerToken = await signSessionToken({ userId: marketerId, tenantId: tenantA.tenant.id, role: "MARKETING", email: `${marketerId}@shop-a.test`, name: "Marketer" });
+    const { GET } = (await import("@/app/api/v1/customers/[id]/route")) as {
+      GET: (r: Request, ctx: { params: Promise<{ id: string }> }) => Promise<Response>;
+    };
+    const detail = async (token: string) => {
+      const res = await GET(new Request(`${BASE}/api/v1/customers/${customer.id}`, { headers: { authorization: `Bearer ${token}` } }), {
+        params: Promise.resolve({ id: customer.id }),
+      });
+      return { status: res.status, body: await res.json() };
+    };
+    const owner = await detail(tenantA.token);
+    assert.strictEqual(owner.status, 200);
+    assert.strictEqual(owner.body.data.orders.length, 1, "the owner sees the order history");
+    const marketer = await detail(marketerToken);
+    assert.strictEqual(marketer.status, 200, "the customer itself is still visible");
+    assert.strictEqual(marketer.body.data.customer.id, customer.id);
+    assert.strictEqual(marketer.body.data.orders, null, "no order history without orders.read");
+  });
+
+  // ---------------------------------------------------------------------------
   console.log(`\n${ANSI_BOLD}[FX-01] Committed secrets (C5)${ANSI_RESET}`);
 
   await runTest("C5: .env.example contains placeholders only", () => {

@@ -424,7 +424,9 @@ export default function CustomersPage() {
 
             <div>
               <div style={{ fontWeight: 600, marginBottom: "8px" }}>Order History</div>
-              {(selectedCustomer.orders || []).length === 0 ? (
+              {selectedCustomer.orders === null ? (
+                <p style={{ color: "var(--color-text-muted)" }}>Your role can&apos;t view orders.</p>
+              ) : (selectedCustomer.orders || []).length === 0 ? (
                 <p style={{ color: "var(--color-text-muted)" }}>No prior orders found.</p>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
