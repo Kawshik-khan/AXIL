@@ -646,8 +646,181 @@ async function main() {
   });
 
   // ---------------------------------------------------------------------------
-  console.log(`\n${ANSI_BOLD}[FX-01] Committed secrets (C5)${ANSI_RESET}`);
+  console.log(`\n${ANSI_BOLD}[ADR-104] Sign-up body validation${ANSI_RESET}`);
+  // The register route takes a strict Zod body, never the raw JSON.
+
+  const register = async (body: Record<string, unknown> | string) => {
+    const { POST } = await import("@/app/api/v1/auth/register/route");
+    const res = await POST(new Request(`${BASE}/api/v1/auth/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: typeof body === "string" ? body : JSON.stringify(body),
+    }));
+    return { status: res.status, json: await res.json(), setCookie: res.headers.getSetCookie() };
+  };
+  const signUp = (overrides: Record<string, unknown> = {}) => ({
+    name: "Sign-up Owner",
+    workspaceName: `Sign-up Shop ${crypto.randomUUID().slice(0, 8)}`,
+    email: `signup-${crypto.randomUUID().slice(0, 8)}@signup.test`,
+    password: "Signup-Owner-Pass-4412!",
+    currency: "BDT",
+    ...overrides,
+  });
+
+  await runTest("register: an unsupported currency is rejected with 400", async () => {
+    const res = await register(signUp({ currency: "XYZ" }));
+    assert.strictEqual(res.status, 400);
+    assert.strictEqual(res.json.error?.code, "VALIDATION_ERROR");
+    assert.match(res.json.error.message, /currency/i);
+  });
+
+  await runTest("register: a missing email is a 400 naming the email field, not a 500", async () => {
+    const body = signUp();
+    delete (body as Record<string, unknown>).email;
+    const res = await register(body);
+    assert.strictEqual(res.status, 400);
+    assert.strictEqual(res.json.error?.code, "VALIDATION_ERROR");
+    assert.match(res.json.error.message, /email/i);
+  });
+
+  await runTest("register: unknown fields (role, tenant_id) are rejected, not ignored", async () => {
+    for (const extra of [{ role: "SUPER_ADMIN" }, { tenant_id: tenantA.tenant.id }]) {
+      const body = signUp(extra);
+      const res = await register(body);
+      assert.strictEqual(res.status, 400, `extra field ${Object.keys(extra)[0]} must be rejected`);
+      assert.strictEqual(res.json.error?.code, "VALIDATION_ERROR");
+      assert.strictEqual(db.findUserByEmail(String(body.email)), undefined, "no account is created");
+    }
+  });
+
+  await runTest("register: a 10 kB workspace name is rejected with 400", async () => {
+    const res = await register(signUp({ workspaceName: "W".repeat(10_000) }));
+    assert.strictEqual(res.status, 400);
+    assert.strictEqual(res.json.error?.code, "VALIDATION_ERROR");
+  });
+
+  await runTest("register: a short password names the password field, never echoes it, and sets no cookie", async () => {
+    const res = await register(signUp({ password: "Shrt-7x" }));
+    assert.strictEqual(res.status, 400);
+    assert.match(res.json.error.message, /password/i);
+    assert.ok(!JSON.stringify(res.json).includes("Shrt-7x"), "the submitted password is not in the response");
+    assert.deepStrictEqual(res.setCookie, [], "no session cookie on a rejected sign-up");
+  });
+
+  await runTest("register: malformed JSON is a 400, not a 500", async () => {
+    const res = await register("{not json");
+    assert.strictEqual(res.status, 400);
+    assert.strictEqual(res.json.error?.code, "VALIDATION_ERROR");
+  });
+
+  await runTest("register: a status key is rejected too", async () => {
+    const res = await register(signUp({ status: "ACTIVE" }));
+    assert.strictEqual(res.status, 400);
+  });
+
+  await runTest("register: a valid body still creates the workspace with the caller as OWNER", async () => {
+    const body = signUp({ currency: "USD", email: `  Mixed-${crypto.randomUUID().slice(0, 8)}@Signup.test ` });
+    const res = await register(body);
+    assert.strictEqual(res.status, 201);
+    assert.strictEqual(res.json.data?.role, "OWNER");
+    assert.strictEqual(res.json.data?.tenant?.currency, "USD");
+    assert.strictEqual(res.json.data?.user?.email, String(body.email).trim().toLowerCase());
+  });
+
   // ---------------------------------------------------------------------------
+  console.log(`\n${ANSI_BOLD}[ADR-104] Sign-in body validation${ANSI_RESET}`);
+  // The workspace login route takes a strict Zod body, never the raw JSON.
+
+  const login = async (body: unknown) => {
+    const { POST } = await import("@/app/api/v1/auth/login/route");
+    const res = await POST(new Request(`${BASE}/api/v1/auth/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: typeof body === "string" ? body : JSON.stringify(body),
+    }));
+    return { status: res.status, json: await res.json(), setCookie: res.headers.getSetCookie() };
+  };
+  // A fresh address per rejected attempt, so these tests never use up a real account's per-email login limit.
+  const strangerEmail = () => `login-${crypto.randomUUID().slice(0, 8)}@login.test`;
+
+  await runTest("login: malformed JSON is a 400, not a 500", async () => {
+    const res = await login("{not json");
+    assert.strictEqual(res.status, 400);
+    assert.strictEqual(res.json.error?.code, "VALIDATION_ERROR");
+  });
+
+  await runTest("login: a null body is a 400, not a 500", async () => {
+    const res = await login("null");
+    assert.strictEqual(res.status, 400);
+    assert.strictEqual(res.json.error?.code, "VALIDATION_ERROR");
+  });
+
+  await runTest("login: a numeric email is a 400 naming the email field, not a 500", async () => {
+    const res = await login({ email: 12345, password: "Whatever-Pass-1!" });
+    assert.strictEqual(res.status, 400);
+    assert.strictEqual(res.json.error?.code, "VALIDATION_ERROR");
+    assert.match(res.json.error.message, /email/i);
+  });
+
+  await runTest("login: a numeric password is a 400 naming the password field, not a 500", async () => {
+    const res = await login({ email: strangerEmail(), password: 12345678 });
+    assert.strictEqual(res.status, 400);
+    assert.strictEqual(res.json.error?.code, "VALIDATION_ERROR");
+    assert.match(res.json.error.message, /password/i);
+    assert.deepStrictEqual(res.setCookie, [], "no session cookie on a rejected sign-in");
+  });
+
+  await runTest("login: an unknown key (tenant_id, role) is a 400, not ignored", async () => {
+    for (const extra of [{ tenant_id: tenantB.tenant.id }, { role: "OWNER" }]) {
+      const res = await login({ email: strangerEmail(), password: "Whatever-Pass-1!", ...extra });
+      assert.strictEqual(res.status, 400, `extra field ${Object.keys(extra)[0]} must be rejected`);
+      assert.strictEqual(res.json.error?.code, "VALIDATION_ERROR");
+    }
+  });
+
+  await runTest("login: a wrong password keeps the generic credential error (401), same as an unknown account", async () => {
+    const wrong = await login({ email: tenantB.user.email, password: "Not-The-Password-1!" });
+    const unknown = await login({ email: strangerEmail(), password: "Not-The-Password-1!" });
+    assert.strictEqual(wrong.status, 401);
+    assert.strictEqual(unknown.status, 401);
+    assert.strictEqual(wrong.json.error?.message, "Invalid email or password.");
+    assert.deepStrictEqual(
+      { code: unknown.json.error?.code, message: unknown.json.error?.message },
+      { code: wrong.json.error?.code, message: wrong.json.error?.message },
+      "no user enumeration"
+    );
+  });
+
+  await runTest("login: a password is not trimmed, so surrounding spaces make it wrong", async () => {
+    const res = await login({ email: tenantB.user.email, password: " Unique-Owner-Pass-8842! " });
+    assert.strictEqual(res.status, 401);
+  });
+
+  await runTest("login: rejected bodies never reach bcrypt and do not use up the per-email limit", async () => {
+    const email = strangerEmail();
+    for (let i = 0; i < 11; i++) {
+      assert.strictEqual((await login({ email, password: "x".repeat(201) })).status, 400);
+    }
+    const res = await login({ email, password: "Not-The-Password-1!" });
+    assert.strictEqual(res.status, 401, "the first well-formed attempt is still checked, not rate-limited");
+  });
+
+  await runTest("login: a tenantId the user does not belong to is ignored (own workspace only)", async () => {
+    const res = await login({ email: tenantB.user.email, password: "Unique-Owner-Pass-8842!", tenantId: tenantA.tenant.id });
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.json.data?.tenant?.id, tenantB.tenant.id);
+  });
+
+  await runTest("login: a valid body (padded mixed-case email, tenantId) still signs in with 200 and a session cookie", async () => {
+    const res = await login({ email: `  ${tenantB.user.email.toUpperCase()} `, password: "Unique-Owner-Pass-8842!", tenantId: tenantB.tenant.id });
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.json.data?.user?.id, tenantB.user.id);
+    assert.strictEqual(res.json.data?.tenant?.id, tenantB.tenant.id);
+    assert.ok(res.setCookie.some((c) => c.startsWith(`${AUTH_COOKIE_NAME}=`)), "the session cookie is set");
+  });
+
+  // ---------------------------------------------------------------------------
+  console.log(`\n${ANSI_BOLD}[FX-01] Committed secrets (C5)${ANSI_RESET}`);
 
   await runTest("C5: .env.example contains placeholders only", () => {
     const example = fs.readFileSync(path.resolve(__dirname, "..", ".env.example"), "utf8");

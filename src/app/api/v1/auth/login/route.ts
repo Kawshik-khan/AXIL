@@ -1,15 +1,45 @@
-import { NextResponse } from "next/server";
+import { z } from "zod";
 import { AuthService } from "@/domains/auth/service";
 import { apiSuccess, apiError } from "@/lib/api-response";
 import { AUTH_COOKIE_NAME } from "@/lib/security";
 import { enforceRateLimit, clientKey, MINUTE } from "@/lib/rate-limit";
 import { withStore } from "@/lib/store-unit";
+import { parseOrThrow, readJson } from "@/lib/validation";
+import { isAppError, ValidationError } from "@/lib/errors";
+
+// Strict (ADR-104): tenant_id, role and any other unknown key are rejected, never ignored. The password is not
+// trimmed; a wrong one still gets the generic credential error from AuthService.login.
+const LoginBody = z
+  .object({
+    email: z
+      .string({ required_error: "Email is required.", invalid_type_error: "Email is required." })
+      .trim()
+      .min(1, "Email is required.")
+      .max(254, "Email must be at most 254 characters."),
+    password: z
+      .string({ required_error: "Password is required.", invalid_type_error: "Password is required." })
+      .min(1, "Password is required.")
+      .max(200, "Password must be at most 200 characters."),
+    tenantId: z.string({ invalid_type_error: "tenantId must be a string." }).max(100).optional(),
+  })
+  .strict();
+
+/** parseOrThrow, but the message is the first issue's (it names the field); every issue stays in the details. */
+function parseLoginBody(input: unknown): z.infer<typeof LoginBody> {
+  try {
+    return parseOrThrow(LoginBody, input);
+  } catch (err) {
+    const first = isAppError(err) ? (err.details?.issues as { message: string }[] | undefined)?.[0] : undefined;
+    if (isAppError(err) && first) throw new ValidationError(first.message, err.details);
+    throw err;
+  }
+}
 
 async function handlePOST(request: Request) {
   try {
-    const body = await request.json();
+    const body = parseLoginBody(await readJson(request));
     // Brute-force limits (FX-14): per account always, per client when a trusted proxy identifies it.
-    const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+    const email = body.email.toLowerCase();
     await enforceRateLimit(`login:tenant:email:${email}`, 10, 15 * MINUTE);
     const client = clientKey(request);
     if (client) await enforceRateLimit(`login:tenant:client:${client}`, 50, 15 * MINUTE);

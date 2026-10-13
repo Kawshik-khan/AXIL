@@ -7,7 +7,7 @@ import { withStore } from "@/lib/store-unit";
 
 const RecoverSchema = z.object({
   order_id: z.string().min(1, "Order ID is required"),
-});
+}).strict();
 
 async function handlePOST(
   request: Request,

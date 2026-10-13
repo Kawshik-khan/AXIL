@@ -533,6 +533,8 @@ export interface AbandonedCartRecoveryItem {
   abandoned_at: string;
   recovery_stage: "PENDING" | "MESSAGED" | "RECOVERED" | "EXPIRED";
   recovered_order_id?: string;
+  /** grand_total of the verified recovered order, set by markCartRecovered */
+  recovered_revenue_bdt?: number;
 }
 
 // ============================================================
