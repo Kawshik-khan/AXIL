@@ -191,7 +191,7 @@ async function main() {
     const ig = db.findConnectedChannelsByProviderId("INSTAGRAM", "17841400001")[0];
     assert.strictEqual(fb.tenant_id, regA.tenant.id);
     assert.strictEqual(ig.tenant_id, regA.tenant.id);
-    assert.strictEqual(fb.configuration.auto_reply_enabled, false);
+    assert.strictEqual(fb.configuration.auto_reply_enabled, true);
     assert.strictEqual(ChannelService.getDecryptedCredentials(fb).accessToken, "PAGE_TOKEN_1");
     assert.strictEqual(ChannelService.getDecryptedCredentials(ig).accessToken, "PAGE_TOKEN_1");
   });

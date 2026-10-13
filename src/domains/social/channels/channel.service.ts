@@ -183,8 +183,8 @@ export class ChannelService {
       provider_account_id: botId,
       credentials_encrypted: "",
       connector_id: connector.id,
-      // Customer-initiated conversations are visible in the inbox; automated replies require an explicit later opt-in.
-      configuration: { auto_reply_enabled: false },
+      // Automatic replies are on for a channel connected through the connector; the merchant can turn them off per channel.
+      configuration: { auto_reply_enabled: true },
       last_sync_at: now,
       created_at: now,
       updated_at: now,

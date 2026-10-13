@@ -394,8 +394,8 @@ export class MetaLoginService {
       provider_account_id: accountId,
       external_page_id: page.id,
       credentials,
-      // Automatic replies stay off until the merchant turns them on
-      configuration: { auto_reply_enabled: false },
+      // Automatic replies are on for a newly connected page; the merchant can turn them off per channel
+      configuration: { auto_reply_enabled: true },
     });
     if (webhookError) {
       db.updateConnectedChannel(context.tenant.id, created.id, { error_message: webhookError });

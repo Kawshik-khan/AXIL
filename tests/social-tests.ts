@@ -215,7 +215,7 @@ export async function runSocialCommerceTests() {
     });
     const channel = db.getConnectedChannels(contextA.tenant.id).find((entry) => entry.connector_id === connector.id);
     assert.ok(channel, "saving the tenant connector creates its Telegram channel");
-    assert.strictEqual(channel.configuration.auto_reply_enabled, false, "automatic replies stay off by default");
+    assert.strictEqual(channel.configuration.auto_reply_enabled, true, "automatic replies are on by default for a connector channel");
 
     const adapter = new TelegramAdapter();
     const webhookSecret = "test-only-webhook-secret";
