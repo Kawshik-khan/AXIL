@@ -8,7 +8,7 @@ import { RtoScoringService } from "@/domains/rto/rto-scoring.service";
 import { orderRepository } from "@/domains/orders/order.repository";
 
 interface RouteParams {
-  params: { orderId: string };
+  params: Promise<{ orderId: string }>;
 }
 
 async function handleGET(request: Request, { params }: RouteParams) {
@@ -16,9 +16,11 @@ async function handleGET(request: Request, { params }: RouteParams) {
     const ctx = await extractRequestContext(request);
     RbacService.assertCan(ctx, PERMISSIONS.ORDERS_READ);
 
-    const order = await orderRepository.findById(ctx.tenant.id, params.orderId);
+    // A Promise in this Next.js version: read synchronously, the id was undefined and every order "not found"
+    const { orderId } = await params;
+    const order = await orderRepository.findById(ctx.tenant.id, orderId);
     if (!order) {
-      throw new NotFoundError("Order", params.orderId);
+      throw new NotFoundError("Order", orderId);
     }
 
     let evaluation = db.findOrderRtoEvaluation(ctx.tenant.id, order.id);

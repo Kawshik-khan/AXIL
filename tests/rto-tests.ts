@@ -1,4 +1,7 @@
+import { randomUUID } from "crypto";
+import { NextRequest } from "next/server";
 import { db } from "../src/infrastructure/db";
+import { AuthService } from "../src/domains/auth/service";
 import { normalizePhoneNumber, hashPhoneForReputation } from "../src/lib/rto-crypto";
 import { RtoScoringService } from "../src/domains/rto/rto-scoring.service";
 import { AdvanceFeeService } from "../src/domains/rto/advance-fee.service";
@@ -235,6 +238,38 @@ async function runRtoTests() {
   assert(typeof radar.estimated_rto_loss_prevented_bdt === "number", "Fraud radar calculates estimated loss prevented BDT");
   assert(typeof radar.network_delivery_success_rate === "number", "Fraud radar computes network delivery success rate");
   assert(radar.district_risk_distribution.length > 0, "District risk distribution contains geographical breakdown");
+
+  // =========================================================================
+  // 8. GET /api/v1/rto/evaluate/[orderId] (route params are a Promise)
+  // =========================================================================
+  console.log("\n▶ Section 8: RTO evaluation route");
+
+  const shop = await AuthService.registerTenantWithOwner({
+    email: `rto_route_${randomUUID().slice(0, 8)}@rto.test`, password: "Rto-Route-Pass-4417!", name: "RTO Owner", workspaceName: "RTO Route Shop",
+  });
+  const routeOrder = {
+    ...mockCodOrder,
+    id: `ord_rto_route_${randomUUID().slice(0, 8)}`,
+    tenant_id: shop.tenant.id,
+    order_number: `ORD-RTO-ROUTE-${randomUUID().slice(0, 6)}`,
+    customer_id: "",
+    items: [],
+  } as Order;
+  db.createOrder(routeOrder, []);
+  const { GET: evaluateRoute } = (await import("../src/app/api/v1/rto/evaluate/[orderId]/route")) as {
+    GET: (r: Request, ctx: { params: Promise<{ orderId: string }> }) => Promise<Response>;
+  };
+  const evaluate = (orderId: string) =>
+    evaluateRoute(
+      new NextRequest(`http://localhost:3000/api/v1/rto/evaluate/${orderId}`, { headers: { authorization: `Bearer ${shop.token}` } }),
+      { params: Promise.resolve({ orderId }) }
+    );
+  const found = await evaluate(routeOrder.id);
+  const foundBody = await found.json();
+  assert(found.status === 200, "The route evaluates a real order (it used to read params synchronously and 404 every order)", `${found.status} ${JSON.stringify(foundBody).slice(0, 200)}`);
+  assert(foundBody.data?.order_id === routeOrder.id, "The evaluation is of the order asked for");
+  const missing = await evaluate("ord_missing_rto");
+  assert(missing.status === 404, "A missing order is a 404", String(missing.status));
 
   console.log("\n══════════════════════════════════════════════════════════════");
   console.log(`   RTO & COURIER FRAUD NETWORK SUITE COMPLETED: ${passed} PASS, ${failed} FAIL`);

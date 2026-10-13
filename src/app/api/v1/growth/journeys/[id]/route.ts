@@ -6,6 +6,7 @@ import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { db } from "@/infrastructure/db";
 import { withStore } from "@/lib/store-unit";
+import { NotFoundError } from "@/lib/errors";
 import { COMMERCE_ANALYTICS_COLLECTIONS } from "@/infrastructure/db/tenant-rows";
 
 // FX-12: status changes go through the pause/resume routes; counters are server-side.
@@ -29,7 +30,7 @@ async function handleGET(
     const { id } = await params;
     const journey = db.getJourneyById(context.tenant.id, id);
     if (!journey || journey.tenant_id !== context.tenant.id) {
-      return apiError(new Error("Journey not found"));
+      return apiError(new NotFoundError("Journey", id));
     }
     const enrollments = db.getJourneyEnrollments(context.tenant.id, id);
     return apiSuccess({ journey, enrollments });
@@ -50,7 +51,7 @@ async function handlePUT(
 
     const journey = db.getJourneyById(context.tenant.id, id);
     if (!journey || journey.tenant_id !== context.tenant.id) {
-      return apiError(new Error("Journey not found"));
+      return apiError(new NotFoundError("Journey", id));
     }
 
     const updated = db.updateJourney(context.tenant.id, id, body);

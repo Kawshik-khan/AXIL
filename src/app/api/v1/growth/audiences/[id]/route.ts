@@ -7,6 +7,7 @@ import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response"
 import { audienceService } from "@/domains/growth/services/audience.service";
 import { db } from "@/infrastructure/db";
 import { withStore } from "@/lib/store-unit";
+import { NotFoundError } from "@/lib/errors";
 import { COMMERCE_ANALYTICS_COLLECTIONS } from "@/infrastructure/db/tenant-rows";
 
 // FX-12: status, size and ownership are computed server-side, never taken from the body.
@@ -29,7 +30,7 @@ async function handleGET(
     const { id } = await params;
     const audience = audienceService.getAudience(context.tenant.id, id);
     if (!audience) {
-      return apiError(new Error("Audience not found"));
+      return apiError(new NotFoundError("Audience", id));
     }
     return apiSuccess({ audience });
   } catch (err) {
@@ -49,7 +50,7 @@ async function handlePUT(
 
     const existing = audienceService.getAudience(context.tenant.id, id);
     if (!existing) {
-      return apiError(new Error("Audience not found"));
+      return apiError(new NotFoundError("Audience", id));
     }
 
     const updated = db.updateAudience(context.tenant.id, id, body);

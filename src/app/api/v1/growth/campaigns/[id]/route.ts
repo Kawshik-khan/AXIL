@@ -6,6 +6,7 @@ import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { db } from "@/infrastructure/db";
 import { withStore } from "@/lib/store-unit";
+import { NotFoundError } from "@/lib/errors";
 import { COMMERCE_ANALYTICS_COLLECTIONS } from "@/infrastructure/db/tenant-rows";
 
 const VARIANT = z
@@ -48,7 +49,7 @@ async function handleGET(
     const { id } = await params;
     const campaign = db.getCampaignById(context.tenant.id, id);
     if (!campaign || campaign.tenant_id !== context.tenant.id) {
-      return apiError(new Error("Campaign not found"));
+      return apiError(new NotFoundError("Campaign", id));
     }
     return apiSuccess({ campaign });
   } catch (err) {
