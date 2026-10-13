@@ -45,8 +45,13 @@ jobs:
           path: tests/rag-replay-report.json
           if-no-files-found: warn
           retention-days: 14
+      # `next build` loads the store, which needs both secrets outside NODE_ENV=test (src/lib/security.ts). Random
+      # throwaway values per run: nothing built here is deployed, and no real secret goes into CI or the repo.
       - name: Build
-        run: npm run build
+        run: |
+          export JWT_SECRET="$(openssl rand -hex 32)"
+          export CREDENTIALS_ENCRYPTION_KEY="$(openssl rand -hex 32)"
+          npm run build
 
   migrations:
     name: Migration check
