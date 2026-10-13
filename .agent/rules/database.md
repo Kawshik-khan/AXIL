@@ -30,3 +30,8 @@ Neon repositories (`src/domains/**/*.repository.ts`, `src/infrastructure/neon/cl
 5. **Transactions**: multi-entity mutations (order + reservation + payment) are atomic. Fix `withTransaction` (audit M8) before relying on it.
 
 6. **Soft delete**: products, customers, and orders use `deleted_at`; financial records are never hard-deleted.
+
+7. **Query-on-demand & Repository Migration (Anti-Hydration Invariant)**:
+   - No new production code may read large collections through `db.data` or `this._data`.
+   - All new large-dataset reads (products, orders, customers, inventory, messages, audit logs) must use a repository/query interface with indexed limits/cursors.
+   - Zero business-dataset hydration at startup is the target; startup memory belongs to runtime, framework, and connection pool only.

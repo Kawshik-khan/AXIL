@@ -27,6 +27,7 @@ import {
 import { Order, OrderStatus } from "@/types/commerce";
 import { PricingService } from "@/domains/pricing/pricing.service";
 import { channelOfOrder, SALES_CHANNEL_NAMES } from "@/lib/sales-channel";
+import { orderRepository } from "@/domains/orders/order.repository";
 
 // All 64 districts of Bangladesh by division: geography only, every count comes from the tenant's orders (FX-30)
 export { BD_64_DISTRICTS } from "@/lib/bd-geography";
@@ -66,7 +67,6 @@ export class AnalyticsService {
     RbacService.assertCan(context, PERMISSIONS.ANALYTICS_READ);
 
     const tenantId = context.tenant.id;
-    const orders = db.getAllOrders(tenantId, { hydrate: true });
     const refunds = db.getRefunds(tenantId);
     const costs = this.unitCosts(tenantId);
 
@@ -76,7 +76,15 @@ export class AnalyticsService {
       return t >= from && t <= to;
     };
 
-    const filteredOrders = orders.filter((o) => o.status !== "CANCELLED" && inWindow(o.created_at, startMs, endMs));
+    const spanMs = endMs - startMs;
+    const startIso = new Date(startMs).toISOString();
+    const endIso = new Date(endMs).toISOString();
+    const prevStartIso = new Date(startMs - spanMs).toISOString();
+
+    const [filteredOrders, previousGmv] = await Promise.all([
+      orderRepository.findInWindow(tenantId, startIso, endIso, { hydrate: true }),
+      orderRepository.sumRevenueInWindow(tenantId, prevStartIso, startIso),
+    ]);
 
     let gmv_bdt = 0;
     let total_discounts_bdt = 0;
@@ -98,16 +106,6 @@ export class AnalyticsService {
     const total_refunds_bdt = refunds
       .filter((r) => inWindow(r.created_at, startMs, endMs))
       .reduce((sum, r) => sum + r.amount, 0);
-
-    // Previous window of the same length, for the period-over-period change.
-    const spanMs = endMs - startMs;
-    const previousGmv = orders
-      .filter((o) => o.status !== "CANCELLED")
-      .filter((o) => {
-        const t = new Date(o.created_at).getTime();
-        return t >= startMs - spanMs && t < startMs;
-      })
-      .reduce((sum, o) => sum + o.grand_total, 0);
 
     const gross_profit_bdt = Math.round(gmv_bdt - cogs_bdt);
 
@@ -139,20 +137,7 @@ export class AnalyticsService {
     RbacService.assertCan(context, PERMISSIONS.ANALYTICS_READ);
 
     const tenantId = context.tenant.id;
-    const orders = db.getAllOrders(tenantId);
-
-    const stats = new Map<string, { shipped: number; delivered: number; rto: number; cod: number }>();
-    for (const order of orders) {
-      const district = order.shipping_address_snapshot?.district;
-      // Addresses nobody chose (FX-36 M5) would put every old outside-Dhaka order in Chattogram
-      if (!district || order.address_confidence === "UNKNOWN" || !SHIPPED_STATUSES.has(order.status)) continue;
-      const cur = stats.get(district) || { shipped: 0, delivered: 0, rto: 0, cod: 0 };
-      cur.shipped += 1;
-      if (order.status === "DELIVERED") cur.delivered += 1;
-      if (RTO_STATUSES.has(order.status)) cur.rto += 1;
-      if (order.payment_method === "COD") cur.cod += 1;
-      stats.set(district, cur);
-    }
+    const stats = await orderRepository.getRtoGeographyMetrics(tenantId);
 
     const evaluatedDistricts: DistrictRtoMetric[] = BD_64_DISTRICTS.map((spec) => {
       const s = stats.get(spec.district) || { shipped: 0, delivered: 0, rto: 0, cod: 0 };
@@ -255,26 +240,11 @@ export class AnalyticsService {
 
     const tenantId = context.tenant.id;
     const { startMs, endMs } = this.resolveDateRange(preset);
-    const filteredOrders = db.getAllOrders(tenantId).filter((o) => {
-      const t = new Date(o.created_at).getTime();
-      return t >= startMs && t <= endMs && o.status !== "CANCELLED";
-    });
-
-    const tallies = new Map<SalesChannel, { orders: number; gmv: number; shipped: number; rto: number; cod: number }>();
-    for (const key of Object.keys(CHANNEL_NAMES) as SalesChannel[]) {
-      tallies.set(key, { orders: 0, gmv: 0, shipped: 0, rto: 0, cod: 0 });
-    }
-    for (const order of filteredOrders) {
-      const t = tallies.get(channelOfOrder(order))!;
-      t.orders += 1;
-      t.gmv += order.grand_total;
-      if (order.payment_method === "COD") t.cod += 1;
-      if (SHIPPED_STATUSES.has(order.status)) t.shipped += 1;
-      if (RTO_STATUSES.has(order.status)) t.rto += 1;
-    }
-
-    const total_gmv_bdt = Math.round(filteredOrders.reduce((acc, o) => acc + o.grand_total, 0));
-    const total_orders_count = filteredOrders.length;
+    const { tallies, total_gmv_bdt, total_orders_count } = await orderRepository.getChannelAttribution(
+      tenantId,
+      new Date(startMs).toISOString(),
+      new Date(endMs).toISOString()
+    );
 
     const channels: ChannelAttributionMetric[] = Array.from(tallies.entries())
       .filter(([key, t]) => t.orders > 0 || key !== "UNATTRIBUTED")

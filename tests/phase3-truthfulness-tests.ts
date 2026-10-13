@@ -982,26 +982,26 @@ async function main() {
   const platformCookie = `commerceos_platform_session=${await signPlatformSessionToken({ userId: operatorId, email: `${operatorId}@ops.test`, platformRole: "SUPER_ADMIN", mfaVerified: true, sv: 1 })}`;
 
   await runTest("FX-34: a tenant kill switch stops changes (503) but not reads; clearing it restores them", async () => {
-    PlatformSafetyService.activateKillSwitch({ scope: "TENANT", targetId: tenantId, reason: "P3 incident containment" }, operatorCtx as never);
+    PlatformSafetyService.activateKillSwitch({ scope: "TENANT", targetId: tenantId, reason: "P3 incident containment", ticketRef: "INC-P3-1" }, operatorCtx as never);
     const blocked = await call("POST", "autonomous/objectives", owner.token, { body: { name: "Blocked", target_value: 1, baseline_value: 0 } });
     assert.strictEqual(blocked.status, 503);
     assert.strictEqual(blocked.json.error?.code, "KILL_SWITCH_ACTIVE");
     assert.strictEqual((await call("GET", "orders", owner.token)).status, 200, "reads still work");
-    PlatformSafetyService.deactivateKillSwitch(`KILL_SWITCH_TENANT_${tenantId}`, "resolved", operatorCtx as never);
+    PlatformSafetyService.deactivateKillSwitch(`KILL_SWITCH_TENANT_${tenantId}`, "resolved after P3 containment", operatorCtx as never, { ticketRef: "INC-P3-1" });
     assert.strictEqual((await call("POST", "autonomous/objectives", owner.token, { body: { name: "OK", target_value: 1, baseline_value: 0 } })).status, 201);
   });
 
   await runTest("FX-34: provider and workflow kill switches are enforced by the model router and automations", async () => {
     const router = ModelRouter.getInstance();
     const providerName = router.getActiveProvider().provider.providerName;
-    PlatformSafetyService.activateKillSwitch({ scope: "PROVIDER", targetId: providerName, reason: "P3 provider outage" }, operatorCtx as never);
+    PlatformSafetyService.activateKillSwitch({ scope: "PROVIDER", targetId: providerName, reason: "P3 provider outage", ticketRef: "INC-P3-2" }, operatorCtx as never);
     try {
       await assert.rejects(router.chatWithRouting("TIER_1_FAST", [{ role: "user", content: "hi" }]), (e: Error & { code?: string }) => e.code === "KILL_SWITCH_ACTIVE");
     } finally {
-      PlatformSafetyService.deactivateKillSwitch(`KILL_SWITCH_PROVIDER_${providerName}`, "resolved", operatorCtx as never);
+      PlatformSafetyService.deactivateKillSwitch(`KILL_SWITCH_PROVIDER_${providerName}`, "resolved after provider outage", operatorCtx as never, { ticketRef: "INC-P3-2" });
     }
     const wf = uid("wf_p3_kill");
-    PlatformSafetyService.activateKillSwitch({ scope: "WORKFLOW", targetId: wf, reason: "P3 runaway workflow" }, operatorCtx as never);
+    PlatformSafetyService.activateKillSwitch({ scope: "WORKFLOW", targetId: wf, reason: "P3 runaway workflow", ticketRef: "INC-P3-3" }, operatorCtx as never);
     const result = await N8nProviderService.invokeWorkflow({
       tenantId, automationId: uid("auto"), workflowId: wf, workflowVersionId: "v1", webhookPath: "x", event: {}, correlationId: uid("c"), idempotencyKey: uid("i"), executionMode: "PRODUCTION",
     });
@@ -1141,6 +1141,14 @@ async function main() {
       // A failing provider with no fallback configured fails; the mock never answers instead
       setOutboundTransportForTesting(async () => reply(500, "down"));
       await assert.rejects(router.chatWithRouting("TIER_1_FAST", [{ role: "user", content: "x" }]), (e: Error & { code?: string }) => e.code === "LLM_PROVIDER_ERROR");
+
+      setOutboundTransportForTesting(async () => reply(200, {
+        choices: [{ message: { tool_calls: [{ id: "bad_call", type: "function", function: { name: "get_shipping_estimate", arguments: "{not-json" } }] } }],
+      }));
+      await assert.rejects(
+        router.chatWithRouting("TIER_1_FAST", [{ role: "user", content: "charge?" }], tools),
+        (e: Error & { code?: string }) => e.code === "AI_TOOL_VALIDATION_FAILED"
+      );
     } finally {
       setOutboundTransportForTesting(null);
       router.configure({ AI_DEMO_MODE: "1" } as NodeJS.ProcessEnv);
@@ -1216,8 +1224,17 @@ async function main() {
 
   await runTest("AI answers are grounded in the workspace's fees and real prices", async () => {
     const fees = PricingService.getDeliveryFees(tenantId);
-    const prompt = ContextBuilder.formatPromptContext({ tenant_id: tenantId, conversation_id: "c", channel_type: "WHATSAPP", recent_messages: [], retrieved_knowledge: [] } as never);
-    assert.ok(prompt.includes(`Outside Dhaka ৳${fees.outside_dhaka_bdt}`));
+    const prompt = ContextBuilder.formatPromptContext({
+      tenant_id: tenantId,
+      conversation_id: "c",
+      channel_type: "WHATSAPP",
+      recent_messages: [],
+      retrieved_knowledge: [],
+      untrusted_context_items: [],
+      context_manifest: { budget_tokens: 256, estimated_tokens: 0, selected_items: [], omitted_items: [], content_hash: "test" },
+    } as never);
+    const contextData = JSON.parse(prompt) as { store: { delivery_charges_bdt: { outside_dhaka: number } } };
+    assert.strictEqual(contextData.store.delivery_charges_bdt.outside_dhaka, fees.outside_dhaka_bdt);
     const tool = new CalculateCheckoutTool();
     await assert.rejects(tool.execute(ownerCtx, tool.schema.parse({ items: [{ variant_id: "var_missing", quantity: 1 }], district: "Dhaka" })));
     await assert.rejects(tool.execute(ownerCtx, tool.schema.parse({ items: [{ variant_id: lcVariant, quantity: 1 }] })), "no district, no guessed zone");

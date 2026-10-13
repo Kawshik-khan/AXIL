@@ -21,6 +21,8 @@ import {
   Layers,
   Flame,
   Building2,
+  Heart,
+  Target,
 } from "lucide-react";
 import styles from "./CommandPalette.module.css";
 import { canAccessPath } from "./module-access";
@@ -199,6 +201,28 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose,
       href: "/growth/campaigns",
       action: () => {
         router.push("/growth/campaigns");
+        onClose();
+      },
+    },
+    {
+      id: "nav-engagement",
+      title: "Engagement Analysis (Facebook & Instagram)",
+      category: "Growth & Marketing",
+      icon: <Heart size={18} />,
+      href: "/engagement",
+      action: () => {
+        router.push("/engagement");
+        onClose();
+      },
+    },
+    {
+      id: "nav-ad-manager",
+      title: "Ad Manager: spend, ROAS & AI suggestions",
+      category: "Growth & Marketing",
+      icon: <Target size={18} />,
+      href: "/ads",
+      action: () => {
+        router.push("/ads");
         onClose();
       },
     },

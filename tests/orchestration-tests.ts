@@ -17,10 +17,12 @@ import { verifierAgent } from "@/domains/ai/orchestration/agents/verifier.agent"
 import { planValidator } from "@/domains/ai/orchestration/planning/plan-validator";
 import { taskPlanner } from "@/domains/ai/orchestration/planning/task-planner";
 import { workflowStateMachine } from "@/domains/ai/orchestration/engine/workflow-state-machine";
-import { taskExecutor } from "@/domains/ai/orchestration/engine/task-executor";
+import { taskExecutor, TaskOutcomeUnknownError } from "@/domains/ai/orchestration/engine/task-executor";
 import { workflowEngine } from "@/domains/ai/orchestration/engine/workflow-engine";
+import { workflowBudgetService } from "@/domains/ai/orchestration/engine/workflow-budget.service";
 import { autonomyPolicyService } from "@/domains/ai/orchestration/autonomy/autonomy-policy.service";
 import { approvalEngine } from "@/domains/ai/orchestration/autonomy/approval-engine";
+import { approvalDigest, approvalPayloadDigest, captureApprovalTargetState } from "@/domains/ai/orchestration/autonomy/approval-binding";
 import { eventTriggerService } from "@/domains/ai/orchestration/triggers/event-trigger.service";
 import { agentSchedulerService } from "@/domains/ai/orchestration/triggers/agent-scheduler.service";
 import { workflowSimulator } from "@/domains/ai/orchestration/simulation/workflow-simulator";
@@ -153,7 +155,7 @@ export async function runOrchestrationTests() {
       "Audit low stock items and prepare reorder quantity"
     );
 
-    assert.strictEqual(validation.isValid, true);
+    assert.strictEqual(validation.isValid, true, JSON.stringify(validation.errors));
     assert.ok(steps.some((s) => s.agent_type === "INVENTORY"));
   });
 
@@ -163,8 +165,64 @@ export async function runOrchestrationTests() {
       "Review delayed Steadfast delivery exception and update customer"
     );
 
-    assert.strictEqual(validation.isValid, true);
+    assert.strictEqual(validation.isValid, true, JSON.stringify(validation.errors));
     assert.ok(steps.some((s) => s.agent_type === "SHIPPING"));
+  });
+
+  await runTest("Unknown workflow objectives do not fall back to unrelated product search", () => {
+    assert.deepStrictEqual(supervisorAgent.decomposeObjective({ objective: "perform an unsupported operation" }), []);
+  });
+
+  await runTest("Template matching is explicit, versioned, and rejects objectives spanning domains", async () => {
+    const ambiguous = await taskPlanner.planObjective(contextA.tenant.id, "Review delayed delivery and refund the payment");
+    assert.strictEqual(ambiguous.steps.length, 0);
+    assert.match(ambiguous.clarification || "", /multiple workflow templates/i);
+    const explicit = await taskPlanner.planObjective(contextA.tenant.id, "do the work", undefined, "LOW_STOCK_RESTOCK");
+    assert.strictEqual(explicit.templateCode, "LOW_STOCK_RESTOCK");
+    assert.strictEqual(explicit.templateVersion, 1);
+    assert.strictEqual(explicit.validation.isValid, true);
+    const falseWholesale = await taskPlanner.planObjective(contextA.tenant.id, "Sell product 50");
+    assert.strictEqual(falseWholesale.steps.length, 0);
+  });
+
+  await runTest("Workflow command enqueue is tenant-scoped and idempotent", async () => {
+    const workflow = await workflowEngine.createWorkflow({
+      tenantId: contextA.tenant.id,
+      name: "Queue idempotency check",
+      objective: "Audit low stock items",
+      createdBy: contextA.user.id,
+      createdByType: "USER",
+    });
+    const first = await workflowEngine.enqueueAction(contextA.tenant.id, workflow.id, "START", "test:workflow:start:1");
+    const replay = await workflowEngine.enqueueAction(contextA.tenant.id, workflow.id, "START", "test:workflow:start:1");
+    assert.strictEqual(first.id, replay.id);
+    assert.strictEqual(db.data.workflow_jobs.filter((job) => job.idempotency_key === "test:workflow:start:1").length, 1);
+    assert.strictEqual(db.getWorkflowJobById("tenant_other", first.id), undefined);
+    assert.strictEqual(first.fence_version, 0);
+    db.updateWorkflowJob(contextA.tenant.id, first.id, { status: "COMPLETED" });
+  });
+
+  await runTest("Workflow queue selection interleaves tenants and rotates the starting tenant", () => {
+    const baseTime = new Date().toISOString();
+    const tenants = ["fair-a", "fair-b", "fair-c"];
+    const queueJobs = ["fair-a", "fair-a", "fair-b", "fair-c"].map((tenantId, index) => ({
+      id: `fair_job_${index}`,
+      tenant_id: tenantId,
+      workflow_id: `fair_workflow_${index}`,
+      action: "START" as const,
+      idempotency_key: `fair:key:${index}`,
+      status: "PENDING" as const,
+      attempt_count: 0,
+      max_attempts: 3,
+      fence_version: 0,
+      created_at: baseTime,
+      updated_at: baseTime,
+    }));
+    queueJobs.forEach((job) => db.createWorkflowJob(job));
+    const batch = db.getDueWorkflowJobs(new Date().toISOString(), 3, tenants[0]);
+    assert.deepStrictEqual(batch.map((job) => job.tenant_id), ["fair-b", "fair-c", "fair-a"]);
+    const nextBatch = db.getDueWorkflowJobs(new Date().toISOString(), 3, batch[batch.length - 1].tenant_id);
+    assert.deepStrictEqual(nextBatch.map((job) => job.tenant_id), ["fair-b", "fair-c", "fair-a"]);
   });
 
   // ============================================================
@@ -176,16 +234,18 @@ export async function runOrchestrationTests() {
     const cyclicPlan = [
       {
         id: "step_1",
+        task_type: "AUDIT_WAREHOUSE_STOCK",
         name: "Step 1",
-        agent_type: "SALES",
-        action: "DO_1",
+        agent_type: "INVENTORY",
+        action: "AUDIT_WAREHOUSE_STOCK",
         dependencies: ["step_2"],
       },
       {
         id: "step_2",
+        task_type: "CALCULATE_SALES_VELOCITY",
         name: "Step 2",
-        agent_type: "INVENTORY",
-        action: "DO_2",
+        agent_type: "SALES",
+        action: "CALCULATE_SALES_VELOCITY",
         dependencies: ["step_1"], // Cycle!
       },
     ];
@@ -225,6 +285,14 @@ export async function runOrchestrationTests() {
     const result = planValidator.validate(invalidAgentPlan);
     assert.strictEqual(result.isValid, false);
     assert.ok(result.errors.some((e) => e.includes("unknown or unpermitted agent")));
+  });
+
+  await runTest("PlanValidator rejects unknown task types, task-agent mismatch, undeclared tools, and trusted-scope overrides", () => {
+    const baseline = { id: "typed_step", name: "Check stock", task_type: "AUDIT_WAREHOUSE_STOCK", agent_type: "INVENTORY", action: "AUDIT_WAREHOUSE_STOCK", dependencies: [] as string[], required_tools: ["check_inventory"] };
+    assert.strictEqual(planValidator.validate([{ ...baseline, task_type: "ARBITRARY_EXECUTION" }]).isValid, false);
+    assert.strictEqual(planValidator.validate([{ ...baseline, agent_type: "SALES" }]).isValid, false);
+    assert.strictEqual(planValidator.validate([{ ...baseline, required_tools: ["send_campaign"] }]).isValid, false);
+    assert.strictEqual(planValidator.validate([{ ...baseline, parameters: { tenant_id: "tenant_other" } }]).isValid, false);
   });
 
   // ============================================================
@@ -383,19 +451,34 @@ export async function runOrchestrationTests() {
   console.log(`\n${ANSI_BOLD}Gate 6: Pre-Execution Entity State Revalidation (Anti-Stale Shield)${ANSI_RESET}`);
 
   await runTest("ApprovalEngine detects concurrent entity mutation and rejects stale approval", async () => {
+    const staleTaskId = `task_stale_test_${now}`;
+    const staleTask = {
+      id: staleTaskId, tenant_id: contextA.tenant.id, workflow_id: "wf_stale_test", agent_id: "agent_order",
+      agent_type: "ORDER_ASSISTANT", task_type: "CANCEL_ORDER", objective: "Cancel order",
+      status: TaskStatus.WAITING_APPROVAL, priority: "HIGH", risk_level: ActionRiskLevel.HIGH,
+      input: { order_id: sampleOrder.id }, dependencies: [], assigned_tools: [], attempt_count: 0, max_attempts: 3,
+      timeout_ms: 30_000, idempotency_key: `stale_${now}`, approval_id: `appr_stale_test_${now}`,
+      created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    };
+    db.insertTask(staleTask);
+    const targetSnapshot = captureApprovalTargetState(contextA.tenant.id, "ORDER", sampleOrder.id);
     // 1. Create a simulated approval request expecting order in 'PENDING' status
     const approvalReq = db.insertApprovalRequest({
       id: `appr_stale_test_${now}`,
       tenant_id: contextA.tenant.id,
       workflow_id: "wf_stale_test",
-      task_id: "task_stale_test",
+      task_id: staleTaskId,
       requested_by_agent: "ORDER_ASSISTANT",
       action: "CANCEL_ORDER",
       risk_level: ActionRiskLevel.HIGH,
       target_entity_type: "ORDER",
       target_entity_id: sampleOrder.id,
-      entity_state_snapshot: { order_status: "PENDING" }, // Snapshot taken when order was PENDING
+      entity_state_snapshot: targetSnapshot, // Snapshot taken before the order is mutated below
       payload: { order_id: sampleOrder.id },
+      requester_id: contextA.user.id,
+      payload_digest: approvalPayloadDigest(contextA.tenant.id, staleTask),
+      entity_state_digest: approvalDigest(targetSnapshot),
+      policy_version: autonomyPolicyService.getPolicy(contextA.tenant.id, "ORDER_ASSISTANT").version,
       reason: "Customer requested cancellation",
       status: ApprovalStatus.PENDING,
       expires_at: new Date(Date.now() + 86400000).toISOString(),
@@ -410,7 +493,70 @@ export async function runOrchestrationTests() {
 
     assert.strictEqual(result.success, false, "Must fail pre-execution validation");
     assert.strictEqual(result.stale, true, "Must flag stale entity");
-    assert.ok(result.reason.includes("Order status changed from PENDING to DELIVERED"));
+    assert.ok(result.reason.includes(`Order status changed from ${targetSnapshot.status} to DELIVERED`), result.reason);
+    assert.strictEqual(result.approval.status, ApprovalStatus.REJECTED);
+  });
+
+  await runTest("Approval rejects self-approval and payload tampering", async () => {
+    const workflow = await workflowEngine.createWorkflow({
+      tenantId: contextA.tenant.id, name: "Approval Binding Test",
+      objective: "Audit low stock items and prepare reorder quantity", createdBy: contextA.user.id, createdByType: "USER",
+    });
+    const task = db.getTasks(contextA.tenant.id, workflow.id)[0];
+    db.updateWorkflow(contextA.tenant.id, workflow.id, { status: WorkflowStatus.WAITING });
+    db.updateTask(contextA.tenant.id, task.id, {
+      status: TaskStatus.READY, risk_level: ActionRiskLevel.HIGH,
+      input: { order_id: sampleOrder.id }, task_type: "CANCEL_ORDER",
+    });
+    const requested = await taskExecutor.executeTask(db.getTaskById(contextA.tenant.id, task.id));
+    assert.strictEqual(requested.status, TaskStatus.WAITING_APPROVAL);
+    const approval = db.getApprovalRequestById(contextA.tenant.id, requested.task.approval_id);
+    const selfApproval = await approvalEngine.approveAction(contextA.tenant.id, approval.id, contextA.user.id);
+    assert.strictEqual(selfApproval.success, false);
+    assert.match(selfApproval.reason, /requester cannot approve/i);
+
+    db.updateTask(contextA.tenant.id, task.id, { input: { order_id: sampleOrder.id, refund_amount: 500 } });
+    const tampered = await approvalEngine.approveAction(contextA.tenant.id, approval.id, "another-operator");
+    assert.strictEqual(tampered.success, false);
+    assert.strictEqual(tampered.stale, true);
+    assert.match(tampered.reason, /payload no longer matches/i);
+    assert.strictEqual(db.getTaskById(contextA.tenant.id, task.id).status, TaskStatus.FAILED);
+  });
+
+  await runTest("Executor refuses an approval-gated action without an approved bound request", async () => {
+    const task = {
+      id: `task_approval_bypass_${now}`, tenant_id: contextA.tenant.id, workflow_id: `wf_approval_bypass_${now}`,
+      agent_id: "agent_order", agent_type: "ORDER_ASSISTANT", task_type: "CANCEL_ORDER",
+      objective: "Approval gate bypass regression", status: TaskStatus.READY, priority: "HIGH",
+      risk_level: ActionRiskLevel.HIGH, input: { order_id: sampleOrder.id }, dependencies: [], assigned_tools: [],
+      attempt_count: 0, max_attempts: 2, timeout_ms: 10_000, idempotency_key: `approval_bypass_${now}`,
+      approval_id: "missing-or-unapproved-approval", created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    };
+    db.insertTask(task);
+    const result = await taskExecutor.executeTask(task);
+    assert.strictEqual(result.status, TaskStatus.FAILED);
+    assert.strictEqual(result.task.failure_class, "POLICY_DENIED");
+    assert.match(result.error, /approved request/i);
+  });
+
+  await runTest("Approval is invalidated when the autonomy policy revision changes", async () => {
+    const workflow = await workflowEngine.createWorkflow({
+      tenantId: contextA.tenant.id, name: "Approval Policy Version Test",
+      objective: "Audit low stock items and prepare reorder quantity", createdBy: contextA.user.id, createdByType: "USER",
+    });
+    const task = db.getTasks(contextA.tenant.id, workflow.id)[0];
+    db.updateTask(contextA.tenant.id, task.id, {
+      status: TaskStatus.READY, risk_level: ActionRiskLevel.HIGH,
+      input: { order_id: sampleOrder.id }, task_type: "CANCEL_ORDER",
+    });
+    const requested = await taskExecutor.executeTask(db.getTaskById(contextA.tenant.id, task.id));
+    const approval = db.getApprovalRequestById(contextA.tenant.id, requested.task.approval_id);
+    const policy = autonomyPolicyService.getPolicy(contextA.tenant.id, task.agent_type);
+    db.upsertAutonomyPolicy(contextA.tenant.id, { ...policy, version: policy.version + 1, updated_at: new Date().toISOString() });
+    const result = await approvalEngine.approveAction(contextA.tenant.id, approval.id, "independent-operator");
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(result.stale, true);
+    assert.match(result.reason, /policy changed/i);
     assert.strictEqual(result.approval.status, ApprovalStatus.REJECTED);
   });
 
@@ -496,7 +642,7 @@ export async function runOrchestrationTests() {
       workflow_id: "wf_rcpt",
       agent_id: "agent_shipping",
       agent_type: "SHIPPING",
-      task_type: "CALCULATE_ESTIMATE",
+      task_type: "CALCULATE_SHIPPING_ESTIMATE",
       objective: "Calculate shipping",
       status: TaskStatus.READY,
       priority: "MEDIUM",
@@ -524,10 +670,212 @@ export async function runOrchestrationTests() {
     assert.strictEqual(storedReceipt.status, "SUCCESS");
   });
 
+  await runTest("Transient task failures use delayed bounded retry without changing the idempotency key", async () => {
+    const retryKey = `retry_idemp_${now}`;
+    const task = {
+      id: `task_retry_${now}`, tenant_id: contextA.tenant.id, workflow_id: `wf_retry_${now}`,
+      agent_id: "agent_shipping", agent_type: "SHIPPING", task_type: "CALCULATE_SHIPPING_ESTIMATE",
+      objective: "Retry taxonomy check", status: TaskStatus.READY, priority: "MEDIUM", risk_level: ActionRiskLevel.LOW,
+      input: { city: "Dhaka", weight_kg: 1 }, dependencies: [], assigned_tools: [], attempt_count: 0,
+      max_attempts: 3, timeout_ms: 10_000, idempotency_key: retryKey,
+      created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    };
+    db.insertTask(task);
+    const executor = taskExecutor as unknown as { dispatchAgentAction: (input: typeof task) => Promise<Record<string, unknown>> };
+    const original = executor.dispatchAgentAction;
+    executor.dispatchAgentAction = async () => { throw new Error("temporary transport failure"); };
+    try {
+      const result = await taskExecutor.executeTask(task);
+      assert.strictEqual(result.status, TaskStatus.RETRY_WAIT);
+      assert.ok(result.task.next_attempt_at && Date.parse(result.task.next_attempt_at) > Date.now());
+      assert.strictEqual(result.task.failure_class, "RETRYABLE");
+      assert.strictEqual(result.task.idempotency_key, retryKey);
+      const immediateReplay = await taskExecutor.executeTask(result.task);
+      assert.strictEqual(immediateReplay.status, TaskStatus.RETRY_WAIT);
+      assert.strictEqual(db.getActionReceiptByIdempotencyKey(contextA.tenant.id, retryKey), undefined);
+    } finally { executor.dispatchAgentAction = original; }
+  });
+
+  await runTest("Uncertain external outcome stops automatic retries pending reconciliation", async () => {
+    const key = `unknown_idemp_${now}`;
+    const task = {
+      id: `task_unknown_${now}`, tenant_id: contextA.tenant.id, workflow_id: `wf_unknown_${now}`,
+      agent_id: "agent_shipping", agent_type: "SHIPPING", task_type: "SEND_SHIPMENT_UPDATE",
+      objective: "Uncertain external outcome check", status: TaskStatus.READY, priority: "MEDIUM", risk_level: ActionRiskLevel.LOW,
+      input: { target_id: "shipment_1" }, dependencies: [], assigned_tools: [], attempt_count: 0,
+      max_attempts: 3, timeout_ms: 10_000, idempotency_key: key,
+      created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    };
+    db.insertTask(task);
+    const executor = taskExecutor as unknown as { dispatchAgentAction: (input: typeof task) => Promise<Record<string, unknown>> };
+    const original = executor.dispatchAgentAction;
+    executor.dispatchAgentAction = async () => { throw new TaskOutcomeUnknownError("provider timed out after request transmission"); };
+    try {
+      const result = await taskExecutor.executeTask(task);
+      assert.strictEqual(result.status, TaskStatus.OUTCOME_UNKNOWN);
+      assert.strictEqual(result.task.failure_class, "OUTCOME_UNKNOWN");
+      assert.strictEqual(db.getActionReceiptByIdempotencyKey(contextA.tenant.id, key), undefined);
+      const replay = await taskExecutor.executeTask(result.task);
+      assert.strictEqual(replay.status, TaskStatus.OUTCOME_UNKNOWN);
+      assert.strictEqual(db.getTaskById(contextA.tenant.id, task.id).attempt_count, 1);
+    } finally { executor.dispatchAgentAction = original; }
+  });
+
+  await runTest("Operator reconciliation records evidence and prevents replay of an applied action", async () => {
+    const workflow = await workflowEngine.createWorkflow({
+      tenantId: contextA.tenant.id, name: "Outcome Reconciliation Test",
+      objective: "Audit low stock items and prepare reorder quantity", createdBy: contextA.user.id, createdByType: "USER",
+    });
+    const tasks = db.getTasks(contextA.tenant.id, workflow.id);
+    const target = tasks[0];
+    db.updateWorkflow(contextA.tenant.id, workflow.id, { status: WorkflowStatus.WAITING });
+    db.updateTask(contextA.tenant.id, target.id, {
+      status: TaskStatus.OUTCOME_UNKNOWN, failure_class: "OUTCOME_UNKNOWN",
+      idempotency_key: `reconcile_${now}`, error: "provider response lost",
+    });
+    for (const other of tasks.slice(1)) db.updateTask(contextA.tenant.id, other.id, { status: TaskStatus.COMPLETED });
+    const result = await workflowEngine.reconcileTaskOutcome(
+      contextA.tenant.id, target.id, "APPLIED", contextA.user.id, "provider:receipt-verified-123", { confirmed: true },
+    );
+    const reconciled = db.getTaskById(contextA.tenant.id, target.id);
+    const receipt = db.getActionReceiptByIdempotencyKey(contextA.tenant.id, reconciled.idempotency_key);
+    assert.strictEqual(reconciled.status, TaskStatus.COMPLETED);
+    assert.strictEqual(receipt.provider_reference, "provider:receipt-verified-123");
+    assert.strictEqual(reconciled.metadata.reconciliations[0].actor_id, contextA.user.id);
+    assert.strictEqual(result.status, WorkflowStatus.COMPLETED);
+  });
+
+  await runTest("Task deadlines expire before execution and prevent action receipts", async () => {
+    const expiredTask = {
+      id: `task_expired_${now}`,
+      tenant_id: contextA.tenant.id,
+      workflow_id: `wf_expired_${now}`,
+      agent_id: "agent_shipping",
+      agent_type: "SHIPPING",
+      task_type: "CALCULATE_SHIPPING_ESTIMATE",
+      objective: "Deadline enforcement test",
+      status: TaskStatus.PENDING,
+      priority: "MEDIUM",
+      risk_level: ActionRiskLevel.LOW,
+      input: { city: "Dhaka", weight_kg: 1 },
+      dependencies: [],
+      assigned_tools: [],
+      attempt_count: 0,
+      max_attempts: 3,
+      timeout_ms: 10_000,
+      deadline: new Date(Date.now() - 1_000).toISOString(),
+      idempotency_key: `idemp_expired_${now}`,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    db.insertTask(expiredTask);
+    const result = await taskExecutor.executeTask(expiredTask);
+    assert.strictEqual(result.status, TaskStatus.EXPIRED);
+    assert.strictEqual(db.getActionReceiptByIdempotencyKey(contextA.tenant.id, expiredTask.idempotency_key), undefined);
+  });
+
+  await runTest("Cancelled workflow cannot be completed by a later task execution", async () => {
+    const workflow = await workflowEngine.createWorkflow({
+      tenantId: contextA.tenant.id,
+      name: "Cancellation Race Test",
+      objective: "Audit low stock items and prepare reorder quantity",
+      createdBy: contextA.user.id,
+      createdByType: "USER",
+    });
+    const cancelled = await workflowEngine.cancelWorkflow(contextA.tenant.id, workflow.id, "Operator stop");
+    const task = db.getTasks(contextA.tenant.id, workflow.id)[0];
+    const result = await taskExecutor.executeTask(task);
+    assert.strictEqual(cancelled.status, WorkflowStatus.CANCELLED);
+    assert.strictEqual(result.status, TaskStatus.CANCELLED);
+    assert.strictEqual(db.getTaskById(contextA.tenant.id, task.id).status, TaskStatus.CANCELLED);
+  });
+
   // ============================================================
   // GATE 10: DURABLE WORKFLOW ENGINE & CHECKPOINTING
   // ============================================================
   console.log(`\n${ANSI_BOLD}Gate 10: Durable Workflow Engine Lifecycle & Step Checkpoints${ANSI_RESET}`);
+
+  await runTest("Concurrent task reservations enforce workflow and task token/cost/tool ceilings", async () => {
+    const workflow = await workflowEngine.createWorkflow({
+      tenantId: contextA.tenant.id,
+      name: "Budget Reservation Test",
+      objective: "Audit low stock items and prepare reorder quantity",
+      createdBy: contextA.user.id,
+      createdByType: "USER",
+    });
+    const tasks = db.getTasks(contextA.tenant.id, workflow.id);
+    assert.ok(tasks.length >= 2, "fixture should include competing tasks");
+    assert.strictEqual(tasks.reduce((sum, task) => sum + task.budget.max_tokens, 0), workflow.budget.max_tokens);
+    assert.strictEqual(tasks.reduce((sum, task) => sum + task.budget.max_tool_calls, 0), workflow.budget.max_tool_calls);
+    assert.ok(Math.abs(tasks.reduce((sum, task) => sum + task.budget.max_cost_usd, 0) - workflow.budget.max_cost_usd) < 1e-7);
+    db.updateWorkflow(contextA.tenant.id, workflow.id, {
+      status: WorkflowStatus.RUNNING,
+      budget: { ...workflow.budget, max_tokens: 100_000, max_cost_usd: 100, max_tool_calls: 1 },
+    });
+    for (const task of tasks) {
+      db.updateTask(contextA.tenant.id, task.id, {
+        budget: { ...task.budget, max_tokens: 10_000, max_cost_usd: 10, max_tool_calls: 1 },
+      });
+    }
+    const expiresAt = new Date(Date.now() + 60_000).toISOString();
+    const results = await Promise.allSettled(tasks.slice(0, 2).map((task) =>
+      workflowBudgetService.reserveTask(contextA.tenant.id, workflow.id, task.id, expiresAt)
+    ));
+    assert.strictEqual(results.filter((result) => result.status === "fulfilled").length, 1);
+    assert.strictEqual(results.filter((result) => result.status === "rejected").length, 1);
+    const winnerIndex = results.findIndex((result) => result.status === "fulfilled");
+    const winner = tasks[winnerIndex];
+    const reservation = (results[winnerIndex] as PromiseFulfilledResult<{ reservationId: string }>).value;
+    await workflowBudgetService.consumeTaskUsage(contextA.tenant.id, workflow.id, winner.id, reservation.reservationId, {
+      tokens: 25,
+      costUsd: 0.25,
+      toolCalls: 1,
+    });
+    await assert.rejects(() => workflowBudgetService.consumeTaskUsage(
+      contextA.tenant.id, workflow.id, winner.id, reservation.reservationId, { toolCalls: 1 },
+    ));
+    await workflowBudgetService.settleTask(contextA.tenant.id, workflow.id, winner.id, reservation.reservationId);
+    const settledWorkflow = db.getWorkflowById(contextA.tenant.id, workflow.id);
+    const settledTask = db.getTaskById(contextA.tenant.id, winner.id);
+    assert.strictEqual(settledWorkflow.budget.used_tokens, 25);
+    assert.strictEqual(settledWorkflow.budget.used_cost_usd, 0.25);
+    assert.strictEqual(settledWorkflow.budget.used_tool_calls, 1);
+    assert.strictEqual(settledTask.budget.used_tokens, 25);
+    assert.deepStrictEqual(settledWorkflow.budget.reservations || {}, {});
+    await workflowEngine.cancelWorkflow(contextA.tenant.id, workflow.id, "Budget test cleanup");
+  });
+
+  await runTest("Expired task holds settle recorded usage and fail closed after worker loss", async () => {
+    const workflow = await workflowEngine.createWorkflow({
+      tenantId: contextA.tenant.id,
+      name: "Expired Hold Recovery Test",
+      objective: "Audit low stock items and prepare reorder quantity",
+      createdBy: contextA.user.id,
+      createdByType: "USER",
+    });
+    const task = db.getTasks(contextA.tenant.id, workflow.id)[0];
+    db.updateWorkflow(contextA.tenant.id, workflow.id, { status: WorkflowStatus.RUNNING });
+    const reservation = await workflowBudgetService.reserveTask(
+      contextA.tenant.id,
+      workflow.id,
+      task.id,
+      new Date(Date.now() + 60_000).toISOString(),
+    );
+    await workflowBudgetService.consumeTaskUsage(contextA.tenant.id, workflow.id, task.id, reservation.reservationId, { toolCalls: 1 });
+    const withHold = db.getWorkflowById(contextA.tenant.id, workflow.id);
+    const hold = withHold.budget.reservations[task.id];
+    db.updateWorkflow(contextA.tenant.id, workflow.id, {
+      budget: { ...withHold.budget, reservations: { ...withHold.budget.reservations, [task.id]: { ...hold, expires_at: new Date(Date.now() - 1).toISOString() } } },
+    });
+
+    assert.strictEqual(await workflowBudgetService.reconcileExpiredReservations(contextA.tenant.id, workflow.id), 1);
+    const recoveredWorkflow = db.getWorkflowById(contextA.tenant.id, workflow.id);
+    const recoveredTask = db.getTaskById(contextA.tenant.id, task.id);
+    assert.strictEqual(recoveredWorkflow.budget.used_tool_calls, 1);
+    assert.strictEqual(recoveredTask.status, TaskStatus.EXPIRED);
+    assert.deepStrictEqual(recoveredWorkflow.budget.reservations || {}, {});
+    await workflowEngine.cancelWorkflow(contextA.tenant.id, workflow.id, "Expired hold test cleanup");
+  });
 
   await runTest("Workflow creates, executes, checkpoints, pauses, and resumes", async () => {
     const workflow = await workflowEngine.createWorkflow({
@@ -555,7 +903,8 @@ export async function runOrchestrationTests() {
 
     // Resume workflow
     const resumed = await workflowEngine.resumeWorkflow(workflow.tenant_id, workflow.id);
-    assert.ok([WorkflowStatus.RUNNING, WorkflowStatus.COMPLETED, WorkflowStatus.WAITING].includes(resumed.status));
+    assert.strictEqual(resumed.status, WorkflowStatus.FAILED);
+    assert.ok(resumed.error, "Unsupported downstream plan work must fail visibly, not appear complete");
   });
 
   // ============================================================
@@ -642,6 +991,8 @@ export async function runOrchestrationTests() {
     assert.ok(sim.estimated_cost_usd > 0);
     assert.ok(sim.required_agents.length > 0);
     assert.strictEqual(sim.safe_to_execute, true);
+    assert.strictEqual(sim.execution_ready, false, "A structurally valid plan may still contain task types without handlers");
+    assert.ok(sim.warnings.some((warning) => warning.includes("Typed execution handlers")));
   });
 
   await runTest("OrchestrationTelemetry aggregates accurate multi-agent metrics", () => {

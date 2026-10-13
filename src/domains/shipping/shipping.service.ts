@@ -6,6 +6,7 @@ import {
   CourierProviderName,
   DeliveryStatus,
 } from "@/types/commerce";
+import { CourierDisputeRecord } from "@/types/rto";
 import { RequestContext } from "@/lib/context";
 import { RbacService } from "@/domains/rbac/service";
 import { PERMISSIONS } from "@/lib/permissions";
@@ -212,5 +213,33 @@ export class ShippingService {
     });
 
     return updated;
+  }
+
+  public static async logCourierDispute(
+    context: RequestContext,
+    payload: {
+      order_id: string;
+      shipment_id: string;
+      courier_provider: string;
+      tracking_number: string;
+      customer_feedback: "RIDER_DID_NOT_CALL" | "RIDER_REFUSED_ENTRY" | "OTHER";
+    }
+  ): Promise<CourierDisputeRecord> {
+    RbacService.assertCan(context, PERMISSIONS.SHIPMENTS_UPDATE);
+
+    const dispute: CourierDisputeRecord = {
+      id: `dsp_${Date.now()}_${randomSuffix()}`,
+      tenant_id: context.tenant.id,
+      order_id: payload.order_id,
+      shipment_id: payload.shipment_id,
+      courier_provider: payload.courier_provider,
+      tracking_number: payload.tracking_number,
+      customer_feedback: payload.customer_feedback,
+      status: "OPEN",
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    return db.saveCourierDispute(dispute);
   }
 }

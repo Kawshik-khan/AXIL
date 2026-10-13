@@ -16,6 +16,7 @@ import { OutboundMessageService } from "@/domains/social/outbound/outbound-messa
 import { AgentPolicyService } from "@/domains/ai/policy/agent-policy.service";
 import { AgentHealthService } from "@/domains/platform/services/agent-health.service";
 import { dispatchOutboxOnce } from "@/domains/automation/outbox/dispatcher";
+import { dispatchCommentTriggersOnce } from "@/domains/social/comment-triggers/comment-trigger.service";
 import { capabilityContext, principalFor } from "./principal";
 import { runCustomerTool } from "./tools";
 import { customerMessages } from "./confirmation";
@@ -47,6 +48,7 @@ let lastAlertCheck = 0;
 
 let timer: ReturnType<typeof setInterval> | null = null;
 let running = false;
+let runningSince = 0;
 
 type Finish = Pick<AgentJob, "status" | "outcome"> & { notBefore?: string };
 
@@ -146,8 +148,21 @@ export async function runAgentJob(job: AgentJob): Promise<Finish> {
   if (!pr) return { status: "BLOCKED", outcome: "INACTIVE_WORKSPACE_OR_CHANNEL" };
   const conversation = db.findConversationById(job.tenant_id, job.conversation_id);
   const mode = agentMode(job.tenant_id);
-  if (!conversation || conversation.automation_paused || mode === "OFF" || !channelAllowed(job.tenant_id, pr.channelType)) {
-    return { status: "CANCELLED", outcome: "NOT_ELIGIBLE" };
+  if (!conversation) {
+    logger.warn("customer_agent.not_eligible", { reason: "no_conversation", conversation_id: job.conversation_id });
+    return { status: "CANCELLED", outcome: "NOT_ELIGIBLE:NO_CONVERSATION" };
+  }
+  if (conversation.automation_paused) {
+    logger.warn("customer_agent.not_eligible", { reason: "automation_paused", conversation_id: job.conversation_id });
+    return { status: "CANCELLED", outcome: "NOT_ELIGIBLE:AUTOMATION_PAUSED" };
+  }
+  if (mode === "OFF") {
+    logger.warn("customer_agent.not_eligible", { reason: "mode_off", tenant_id: job.tenant_id });
+    return { status: "CANCELLED", outcome: "NOT_ELIGIBLE:MODE_OFF" };
+  }
+  if (!channelAllowed(job.tenant_id, pr.channelType, pr.channelId)) {
+    logger.warn("customer_agent.not_eligible", { reason: "channel_not_allowed", tenant_id: job.tenant_id, channel_type: pr.channelType, channel_id: pr.channelId });
+    return { status: "CANCELLED", outcome: "NOT_ELIGIBLE:CHANNEL_NOT_ALLOWED" };
   }
 
   // A paused workspace or channel: no model call at all, in shadow mode too
@@ -262,14 +277,25 @@ export async function runAgentJobsOnce(limit = TURNS_PER_PASS): Promise<{ claime
 export function startCustomerAgentWorker(): void {
   if (timer || process.env.CUSTOMER_AGENT_WORKER === "0" || process.env.NEXT_PHASE === "phase-production-build") return;
   timer = setInterval(() => {
-    if (running) return; // a turn takes seconds: never overlap passes
+    if (running) {
+      if (Date.now() - runningSince > 45_000) {
+        logger.warn("customer_agent.worker_stuck_resetting", { stuck_ms: Date.now() - runningSince });
+        running = false;
+      } else {
+        return; // a turn takes seconds: never overlap passes
+      }
+    }
     running = true;
+    runningSince = Date.now();
     runAgentJobsOnce()
       .then(async (s) => {
         if (s.claimed) logger.info("customer_agent.worker_pass", s);
         // Domain-event outbox (FX-99 Part B): same worker, same never-overlap rule
         const o = await dispatchOutboxOnce();
         if (o.delivered || o.failed || o.dead) logger.info("outbox.dispatch_pass", o);
+        // Comment-to-inbox replies: retries and anything the webhook's own kick missed
+        const c = await dispatchCommentTriggersOnce();
+        if (c.sent || c.failed || c.retrying) logger.info("comment_trigger.dispatch_pass", c);
         if (Date.now() - lastAlertCheck >= ALERT_INTERVAL_MS) {
           lastAlertCheck = Date.now();
           await db.unit(async () => AgentHealthService.raiseAlerts(), () => true);

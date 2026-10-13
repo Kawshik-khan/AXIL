@@ -174,33 +174,20 @@ export class BulkImportService {
 
             // If stock update was provided, adjust inventory item
             if (row.stock !== undefined && row.stock >= 0 && defaultWarehouse) {
-              const defaultVariant = db.data.product_variants.find(
-                (v) => v.product_id === existingProduct.id && v.tenant_id === context.tenant.id
-              );
+              const defaultVariant = db.getProductVariants(context.tenant.id, existingProduct.id)[0];
               if (defaultVariant) {
-                const invItem = db.data.inventory_items.find(
-                  (i) =>
-                    i.product_variant_id === defaultVariant.id &&
-                    i.warehouse_id === defaultWarehouse.id &&
-                    i.tenant_id === context.tenant.id
-                );
+                const invItem = db.findInventoryItem(context.tenant.id, defaultWarehouse.id, defaultVariant.id);
                 if (invItem) {
                   const delta = row.stock - invItem.quantity_on_hand;
-                  invItem.quantity_on_hand = row.stock;
-                  invItem.quantity_available = Math.max(0, row.stock - invItem.quantity_reserved);
-                  invItem.updated_at = new Date().toISOString();
-
                   if (delta !== 0) {
-                    db.data.stock_movements.push({
-                      id: `sm_${Date.now()}_adj_${randomSuffix()}`,
-                      tenant_id: context.tenant.id,
+                    db.adjustStock(context.tenant.id, {
                       warehouse_id: defaultWarehouse.id,
                       product_variant_id: defaultVariant.id,
+                      quantity_delta: delta,
                       type: delta > 0 ? "PURCHASE" : "ADJUSTMENT",
-                      quantity: Math.abs(delta),
                       reason: `Bulk import stock synchronization (${batchId})`,
                       actor_user_id: context.user.id,
-                      created_at: new Date().toISOString(),
+                      allow_overselling: true,
                     });
                   }
                 }
@@ -234,7 +221,7 @@ export class BulkImportService {
               candidateSlug = `${baseSlug}-${counter}`;
             }
 
-            assertWithinLimit(context.tenant.id, "max_products"); // imports count against the plan too (FX-34)
+            await assertWithinLimit(context.tenant.id, "max_products"); // imports count against the plan too (FX-34)
             const productId = `prod_${Date.now()}_${randomSuffix()}`;
             const now = new Date().toISOString();
 

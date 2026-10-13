@@ -6,6 +6,7 @@ import { db } from "@/infrastructure/db";
 import { FeatureNotEntitledError, KillSwitchActiveError, PlanLimitError } from "@/lib/errors";
 import { PlatformSafetyService } from "@/domains/platform/services/platform-safety.service";
 import { PlatformEntitlementService } from "@/domains/platform/services/platform-entitlement.service";
+import { CURRENT_COUNT, type EntitlementLimitKey } from "@/domains/platform/services/entitlement-usage";
 import crypto from "crypto";
 
 type KillScope = "TENANT" | "CHANNEL" | "WORKFLOW" | "PROVIDER";
@@ -22,25 +23,29 @@ export function assertNotKilled(tenantId: string, scope: KillScope = "TENANT", .
   }
 }
 
-/** Limits that count what exists now (not monthly usage), and how to count it. */
-const CURRENT_COUNT: Record<string, (tenantId: string) => number> = {
-  max_users: (t) => db.findMembershipsByTenantId(t).filter((m) => m.status !== "SUSPENDED").length +
-    db.findInvitationsByTenant(t).filter((i) => i.status === "PENDING" && Date.parse(i.expires_at) > Date.now()).length,
-  max_products: (t) => db.getAllProducts(t).filter((p) => p.status !== "ARCHIVED").length,
-  max_channels: (t) => db.getConnectedChannels(t).length,
-};
+export type { EntitlementLimitKey };
 
 /**
  * Throws when adding `adding` more would exceed the workspace's limit (tenant override, then plan, then default).
- * `can()` measured these against monthly usage records, which never counted existing users, products or channels.
+ * Overloaded for type safety: `max_products` is async (runs on-demand SQL count), while `max_users` and `max_channels` are sync.
  */
-export function assertWithinLimit(tenantId: string, entitlementId: keyof typeof CURRENT_COUNT, adding = 1): void {
+export function assertWithinLimit(tenantId: string, entitlementId: "max_users" | "max_channels", adding?: number): void;
+export function assertWithinLimit(tenantId: string, entitlementId: "max_products", adding?: number): Promise<void>;
+export function assertWithinLimit(tenantId: string, entitlementId: EntitlementLimitKey, adding?: number): void | Promise<void>;
+export function assertWithinLimit(tenantId: string, entitlementId: EntitlementLimitKey, adding = 1): void | Promise<void> {
   const limit = PlatformEntitlementService.resolveLimit(tenantId, entitlementId);
   if (limit === null) return; // not gated
   if (limit === false) throw new FeatureNotEntitledError(entitlementId);
   if (limit === true) return;
-  const current = CURRENT_COUNT[entitlementId](tenantId);
-  if (current + adding > limit) throw new PlanLimitError(entitlementId, limit, current);
+
+  const countOrPromise = CURRENT_COUNT[entitlementId](tenantId);
+  if (countOrPromise instanceof Promise) {
+    return countOrPromise.then((current) => {
+      if (current + adding > limit) throw new PlanLimitError(entitlementId, limit, current);
+    });
+  }
+
+  if (countOrPromise + adding > limit) throw new PlanLimitError(entitlementId, limit, countOrPromise);
 }
 
 /**

@@ -71,7 +71,7 @@ export class ParentChildChunkingService {
         );
         for (let s = 0; s < subParents.length; s++) {
           rawParents.push({
-            id: `kchk_parent_${documentId}_${parentIndex}`,
+            id: `kchk_parent_${documentId}_v${metadata.version}_${parentIndex}`,
             index: parentIndex++,
             heading: `${section.heading} (Part ${s + 1})`,
             content: subParents[s].trim(),
@@ -92,7 +92,7 @@ export class ParentChildChunkingService {
       const rawChildren = this.extractChildChunks(p.content, p.heading);
 
       for (const childText of rawChildren) {
-        const childId = `kchk_child_${documentId}_${childIndex}`;
+        const childId = `kchk_child_${documentId}_v${metadata.version}_${childIndex}`;
         childIdsForThisParent.push(childId);
 
         // Pre-tokenize for BM25 lexical index

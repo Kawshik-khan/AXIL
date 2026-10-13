@@ -1,5 +1,5 @@
 import { randomSuffix } from "@/lib/ids";
-import { db } from "@/infrastructure/db";
+import { couponRepository } from "@/domains/promotions/coupon.repository";
 import { Coupon } from "@/types/commerce";
 import { RequestContext } from "@/lib/context";
 import { RbacService } from "@/domains/rbac/service";
@@ -9,7 +9,8 @@ import { BadRequestError, NotFoundError } from "@/lib/errors";
 export class CouponService {
   public static async listCoupons(context: RequestContext): Promise<Coupon[]> {
     RbacService.assertCan(context, PERMISSIONS.COUPONS_READ);
-    return db.getCoupons(context.tenant.id);
+    const result = await couponRepository.listWithCursor(context.tenant.id, { limit: 100 });
+    return result.items;
   }
 
   public static async createCoupon(
@@ -34,7 +35,7 @@ export class CouponService {
     }
 
     const normalizedCode = payload.code.trim().toUpperCase();
-    const existing = db.findCouponByCode(context.tenant.id, normalizedCode);
+    const existing = await couponRepository.findByCode(context.tenant.id, normalizedCode);
     if (existing) {
       throw new BadRequestError(`Coupon code '${normalizedCode}' already exists.`);
     }
@@ -54,7 +55,7 @@ export class CouponService {
       created_at: new Date().toISOString(),
     };
 
-    return db.createCoupon(newCoupon);
+    return couponRepository.create(context.tenant.id, newCoupon);
   }
 
   public static async validateAndCalculateDiscount(
@@ -63,7 +64,7 @@ export class CouponService {
     subtotal: number
   ): Promise<{ discount: number; coupon: Coupon }> {
     const normalized = code.trim().toUpperCase();
-    const coupon = db.findCouponByCode(tenantId, normalized);
+    const coupon = await couponRepository.findByCode(tenantId, normalized);
 
     if (!coupon || coupon.status !== "ACTIVE") {
       throw new BadRequestError(`Coupon '${code}' is invalid or inactive.`);

@@ -31,8 +31,20 @@ jobs:
         run: npm test
       - name: Tests (every suite on in-memory Postgres)
         run: npm run test:pg
+      - name: Zero-hydration suites (own in-memory Postgres)
+        run: npm run test:zero-hydration
       - name: Eval gate
         run: npm run test:eval
+      - name: RAG offline replay
+        run: npm run rag:replay:offline
+      - name: Upload RAG replay report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rag-replay-report
+          path: tests/rag-replay-report.json
+          if-no-files-found: warn
+          retention-days: 14
       - name: Build
         run: npm run build
 

@@ -5,8 +5,10 @@ import { useRouter } from "next/navigation";
 import { TopBar } from "@/components/navigation/TopBar";
 import { FloatingNav } from "@/components/navigation/FloatingNav";
 import { CommandPalette } from "@/components/navigation/CommandPalette";
+import { ProgressiveBlur } from "@/components/navigation/ProgressiveBlur";
+import { PlatformNotices } from "@/components/navigation/PlatformNotices";
 import { LoadingSkeleton } from "@/components/ui/States/States";
-import styles from "./dashboard.module.css";
+import styles from "@/components/navigation/Shell.module.css";
 
 export default function DashboardLayout({
   children,
@@ -17,7 +19,6 @@ export default function DashboardLayout({
   const [session, setSession] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
-  const [isScrolled, setIsScrolled] = useState(false);
 
   useEffect(() => {
     async function loadSession() {
@@ -52,19 +53,12 @@ export default function DashboardLayout({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
-  useEffect(() => {
-    const handleScroll = () => {
-      const currentScroll = window.scrollY || document.documentElement.scrollTop;
-      setIsScrolled(currentScroll > 12);
-    };
-    window.addEventListener("scroll", handleScroll, { passive: true });
-    handleScroll();
-    return () => window.removeEventListener("scroll", handleScroll);
-  }, []);
-
   if (isLoading) {
     return (
-      <div style={{ padding: "48px", maxWidth: "600px", margin: "100px auto" }}>
+      <div
+        style={{ padding: "48px", maxWidth: "600px", margin: "100px auto" }}
+        suppressHydrationWarning
+      >
         <LoadingSkeleton lines={4} height="200px" />
       </div>
     );
@@ -75,21 +69,9 @@ export default function DashboardLayout({
   }
 
   return (
-    <div className={styles.shell}>
+    <div className={styles.shell} suppressHydrationWarning>
       {/* Root Apple-grade progressive blur (spans 100vw across side place + navbar) */}
-      <div
-        className={`${styles.progressiveBlurContainer} ${isScrolled ? styles.progressiveBlurActive : ""}`}
-        aria-hidden="true"
-      >
-        <div className={styles.blurFilter} />
-        <div className={styles.blurFilter} />
-        <div className={styles.blurFilter} />
-        <div className={styles.blurFilter} />
-        <div className={styles.blurFilter} />
-        <div className={styles.blurFilter} />
-        <div className={styles.blurFilter} />
-        <div className={styles.blurGradient} />
-      </div>
+      <ProgressiveBlur />
 
       <FloatingNav
         userRole={session.role}
@@ -124,7 +106,7 @@ export default function DashboardLayout({
               type="button"
               onClick={async () => {
                 await fetch("/api/v1/auth/impersonation", { method: "DELETE", credentials: "include" }).catch(() => undefined);
-                window.location.href = "/super-admin";
+                window.location.href = "/";
               }}
               style={{ background: "transparent", border: "1px solid currentColor", borderRadius: "6px", padding: "4px 10px", cursor: "pointer", color: "inherit" }}
             >
@@ -138,7 +120,10 @@ export default function DashboardLayout({
           userRole={session.role}
           onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
         />
-        <main className={styles.mainContent}>{children}</main>
+        <main className={styles.mainContent}>
+          <PlatformNotices />
+          {children}
+        </main>
       </div>
 
       <CommandPalette

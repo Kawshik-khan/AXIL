@@ -12,7 +12,7 @@ async function handlePOST(
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.MARKETING_READ);
-    const simulation = campaignService.simulateCampaign(context.tenant.id, params.id);
+    const simulation = await campaignService.simulateCampaign(context.tenant.id, params.id);
     return apiSuccess({ simulation });
   } catch (err) {
     return apiError(err);

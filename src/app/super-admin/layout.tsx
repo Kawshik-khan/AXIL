@@ -1,19 +1,12 @@
 import React from "react";
 import type { Metadata } from "next";
+import styles from "./super-admin.module.css";
 
 export const metadata: Metadata = {
-  title: "CommerceOS — SaaS Owner & Platform Control Plane",
-  description: "Authoritative platform administration, multi-tenant governance, SaaS billing, and operational infrastructure control.",
+  title: "CommerceOS — Platform Console",
+  description: "Platform administration for CommerceOS: tenants, plans, AI governance, safety controls and audit.",
 };
 
-export default function SuperAdminLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
-  return (
-    <div style={{ minHeight: "100vh", backgroundColor: "#0f1013" }}>
-      {children}
-    </div>
-  );
+export default function SuperAdminLayout({ children }: { children: React.ReactNode }) {
+  return <div className={styles.root}>{children}</div>;
 }

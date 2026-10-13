@@ -52,6 +52,13 @@ export interface PlanRecord {
   name: string;
   description: string;
   is_active: boolean;
+  /** PUBLIC: offered to every workspace; HIDDEN: assignable by operators only; PRIVATE: a custom deal for named tenants. Absent = PUBLIC. */
+  visibility?: "PUBLIC" | "HIDDEN" | "PRIVATE";
+  /** Tenants a PRIVATE plan is offered to. */
+  private_tenant_ids?: string[];
+  display_order?: number;
+  /** Operator-entered marketing label, e.g. "Most popular". */
+  highlight_label?: string;
   created_at: string;
   updated_at: string;
 }
@@ -60,11 +67,25 @@ export interface PlanVersionRecord {
   id: string;
   plan_id: string;
   version: number;
+  /** Legacy single price: kept in sync for older readers; new versions carry monthly/annual prices below. */
   billing_period: "MONTHLY" | "ANNUAL";
   price_bdt: number;
   features: Record<string, unknown>;
+  /** Legacy flag, kept equal to status === "PUBLISHED". */
   is_published: boolean;
+  /** Absent on legacy versions: derived from is_published. Published versions are immutable. */
+  status?: "DRAFT" | "PUBLISHED" | "RETIRED";
+  monthly_price_bdt?: number | null;
+  annual_price_bdt?: number | null;
+  trial_days?: number | null;
+  setup_fee_bdt?: number | null;
+  change_note?: string;
+  created_by?: string;
+  published_by?: string;
+  published_at?: string;
+  retired_at?: string;
   created_at: string;
+  updated_at?: string;
 }
 
 export interface SubscriptionRecord {
@@ -73,6 +94,8 @@ export interface SubscriptionRecord {
   plan_id: string;
   plan_version_id: string;
   status: "TRIAL" | "ACTIVE" | "PAST_DUE" | "CANCELLED" | "EXPIRED";
+  /** Which price of the plan version the tenant pays; absent = the version's legacy billing_period. */
+  billing_period?: "MONTHLY" | "ANNUAL";
   trial_ends_at?: string;
   current_period_start: string;
   current_period_end: string;
@@ -95,6 +118,10 @@ export interface TenantEntitlementRecord {
   value: unknown;
   is_override: boolean;
   override_reason?: string;
+  /** After this instant the override no longer applies (derived on read; nothing is rewritten). */
+  expires_at?: string;
+  granted_by?: string;
+  ticket_ref?: string;
   updated_at: string;
 }
 
@@ -124,7 +151,19 @@ export interface PlatformFeatureFlagRecord {
 export interface PlatformSettingRecord {
   key: string;
   value: unknown;
-  category: "AI_MODELS" | "SECURITY" | "STORAGE" | "N8N_CLUSTER" | "RATE_LIMITS" | "NOTIFICATIONS";
+  /** Registry categories (src/domains/platform/settings-registry.ts) plus the legacy AI_MODELS. */
+  category:
+    | "AI_MODELS"
+    | "AI"
+    | "SECURITY"
+    | "STORAGE"
+    | "N8N_CLUSTER"
+    | "RATE_LIMITS"
+    | "NOTIFICATIONS"
+    | "BILLING"
+    | "TRIALS"
+    | "OPERATIONS"
+    | "FINANCE";
   description: string;
   is_sensitive: boolean;
   updated_at: string;
@@ -251,5 +290,71 @@ export interface PlatformApiKeyRecord {
   status: "ACTIVE" | "REVOKED" | "EXPIRED";
   expires_at?: string;
   last_used_at?: string;
+  created_at: string;
+}
+
+/** Two-person approval for privileged platform actions (super-admin console plan §5.5). Platform scope. */
+export type PlatformApprovalStatus = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | "EXECUTED";
+
+export interface PlatformApprovalRequestRecord {
+  id: string;
+  /** A key from src/domains/platform/privileged-actions.ts. */
+  action_key: string;
+  target_type: string;
+  target_id: string;
+  target_tenant_id?: string;
+  /** Human-readable target, captured when requested (e.g. the tenant name). */
+  target_label: string;
+  /** The exact action input the approval covers (sanitized; no secrets). */
+  payload: Record<string, unknown>;
+  /** SHA-256 of the canonical payload; execution must present the same payload. */
+  payload_hash: string;
+  reason: string;
+  ticket_ref?: string;
+  requested_by: string;
+  requested_by_role: PlatformRole;
+  requested_at: string;
+  /** Expiry is derived on read (now > expires_at); the status is not rewritten. */
+  expires_at: string;
+  status: PlatformApprovalStatus;
+  decided_by?: string;
+  decided_at?: string;
+  decision_note?: string;
+  executed_at?: string;
+  executed_request_id?: string;
+}
+
+/** A purchasable or grantable increment to one entitlement (plan C3). */
+export interface PlatformAddonRecord {
+  id: string;
+  name: string;
+  description: string;
+  entitlement_id: string;
+  /** How much one unit adds to the entitlement's numeric limit. */
+  increment: number;
+  /** null until the billing engine can charge for add-ons. */
+  monthly_price_bdt: number | null;
+  status: "ACTIVE" | "RETIRED";
+  /** Empty = available on every plan. */
+  allowed_plan_ids: string[];
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** An add-on granted to a tenant. Active while starts_at <= now < ends_at (derived on read) and not revoked. */
+export interface TenantAddonRecord {
+  id: string;
+  tenant_id: string;
+  addon_id: string;
+  quantity: number;
+  source: "PURCHASED" | "COMPLIMENTARY";
+  starts_at: string;
+  ends_at?: string;
+  granted_by: string;
+  reason: string;
+  ticket_ref?: string;
+  revoked_at?: string;
+  revoked_by?: string;
   created_at: string;
 }

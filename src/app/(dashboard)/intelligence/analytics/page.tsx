@@ -97,23 +97,14 @@ export default function AnalyticsExplorerPage() {
           <span className={styles.badgeLime}>Deterministic Execution</span>
         </div>
 
-        <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+        <div className={styles.queryInputContainer}>
           <input
             type="text"
             placeholder="Ask anything (e.g. 'What is our 30-day sales revenue?', 'Show me order volume today')..."
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleAsk()}
-            style={{
-              flex: 1,
-              background: "rgba(255, 255, 255, 0.05)",
-              border: "1px solid rgba(255, 255, 255, 0.1)",
-              borderRadius: 10,
-              padding: "10px 16px",
-              color: "#fff",
-              fontSize: 14,
-              outline: "none",
-            }}
+            className={styles.queryInput}
           />
           <button className={styles.actionBtn} onClick={() => handleAsk()} disabled={loading}>
             <Send size={14} style={{ marginRight: 6 }} /> Ask
@@ -121,13 +112,13 @@ export default function AnalyticsExplorerPage() {
         </div>
 
         {/* Suggestion Chips */}
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          <span style={{ fontSize: 12, color: "#8c8f96" }}>Try:</span>
+        <div className={styles.querySuggestions}>
+          <span className={styles.querySuggestionsLabel}>Try:</span>
           {SUGGESTED_QUERIES.map((sq, i) => (
             <button
               key={i}
-              className={styles.secondaryBtn}
-              style={{ fontSize: 11, padding: "4px 10px" }}
+              type="button"
+              className={styles.querySuggestionBtn}
               onClick={() => {
                 setQuestion(sq);
                 handleAsk(sq);
@@ -140,12 +131,12 @@ export default function AnalyticsExplorerPage() {
 
         {/* Answer Box */}
         {loading && <div style={{ marginTop: 20 }}><LoadingSkeleton lines={2} height="80px" /></div>}
-        {error && <div style={{ marginTop: 16, color: "#ff6b6b", fontSize: 13 }}>{error}</div>}
+        {error && <div style={{ marginTop: 16, color: "#dc2626", fontSize: 13 }}>{error}</div>}
         {nlResult && !loading && (
-          <div style={{ marginTop: 20, padding: 16, background: "rgba(199, 249, 0, 0.05)", border: "1px solid rgba(199, 249, 0, 0.2)", borderRadius: 12 }}>
-            <div style={{ fontSize: 12, color: "#C7F900", fontWeight: 600, marginBottom: 4 }}>GROUNDED ANSWER</div>
-            <div style={{ fontSize: 15, color: "#fff", lineHeight: 1.5 }}>{nlResult.grounded_answer}</div>
-            <div style={{ fontSize: 11, color: "#8c8f96", marginTop: 8 }}>
+          <div className={styles.groundedAnswerBox}>
+            <div className={styles.groundedAnswerLabel}>✦ GROUNDED ANSWER</div>
+            <div className={styles.groundedAnswerText}>{nlResult.grounded_answer}</div>
+            <div className={styles.groundedAnswerMeta}>
               Interpreted Metric: <strong>{nlResult.interpreted_metric}</strong> • Period: {nlResult.parameters?.startDate} to {nlResult.parameters?.endDate}
             </div>
           </div>
@@ -157,7 +148,7 @@ export default function AnalyticsExplorerPage() {
         {/* Customer RFM Table */}
         <div className={`${styles.bentoCard} ${styles.col7}`}>
           <div className={styles.cardTitle}>
-            <span><Users size={16} color="#C7F900" style={{ marginRight: 6 }} /> Customer RFM Intelligence & LTV</span>
+            <span><Users size={16} color="#3b4d00" style={{ marginRight: 6 }} /> Customer RFM Intelligence & LTV</span>
             <span className={styles.badgeNeutral}>{customers.length} Profiles</span>
           </div>
 
@@ -174,13 +165,13 @@ export default function AnalyticsExplorerPage() {
               </thead>
               <tbody>
                 {customers.length === 0 ? (
-                  <tr><td colSpan={5} style={{ textAlign: "center", color: "#8c8f96" }}>No customer records found</td></tr>
+                  <tr><td colSpan={5} style={{ textAlign: "center", color: "var(--color-text-secondary)" }}>No customer records found</td></tr>
                 ) : (
                   customers.slice(0, 5).map((c) => (
                     <tr key={c.id}>
                       <td>
-                        <div style={{ fontWeight: 600, color: "#fff" }}>{c.customer_name}</div>
-                        <div style={{ fontSize: 11, color: "#8c8f96" }}>{c.phone}</div>
+                        <div className={styles.customerName}>{c.customer_name}</div>
+                        <div className={styles.customerPhone}>{c.phone}</div>
                       </td>
                       <td>
                         <span className={
@@ -194,8 +185,10 @@ export default function AnalyticsExplorerPage() {
                         </span>
                       </td>
                       <td>৳{c.observed_ltv_bdt?.toLocaleString()}</td>
-                      <td style={{ color: "#C7F900" }}>৳{c.estimated_ltv_bdt?.toLocaleString()}</td>
-                      <td>{c.recency_days}d ago</td>
+                      <td>
+                        <strong style={{ color: "#047857" }}>৳{c.estimated_ltv_bdt?.toLocaleString()}</strong>
+                      </td>
+                      <td style={{ color: "var(--color-text-secondary)" }}>{c.recency_days}d ago</td>
                     </tr>
                   ))
                 )}
@@ -207,7 +200,7 @@ export default function AnalyticsExplorerPage() {
         {/* Acquisition Cohorts */}
         <div className={`${styles.bentoCard} ${styles.col5}`}>
           <div className={styles.cardTitle}>
-            <span><BarChart3 size={16} color="#C7F900" style={{ marginRight: 6 }} /> Customer Retention Cohorts</span>
+            <span><BarChart3 size={16} color="#3b4d00" style={{ marginRight: 6 }} /> Customer Retention Cohorts</span>
             <span className={styles.badgeNeutral}>{cohorts.length} Cohorts</span>
           </div>
 
@@ -224,15 +217,27 @@ export default function AnalyticsExplorerPage() {
               </thead>
               <tbody>
                 {cohorts.length === 0 ? (
-                  <tr><td colSpan={5} style={{ textAlign: "center", color: "#8c8f96" }}>No cohort data recorded</td></tr>
+                  <tr><td colSpan={5} style={{ textAlign: "center", color: "var(--color-text-secondary)" }}>No cohort data recorded</td></tr>
                 ) : (
                   cohorts.slice(0, 4).map((coh) => (
                     <tr key={coh.cohort_month}>
-                      <td style={{ fontWeight: 600, color: "#fff" }}>{coh.cohort_month}</td>
-                      <td>{coh.cohort_size}</td>
-                      <td style={{ color: "var(--color-lime-hover)" }}>{coh.periods?.[0]?.retention_rate_pct !== undefined ? `${coh.periods[0].retention_rate_pct}%` : "—"}</td>
-                      <td>{coh.periods?.[1]?.retention_rate_pct !== undefined ? `${coh.periods[1].retention_rate_pct}%` : "—"}</td>
-                      <td>{coh.periods?.[2]?.retention_rate_pct !== undefined ? `${coh.periods[2].retention_rate_pct}%` : "—"}</td>
+                      <td className={styles.cohortMonth}>{coh.cohort_month}</td>
+                      <td style={{ color: "var(--color-text-secondary)" }}>{coh.cohort_size}</td>
+                      <td>
+                        {coh.periods?.[0]?.retention_rate_pct !== undefined ? (
+                          <span className={styles.cohortRatePill}>{coh.periods[0].retention_rate_pct}%</span>
+                        ) : "—"}
+                      </td>
+                      <td>
+                        {coh.periods?.[1]?.retention_rate_pct !== undefined ? (
+                          <span className={styles.cohortRatePill}>{coh.periods[1].retention_rate_pct}%</span>
+                        ) : "—"}
+                      </td>
+                      <td>
+                        {coh.periods?.[2]?.retention_rate_pct !== undefined ? (
+                          <span className={styles.cohortRatePill}>{coh.periods[2].retention_rate_pct}%</span>
+                        ) : "—"}
+                      </td>
                     </tr>
                   ))
                 )}

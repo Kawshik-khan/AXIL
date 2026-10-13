@@ -15,6 +15,7 @@ import { newId } from "@/lib/ids";
 import { ConflictError, NotFoundError } from "@/lib/errors";
 import { OrderStateMachine } from "./order-state-machine";
 import type { Order, OrderStatus } from "@/types/commerce";
+import { RtoScoringService } from "@/domains/rto/rto-scoring.service";
 
 export interface LifecycleActor {
   type: "USER" | "SYSTEM" | "COURIER";
@@ -109,6 +110,9 @@ export class OrderLifecycleService {
       // Cash is collected at the door: the delivery confirms the payment (moved from shipping and courier sync)
       for (const p of db.getPayments(tenantId, order.id)) db.updatePaymentStatus(tenantId, p.id, "PAID");
       db.updateOrderPaymentStatus(tenantId, order.id, "PAID");
+    }
+    if (["DELIVERED", "RETURNED", "CANCELLED"].includes(next)) {
+      RtoScoringService.recordOrderOutcome(tenantId, order, next);
     }
   }
 

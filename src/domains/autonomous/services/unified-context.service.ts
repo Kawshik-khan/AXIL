@@ -4,6 +4,7 @@
  */
 
 import { db } from "@/infrastructure/db";
+import { orderRepository } from "@/domains/orders/order.repository";
 import { UnifiedCommerceContext } from "@/types/autonomous";
 
 export class UnifiedContextService {
@@ -12,10 +13,10 @@ export class UnifiedContextService {
    */
   buildContext(tenantId: string): UnifiedCommerceContext {
     const now = new Date().toISOString();
-    const orders = db.data.orders.filter((o) => o.tenant_id === tenantId);
-    const customers = db.data.customers.filter((c) => c.tenant_id === tenantId);
-    const products = db.data.products.filter((p) => p.tenant_id === tenantId);
-    const inventory = db.data.inventory_items.filter((i) => i.tenant_id === tenantId);
+    const orderSummaries = orderRepository.getAllCustomerOrderSummariesSync(tenantId);
+    const customers = db.getAllCustomers(tenantId);
+    const products = db.getAllProducts(tenantId);
+    const inventory = db.getInventory(tenantId);
     const campaigns = db.data.campaigns?.filter((c) => c.tenant_id === tenantId) || [];
     const experiments = db.data.experiments?.filter((e) => e.tenant_id === tenantId) || [];
     const anomalies = db.data.anomalies?.filter((a) => a.tenant_id === tenantId) || [];
@@ -33,8 +34,16 @@ export class UnifiedContextService {
     const workflows = db.data.autonomous_workflow_runs?.filter((w) => w.tenant_id === tenantId) || [];
     const health = db.data.platform_health_records.find((h) => h.tenant_id === tenantId);
 
-    const totalRevenue = orders.reduce((sum, o) => sum + (o.grand_total || 0), 0);
-    const avgOrderValue = orders.length > 0 ? totalRevenue / orders.length : 0;
+    let totalRevenue = 0;
+    let totalOrders = 0;
+    let repeaters = 0;
+    for (const summary of orderSummaries.values()) {
+      totalRevenue += summary.totalSpend;
+      totalOrders += summary.orderCount;
+      if (summary.orderCount >= 2) repeaters += 1;
+    }
+    const buyers = orderSummaries.size;
+    const avgOrderValue = totalOrders > 0 ? totalRevenue / totalOrders : 0;
     const lowStockItems = inventory.filter((i) => i.quantity_available <= (i.reorder_point || 5));
 
     const detectedOpportunities: string[] = [];
@@ -57,18 +66,12 @@ export class UnifiedContextService {
     });
     const successfulRuns = recentAgentRuns.filter((r) => r.status === "COMPLETED");
 
-    // Repeat purchase rate from orders: buying customers with 2+ orders (was a literal 28.5)
-    const ordersPerCustomer = new Map<string, number>();
-    for (const o of orders) if (o.status !== "CANCELLED") ordersPerCustomer.set(o.customer_id, (ordersPerCustomer.get(o.customer_id) ?? 0) + 1);
-    const buyers = ordersPerCustomer.size;
-    const repeaters = [...ordersPerCustomer.values()].filter((n) => n >= 2).length;
-
     return {
       tenant_id: tenantId,
       generated_at: now,
       commerce: {
         total_revenue_bdt: totalRevenue,
-        total_orders: orders.length,
+        total_orders: totalOrders,
         average_order_value_bdt: Math.round(avgOrderValue * 100) / 100,
         active_customers: customers.filter((c) => c.status === "ACTIVE").length,
         conversion_rate: null, // no visit data exists (was a literal 3.2) (FX-30)

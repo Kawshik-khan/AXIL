@@ -243,6 +243,125 @@
   font-weight: 600;
 }
 
+.metricCardClickable {
+  cursor: pointer;
+}
+
+.metricCardClickable:active {
+  transform: translateY(0);
+}
+
+.metricActionCue {
+  font-size: 11px;
+  color: #3F4E00;
+  font-weight: 600;
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  opacity: 0.8;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.metricCard:hover .metricActionCue {
+  opacity: 1;
+  transform: translateX(2px);
+}
+
+/* Operational Status & Safety Section */
+.operationalGrid {
+  display: grid;
+  grid-template-columns: 1.25fr 1fr;
+  gap: 16px;
+  margin-top: 8px;
+}
+
+@media (max-width: 960px) {
+  .operationalGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.operationalCard {
+  background: var(--color-surface-pure, #FFFFFF);
+  border: 1px solid var(--color-border-subtle, rgba(30, 32, 30, 0.08));
+  border-radius: 20px;
+  padding: 24px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.channelsRow {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 14px 0 16px 0;
+}
+
+.channelPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 9999px;
+  background: var(--color-surface-soft, #FAFBF8);
+  border: 1px solid var(--color-border-subtle, rgba(30, 32, 30, 0.08));
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-primary, #202124);
+}
+
+.channelStatusDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #4CAF70;
+  box-shadow: 0 0 6px rgba(76, 175, 112, 0.5);
+  display: inline-block;
+}
+
+.guardrailsList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.guardrailItem {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--color-surface-soft, #FAFBF8);
+  border: 1px solid var(--color-border-subtle, rgba(30, 32, 30, 0.06));
+  border-radius: 12px;
+}
+
+.guardrailIcon {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.guardrailText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.guardrailTitle {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--color-text-primary, #202124);
+}
+
+.guardrailDesc {
+  font-size: 11px;
+  color: var(--color-text-secondary, #70736F);
+  line-height: 1.4;
+}
+
 /* Architecture & Safety Section */
 .architectureCard {
   background: var(--color-surface-pure, #FFFFFF);

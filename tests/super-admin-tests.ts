@@ -13,6 +13,7 @@ import {
   PlatformFeatureFlagService,
 } from "../src/domains/platform";
 import { PlatformContext } from "../src/lib/context";
+import { PlatformApprovalService } from "../src/domains/platform/services/platform-approval.service";
 import { PLATFORM_PERMISSIONS, PLATFORM_ROLE_PERMISSIONS } from "../src/lib/permissions";
 import { verifyImpersonationToken, signPlatformSessionToken, verifyPlatformSessionToken } from "../src/lib/security";
 import {
@@ -178,7 +179,8 @@ async function runSuperAdminTests() {
   const suspendedTenant = PlatformTenantService.suspendTenant(
     provisioned.tenant.id,
     "Payment delinquency and terms verification",
-    superAdminContext
+    superAdminContext,
+    { ticketRef: "OPS-1201" } // HIGH actions need a ticket (rules/privileged-actions.md §2)
   );
   assert(suspendedTenant?.status === "SUSPENDED", "Controlled suspension updates tenant status to SUSPENDED");
 
@@ -194,7 +196,8 @@ async function runSuperAdminTests() {
   const archivedTenant = PlatformTenantService.archiveTenant(
     provisioned.tenant.id,
     "Requested closure after 30-day grace period",
-    superAdminContext
+    superAdminContext,
+    { ticketRef: "OPS-1202" }
   );
   assert(archivedTenant?.status === "ARCHIVED", "Controlled deletion moves tenant to ARCHIVED (never immediate hard delete)");
 
@@ -218,7 +221,8 @@ async function runSuperAdminTests() {
     "max_users",
     99,
     "Special promotional contract extension",
-    superAdminContext
+    superAdminContext,
+    { ticketRef: "DEAL-42" } // HIGH: the ticket is enforced on the server
   );
   assert(override.is_override === true && override.value === 99, "Tenant entitlement override successfully saved");
 
@@ -284,13 +288,52 @@ async function runSuperAdminTests() {
   // ============================================================
   console.log("\n5. Platform Safety & Emergency Kill Switch:");
 
-  const killSwitch = PlatformSafetyService.activateKillSwitch(
-    {
-      scope: "GLOBAL",
-      reason: "Simulated runaway automation loop incident",
-    },
-    superAdminContext
-  );
+  // The GLOBAL switch is CRITICAL: one operator alone is refused (rules/privileged-actions.md §3.3)
+  const globalInput = {
+    scope: "GLOBAL" as const,
+    reason: "Simulated runaway automation loop incident",
+    ticketRef: "INC-5001",
+    confirmation: "CONFIRM KILL SWITCH",
+  };
+  let unilateral: unknown = null;
+  try {
+    PlatformSafetyService.activateKillSwitch(globalInput, superAdminContext);
+  } catch (e) {
+    unilateral = e;
+  }
+  assert((unilateral as { code?: string })?.code === "APPROVAL_REQUIRED", "GLOBAL kill switch without a second operator is refused (APPROVAL_REQUIRED)");
+
+  // Two-person flow: request, a second operator approves, the requester executes with the approval
+  const secondOperator: PlatformContext = {
+    ...superAdminContext,
+    requestId: "req_test_sa_02",
+    platformUser: { id: "usr_superadmin_02", email: "second@commerceos.io", name: "Second Operator", status: "ACTIVE" },
+  };
+  db.createUser({ id: "usr_superadmin_02", email: "second@commerceos.io", name: "Second Operator", password_hash: "!disabled", status: "ACTIVE", created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
+  db.savePlatformMembership({ id: "pm_superadmin_02", user_id: "usr_superadmin_02", role: "SUPER_ADMIN", mfa_enabled: true, is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
+  const approvalRequest = PlatformApprovalService.request(superAdminContext, {
+    actionKey: "kill_switch.activate_global",
+    payload: { switch_id: "KILL_SWITCH_GLOBAL", scope: "GLOBAL", target_id: null },
+    reason: globalInput.reason,
+    ticketRef: globalInput.ticketRef,
+  });
+  let selfApproval: unknown = null;
+  try {
+    PlatformApprovalService.decide(superAdminContext, approvalRequest.id, "APPROVE", undefined);
+  } catch (e) {
+    selfApproval = e;
+  }
+  assert((selfApproval as { code?: string })?.code === "FORBIDDEN", "The requester cannot approve their own request");
+  PlatformApprovalService.decide(secondOperator, approvalRequest.id, "APPROVE", "Confirmed with the incident commander");
+
+  const killSwitch = PlatformSafetyService.activateKillSwitch({ ...globalInput, approvalId: approvalRequest.id }, superAdminContext);
+  let reused: unknown = null;
+  try {
+    PlatformSafetyService.activateKillSwitch({ ...globalInput, approvalId: approvalRequest.id }, superAdminContext);
+  } catch (e) {
+    reused = e;
+  }
+  assert((reused as { code?: string })?.code === "APPROVAL_INVALID", "An approval is single-use");
 
   assert(killSwitch.is_active === true, "Emergency kill switch successfully activated");
   assert(
@@ -299,10 +342,18 @@ async function runSuperAdminTests() {
   );
 
   // Deactivate
+  const offRequest = PlatformApprovalService.request(superAdminContext, {
+    actionKey: "kill_switch.deactivate_global",
+    payload: { switch_id: killSwitch.id },
+    reason: "Runaway loop mitigated, operations resumed",
+    ticketRef: "INC-5001",
+  });
+  PlatformApprovalService.decide(secondOperator, offRequest.id, "APPROVE", "Loop fix verified in staging");
   const deactivated = PlatformSafetyService.deactivateKillSwitch(
     killSwitch.id,
     "Runaway loop mitigated, operations resumed",
-    superAdminContext
+    superAdminContext,
+    { ticketRef: "INC-5001", approvalId: offRequest.id }
   );
   assert(deactivated.is_active === false, "Emergency kill switch successfully deactivated");
   assert(

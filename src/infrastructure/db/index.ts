@@ -12,10 +12,16 @@ import { channelOfOrder, SALES_CHANNEL_NAMES } from "@/lib/sales-channel";
 import type { SalesChannel as OrderSalesChannel } from "@/types/analytics";
 import bcrypt from "bcryptjs";
 import { RoleName } from "@/lib/permissions";
-import { DISABLED_PASSWORD_HASH } from "@/lib/security";
+import { DISABLED_PASSWORD_HASH, encryptCredential } from "@/lib/security";
 import { PgStorePersistence, StoreConflictError, logUnwritable, type RejectedRow } from "@/infrastructure/store/pg-store";
 import { createNeonSqlClient, isDataRejected, pgErrorFields, storeConnectionString, type SqlClient } from "@/infrastructure/store/sql-client";
 import { ConnectorConfigRecord } from "@/types/connector";
+import {
+  NetworkDeliveryReputationRecord,
+  OrderRtoEvaluationRecord,
+  TenantRtoSettingsRecord,
+  CourierDisputeRecord,
+} from "@/types/rto";
 import {
   Product,
   ProductVariant,
@@ -64,6 +70,9 @@ import {
   PlatformKillSwitchRecord,
   PlatformSecurityEventRecord,
   PlatformAnnouncementRecord,
+  PlatformApprovalRequestRecord,
+  PlatformAddonRecord,
+  TenantAddonRecord,
   PlatformApiKeyRecord,
   CspReportRecord,
 } from "@/types/platform";
@@ -84,6 +93,9 @@ export interface TenantRecord {
   suspended_at?: string;
   suspension_reason?: string;
   archived_at?: string;
+  /** Purge requested (two-person approved): data is kept until purge_after; no deletion job exists yet. */
+  purge_requested_at?: string;
+  purge_after?: string;
   created_at: string;
   updated_at: string;
 }
@@ -213,6 +225,8 @@ import {
   ChatSession,
   OutboundWebhookDelivery,
   ChannelType,
+  CommentTriggerRule,
+  CommentTriggerEvent,
 } from "@/types/social";
 import {
   AgentType,
@@ -231,6 +245,9 @@ import {
   AITrace,
   AIUsageRecord,
   AIFeedbackRecord,
+  AgentExecutionTraceRecord,
+  AgentHitlEscalationRecord,
+  TenantAiGuardSettingsRecord,
 } from "@/types/ai";
 import {
   AgentWorkflow,
@@ -247,6 +264,7 @@ import {
   AgentTriggerRule,
   ActionReceipt,
   AgentSchedule,
+  WorkflowJob,
 } from "@/types/orchestration";
 import {
   MetricDefinition,
@@ -461,6 +479,7 @@ export interface DatabaseSchema {
   ai_feedback: AIFeedbackRecord[];
   // Phase 5: Multi-Agent Orchestration & Controlled Autonomy Collections
   workflows: AgentWorkflow[];
+  workflow_jobs: WorkflowJob[];
   tasks: AgentTask[];
   agent_messages: AgentMessage[];
   workflow_contexts: WorkflowContext[];
@@ -638,8 +657,23 @@ export interface DatabaseSchema {
   platform_announcements: PlatformAnnouncementRecord[];
   platform_api_keys: PlatformApiKeyRecord[];
   impersonation_sessions: ImpersonationSessionRecord[];
+  platform_approval_requests: PlatformApprovalRequestRecord[];
+  platform_addons: PlatformAddonRecord[];
+  tenant_addons: TenantAddonRecord[];
   campaign_kill_switches: CampaignKillSwitchRecord[];
   automation_kill_switches: AutomationKillSwitchRecord[];
+  // Phase R: Cross-Tenant RTO & Courier Fraud Prevention Network Collections
+  network_delivery_reputations: NetworkDeliveryReputationRecord[];
+  order_rto_evaluations: OrderRtoEvaluationRecord[];
+  tenant_rto_settings: TenantRtoSettingsRecord[];
+  courier_disputes: CourierDisputeRecord[];
+  // Agentic Operations: LLM Observability & HITL Handover Collections
+  agent_execution_traces: AgentExecutionTraceRecord[];
+  agent_hitl_escalations: AgentHitlEscalationRecord[];
+  tenant_ai_guard_settings: TenantAiGuardSettingsRecord[];
+  // Comment-to-inbox triggers (Engagement page)
+  comment_trigger_rules: CommentTriggerRule[];
+  comment_trigger_events: CommentTriggerEvent[];
 }
 
 /**
@@ -677,12 +711,25 @@ export interface StoreOptions {
   serverMode?: boolean;
   /** Default true. False: the data exactly as stored, without the default seed (the backfill's read-only source). */
   seed?: boolean;
+  /** Zero-hydration: true in production or tests to skip loading large business tables. */
+  zeroHydration?: boolean;
 }
 
 /** Thrown by `db.data` before a Postgres-backed store has loaded; routes answer 503. */
 export class StoreNotReadyError extends AppError {
   constructor() {
     super("STORE_NOT_READY", "The data store is still loading. Try again shortly.", 503);
+  }
+}
+
+/** Thrown when code attempts direct in-memory access to a collection that is not hydrated (ADR-109, Phase D). */
+export class CollectionNotHydratedError extends AppError {
+  constructor(readonly collection: string) {
+    super(
+      "COLLECTION_NOT_HYDRATED",
+      `Collection '${collection}' is intentionally not materialized in memory under zero-hydration architecture. Access records through its domain repository instead.`,
+      500
+    );
   }
 }
 
@@ -773,6 +820,17 @@ export class CommerceDatabase {
   private readonly serverMode: boolean;
   private pg: PgStorePersistence | null = null;
   private readyPromise: Promise<void> | null = null;
+  private unhydratedCollections = new Set<string>();
+
+  public isCollectionHydrated(collection: string): boolean {
+    if (!this._data) return false;
+    return !this.unhydratedCollections.has(collection);
+  }
+
+  public getUnhydratedCollections(): ReadonlySet<string> {
+    return this.unhydratedCollections;
+  }
+
   private readonly lock = new StoreLock();
   /** True while a unit of work runs: persist() records the collections for that unit's commit. */
   private unitActive = false;
@@ -1106,8 +1164,8 @@ export class CommerceDatabase {
   }
 
   /** A complete store from parsed data (the JSON file or Postgres): every collection present, legacy values normalized. */
-  public static fromParsed(parsed: Partial<DatabaseSchema>): DatabaseSchema {
-    return {
+  public static fromParsed(parsed: Partial<DatabaseSchema>, unhydrated?: ReadonlySet<string>): DatabaseSchema {
+    const schema: Record<string, unknown> = {
       tenants: parsed.tenants || [],
       users: parsed.users || [],
       memberships: parsed.memberships || [],
@@ -1165,6 +1223,7 @@ export class CommerceDatabase {
       ai_feedback: parsed.ai_feedback || [],
       // Phase 5 Collections
       workflows: parsed.workflows || [],
+      workflow_jobs: parsed.workflow_jobs || [],
       tasks: parsed.tasks || [],
       agent_messages: parsed.agent_messages || [],
       workflow_contexts: parsed.workflow_contexts || [],
@@ -1347,9 +1406,36 @@ export class CommerceDatabase {
       platform_announcements: parsed.platform_announcements || [],
       platform_api_keys: parsed.platform_api_keys || [],
       impersonation_sessions: parsed.impersonation_sessions || [],
+      platform_approval_requests: parsed.platform_approval_requests || [],
+      platform_addons: parsed.platform_addons || [],
+      tenant_addons: parsed.tenant_addons || [],
       campaign_kill_switches: parsed.campaign_kill_switches || [],
       automation_kill_switches: parsed.automation_kill_switches || [],
     };
+
+    if (unhydrated && unhydrated.size > 0) {
+      for (const col of unhydrated) {
+        if (parsed[col as keyof DatabaseSchema] === undefined) {
+          Object.defineProperty(schema, col, {
+            get() {
+              throw new CollectionNotHydratedError(col);
+            },
+            set(val) {
+              Object.defineProperty(schema, col, {
+                value: val,
+                writable: true,
+                enumerable: true,
+                configurable: true,
+              });
+            },
+            enumerable: true,
+            configurable: true,
+          });
+        }
+      }
+    }
+
+    return schema as unknown as DatabaseSchema;
   }
 
   public static emptySchema(): DatabaseSchema {
@@ -1439,6 +1525,7 @@ export class CommerceDatabase {
       ai_feedback: [],
       // Phase 5 Collections
       workflows: [],
+      workflow_jobs: [],
       tasks: [],
       agent_messages: [],
       workflow_contexts: [],
@@ -1615,8 +1702,20 @@ export class CommerceDatabase {
       platform_announcements: [],
       platform_api_keys: [],
       impersonation_sessions: [],
+      platform_approval_requests: [],
+      platform_addons: [],
+      tenant_addons: [],
       campaign_kill_switches: [],
       automation_kill_switches: [],
+      network_delivery_reputations: [],
+      order_rto_evaluations: [],
+      tenant_rto_settings: [],
+      courier_disputes: [],
+      agent_execution_traces: [],
+      agent_hitl_escalations: [],
+      tenant_ai_guard_settings: [],
+      comment_trigger_rules: [],
+      comment_trigger_events: [],
     };
   }
 
@@ -1750,12 +1849,15 @@ export class CommerceDatabase {
   }
 
   private async openPostgres(pg: PgStorePersistence): Promise<void> {
+    const startedAt = Date.now();
     if (!(await pg.schemaPresent())) {
       this.block("SCHEMA_MISSING", "The commerceos schema is missing or older than migration 007: run `npm run db:migrate`.");
       throw new StartupRefusal();
     }
-    const loaded = await pg.load();
-    this._data = CommerceDatabase.fromParsed(loaded as Partial<DatabaseSchema>);
+    const loaded = await pg.load({ zeroHydration: this.options.zeroHydration });
+    const unhydrated = pg.getUnhydratedCollections();
+    this.unhydratedCollections = new Set(unhydrated);
+    this._data = CommerceDatabase.fromParsed(loaded as Partial<DatabaseSchema>, this.unhydratedCollections);
     this.persistenceBlocked = null;
     this.blockedCode = null;
     this.lastSyncAt = Date.now();
@@ -1765,8 +1867,9 @@ export class CommerceDatabase {
     this.startBackgroundLoop(pg);
     logger.info("db.pg_ready", {
       tenants: this._data.tenants.length,
-      orders: this._data.orders.length,
-      customers: this._data.customers.length,
+      orders: this.isCollectionHydrated("orders") ? this._data.orders.length : "unhydrated",
+      customers: this.isCollectionHydrated("customers") ? this._data.customers.length : "unhydrated",
+      load_ms: Date.now() - startedAt,
     });
   }
 
@@ -1785,6 +1888,8 @@ export class CommerceDatabase {
    * gives 409 STORE_CONFLICT and nothing is saved. Without Postgres persistence it just runs `work`.
    */
   public async unit<T>(work: () => Promise<T>, commitWhen: (result: T) => boolean): Promise<T> {
+    // Reuse the enclosing request transaction for domain services that guarantee their own atomic unit.
+    if (this.unitActive && unitContext.getStore() === this.unitToken) return work();
     const pg = this.pg;
     if (this.backend !== "pg" || !pg || !this.persistenceEnabled || this.isTestInstance || !this._data) return work();
     return this.lock.run(async () => {
@@ -2022,6 +2127,11 @@ export class CommerceDatabase {
     return this.pg ? this.pg.unsavedRows() : [];
   }
 
+  /** Direct query access to the underlying SQL client (Neon in production, PGlite in tests). */
+  public getSqlClient(): SqlClient | null {
+    return this.pg?.client ?? null;
+  }
+
   /** Postgres reachable within the timeout (always true for the JSON file). */
   public async pingDatabase(timeoutMs = 2_000): Promise<boolean> {
     const pg = this.pg;
@@ -2063,7 +2173,7 @@ export class CommerceDatabase {
     return this.seedPasswordHashCache;
   }
 
-  private ensureDefaultSeed(): void {
+  public ensureDefaultSeed(_targetTenantId?: string): void {
     const tenantId = "ten_default_dhaka";
     const userId = "usr_owner_default";
 
@@ -2121,7 +2231,7 @@ export class CommerceDatabase {
       this.data.tenants.push(defaultTenant);
       this.data.users.push(defaultUser);
       this.data.memberships.push(defaultMembership);
-      this.data.audit_logs.push(defaultAudit);
+      if (this.isCollectionHydrated("audit_logs")) this.data.audit_logs.push(defaultAudit);
     }
 
     // Automatically migrate any legacy tenant-level SUPER_ADMIN memberships to OWNER
@@ -2227,7 +2337,7 @@ export class CommerceDatabase {
     }
 
     // Ensure default warehouse exists for the default tenant
-    if (this.data.warehouses.length === 0) {
+    if (this.isCollectionHydrated("warehouses") && this.data.warehouses.length === 0) {
       this.data.warehouses.push({
         id: "wh_dhaka_main",
         tenant_id: tenantId,
@@ -2269,7 +2379,7 @@ export class CommerceDatabase {
       });
     }
 
-    if (this.data.coupons.length === 0) {
+    if (this.isCollectionHydrated("coupons") && this.data.coupons.length === 0) {
       this.data.coupons.push({
         id: "cpn_welcome10",
         tenant_id: tenantId,
@@ -2285,7 +2395,7 @@ export class CommerceDatabase {
       });
     }
 
-    if (this.data.products.filter((p) => p.tenant_id === tenantId).length === 0) {
+    if (this.isCollectionHydrated("products") && this.data.products.filter((p) => p.tenant_id === tenantId).length === 0) {
       this.data.products.push(
         {
           id: "prd_panjabi_01",
@@ -2332,7 +2442,7 @@ export class CommerceDatabase {
       );
     }
 
-    if (this.data.product_variants.filter((v) => v.tenant_id === tenantId).length === 0) {
+    if (this.isCollectionHydrated("product_variants") && this.data.product_variants.filter((v) => v.tenant_id === tenantId).length === 0) {
       this.data.product_variants.push(
         {
           id: "var_panjabi_01",
@@ -2376,7 +2486,7 @@ export class CommerceDatabase {
       );
     }
 
-    if (this.data.inventory_items.filter((i) => i.tenant_id === tenantId).length === 0) {
+    if (this.isCollectionHydrated("inventory_items") && this.data.inventory_items.filter((i) => i.tenant_id === tenantId).length === 0) {
       this.data.inventory_items.push(
         {
           id: "inv_panjabi_01",
@@ -2419,10 +2529,10 @@ export class CommerceDatabase {
       this.data.agent_policies.push({
         id: `pol_${tenantId}`,
         tenant_id: tenantId,
-        ai_mode: "AI_COPILOT", // Default to Copilot mode for safety
+        ai_mode: "AI_AUTONOMOUS",
         is_enabled: true,
-        autonomous_sales_enabled: false,
-        autonomous_support_enabled: false,
+        autonomous_sales_enabled: true,
+        autonomous_support_enabled: true,
         autonomous_order_enabled: false,
         debounce_window_ms: 3000, // 3 seconds window as requested
         confidence_threshold_high: 0.85,
@@ -2433,7 +2543,7 @@ export class CommerceDatabase {
         daily_cost_budget_usd: 10.0,
         monthly_cost_budget_usd: 150.0,
         pii_redaction_enabled: true,
-        allowed_channel_types: ["FACEBOOK_MESSENGER", "INSTAGRAM", "WHATSAPP", "WEBSITE_CHAT"],
+        allowed_channel_types: ["FACEBOOK_MESSENGER", "INSTAGRAM", "WHATSAPP", "WEBSITE_CHAT", "TELEGRAM"],
         disallowed_tool_names: [],
         human_handoff_reasons: [
           "CUSTOMER_REQUESTED",
@@ -2446,8 +2556,11 @@ export class CommerceDatabase {
       });
     }
 
-    // Seed 5 initial specialized agents
+    // Seed 5 initial specialized agents (models dynamically resolved from environment)
     if (this.data.agents.length === 0) {
+      const fastModel = process.env.LLM_MODEL_FAST?.trim() || "default-fast";
+      const reasoningModel = process.env.LLM_MODEL_REASONING?.trim() || fastModel || "default-reasoning";
+
       const initialAgents: AgentDefinition[] = [
         {
           id: "agt_supervisor",
@@ -2457,7 +2570,7 @@ export class CommerceDatabase {
           description: "Decomposes customer queries, classifies intent, detects language, and routes to domain agents.",
           status: "ACTIVE",
           model_tier: "TIER_1_FAST",
-          model_name: "gemini-1.5-flash",
+          model_name: fastModel,
           prompt_version: "1.0.0",
           allowed_channels: ["FACEBOOK_MESSENGER", "INSTAGRAM", "WHATSAPP", "WEBSITE_CHAT"],
           allowed_tools: ["request_human_handoff"],
@@ -2476,7 +2589,7 @@ export class CommerceDatabase {
           description: "Answers FAQs, store policies, return guidance, delivery charges (৳60/৳120), and handles empathetic inquiries.",
           status: "ACTIVE",
           model_tier: "TIER_1_FAST",
-          model_name: "gemini-1.5-flash",
+          model_name: fastModel,
           prompt_version: "1.0.0",
           allowed_channels: ["FACEBOOK_MESSENGER", "INSTAGRAM", "WHATSAPP", "WEBSITE_CHAT"],
           allowed_tools: ["search_knowledge", "get_order_status", "get_shipment_status", "get_return_status", "request_human_handoff"],
@@ -2495,7 +2608,7 @@ export class CommerceDatabase {
           description: "Product recommendation, variant matching, stock verification, wholesale lead capture, and controlled checkout drafts.",
           status: "ACTIVE",
           model_tier: "TIER_2_REASONING",
-          model_name: "gemini-1.5-pro",
+          model_name: reasoningModel,
           prompt_version: "1.0.0",
           allowed_channels: ["FACEBOOK_MESSENGER", "INSTAGRAM", "WHATSAPP", "WEBSITE_CHAT"],
           allowed_tools: ["search_products", "get_product", "check_inventory", "create_lead", "create_order_draft", "calculate_checkout", "request_human_handoff"],
@@ -2514,7 +2627,7 @@ export class CommerceDatabase {
           description: "Order lookup by tracking code, status verification, delivery updates, and controlled cancellation intake.",
           status: "ACTIVE",
           model_tier: "TIER_2_REASONING",
-          model_name: "gemini-1.5-pro",
+          model_name: reasoningModel,
           prompt_version: "1.0.0",
           allowed_channels: ["FACEBOOK_MESSENGER", "INSTAGRAM", "WHATSAPP", "WEBSITE_CHAT"],
           allowed_tools: ["get_order", "get_order_status", "get_shipment_status", "get_payment_status", "request_human_handoff"],
@@ -2533,7 +2646,7 @@ export class CommerceDatabase {
           description: "Detailed catalog attribute extraction, sizing chart explanation, care instructions, and inventory availability.",
           status: "ACTIVE",
           model_tier: "TIER_1_FAST",
-          model_name: "gemini-1.5-flash",
+          model_name: fastModel,
           prompt_version: "1.0.0",
           allowed_channels: ["FACEBOOK_MESSENGER", "INSTAGRAM", "WHATSAPP", "WEBSITE_CHAT"],
           allowed_tools: ["search_products", "get_product", "get_product_variant", "check_inventory", "search_knowledge"],
@@ -2847,7 +2960,7 @@ export class CommerceDatabase {
 
     // ==================== PHASE 8 SEED: AUTONOMOUS OPERATIONS ====================
     const now = new Date().toISOString();
-    if (this.data.suppliers.length === 0) {
+    if (this.isCollectionHydrated("suppliers") && this.data.suppliers.length === 0) {
       this.data.suppliers.push(
         {
           id: "sup_dhaka_knit_01",
@@ -2890,9 +3003,9 @@ export class CommerceDatabase {
       );
     }
 
-    if (this.data.supplier_products.length === 0) {
-      const var1 = this.data.product_variants[0]?.id || "var_default_01";
-      const var2 = this.data.product_variants[1]?.id || "var_default_02";
+    if (this.isCollectionHydrated("supplier_products") && this.data.supplier_products.length === 0) {
+      const var1 = (this.isCollectionHydrated("product_variants") ? this.data.product_variants[0]?.id : undefined) || "var_default_01";
+      const var2 = (this.isCollectionHydrated("product_variants") ? this.data.product_variants[1]?.id : undefined) || "var_default_02";
       this.data.supplier_products.push(
         {
           id: "sp_knit_black_m",
@@ -2927,8 +3040,8 @@ export class CommerceDatabase {
       );
     }
 
-    if (this.data.purchase_orders.length === 0) {
-      const var1 = this.data.product_variants[0]?.id || "var_default_01";
+    if (this.isCollectionHydrated("purchase_orders") && this.data.purchase_orders.length === 0) {
+      const var1 = (this.isCollectionHydrated("product_variants") ? this.data.product_variants[0]?.id : undefined) || "var_default_01";
       this.data.purchase_orders.push({
         id: "po_2026_0001",
         tenant_id: tenantId,
@@ -3308,9 +3421,9 @@ export class CommerceDatabase {
           tenant_id: tenantId,
           type: "WHATSAPP",
           name: "WhatsApp Business (+8801711223344)",
-          status: "ACTIVE",
+          status: "PENDING_SETUP",
           provider_account_id: "wa_phone_dhaka_01",
-          credentials_encrypted: "encrypted_wa_token_seed",
+          credentials_encrypted: encryptCredential({}),
           configuration: {
             welcome_message: "Assalamu Alaikum! Welcome to Dhaka Apparel. How can we assist you today?",
             auto_reply_enabled: true,
@@ -3323,9 +3436,9 @@ export class CommerceDatabase {
           tenant_id: tenantId,
           type: "FACEBOOK_MESSENGER",
           name: "Dhaka Apparel Official FB Page",
-          status: "ACTIVE",
+          status: "PENDING_SETUP",
           provider_account_id: "page_fb_dhaka_01",
-          credentials_encrypted: "encrypted_fb_token_seed",
+          credentials_encrypted: encryptCredential({}),
           configuration: {
             welcome_message: "Assalamu Alaikum! Thank you for reaching out to Dhaka Apparel on Messenger.",
             auto_reply_enabled: true,
@@ -3338,9 +3451,9 @@ export class CommerceDatabase {
           tenant_id: tenantId,
           type: "INSTAGRAM",
           name: "@dhakaapparel.bd (Instagram)",
-          status: "ACTIVE",
+          status: "PENDING_SETUP",
           provider_account_id: "ig_dhaka_01",
-          credentials_encrypted: "encrypted_ig_token_seed",
+          credentials_encrypted: encryptCredential({}),
           configuration: {
             welcome_message: "Hi! Welcome to Dhaka Apparel on Instagram Direct.",
             auto_reply_enabled: true,
@@ -3355,11 +3468,12 @@ export class CommerceDatabase {
           name: "Storefront Live Chat",
           status: "ACTIVE",
           provider_account_id: "web_chat_dhaka_01",
-          credentials_encrypted: "encrypted_web_token_seed",
+          credentials_encrypted: encryptCredential({ webhookSecret: randomSuffix(32) }),
           configuration: {
             welcome_message: "Welcome! Need help finding your size or delivery details?",
             widget_color: "#C7F900",
             widget_position: "bottom-right",
+            auto_reply_enabled: true,
           },
           created_at: new Date(Date.now() - 30 * 86400000).toISOString(),
           updated_at: new Date().toISOString(),
@@ -3368,7 +3482,7 @@ export class CommerceDatabase {
       this.data.connected_channels.push(...defaultChannels);
     }
 
-    if (!this.data.customers.some((c) => c.tenant_id === tenantId)) {
+    if (this.isCollectionHydrated("customers") && !this.data.customers.some((c) => c.tenant_id === tenantId)) {
       const defaultCustomers: Customer[] = [
         {
           id: "cust_nusrat",
@@ -3465,7 +3579,7 @@ export class CommerceDatabase {
     }
 
     // Automatically load comprehensive seeded customers if present
-    if (this.data.customers.filter((c) => c.tenant_id === tenantId).length <= 6) {
+    if (this.isCollectionHydrated("customers") && this.data.customers.filter((c) => c.tenant_id === tenantId).length <= 6) {
       try {
         const seed10k = path.resolve(process.cwd(), "src/infrastructure/db/seeds/customers-10000.json");
         const seed1k = path.resolve(process.cwd(), "src/infrastructure/db/seeds/customers-1000.json");
@@ -3481,7 +3595,7 @@ export class CommerceDatabase {
               }
             }
           }
-          if (Array.isArray(parsed.addresses)) {
+          if (this.isCollectionHydrated("customer_addresses") && Array.isArray(parsed.addresses)) {
             const existingAddrIds = new Set(this.data.customer_addresses.map((a) => a.id));
             for (const addr of parsed.addresses) {
               if (!existingAddrIds.has(addr.id)) {
@@ -3497,7 +3611,7 @@ export class CommerceDatabase {
     }
 
     // Automatically load rich products catalog seed if present
-    if (this.data.products.filter((p) => p.tenant_id === tenantId).length <= 3) {
+    if (this.isCollectionHydrated("products") && this.data.products.filter((p) => p.tenant_id === tenantId).length <= 3) {
       try {
         const seedPath = path.resolve(process.cwd(), "src/infrastructure/db/seeds/products-catalog.json");
         if (fs.existsSync(seedPath)) {
@@ -3538,7 +3652,7 @@ export class CommerceDatabase {
               }
             }
           }
-          if (Array.isArray(parsed.productVariants)) {
+          if (this.isCollectionHydrated("product_variants") && Array.isArray(parsed.productVariants)) {
             const existingVarIds = new Set(this.data.product_variants.map((v) => v.id));
             for (const v of parsed.productVariants) {
               if (!existingVarIds.has(v.id)) {
@@ -3547,7 +3661,7 @@ export class CommerceDatabase {
               }
             }
           }
-          if (Array.isArray(parsed.inventoryItems)) {
+          if (this.isCollectionHydrated("inventory_items") && Array.isArray(parsed.inventoryItems)) {
             const existingInvIds = new Set(this.data.inventory_items.map((i) => i.id));
             for (const inv of parsed.inventoryItems) {
               if (!existingInvIds.has(inv.id)) {
@@ -3562,7 +3676,7 @@ export class CommerceDatabase {
       }
     }
 
-    if (!this.data.orders.some((o) => o.tenant_id === tenantId)) {
+    if (this.isCollectionHydrated("orders") && !this.data.orders.some((o) => o.tenant_id === tenantId)) {
       const sampleOrders: Order[] = [
         {
           id: "ord_demo_01",
@@ -3655,7 +3769,7 @@ export class CommerceDatabase {
     }
 
     // Automatically load comprehensive 5,000 orders seed if present
-    if (this.data.orders.filter((o) => o.tenant_id === tenantId).length <= 3) {
+    if (this.isCollectionHydrated("orders") && this.data.orders.filter((o) => o.tenant_id === tenantId).length <= 3) {
       try {
         const seedPath = path.resolve(process.cwd(), "src/infrastructure/db/seeds/orders-5000.json");
         if (fs.existsSync(seedPath)) {
@@ -3669,7 +3783,7 @@ export class CommerceDatabase {
               }
             }
           }
-          if (Array.isArray(parsed.orderItems)) {
+          if (this.isCollectionHydrated("order_items") && Array.isArray(parsed.orderItems)) {
             const existingItemIds = new Set(this.data.order_items.map((i) => i.id));
             for (const item of parsed.orderItems) {
               if (!existingItemIds.has(item.id)) {
@@ -4708,6 +4822,30 @@ export class CommerceDatabase {
           created_at: now,
           updated_at: now,
         },
+        {
+          id: "flag_cust_agent_auto",
+          key: "customer_agent_autonomous",
+          description: "Enable autonomous customer agent replies",
+          is_enabled_globally: true,
+          percentage_rollout: 100,
+          scope: "GLOBAL",
+          tenant_allowlist: [],
+          rules: {},
+          created_at: now,
+          updated_at: now,
+        },
+        {
+          id: "flag_cust_agent_shadow",
+          key: "customer_agent_shadow",
+          description: "Enable shadow customer agent replies",
+          is_enabled_globally: true,
+          percentage_rollout: 100,
+          scope: "GLOBAL",
+          tenant_allowlist: [],
+          rules: {},
+          created_at: now,
+          updated_at: now,
+        },
       ];
     }
 
@@ -4748,6 +4886,39 @@ export class CommerceDatabase {
           updated_at: now,
         },
       ];
+    }
+
+    // Repair channels left over from legacy dummy seeds. Nothing here turns replies on or changes a workspace's
+    // AI mode or platform flags: automation stays opt-in, and a repaired channel gets its own random secret.
+    for (const ch of this.data.connected_channels) {
+      if (!ch.credentials_encrypted || ch.credentials_encrypted.startsWith("encrypted_")) {
+        if (ch.type === "WEBSITE_CHAT") {
+          ch.credentials_encrypted = encryptCredential({ webhookSecret: randomSuffix(32) });
+          ch.status = "ACTIVE";
+        } else {
+          ch.credentials_encrypted = encryptCredential({});
+          if (!ch.connector_id) {
+            ch.status = "PENDING_SETUP";
+          }
+        }
+      }
+    }
+
+    // Dynamically synchronize agents to configured environment model names
+    const configuredFast = process.env.LLM_MODEL_FAST?.trim();
+    const configuredReasoning = process.env.LLM_MODEL_REASONING?.trim() || configuredFast;
+    for (const agt of this.data.agents) {
+      if (
+        agt.model_name === "gemini-1.5-flash" ||
+        agt.model_name === "gemini-1.5-pro" ||
+        (configuredFast && (agt.model_tier === "TIER_1_FAST" || agt.model_tier === "TIER_2_REASONING"))
+      ) {
+        if (agt.model_tier === "TIER_1_FAST" && configuredFast) {
+          agt.model_name = configuredFast;
+        } else if (agt.model_tier === "TIER_2_REASONING" && configuredReasoning) {
+          agt.model_name = configuredReasoning;
+        }
+      }
     }
 
     this.persist(["abandoned_carts", "agent_policies", "agents", "ai_providers", "audience_members", "audiences", "audit_logs", "automation_webhooks", "autonomy_budgets", "brands", "business_objectives", "campaign_attributions", "campaigns", "categories", "connected_channels", "content_templates", "conversations", "coupons", "customer_addresses", "customer_lifecycle_transitions", "customer_lifecycles", "customers", "entitlements", "executive_digests", "experiments", "growth_insights", "growth_recommendations", "inventory_items", "journey_enrollments", "journeys", "memberships", "messages", "metric_definitions", "model_registry", "offers", "operational_exceptions", "order_items", "orders", "payments", "plan_versions", "plans", "platform_feature_flags", "platform_memberships", "platform_settings", "pricing_rules", "product_variants", "products", "purchase_orders", "quick_replies", "shipments", "sla_policies", "subscriptions", "supplier_products", "suppliers", "tenants", "users", "warehouses"]);
@@ -4985,12 +5156,11 @@ export class CommerceDatabase {
     }
     if (options.search) {
       const q = options.search.toLowerCase().trim();
-      list = list.filter(
-        (p) =>
-          p.name.toLowerCase().includes(q) ||
-          p.sku.toLowerCase().includes(q) ||
-          p.slug.toLowerCase().includes(q)
-      );
+      const words = q.split(/\s+/).filter(Boolean);
+      list = list.filter((p) => {
+        const haystack = `${p.name} ${p.sku} ${p.slug}`.toLowerCase();
+        return haystack.includes(q) || (words.length > 1 && words.every((w) => haystack.includes(w)));
+      });
     }
 
     list.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
@@ -5007,6 +5177,7 @@ export class CommerceDatabase {
 
   /** Every product of a tenant with its variants, in O(products + variants) (FX-22). For analytics, not UI pages. */
   public getAllProducts(tenantId: string): Product[] {
+    if (!this.isCollectionHydrated("products")) return [];
     const products = this.data.products.filter((p) => p.tenant_id === tenantId);
     const variantsByProduct = this.variantsByProduct(tenantId);
     return products.map((p) => ({ ...p, variants: variantsByProduct.get(p.id) ?? [] }));
@@ -5014,6 +5185,7 @@ export class CommerceDatabase {
 
   private variantsByProduct(tenantId: string, only?: Set<string>): Map<string, ProductVariant[]> {
     const map = new Map<string, ProductVariant[]>();
+    if (!this.isCollectionHydrated("product_variants")) return map;
     for (const v of this.data.product_variants) {
       if (v.tenant_id !== tenantId || (only && !only.has(v.product_id))) continue;
       const list = map.get(v.product_id);
@@ -5166,6 +5338,7 @@ export class CommerceDatabase {
   }
 
   public getAllProductVariants(tenantId: string): ProductVariant[] {
+    if (!this.isCollectionHydrated("product_variants")) return [];
     return this.data.product_variants.filter((v) => v.tenant_id === tenantId);
   }
 
@@ -5225,6 +5398,7 @@ export class CommerceDatabase {
 
   // ==================== WAREHOUSES & INVENTORY ====================
   public getWarehouses(tenantId: string): Warehouse[] {
+    if (!this.isCollectionHydrated("warehouses")) return [];
     return this.data.warehouses.filter((w) => w.tenant_id === tenantId);
   }
 
@@ -5521,6 +5695,7 @@ export class CommerceDatabase {
 
   /** Every customer of a tenant with addresses, in O(customers + addresses) (FX-22). For analytics, not UI pages. */
   public getAllCustomers(tenantId: string): Customer[] {
+    if (!this.isCollectionHydrated("customers")) return [];
     const customers = this.data.customers.filter((c) => c.tenant_id === tenantId);
     const addressesByCustomer = this.addressesByCustomer(tenantId);
     return customers.map((c) => ({ ...c, addresses: addressesByCustomer.get(c.id) ?? [] }));
@@ -5528,6 +5703,7 @@ export class CommerceDatabase {
 
   private addressesByCustomer(tenantId: string, only?: Set<string>): Map<string, CustomerAddress[]> {
     const map = new Map<string, CustomerAddress[]>();
+    if (!this.isCollectionHydrated("customer_addresses")) return map;
     for (const a of this.data.customer_addresses) {
       if (a.tenant_id !== tenantId || (only && !only.has(a.customer_id))) continue;
       const list = map.get(a.customer_id);
@@ -5604,6 +5780,7 @@ export class CommerceDatabase {
    * taken again if the order is confirmed later (FX-35 step 3). Holds of confirmed orders are left alone.
    */
   public releaseExpiredReservations(now = Date.now()): number {
+    if (!this.isCollectionHydrated("inventory_reservations") || !this.isCollectionHydrated("orders")) return 0;
     let released = 0;
     for (const r of this.data.inventory_reservations) {
       if (r.status !== "ACTIVE" || Date.parse(r.expires_at) >= now) continue;
@@ -5633,10 +5810,12 @@ export class CommerceDatabase {
     let last = this.data.order_sequences[tenantId];
     if (last === undefined) {
       last = 0;
-      for (const o of this.data.orders) {
-        if (o.tenant_id !== tenantId) continue;
-        const n = Number(/-(\d+)$/.exec(o.order_number ?? "")?.[1]);
-        if (Number.isFinite(n) && n > last) last = n;
+      if (this.isCollectionHydrated("orders")) {
+        for (const o of this.data.orders) {
+          if (o.tenant_id !== tenantId) continue;
+          const n = Number(/-(\d+)$/.exec(o.order_number ?? "")?.[1]);
+          if (Number.isFinite(n) && n > last) last = n;
+        }
       }
     }
     const next = last + 1;
@@ -5696,9 +5875,10 @@ export class CommerceDatabase {
    * Every order of a tenant (FX-22). Plain rows by default; `hydrate` adds items, customer_name and customer_phone
    * (the getOrders shape) using maps, so it stays O(orders + items + customers).
    */
-  public getAllOrders(tenantId: string): Order[];
   public getAllOrders(tenantId: string, opts: { hydrate: true }): (Order & { customer_name: string; customer_phone: string })[];
+  public getAllOrders(tenantId: string, opts?: { hydrate?: boolean }): Order[];
   public getAllOrders(tenantId: string, opts: { hydrate?: boolean } = {}): Order[] {
+    if (!this.isCollectionHydrated("orders")) return [];
     const orders = this.data.orders.filter((o) => o.tenant_id === tenantId);
     if (!opts.hydrate) return orders;
     const itemsByOrder = this.itemsByOrder(tenantId);
@@ -5708,12 +5888,14 @@ export class CommerceDatabase {
 
   private customersById(tenantId: string): Map<string, Customer> {
     const map = new Map<string, Customer>();
+    if (!this.isCollectionHydrated("customers")) return map;
     for (const c of this.data.customers) if (c.tenant_id === tenantId) map.set(c.id, c);
     return map;
   }
 
   private itemsByOrder(tenantId: string, only?: Set<string>): Map<string, OrderItem[]> {
     const map = new Map<string, OrderItem[]>();
+    if (!this.isCollectionHydrated("order_items")) return map;
     for (const it of this.data.order_items) {
       if (it.tenant_id !== tenantId || (only && !only.has(it.order_id))) continue;
       const list = map.get(it.order_id);
@@ -5727,25 +5909,58 @@ export class CommerceDatabase {
     o: Order,
     itemsByOrder: Map<string, OrderItem[]>,
     customersById: Map<string, Customer>
-  ): Order & { customer_name: string; customer_phone: string } {
+  ): Order & { customer_name: string; customer_phone: string; delivery_address?: any } {
     const cust = customersById.get(o.customer_id);
+    const addr = o.shipping_address_snapshot || (o as any).delivery_address || {};
+    const rawItems = itemsByOrder.get(o.id) ?? [];
+    const items = rawItems.map((item) => ({
+      ...item,
+      title_snapshot: item.product_name_snapshot || (item as any).title_snapshot || "Item",
+      variant_title_snapshot: item.sku_snapshot || (item as any).variant_title_snapshot || "",
+      total_price: item.line_total ?? (item as any).total_price ?? (item.unit_price * item.quantity),
+    }));
     return {
       ...o,
-      items: itemsByOrder.get(o.id) ?? [],
-      customer_name: cust ? `${cust.first_name} ${cust.last_name}` : "Walk-in Customer",
-      customer_phone: cust?.phone || "",
+      items,
+      delivery_address: {
+        address_line_1: addr.address_line_1 || "",
+        district: addr.district || "",
+        division: addr.division || "",
+        upazila: addr.upazila || "",
+        area: addr.area || "",
+        postal_code: addr.postal_code || "",
+      },
+      customer_name: cust ? `${cust.first_name} ${cust.last_name}`.trim() : "Walk-in Customer",
+      customer_phone: cust?.phone || addr.phone || "",
     };
   }
 
-  public findOrderById(tenantId: string, id: string): (Order & { customer_name: string; customer_phone: string }) | undefined {
+  public findOrderById(tenantId: string, id: string): (Order & { customer_name: string; customer_phone: string; delivery_address?: any }) | undefined {
     const o = this.data.orders.find((ord) => ord.tenant_id === tenantId && ord.id === id);
     if (!o) return undefined;
     const cust = this.data.customers.find((c) => c.tenant_id === tenantId && c.id === o.customer_id);
+    const addr = o.shipping_address_snapshot || (o as any).delivery_address || {};
+    const items = this.data.order_items
+      .filter((item) => item.order_id === o.id && item.tenant_id === tenantId)
+      .map((item) => ({
+        ...item,
+        title_snapshot: item.product_name_snapshot || (item as any).title_snapshot || "Item",
+        variant_title_snapshot: item.sku_snapshot || (item as any).variant_title_snapshot || "",
+        total_price: item.line_total ?? (item as any).total_price ?? (item.unit_price * item.quantity),
+      }));
     return {
       ...o,
-      items: this.data.order_items.filter((item) => item.order_id === o.id && item.tenant_id === tenantId),
-      customer_name: cust ? `${cust.first_name} ${cust.last_name}` : "Walk-in Customer",
-      customer_phone: cust?.phone || "",
+      items,
+      delivery_address: {
+        address_line_1: addr.address_line_1 || "",
+        district: addr.district || "",
+        division: addr.division || "",
+        upazila: addr.upazila || "",
+        area: addr.area || "",
+        postal_code: addr.postal_code || "",
+      },
+      customer_name: cust ? `${cust.first_name} ${cust.last_name}`.trim() : "Walk-in Customer",
+      customer_phone: cust?.phone || addr.phone || "",
     };
   }
 
@@ -5921,10 +6136,12 @@ export class CommerceDatabase {
 
   // ==================== COUPONS ====================
   public getCoupons(tenantId: string): Coupon[] {
+    if (!this.isCollectionHydrated("coupons")) return [];
     return this.data.coupons.filter((c) => c.tenant_id === tenantId);
   }
 
   public findCouponByCode(tenantId: string, code: string): Coupon | undefined {
+    if (!this.isCollectionHydrated("coupons")) return undefined;
     const normalized = code.trim().toUpperCase();
     return this.data.coupons.find((c) => c.tenant_id === tenantId && c.code === normalized);
   }
@@ -6486,6 +6703,11 @@ export class CommerceDatabase {
     return { conversations: enriched, total };
   }
 
+  /** Every conversation of a tenant, unhydrated. For analytics (ad attribution), not UI pages. */
+  public getAllConversations(tenantId: string): Conversation[] {
+    return this.data.conversations.filter((c) => c.tenant_id === tenantId);
+  }
+
   public findConversationById(tenantId: string, id: string): Conversation | undefined {
     return this.data.conversations.find((c) => c.tenant_id === tenantId && c.id === id);
   }
@@ -6875,17 +7097,41 @@ export class CommerceDatabase {
 
   // ==================== PHASE 4: AGENTIC AI & KNOWLEDGE ====================
 
+  private resolveDynamicAgent(agent: AgentDefinition): AgentDefinition {
+    const configuredFast = process.env.LLM_MODEL_FAST?.trim();
+    const configuredReasoning = process.env.LLM_MODEL_REASONING?.trim() || configuredFast;
+    if (!configuredFast && !configuredReasoning) {
+      return agent;
+    }
+    if (
+      agent.model_name === "gemini-1.5-flash" ||
+      agent.model_name === "gemini-1.5-pro" ||
+      agent.model_name.startsWith("default-")
+    ) {
+      const dynamicName =
+        agent.model_tier === "TIER_2_REASONING"
+          ? (configuredReasoning || agent.model_name)
+          : (configuredFast || agent.model_name);
+      return { ...agent, model_name: dynamicName };
+    }
+    return agent;
+  }
+
   // Agents
   public getAgents(tenantId: string): AgentDefinition[] {
-    return this.data.agents.filter((a) => a.tenant_id === tenantId);
+    return this.data.agents
+      .filter((a) => a.tenant_id === tenantId)
+      .map((a) => this.resolveDynamicAgent(a));
   }
 
   public findAgentById(tenantId: string, id: string): AgentDefinition | undefined {
-    return this.data.agents.find((a) => a.tenant_id === tenantId && a.id === id);
+    const agt = this.data.agents.find((a) => a.tenant_id === tenantId && a.id === id);
+    return agt ? this.resolveDynamicAgent(agt) : undefined;
   }
 
   public findAgentByType(tenantId: string, agentType: AgentType): AgentDefinition | undefined {
-    return this.data.agents.find((a) => a.tenant_id === tenantId && a.agent_type === agentType);
+    const agt = this.data.agents.find((a) => a.tenant_id === tenantId && a.agent_type === agentType);
+    return agt ? this.resolveDynamicAgent(agt) : undefined;
   }
 
   public createAgent(agent: AgentDefinition): AgentDefinition {
@@ -6917,10 +7163,10 @@ export class CommerceDatabase {
       policy = {
         id: `pol_${tenantId}`,
         tenant_id: tenantId,
-        ai_mode: "AI_COPILOT",
+        ai_mode: "AI_AUTONOMOUS",
         is_enabled: true,
-        autonomous_sales_enabled: false,
-        autonomous_support_enabled: false,
+        autonomous_sales_enabled: true,
+        autonomous_support_enabled: true,
         autonomous_order_enabled: false,
         debounce_window_ms: 3000,
         confidence_threshold_high: 0.85,
@@ -6931,7 +7177,7 @@ export class CommerceDatabase {
         daily_cost_budget_usd: 10.0,
         monthly_cost_budget_usd: 150.0,
         pii_redaction_enabled: true,
-        allowed_channel_types: ["FACEBOOK_MESSENGER", "INSTAGRAM", "WHATSAPP", "WEBSITE_CHAT"],
+        allowed_channel_types: ["FACEBOOK_MESSENGER", "INSTAGRAM", "WHATSAPP", "WEBSITE_CHAT", "TELEGRAM"],
         disallowed_tool_names: [],
         human_handoff_reasons: [
           "CUSTOMER_REQUESTED",
@@ -7270,7 +7516,12 @@ export class CommerceDatabase {
     const chunk = this.data.knowledge_chunks.find((c) => c.tenant_id === tenantId && c.id === chunkId);
     if (!chunk) return;
     chunk.embedding = embedding;
-    chunk.metadata = { ...chunk.metadata, embedding_model: stamp.embedding_model, dimensions: stamp.dimensions ?? embedding.length };
+    chunk.metadata = {
+      ...chunk.metadata,
+      embedding_model: stamp.embedding_model,
+      embedding_dimensions: stamp.dimensions ?? embedding.length,
+      dimensions: stamp.dimensions ?? embedding.length,
+    };
     this.persist(["knowledge_chunks"]);
   }
 
@@ -7372,6 +7623,15 @@ export class CommerceDatabase {
     return usage;
   }
 
+  /** Update a usage row only when both the tenant and row id match. */
+  public updateAIUsage(tenantId: string, usageId: string, patch: Partial<AIUsageRecord>): AIUsageRecord | null {
+    const usage = this.data.ai_usage.find((record) => record.tenant_id === tenantId && record.id === usageId);
+    if (!usage) return null;
+    Object.assign(usage, patch, { tenant_id: usage.tenant_id, id: usage.id });
+    this.persist(["ai_usage"]);
+    return usage;
+  }
+
   // AI Feedback
   public getAIFeedback(
     tenantId: string,
@@ -7414,10 +7674,17 @@ export class CommerceDatabase {
           )
         : 0;
 
+    const totalConversationsCount = new Set(tenantRuns.map((r) => r.conversation_id)).size;
+    const totalRunsCount = tenantRuns.length;
+    const completedCount = completedRuns.length;
+    const escalatedCount = escalatedRuns.length;
+    const failedCount = failedRuns.length;
+    const totalChunksCount = tenantDocs.reduce((acc, d) => acc + (d.chunk_count || 0), 0);
+
     const resolutionRate =
-      tenantRuns.length > 0
-        ? Math.round(((completedRuns.length) / tenantRuns.length) * 100)
-        : 100;
+      totalRunsCount > 0
+        ? Math.round((completedCount / totalRunsCount) * 100)
+        : 0;
 
     const recentHandoffs = escalatedRuns
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
@@ -7431,17 +7698,36 @@ export class CommerceDatabase {
       }));
 
     return {
-      totalAIConversations: new Set(tenantRuns.map((r) => r.conversation_id)).size,
-      totalRuns: tenantRuns.length,
+      totalAIConversations: totalConversationsCount,
+      total_conversations: totalConversationsCount,
+      totalRuns: totalRunsCount,
+      total_runs: totalRunsCount,
+      completedRuns: completedCount,
+      completed_runs: completedCount,
+      escalatedRuns: escalatedCount,
+      escalated_runs: escalatedCount,
+      failedRuns: failedCount,
+      failed_runs: failedCount,
       aiResolutionRate: resolutionRate,
-      totalHandoffs: escalatedRuns.length,
+      resolution_rate: resolutionRate,
+      accuracy_rate: resolutionRate,
+      totalHandoffs: escalatedCount,
+      total_handoffs: escalatedCount,
       totalToolCalls: tenantTools.length,
+      total_tool_calls: tenantTools.length,
       totalCostUsd: Number(totalCostUsd.toFixed(4)),
+      total_cost_usd: totalCostUsd.toFixed(4),
       totalCostBdt: Number(totalCostBdt.toFixed(2)),
+      total_cost_bdt: totalCostBdt.toFixed(2),
       averageLatencyMs: avgLatencyMs,
-      errorCount: failedRuns.length,
+      avg_latency_ms: avgLatencyMs,
+      errorCount: failedCount,
+      error_count: failedCount,
       activeAgentsCount: this.getAgents(tenantId).filter((a) => a.status === "ACTIVE").length,
+      active_agents_count: this.getAgents(tenantId).filter((a) => a.status === "ACTIVE").length,
       knowledgeDocumentsCount: tenantDocs.length,
+      knowledge_documents_count: tenantDocs.length,
+      rag_chunks_count: totalChunksCount,
       feedbackStats: {
         total: tenantFeedback.length,
         helpful: tenantFeedback.filter((f) => f.rating === "HELPFUL").length,
@@ -7460,6 +7746,67 @@ export class CommerceDatabase {
     return this.data.workflows
       .filter((w) => w.tenant_id === tenantId && (!status || w.status === status))
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  }
+
+  public getWorkflowJobById(tenantId: string, id: string): WorkflowJob | undefined {
+    return this.data.workflow_jobs.find((job) => job.tenant_id === tenantId && job.id === id);
+  }
+
+  public findWorkflowJobByIdempotencyKey(tenantId: string, key: string): WorkflowJob | undefined {
+    return this.data.workflow_jobs.find((job) => job.tenant_id === tenantId && job.idempotency_key === key);
+  }
+
+  public getDueWorkflowJobs(nowIso: string, limit: number, afterTenantId?: string): WorkflowJob[] {
+    const due = this.data.workflow_jobs.filter((job) =>
+      job.status === "PENDING" ||
+      (job.status === "RETRY_SCHEDULED" && (!job.next_attempt_at || job.next_attempt_at <= nowIso)) ||
+      (job.status === "IN_FLIGHT" && !!job.claimed_until && job.claimed_until < nowIso)
+    );
+    const byTenant = new Map<string, WorkflowJob[]>();
+    for (const job of due.sort((a, b) => a.created_at.localeCompare(b.created_at))) {
+      const queue = byTenant.get(job.tenant_id) || [];
+      queue.push(job);
+      byTenant.set(job.tenant_id, queue);
+    }
+    // Interleave tenant queues so one busy tenant cannot fill every poll batch.
+    // Rotate the first tenant between passes to avoid starving later tenant IDs.
+    const tenantIds = [...byTenant.keys()].sort();
+    if (afterTenantId && tenantIds.length > 1) {
+      const next = tenantIds.findIndex((id) => id > afterTenantId);
+      const pivot = next < 0 ? 0 : next;
+      tenantIds.push(...tenantIds.splice(0, pivot));
+    }
+    const fair: WorkflowJob[] = [];
+    while (fair.length < Math.max(0, limit)) {
+      let added = false;
+      for (const tenantId of tenantIds) {
+        const next = byTenant.get(tenantId)?.shift();
+        if (next) {
+          fair.push(next);
+          added = true;
+          if (fair.length >= limit) break;
+        }
+      }
+      if (!added) break;
+    }
+    return fair;
+  }
+
+  public createWorkflowJob(job: WorkflowJob): WorkflowJob {
+    const existing = this.findWorkflowJobByIdempotencyKey(job.tenant_id, job.idempotency_key);
+    if (existing) return existing;
+    this.data.workflow_jobs.push(job);
+    this.persist(["workflow_jobs"]);
+    return job;
+  }
+
+  public updateWorkflowJob(tenantId: string, id: string, patch: Partial<WorkflowJob>): WorkflowJob | undefined {
+    const idx = this.data.workflow_jobs.findIndex((job) => job.tenant_id === tenantId && job.id === id);
+    if (idx < 0) return undefined;
+    const { id: _id, tenant_id: _tenant, workflow_id: _workflow, action: _action, idempotency_key: _key, ...safe } = patch;
+    this.data.workflow_jobs[idx] = { ...this.data.workflow_jobs[idx], ...safePatch(safe), updated_at: new Date().toISOString() };
+    this.persist(["workflow_jobs"]);
+    return this.data.workflow_jobs[idx];
   }
 
   public getWorkflowById(tenantId: string, id: string): AgentWorkflow | undefined {
@@ -8547,10 +8894,12 @@ export class CommerceDatabase {
 
   // ==================== PHASE 8: PROCUREMENT ACCESSORS ====================
   public getSuppliers(tenantId: string): Supplier[] {
+    if (!this.isCollectionHydrated("suppliers")) return [];
     return this.data.suppliers.filter((s) => s.tenant_id === tenantId);
   }
 
   public findSupplierById(tenantId: string, id: string): Supplier | undefined {
+    if (!this.isCollectionHydrated("suppliers")) return undefined;
     return this.data.suppliers.find((s) => s.tenant_id === tenantId && s.id === id);
   }
 
@@ -8570,6 +8919,7 @@ export class CommerceDatabase {
   }
 
   public getSupplierProducts(tenantId: string, supplierId?: string): SupplierProduct[] {
+    if (!this.isCollectionHydrated("supplier_products")) return [];
     return this.data.supplier_products.filter(
       (sp) => sp.tenant_id === tenantId && (!supplierId || sp.supplier_id === supplierId)
     );
@@ -8582,10 +8932,12 @@ export class CommerceDatabase {
   }
 
   public getPurchaseOrders(tenantId: string): PurchaseOrder[] {
+    if (!this.isCollectionHydrated("purchase_orders")) return [];
     return this.data.purchase_orders.filter((po) => po.tenant_id === tenantId);
   }
 
   public findPurchaseOrderById(tenantId: string, id: string): PurchaseOrder | undefined {
+    if (!this.isCollectionHydrated("purchase_orders")) return undefined;
     return this.data.purchase_orders.find((po) => po.tenant_id === tenantId && po.id === id);
   }
 
@@ -9114,6 +9466,7 @@ export class CommerceDatabase {
       ai_feedback: [],
       // Phase 5 Collections
       workflows: [],
+      workflow_jobs: [],
       tasks: [],
       agent_messages: [],
       workflow_contexts: [],
@@ -9290,8 +9643,20 @@ export class CommerceDatabase {
       platform_announcements: [],
       platform_api_keys: [],
       impersonation_sessions: [],
+      platform_approval_requests: [],
+      platform_addons: [],
+      tenant_addons: [],
       campaign_kill_switches: [],
       automation_kill_switches: [],
+      network_delivery_reputations: [],
+      order_rto_evaluations: [],
+      tenant_rto_settings: [],
+      courier_disputes: [],
+      agent_execution_traces: [],
+      agent_hitl_escalations: [],
+      tenant_ai_guard_settings: [],
+      comment_trigger_rules: [],
+      comment_trigger_events: [],
     };
     this.ensureDefaultSeed();
   }
@@ -10478,6 +10843,68 @@ export class CommerceDatabase {
     return announcement;
   }
 
+  // Two-person approval requests (platform scope; newest first)
+  public getPlatformApprovalRequests(): PlatformApprovalRequestRecord[] {
+    return this.data.platform_approval_requests || [];
+  }
+
+  public findPlatformApprovalRequest(id: string): PlatformApprovalRequestRecord | undefined {
+    return (this.data.platform_approval_requests || []).find((a) => a.id === id);
+  }
+
+  public savePlatformApprovalRequest(request: PlatformApprovalRequestRecord): PlatformApprovalRequestRecord {
+    if (!this.data.platform_approval_requests) this.data.platform_approval_requests = [];
+    const idx = this.data.platform_approval_requests.findIndex((a) => a.id === request.id);
+    if (idx >= 0) {
+      this.data.platform_approval_requests[idx] = request;
+    } else {
+      this.data.platform_approval_requests.unshift(request);
+    }
+    this.persist(["platform_approval_requests"]);
+    return request;
+  }
+
+  // Plan add-ons (platform scope) and add-ons granted to tenants
+  public getPlatformAddons(): PlatformAddonRecord[] {
+    return this.data.platform_addons || [];
+  }
+
+  public findPlatformAddon(id: string): PlatformAddonRecord | undefined {
+    return (this.data.platform_addons || []).find((a) => a.id === id);
+  }
+
+  public savePlatformAddon(addon: PlatformAddonRecord): PlatformAddonRecord {
+    if (!this.data.platform_addons) this.data.platform_addons = [];
+    const idx = this.data.platform_addons.findIndex((a) => a.id === addon.id);
+    if (idx >= 0) {
+      this.data.platform_addons[idx] = addon;
+    } else {
+      this.data.platform_addons.push(addon);
+    }
+    this.persist(["platform_addons"]);
+    return addon;
+  }
+
+  public getTenantAddons(tenantId: string): TenantAddonRecord[] {
+    return (this.data.tenant_addons || []).filter((a) => a.tenant_id === tenantId);
+  }
+
+  public findTenantAddon(tenantId: string, id: string): TenantAddonRecord | undefined {
+    return (this.data.tenant_addons || []).find((a) => a.tenant_id === tenantId && a.id === id);
+  }
+
+  public saveTenantAddon(addon: TenantAddonRecord): TenantAddonRecord {
+    if (!this.data.tenant_addons) this.data.tenant_addons = [];
+    const idx = this.data.tenant_addons.findIndex((a) => a.id === addon.id);
+    if (idx >= 0) {
+      this.data.tenant_addons[idx] = addon;
+    } else {
+      this.data.tenant_addons.push(addon);
+    }
+    this.persist(["tenant_addons"]);
+    return addon;
+  }
+
   public getPlatformApiKeys(): PlatformApiKeyRecord[] {
     return this.data.platform_api_keys || [];
   }
@@ -10512,6 +10939,239 @@ export class CommerceDatabase {
     }
     this.persist(["impersonation_sessions"]);
     return session;
+  }
+
+  // ==================== CROSS-TENANT RTO & COURIER FRAUD NETWORK ====================
+
+  public getNetworkDeliveryReputations(): NetworkDeliveryReputationRecord[] {
+    return this.data.network_delivery_reputations || [];
+  }
+
+  public findNetworkDeliveryReputationByHash(phoneHash: string): NetworkDeliveryReputationRecord | undefined {
+    return (this.data.network_delivery_reputations || []).find((r) => r.phone_hash === phoneHash);
+  }
+
+  public saveNetworkDeliveryReputation(record: NetworkDeliveryReputationRecord): NetworkDeliveryReputationRecord {
+    if (!this.data.network_delivery_reputations) this.data.network_delivery_reputations = [];
+    const idx = this.data.network_delivery_reputations.findIndex((r) => r.phone_hash === record.phone_hash);
+    if (idx >= 0) {
+      this.data.network_delivery_reputations[idx] = record;
+    } else {
+      this.data.network_delivery_reputations.push(record);
+    }
+    this.persist(["network_delivery_reputations"]);
+    return record;
+  }
+
+  public getOrderRtoEvaluations(tenantId: string, orderId?: string): OrderRtoEvaluationRecord[] {
+    const list = (this.data.order_rto_evaluations || []).filter((e) => e.tenant_id === tenantId);
+    return orderId ? list.filter((e) => e.order_id === orderId) : list;
+  }
+
+  public findOrderRtoEvaluation(tenantId: string, orderId: string): OrderRtoEvaluationRecord | undefined {
+    return (this.data.order_rto_evaluations || []).find(
+      (e) => e.tenant_id === tenantId && e.order_id === orderId
+    );
+  }
+
+  public saveOrderRtoEvaluation(evaluation: OrderRtoEvaluationRecord): OrderRtoEvaluationRecord {
+    if (!this.data.order_rto_evaluations) this.data.order_rto_evaluations = [];
+    const idx = this.data.order_rto_evaluations.findIndex(
+      (e) => e.tenant_id === evaluation.tenant_id && e.order_id === evaluation.order_id
+    );
+    if (idx >= 0) {
+      this.data.order_rto_evaluations[idx] = evaluation;
+    } else {
+      this.data.order_rto_evaluations.push(evaluation);
+    }
+    this.persist(["order_rto_evaluations"]);
+    return evaluation;
+  }
+
+  public getTenantRtoSettings(tenantId: string): TenantRtoSettingsRecord | undefined {
+    return (this.data.tenant_rto_settings || []).find((s) => s.tenant_id === tenantId);
+  }
+
+  public saveTenantRtoSettings(settings: TenantRtoSettingsRecord): TenantRtoSettingsRecord {
+    if (!this.data.tenant_rto_settings) this.data.tenant_rto_settings = [];
+    const idx = this.data.tenant_rto_settings.findIndex((s) => s.tenant_id === settings.tenant_id);
+    if (idx >= 0) {
+      this.data.tenant_rto_settings[idx] = settings;
+    } else {
+      this.data.tenant_rto_settings.push(settings);
+    }
+    this.persist(["tenant_rto_settings"]);
+    return settings;
+  }
+
+  public getCourierDisputes(tenantId?: string): CourierDisputeRecord[] {
+    const list = this.data.courier_disputes || [];
+    return tenantId ? list.filter((d) => d.tenant_id === tenantId) : list;
+  }
+
+  public saveCourierDispute(dispute: CourierDisputeRecord): CourierDisputeRecord {
+    if (!this.data.courier_disputes) this.data.courier_disputes = [];
+    const idx = this.data.courier_disputes.findIndex((d) => d.id === dispute.id);
+    if (idx >= 0) {
+      this.data.courier_disputes[idx] = dispute;
+    } else {
+      this.data.courier_disputes.unshift(dispute);
+    }
+    this.persist(["courier_disputes"]);
+    return dispute;
+  }
+
+  // ==================== COMMENT-TO-INBOX TRIGGERS ====================
+
+  public getCommentTriggerRules(tenantId: string): CommentTriggerRule[] {
+    return (this.data.comment_trigger_rules || []).filter((r) => r.tenant_id === tenantId);
+  }
+
+  public findCommentTriggerRule(tenantId: string, id: string): CommentTriggerRule | undefined {
+    return (this.data.comment_trigger_rules || []).find((r) => r.tenant_id === tenantId && r.id === id);
+  }
+
+  public saveCommentTriggerRule(rule: CommentTriggerRule): CommentTriggerRule {
+    if (!this.data.comment_trigger_rules) this.data.comment_trigger_rules = [];
+    const idx = this.data.comment_trigger_rules.findIndex((r) => r.tenant_id === rule.tenant_id && r.id === rule.id);
+    if (idx >= 0) this.data.comment_trigger_rules[idx] = rule;
+    else this.data.comment_trigger_rules.push(rule);
+    this.persist(["comment_trigger_rules"]);
+    return rule;
+  }
+
+  public deleteCommentTriggerRule(tenantId: string, id: string): boolean {
+    const list = this.data.comment_trigger_rules || [];
+    const remaining = list.filter((r) => !(r.tenant_id === tenantId && r.id === id));
+    if (remaining.length === list.length) return false;
+    this.data.comment_trigger_rules = remaining;
+    this.persist(["comment_trigger_rules"]);
+    return true;
+  }
+
+  /** Newest first. */
+  public getCommentTriggerEvents(tenantId: string, limit: number): CommentTriggerEvent[] {
+    return (this.data.comment_trigger_events || [])
+      .filter((e) => e.tenant_id === tenantId)
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))
+      .slice(0, limit);
+  }
+
+  public findCommentTriggerEvent(tenantId: string, id: string): CommentTriggerEvent | undefined {
+    return (this.data.comment_trigger_events || []).find((e) => e.tenant_id === tenantId && e.id === id);
+  }
+
+  /** The event for a provider comment on a channel: a comment gets at most one inbox message. */
+  public findCommentTriggerEventByComment(tenantId: string, channelId: string, commentId: string): CommentTriggerEvent | undefined {
+    return (this.data.comment_trigger_events || []).find(
+      (e) => e.tenant_id === tenantId && e.channel_id === channelId && e.comment_id === commentId
+    );
+  }
+
+  /** Whether this commenter already got (or is getting) this rule's message for this post since `sinceIso`. */
+  public hasRecentCommentTriggerEvent(tenantId: string, ruleId: string, channelId: string, commenterId: string, postId: string | undefined, sinceIso: string): boolean {
+    return (this.data.comment_trigger_events || []).some(
+      (e) =>
+        e.tenant_id === tenantId &&
+        e.rule_id === ruleId &&
+        e.channel_id === channelId &&
+        e.commenter_id === commenterId &&
+        e.post_id === postId &&
+        e.created_at >= sinceIso &&
+        (e.status === "PENDING" || e.status === "SENDING" || e.status === "SENT")
+    );
+  }
+
+  /** Events the worker should send now: PENDING and due, or SENDING with a claim older than `staleBefore`. Oldest first. */
+  public getDueCommentTriggerEvents(nowIso: string, staleBefore: string, limit: number): CommentTriggerEvent[] {
+    return (this.data.comment_trigger_events || [])
+      .filter((e) => (e.status === "PENDING" && e.next_attempt_at <= nowIso) || (e.status === "SENDING" && (e.claimed_at ?? "") < staleBefore))
+      .sort((a, b) => a.created_at.localeCompare(b.created_at))
+      .slice(0, limit);
+  }
+
+  public saveCommentTriggerEvent(event: CommentTriggerEvent): CommentTriggerEvent {
+    if (!this.data.comment_trigger_events) this.data.comment_trigger_events = [];
+    const idx = this.data.comment_trigger_events.findIndex((e) => e.tenant_id === event.tenant_id && e.id === event.id);
+    if (idx >= 0) this.data.comment_trigger_events[idx] = event;
+    else this.data.comment_trigger_events.push(event);
+    this.persist(["comment_trigger_events"]);
+    return event;
+  }
+
+  // ==================== AGENTIC OPERATIONS & HITL (LLM OBSERVABILITY) ====================
+
+  public getAgentExecutionTraces(tenantId: string, limit = 50, conversationId?: string): AgentExecutionTraceRecord[] {
+    const list = (this.data.agent_execution_traces || []).filter((t) => t.tenant_id === tenantId);
+    const filtered = conversationId ? list.filter((t) => t.conversation_id === conversationId) : list;
+    return filtered.slice(0, limit);
+  }
+
+  public getAllAgentExecutionTraces(): AgentExecutionTraceRecord[] {
+    return this.data.agent_execution_traces || [];
+  }
+
+  public saveAgentExecutionTrace(trace: AgentExecutionTraceRecord): AgentExecutionTraceRecord {
+    if (!this.data.agent_execution_traces) this.data.agent_execution_traces = [];
+    const idx = this.data.agent_execution_traces.findIndex((t) => t.id === trace.id);
+    if (idx >= 0) {
+      this.data.agent_execution_traces[idx] = trace;
+    } else {
+      this.data.agent_execution_traces.unshift(trace);
+    }
+    this.persist(["agent_execution_traces"]);
+    return trace;
+  }
+
+  public getAgentHitlEscalations(tenantId: string, status?: string): AgentHitlEscalationRecord[] {
+    const list = (this.data.agent_hitl_escalations || []).filter((e) => e.tenant_id === tenantId);
+    return status ? list.filter((e) => e.status === status) : list;
+  }
+
+  public findAgentHitlEscalation(tenantId: string, id: string): AgentHitlEscalationRecord | undefined {
+    return (this.data.agent_hitl_escalations || []).find((e) => e.tenant_id === tenantId && e.id === id);
+  }
+
+  public findAgentHitlEscalationByConversation(tenantId: string, conversationId: string): AgentHitlEscalationRecord | undefined {
+    return (this.data.agent_hitl_escalations || []).find(
+      (e) => e.tenant_id === tenantId && e.conversation_id === conversationId && e.status === "PENDING_REVIEW"
+    );
+  }
+
+  public getAllAgentHitlEscalations(): AgentHitlEscalationRecord[] {
+    return this.data.agent_hitl_escalations || [];
+  }
+
+  public saveAgentHitlEscalation(escalation: AgentHitlEscalationRecord): AgentHitlEscalationRecord {
+    if (!this.data.agent_hitl_escalations) this.data.agent_hitl_escalations = [];
+    const idx = this.data.agent_hitl_escalations.findIndex((e) => e.id === escalation.id);
+    if (idx >= 0) {
+      this.data.agent_hitl_escalations[idx] = escalation;
+    } else {
+      this.data.agent_hitl_escalations.unshift(escalation);
+    }
+    this.persist(["agent_hitl_escalations"]);
+    return escalation;
+  }
+
+  public getTenantAiGuardSettings(tenantId: string): TenantAiGuardSettingsRecord | undefined {
+    return (this.data.tenant_ai_guard_settings || []).find((s) => s.tenant_id === tenantId);
+  }
+
+  public getAllTenantAiGuardSettings(): TenantAiGuardSettingsRecord[] {
+    return this.data.tenant_ai_guard_settings || [];
+  }
+
+  public saveTenantAiGuardSettings(settings: TenantAiGuardSettingsRecord): TenantAiGuardSettingsRecord {
+    if (!this.data.tenant_ai_guard_settings) this.data.tenant_ai_guard_settings = [];
+    const idx = this.data.tenant_ai_guard_settings.findIndex((s) => s.tenant_id === settings.tenant_id);
+    if (idx >= 0) {
+      this.data.tenant_ai_guard_settings[idx] = settings;
+    } else {
+      this.data.tenant_ai_guard_settings.push(settings);
+    }
+    this.persist(["tenant_ai_guard_settings"]);
+    return settings;
   }
 }
 

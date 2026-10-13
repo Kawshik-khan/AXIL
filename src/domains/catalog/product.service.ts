@@ -9,6 +9,9 @@ import { PERMISSIONS } from "@/lib/permissions";
 import { BadRequestError, NotFoundError, ConflictError } from "@/lib/errors";
 import { assertWithinLimit } from "@/lib/safety-gate";
 
+import { searchTokens } from "./search-synonyms";
+import { productRepository } from "./product.repository";
+
 export class ProductService {
   /**
    * Slug generator with collision resolution
@@ -29,10 +32,70 @@ export class ProductService {
       search?: string;
       limit?: number;
       offset?: number;
+      cursor?: string;
     }
-  ): Promise<{ products: Product[]; total: number }> {
+  ): Promise<{
+    products: Product[];
+    total: number;
+    next_cursor?: string | null;
+    has_more?: boolean;
+  }> {
     RbacService.assertCan(context, PERMISSIONS.PRODUCTS_READ);
-    return db.getProducts(context.tenant.id, { ...options, limit: options?.limit ?? 50 }); // one page; analytics use getAllProducts
+
+    if (options?.cursor !== undefined) {
+      const cursorRes = await productRepository.listWithCursor(context.tenant.id, {
+        category_id: options.category_id,
+        status: options.status,
+        search: options.search,
+        limit: options.limit ?? 20,
+        cursor: options.cursor,
+      });
+      return {
+        products: cursorRes.items,
+        total: cursorRes.total ?? cursorRes.items.length,
+        next_cursor: cursorRes.pagination.next_cursor,
+        has_more: cursorRes.pagination.has_more,
+      };
+    }
+
+    const standard = db.getProducts(context.tenant.id, { ...options, limit: options?.limit ?? 50 });
+    if (!options?.search || standard.products.length > 0) {
+      return standard;
+    }
+
+    const queryTokens = searchTokens(options.search);
+    if (queryTokens.length === 0) {
+      return standard;
+    }
+
+    let all = db.getAllProducts(context.tenant.id);
+    if (options.category_id) {
+      all = all.filter((p) => p.category_id === options.category_id);
+    }
+    if (options.status && options.status !== "ALL") {
+      all = all.filter((p) => p.status === options.status);
+    }
+
+    const scored = all
+      .map((p) => {
+        const variantText = (p.variants ?? [])
+          .map((v) => `${v.title} ${Object.values(v.attributes ?? {}).join(" ")}`)
+          .join(" ");
+        const pTokens = new Set(
+          searchTokens(`${p.name} ${p.sku} ${p.short_description ?? ""} ${p.description ?? ""} ${variantText}`)
+        );
+        const hits = queryTokens.filter((t) => pTokens.has(t)).length;
+        return { product: p, hits };
+      })
+      .filter((x) => x.hits > 0);
+
+    scored.sort((a, b) => b.hits - a.hits);
+
+    const limit = options.limit ?? 50;
+    const offset = options.offset || 0;
+    const paginated = scored.slice(offset, offset + limit).map((x) => x.product);
+
+    return { products: paginated, total: scored.length };
   }
 
   public static async getProductById(
@@ -40,7 +103,7 @@ export class ProductService {
     productId: string
   ): Promise<Product> {
     RbacService.assertCan(context, PERMISSIONS.PRODUCTS_READ);
-    const product = db.findProductById(context.tenant.id, productId);
+    const product = (await productRepository.findById(context.tenant.id, productId)) ?? db.findProductById(context.tenant.id, productId);
     if (!product) {
       throw new NotFoundError(`Product '${productId}' not found in tenant workspace.`);
     }
@@ -74,7 +137,7 @@ export class ProductService {
     }
   ): Promise<Product> {
     RbacService.assertCan(context, PERMISSIONS.PRODUCTS_CREATE);
-    assertWithinLimit(context.tenant.id, "max_products"); // plan limit (FX-34)
+    await assertWithinLimit(context.tenant.id, "max_products"); // plan limit (FX-34)
 
     if (!payload.name || payload.name.trim().length === 0) {
       throw new BadRequestError("Product name is required.");

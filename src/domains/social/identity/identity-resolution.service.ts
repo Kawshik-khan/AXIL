@@ -3,6 +3,7 @@ import { db } from "@/infrastructure/db";
 import { CustomerIdentity, ChannelType } from "@/types/social";
 import { Customer } from "@/types/commerce";
 import { CustomerService } from "@/domains/customers/customer.service";
+import { customerRepository } from "@/domains/customers/customer.repository";
 import { RequestContext } from "@/lib/context";
 import { AuditService } from "@/domains/audit/service";
 import { PERMISSIONS } from "@/lib/permissions";
@@ -23,7 +24,7 @@ export class IdentityResolutionService {
   public static async linkVerifiedPhone(tenantId: string, identity: CustomerIdentity, rawPhone: string): Promise<Customer> {
     const phone = CustomerService.normalizePhoneNumber(rawPhone);
     const current = db.findCustomerById(tenantId, identity.customer_id);
-    const owners = db.data.customers.filter((c) => c.tenant_id === tenantId && c.phone === phone && Boolean(phone));
+    const owners = await customerRepository.findAllByPhone(tenantId, phone);
     const claimLinked = ["PHONE_MATCH", "EMAIL_MATCH"].includes(String(identity.metadata?.resolution_strategy ?? ""));
     const audit = (outcome: string, to?: string) =>
       AuditService.log({
@@ -162,10 +163,7 @@ export class IdentityResolutionService {
 
     // 3. Priority 3: Match verified email
     if (profileData?.email) {
-      const allCustomers = db.getAllCustomers(tenantId);
-      const matchedByEmail = allCustomers.find(
-        (c) => c.email && c.email.toLowerCase() === profileData.email!.toLowerCase()
-      );
+      const matchedByEmail = await customerRepository.findByEmail(tenantId, profileData.email);
       if (matchedByEmail) {
         const newIdentity: CustomerIdentity = {
           id: `cid_${Date.now()}_${randomSuffix()}`,

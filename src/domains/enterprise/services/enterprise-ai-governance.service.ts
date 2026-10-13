@@ -29,7 +29,19 @@ export class EnterpriseAiGovernanceService {
       monthly_spent_usd: 0,
       max_tokens_per_month: params.maxTokensPerMonth,
       tokens_consumed_month: 0,
-      allowed_models: params.allowedModels || ["gemini-1.5-pro", "gemini-1.5-flash", "claude-3-5-sonnet"],
+      allowed_models:
+        params.allowedModels ||
+        Array.from(
+          new Set(
+            [
+              process.env.LLM_MODEL_FAST?.trim(),
+              process.env.LLM_MODEL_REASONING?.trim(),
+              "nemotron-3-ultra",
+              "gemma4:31b",
+              "llama3.3",
+            ].filter(Boolean) as string[]
+          )
+        ),
       blocked_tools: params.blockedTools || [],
       approval_required_for_tier2: true,
       status: "ACTIVE",

@@ -3,7 +3,7 @@ import styles from "./Bento.module.css";
 
 export interface BentoCardProps {
   children: React.ReactNode;
-  span?: 3 | 4 | 6 | 8 | 12;
+  span?: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12;
   title?: string;
   subtitle?: string;
   action?: React.ReactNode;

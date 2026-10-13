@@ -7,6 +7,8 @@ import { randomSuffix } from "@/lib/ids";
  */
 
 import { db } from "@/infrastructure/db";
+import { supplierRepository } from "../supplier.repository";
+import { inventoryRepository } from "@/domains/inventory/inventory.repository";
 import {
   Supplier,
   SupplierProduct,
@@ -206,6 +208,137 @@ export class ProcurementService {
     }
 
     return db.updatePurchaseOrder(tenantId, poId, updates);
+  }
+
+  /**
+   * Database-native async purchase order creation (Phase E).
+   */
+  public async createPurchaseOrderDraftAsync(
+    tenantId: string,
+    params: {
+      supplierId: string;
+      items: Array<{ variantId: string; quantity: number }>;
+      notes?: string;
+    }
+  ): Promise<PurchaseOrder> {
+    const supplier = await supplierRepository.findSupplierById(tenantId, params.supplierId);
+    if (!supplier) throw new AppError("NOT_FOUND", `Supplier not found: ${params.supplierId}`, 404);
+
+    const supplierProducts = await supplierRepository.getSupplierProducts(tenantId, params.supplierId);
+    const variants = db.getAllProductVariants(tenantId);
+    const poItems: PurchaseOrderItem[] = [];
+    let totalAmount = 0;
+    const poId = `po_${Date.now()}_${randomSuffix()}`;
+
+    for (const item of params.items) {
+      const sp = supplierProducts.find((p) => p.product_variant_id === item.variantId);
+      if (!sp) throw new Error(`Supplier ${supplier.name} does not provide variant ${item.variantId}`);
+
+      const variant = variants.find((v) => v.id === item.variantId);
+      const orderQty = Math.max(item.quantity, sp.moq);
+      const subtotal = orderQty * sp.cost_price;
+      totalAmount += subtotal;
+
+      poItems.push({
+        id: `poi_${randomSuffix()}`,
+        purchase_order_id: poId,
+        product_variant_id: item.variantId,
+        sku: sp.supplier_sku || variant?.sku || "SKU",
+        product_name: variant?.title || "Product Item",
+        quantity_ordered: orderQty,
+        quantity_received: 0,
+        unit_cost: sp.cost_price,
+        subtotal,
+      });
+    }
+
+    const expectedDate = new Date(Date.now() + supplier.lead_time_days * 86400000).toISOString();
+    const poNumber = `PO-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+
+    const po: PurchaseOrder = {
+      id: poId,
+      tenant_id: tenantId,
+      po_number: poNumber,
+      supplier_id: supplier.id,
+      supplier_name: supplier.name,
+      status: "PENDING_APPROVAL",
+      items: poItems,
+      total_amount: totalAmount,
+      currency: "BDT",
+      expected_delivery_date: expectedDate,
+      notes: params.notes || "Autonomous operational replenishment draft",
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    return supplierRepository.createPurchaseOrder(tenantId, po);
+  }
+
+  /**
+   * Database-native async status transition with OCC support (Phase E).
+   */
+  public async transitionPurchaseOrderStatusAsync(
+    tenantId: string,
+    poId: string,
+    targetStatus: PurchaseOrderStatus,
+    actor: string,
+    options?: { expectedVersion?: number }
+  ): Promise<PurchaseOrder> {
+    const po = await supplierRepository.findPurchaseOrderById(tenantId, poId);
+    if (!po) throw new AppError("NOT_FOUND", `Purchase order not found: ${poId}`, 404);
+
+    const validTransitions: Record<PurchaseOrderStatus, PurchaseOrderStatus[]> = {
+      DRAFT: ["PENDING_APPROVAL", "APPROVED", "CANCELLED"],
+      PENDING_APPROVAL: ["APPROVED", "CANCELLED"],
+      APPROVED: ["SENT", "CANCELLED"],
+      SENT: ["ACKNOWLEDGED", "PARTIALLY_RECEIVED", "RECEIVED", "CANCELLED"],
+      ACKNOWLEDGED: ["PARTIALLY_RECEIVED", "RECEIVED", "CANCELLED"],
+      PARTIALLY_RECEIVED: ["RECEIVED", "CANCELLED"],
+      RECEIVED: [],
+      CANCELLED: [],
+    };
+
+    if (!validTransitions[po.status].includes(targetStatus)) {
+      throw new Error(`Invalid PurchaseOrder transition from ${po.status} to ${targetStatus}`);
+    }
+
+    const updates: Partial<PurchaseOrder> = {
+      status: targetStatus,
+      updated_at: new Date().toISOString(),
+    };
+
+    if (targetStatus === "APPROVED") {
+      updates.approved_by = actor;
+      updates.approved_at = new Date().toISOString();
+    } else if (targetStatus === "SENT") {
+      updates.sent_at = new Date().toISOString();
+    } else if (targetStatus === "RECEIVED") {
+      updates.received_at = new Date().toISOString();
+
+      const defaultWh = (await inventoryRepository.getWarehouses(tenantId))[0];
+      if (defaultWh) {
+        for (const item of po.items) {
+          const qtyToReceive = item.quantity_ordered - item.quantity_received;
+          if (qtyToReceive > 0) {
+            db.adjustStock(tenantId, {
+              warehouse_id: defaultWh.id,
+              product_variant_id: item.product_variant_id,
+              quantity_delta: qtyToReceive,
+              type: "PURCHASE",
+              reason: `Received Purchase Order ${po.po_number}`,
+              actor_user_id: actor,
+              reference_type: "PURCHASE_ORDER",
+              reference_id: po.id,
+              allow_overselling: true,
+            });
+            item.quantity_received = item.quantity_ordered;
+          }
+        }
+        updates.items = po.items;
+      }
+    }
+
+    return supplierRepository.updatePurchaseOrder(tenantId, poId, updates, options);
   }
 }
 

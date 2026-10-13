@@ -33,7 +33,9 @@ const tempDir = () => fs.mkdtempSync(path.join(os.tmpdir(), "commerceos-persist-
 
 /** `readOnly`: the fixture records the store's refusal to start instead of exiting, so the scenario can report. */
 function workerEnv(dataDir: string, opts: { readOnly?: boolean } = {}): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env, NODE_ENV: "development", COMMERCEOS_DATA_DIR: dataDir, PERSIST_DEBOUNCE_MS: "250" };
+  // These child-process scenarios specifically exercise the JSON file store;
+  // keep them isolated even when the parent suite is running in PGlite mode.
+  const env: NodeJS.ProcessEnv = { ...process.env, NODE_ENV: "development", DATA_BACKEND: "json", COMMERCEOS_DATA_DIR: dataDir, PERSIST_DEBOUNCE_MS: "250" };
   if (opts.readOnly) env.PERSIST_TEST_CAPTURE_EXIT = "1";
   else delete env.PERSIST_TEST_CAPTURE_EXIT;
   // Blank, not delete: the test runner refills unset variables from .env.local, which can select the real Postgres.

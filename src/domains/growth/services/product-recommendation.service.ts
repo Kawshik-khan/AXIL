@@ -71,7 +71,7 @@ export class ProductRecommendationService {
       const targetProd = products.find((p) => p.id === targetId);
 
       if (targetProd) {
-        const variants = db.getProductVariants(tenantId, targetProd.id);
+        const variants = targetProd.variants && targetProd.variants.length > 0 ? targetProd.variants : db.getProductVariants(tenantId, targetProd.id);
         const stock = variants.reduce((sum, v) => sum + ((v as any).stock_quantity ?? (v as any).stock ?? 10), 0);
 
         if (stock > 0) {
@@ -93,7 +93,7 @@ export class ProductRecommendationService {
       const current = products.find((p) => p.id === productId);
       const otherProds = products.filter((p) => p.id !== productId);
       for (const op of otherProds.slice(0, 2)) {
-        const variants = db.getProductVariants(tenantId, op.id);
+        const variants = op.variants && op.variants.length > 0 ? op.variants : db.getProductVariants(tenantId, op.id);
         const stock = variants.reduce((sum, v) => sum + ((v as any).stock_quantity ?? (v as any).stock ?? 10), 0);
         if (stock > 0) {
           candidates.push({
@@ -127,7 +127,7 @@ export class ProductRecommendationService {
     );
 
     for (const h of higherVal.slice(0, 2)) {
-      const variants = db.getProductVariants(tenantId, h.id);
+      const variants = h.variants && h.variants.length > 0 ? h.variants : db.getProductVariants(tenantId, h.id);
       const stock = variants.reduce((sum, v) => sum + ((v as any).stock_quantity ?? (v as any).stock ?? 10), 0);
       if (stock > 0) {
         candidates.push({

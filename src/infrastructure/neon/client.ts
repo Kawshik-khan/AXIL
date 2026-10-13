@@ -7,15 +7,11 @@
  */
 
 import dns from 'dns';
-import { neon, neonConfig, Pool, NeonQueryFunction } from '@neondatabase/serverless';
+import { neon, Pool, NeonQueryFunction } from '@neondatabase/serverless';
 
 try {
   dns.setDefaultResultOrder('ipv4first');
 } catch {}
-
-// ── Configuration ──────────────────────────────────────────────
-// Enable fetch connection caching for better performance in serverless
-neonConfig.fetchConnectionCache = true;
 
 // ── HTTP Client (one-shot queries) ─────────────────────────────
 // Best for: SELECT, simple INSERT/UPDATE, non-transactional reads

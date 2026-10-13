@@ -1,0 +1,31 @@
+/* Hairline figures themed from the design tokens. --hairline-plate must equal the surface behind the figure. */
+.frame {
+  margin: 0 auto;
+  pointer-events: auto;
+}
+
+.sm {
+  width: 160px;
+}
+
+.md {
+  width: 220px;
+}
+
+.light {
+  --hairline-plate: var(--color-surface-pure);
+  --hairline-hi: var(--color-text-primary);
+  --hairline-edge: var(--color-text-secondary);
+  --hairline-mid: var(--color-text-muted);
+  --hairline-lo: var(--color-border-medium);
+  --hairline-stroke: 0.9;
+}
+
+.dark {
+  --hairline-plate: var(--color-dark-card);
+  --hairline-hi: var(--color-lime-primary);
+  --hairline-edge: var(--color-text-dark-muted);
+  --hairline-mid: var(--motion-line-mid-dark);
+  --hairline-lo: var(--color-border-dark);
+  --hairline-stroke: 0.9;
+}

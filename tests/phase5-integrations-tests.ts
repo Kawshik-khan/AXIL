@@ -17,6 +17,7 @@ import { webhookPlatformService } from "@/domains/enterprise/services/webhook-pl
 import { N8nProviderService } from "@/domains/automation/services/n8n-provider.service";
 import {
   OutboundBlockedError,
+  OutboundCancelledError,
   OutboundNetworkError,
   OutboundTimeoutError,
   assertSafeUrl,
@@ -186,6 +187,11 @@ async function main() {
 
   await runTest("the deadline and the response size cap apply", async () => {
     await assert.rejects(outboundRequest(`${base}/slow`, { timeoutMs: 200 }), OutboundTimeoutError);
+    const cancelController = new AbortController();
+    const cancelledRequest = outboundRequest(`${base}/slow`, { method: "POST", body: "mutation", signal: cancelController.signal });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    cancelController.abort();
+    await assert.rejects(cancelledRequest, (err: unknown) => err instanceof OutboundCancelledError && err.mayHaveReachedPeer);
     const big = await outboundRequest(`${base}/big`, { maxResponseBytes: 1000 });
     assert.strictEqual(big.truncated, true);
     assert.strictEqual(big.body.length, 1000);

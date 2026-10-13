@@ -239,11 +239,49 @@ export class ChannelService {
       if (channel.connector_id) {
         // The credentials live in the connector, so there is one copy to rotate and revoke (connector plan D3)
         const connector = db.findConnectorById(channel.tenant_id, channel.connector_id);
-        if (!connector || connector.enabled === false) throw new Error("connector missing or disabled");
-        return decryptCredential<ChannelCredentials>(connector.credentials_encrypted);
+        if (!connector || connector.enabled === false) {
+          throw new AppError(
+            "CHANNEL_CONNECTOR_UNAVAILABLE",
+            "The connector linked to this channel is disabled or missing. Reconfigure it in Connector Hub.",
+            424
+          );
+        }
+        const raw = decryptCredential<Record<string, unknown>>(connector.credentials_encrypted);
+        return {
+          ...raw,
+          accessToken: String(raw.permanent_access_token || raw.page_access_token || raw.access_token || raw.accessToken || ""),
+          phoneNumberId: String(raw.phone_number_id || raw.phoneNumberId || ""),
+          pageId: String(raw.page_id || raw.pageId || ""),
+          appSecret: String(raw.app_secret || raw.appSecret || ""),
+          verifyToken: String(raw.verify_token || raw.verifyToken || ""),
+          businessAccountId: String(raw.waba_id || raw.business_account_id || raw.businessAccountId || ""),
+          webhookSecret: String(raw.webhook_secret || raw.webhookSecret || ""),
+          apiKey: String(raw.api_key || raw.apiKey || ""),
+        };
       }
-      return decryptCredential<ChannelCredentials>(channel.credentials_encrypted);
-    } catch {
+
+      if (!channel.credentials_encrypted) {
+        throw new AppError(
+          "CHANNEL_CREDENTIALS_INVALID",
+          "This channel's stored credentials could not be read. Reconnect the channel to update them.",
+          424
+        );
+      }
+
+      const raw = decryptCredential<Record<string, unknown>>(channel.credentials_encrypted);
+      return {
+        ...raw,
+        accessToken: String(raw.accessToken || raw.access_token || raw.page_access_token || raw.permanent_access_token || ""),
+        phoneNumberId: String(raw.phoneNumberId || raw.phone_number_id || ""),
+        pageId: String(raw.pageId || raw.page_id || ""),
+        appSecret: String(raw.appSecret || raw.app_secret || ""),
+        verifyToken: String(raw.verifyToken || raw.verify_token || ""),
+        businessAccountId: String(raw.businessAccountId || raw.business_account_id || raw.waba_id || ""),
+        webhookSecret: String(raw.webhookSecret || raw.webhook_secret || ""),
+        apiKey: String(raw.apiKey || raw.api_key || ""),
+      };
+    } catch (err) {
+      if (err instanceof AppError) throw err;
       throw new AppError(
         "CHANNEL_CREDENTIALS_INVALID",
         "This channel's stored credentials could not be read. Reconnect the channel to update them.",
@@ -266,6 +304,18 @@ export class ChannelService {
       const error = err instanceof Error ? err.message : "Channel credentials could not be read.";
       db.updateConnectedChannel(context.tenant.id, channelId, { status: "ERROR", error_message: error });
       return { healthy: false, status: "ERROR", error };
+    }
+
+    if (
+      channel.status === "PENDING_SETUP" ||
+      (!creds.accessToken && !creds.apiKey && !creds.phoneNumberId && channel.type !== "WEBSITE_CHAT")
+    ) {
+      return {
+        healthy: false,
+        status: "PENDING_SETUP",
+        verified: false,
+        error: "Channel credentials are not yet configured. Please configure your provider in Connector Hub.",
+      };
     }
 
     const result = await adapter.validateCredentials(creds);

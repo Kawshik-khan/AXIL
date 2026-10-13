@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
+import {
+  extractRequestContext,
+  apiSuccess,
+  apiError,
+} from "@/lib/api-response";
 import { RbacService } from "@/domains/rbac/service";
 import { PERMISSIONS } from "@/lib/permissions";
 import { approvalEngine } from "@/domains/ai/orchestration/autonomy/approval-engine";
@@ -11,14 +15,17 @@ import { parseOrThrow, readJson } from "@/lib/validation";
 // Strict body (ADR-104); a non-string action used to crash with 500 (Stage 1 security review)
 const Body = z
   .object({
-    action: z.string().transform((s) => s.toUpperCase()).pipe(z.enum(["APPROVE", "REJECT"])),
+    action: z
+      .string()
+      .transform((s) => s.toUpperCase())
+      .pipe(z.enum(["APPROVE", "REJECT"])),
     reason: z.string().trim().max(500).optional(),
   })
   .strict();
 
 async function handlePOST(
   request: Request,
-  { params: rawParams }: { params: Promise<{ id: string }> }
+  { params: rawParams }: { params: Promise<{ id: string }> },
 ) {
   const params = await rawParams;
   try {
@@ -30,27 +37,34 @@ async function handlePOST(
 
     if (action === "APPROVE") {
       requireStepUp(context, "APPROVE_AI_ACTION"); // a fresh authenticator code (FX-97 Part A; audit F30)
-      const result = await approvalEngine.approveAction(context.tenant.id, params.id, context.user.id);
+      const result = await approvalEngine.approveAction(
+        context.tenant.id,
+        params.id,
+        context.user.id,
+      );
       if (!result.success) {
         return apiSuccess({
           success: false,
           stale: result.stale || false,
           reason: result.reason,
           approval: result.approval,
-        }, undefined, 409);
+        }); // Keep the decision transaction committed (stale approvals are durably invalidated).
       }
       return apiSuccess(result);
     } else if (action === "REJECT") {
-      const reason = body.reason || "Rejected by operator";
+      const reason = body.reason;
+      if (!reason) throw new BadRequestError("A rejection reason is required.");
       const result = await approvalEngine.rejectAction(
         context.tenant.id,
         params.id,
         context.user.id,
-        reason
+        reason,
       );
       return apiSuccess(result);
     } else {
-      throw new BadRequestError(`Invalid approval action: ${action}. Expected APPROVE or REJECT.`);
+      throw new BadRequestError(
+        `Invalid approval action: ${action}. Expected APPROVE or REJECT.`,
+      );
     }
   } catch (err) {
     return apiError(err);

@@ -21,6 +21,6 @@ export interface IAgentTool<TInput = any, TOutput = any> {
   execute(
     context: RequestContext,
     input: TInput,
-    options?: { conversationId?: string; idempotencyKey?: string }
+    options?: { conversationId?: string; idempotencyKey?: string; signal?: AbortSignal }
   ): Promise<TOutput>;
 }

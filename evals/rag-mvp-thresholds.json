@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "dataset_version": "rag-bn-commerce-v1",
+  "min_cases": 30,
+  "min_recall_at_5": 0.75,
+  "min_answerable_coverage": 0.70,
+  "min_citation_support_rate": 0.70,
+  "min_citation_precision": 0.30,
+  "min_critical_fact_exactness": 0.70,
+  "min_correct_abstention_rate": 0.95,
+  "min_answerable_cases_per_language": 3,
+  "min_language_answerable_coverage": 0.50,
+  "min_answerable_cases_per_category": 3,
+  "min_category_answerable_coverage": 0.50,
+  "max_false_answer_count": 0,
+  "max_cross_tenant_leak_count": 0,
+  "max_archived_version_citation_count": 0
+}

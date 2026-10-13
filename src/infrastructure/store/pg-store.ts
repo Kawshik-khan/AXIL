@@ -167,6 +167,59 @@ UNION ALL SELECT 'row', 'store_meta', k.key, k.version::text, k.value::text FROM
   return syncSql;
 }
 
+/**
+ * Core tables that are read strictly query-on-demand via repositories and should NOT be
+ * hydrated into Node.js memory at cold boot.
+ */
+export const UNHYDRATED_CORE_TABLES = new Set<string>([
+  "audit_logs",
+]);
+
+/**
+ * Full Phase D Zero-Hydration core business tables: excluded from startup hydration in production
+ * or when ZERO_HYDRATION=1 is set.
+ */
+export const ZERO_HYDRATION_CORE_TABLES = new Set<string>([
+  "audit_logs",
+  "products",
+  "product_variants",
+  "customers",
+  "customer_addresses",
+  "customer_identities",
+  "orders",
+  "order_items",
+  "inventory_items",
+  "stock_movements",
+  "inventory_reservations",
+  "coupons",
+  "warehouses",
+]);
+
+/**
+ * Unstructured document collections that are pure append-only telemetry or granular trace logs,
+ * or operational secondary entities accessed on-demand via database repositories (Phase E).
+ * They should NOT be hydrated into Node.js memory at cold boot.
+ */
+export const UNHYDRATED_DOCUMENT_COLLECTIONS = new Set<string>([
+  "ai_traces",
+  "csp_reports",
+  "analytics_events",
+  "suppliers",
+  "supplier_products",
+  "purchase_orders",
+]);
+
+export function isZeroHydrationActive(options?: { zeroHydration?: boolean; all?: boolean }): boolean {
+  if (options?.all) return false;
+  if (options?.zeroHydration !== undefined) return options.zeroHydration;
+  return process.env.ZERO_HYDRATION === "1" || (process.env.DATA_BACKEND === "pg" && process.env.NODE_ENV === "production");
+}
+
+export function getActiveUnhydratedCoreTables(options?: { zeroHydration?: boolean; all?: boolean }): Set<string> {
+  if (options?.all) return new Set();
+  return isZeroHydrationActive(options) ? ZERO_HYDRATION_CORE_TABLES : new Set<string>();
+}
+
 export class PgStorePersistence {
   /** Identifies this server in commerceos.changes (its own entries are skipped by sync). */
   readonly writerId = crypto.randomUUID();
@@ -174,6 +227,7 @@ export class PgStorePersistence {
   private readonly committed = new Map<string, Map<string, Committed>>();
   private readonly committedSequences = new Map<string, { value: number; version: number }>();
   private readonly committedMeta = new Map<string, Committed>();
+  private unhydratedCollections = new Set<string>();
   private epoch: string | null = null;
   private lastSeq = 0;
   private lastPruneAt = 0;
@@ -183,6 +237,10 @@ export class PgStorePersistence {
   private fastWrites = false;
 
   constructor(readonly client: SqlClient) {}
+
+  getUnhydratedCollections(): ReadonlySet<string> {
+    return this.unhydratedCollections;
+  }
 
   async schemaPresent(): Promise<boolean> {
     const result = await this.client.query<{ present: boolean }>(
@@ -211,8 +269,15 @@ export class PgStorePersistence {
 
   // ---- Load --------------------------------------------------------------------------------------------------------
 
-  /** Reads the whole store in one snapshot. The records become the baseline that computeChanges() compares against. */
-  async load(): Promise<Record<string, unknown>> {
+  /** Reads the store in one snapshot. Selective hydration excludes audit logs and telemetry from RAM unless options.all is true. */
+  async load(options?: { all?: boolean; zeroHydration?: boolean }): Promise<Record<string, unknown>> {
+    const isZero = isZeroHydrationActive(options);
+    const unhydratedCore = getActiveUnhydratedCoreTables(options);
+    const unhydratedDocs = options?.all || !isZero ? new Set<string>() : UNHYDRATED_DOCUMENT_COLLECTIONS;
+    this.unhydratedCollections = new Set([
+      ...unhydratedCore,
+      ...unhydratedDocs,
+    ]);
     return this.client.transaction(async (tx) => {
       await tx.query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ");
       this.committed.clear();
@@ -225,15 +290,33 @@ export class PgStorePersistence {
       const fn = await tx.query<{ ok: boolean }>("SELECT to_regprocedure('commerceos.apply_changes(jsonb,text)') IS NOT NULL AS ok");
       this.fastWrites = fn.rows[0]?.ok === true;
       const out: Record<string, unknown> = {};
-      for (const [collection, core] of Object.entries(CORE_TABLES) as Array<[string, CoreTable]>) {
-        const order = NEWEST_FIRST_COLLECTIONS.has(collection) ? "DESC" : "ASC";
-        const result = await tx.query<{ id: string; version: string; data: string }>(
-          `SELECT id, version::text AS version, data::text AS data FROM ${qualified(core.table)} ORDER BY seq ${order}`
+      const coreEntries = (Object.entries(CORE_TABLES) as Array<[string, CoreTable]>).filter(
+        ([col]) => options?.all || !unhydratedCore.has(col)
+      );
+      if (coreEntries.length > 0) {
+        const unionQuery = coreEntries
+          .map(([col, core]) => `SELECT '${col}'::text AS collection, id, version::text AS version, data::text AS data, seq FROM ${qualified(core.table)}`)
+          .join(" UNION ALL ");
+        const result = await tx.query<{ collection: string; id: string; version: string; data: string; seq: string }>(
+          `${unionQuery} ORDER BY collection, seq ASC`
         );
-        out[collection] = this.adopt(collection, result.rows);
+        const groupedCore = new Map<string, Array<{ id: string; version: string; data: string }>>();
+        for (const [col] of coreEntries) {
+          groupedCore.set(col, []);
+        }
+        for (const row of result.rows) {
+          groupedCore.get(row.collection)?.push(row);
+        }
+        for (const [col, rows] of groupedCore) {
+          if (NEWEST_FIRST_COLLECTIONS.has(col)) rows.reverse();
+          out[col] = this.adopt(col, rows);
+        }
       }
+      const docExclusion = options?.all || !isZero
+        ? ""
+        : `WHERE collection NOT IN (${[...UNHYDRATED_DOCUMENT_COLLECTIONS].map((c) => `'${c}'`).join(", ")}) `;
       const docs = await tx.query<{ collection: string; id: string; version: string; data: string }>(
-        "SELECT collection, id, version::text AS version, data::text AS data FROM commerceos.documents ORDER BY collection, seq"
+        `SELECT collection, id, version::text AS version, data::text AS data FROM commerceos.documents ${docExclusion}ORDER BY collection, seq`
       );
       const grouped = new Map<string, Array<{ id: string; version: string; data: string }>>();
       for (const row of docs.rows) {
@@ -293,7 +376,7 @@ export class PgStorePersistence {
       rowCount: 0,
       sanitizedRows: 0,
     };
-    const wanted = (k: string) => !only || only.has(k);
+    const wanted = (k: string) => (!only || only.has(k)) && !this.unhydratedCollections.has(k);
     const coreOrder = Object.keys(CORE_TABLES).filter((k) => k in data && wanted(k));
     const others = Object.keys(data)
       .filter((k) => !coreTableFor(k) && wanted(k))
@@ -766,6 +849,7 @@ export class PgStorePersistence {
     }
     const rows: SyncedRow[] = [];
     for (const [collection, ids] of byCollection) {
+      if (this.unhydratedCollections.has(collection)) continue;
       const found = (id: string) => current.get(`${collection}\u0000${id}`);
       if (collection === ORDER_SEQUENCES_KEY) {
         for (const id of ids) {
@@ -809,6 +893,7 @@ export class PgStorePersistence {
   /** Applies synced rows to memory: replaced in place, removed, or added (at the end; at the front when newest-first). */
   applySync(data: Record<string, unknown>, rows: SyncedRow[]): void {
     for (const r of rows) {
+      if (this.unhydratedCollections.has(r.collection)) continue;
       if (r.collection === ORDER_SEQUENCES_KEY) {
         const sequences = (data[ORDER_SEQUENCES_KEY] ??= {}) as Record<string, number>;
         if (typeof r.record === "number") sequences[r.id] = r.record;

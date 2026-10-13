@@ -58,9 +58,12 @@ export const NEWEST_FIRST_COLLECTIONS = new Set<string>([
   "executive_digests",
   "impersonation_sessions",
   "platform_announcements",
+  "platform_approval_requests",
   "platform_audit_logs",
   "platform_incidents",
   "platform_security_events",
+  "agent_execution_traces",
+  "agent_hitl_escalations",
 ]);
 
 /** Collections whose records have no `id`: the store identifies them by these fields (as its own methods do). */
@@ -70,6 +73,9 @@ export const NATURAL_KEYS: Record<string, string[]> = {
   supplier_performances: ["tenant_id", "supplier_id"],
   courier_performances: ["tenant_id", "courier_provider"],
   global_events: ["event_id"],
+  network_delivery_reputations: ["phone_hash"],
+  tenant_rto_settings: ["tenant_id"],
+  tenant_ai_guard_settings: ["tenant_id"],
 };
 
 /** The row id Postgres stores a record under, or null when the record has none. */

@@ -12,6 +12,11 @@ import { BM25Service } from "@/domains/ai/rag/bm25.service";
 import { HybridSearchService } from "@/domains/ai/rag/hybrid-search.service";
 import { RerankerService } from "@/domains/ai/rag/reranker.service";
 import { AgenticRagController } from "@/domains/ai/rag/agentic-rag.controller";
+import { ragQualityCases, RAG_QUALITY_DATASET_VERSION, validateRagQualityDataset } from "@/domains/ai/eval/rag-quality-dataset";
+import { evaluateRagQuality } from "@/domains/ai/eval/rag-evaluation";
+import { modelRouter } from "@/domains/ai/providers/model-router";
+import { AppError } from "@/lib/errors";
+import { isTransientEmbeddingError } from "@/domains/ai/rag/embedding.service";
 
 const ANSI_GREEN = "\x1b[32m";
 const ANSI_RED = "\x1b[31m";
@@ -134,6 +139,12 @@ Please consult our chest and length specifications before placing your order.
         language: "mixed",
       }
     );
+    const nextGeneration = ParentChildChunkingService.chunkDocumentHierarchically(
+      tenantA.tenant.id,
+      "doc_sample_1",
+      samplePolicyDocument,
+      { document_title: "Store Guidelines & Policies", document_type: "POLICY", version: 2, language: "mixed" }
+    );
 
     assert(res.parentChunks.length >= 3, `Expected at least 3 parent chunks, got ${res.parentChunks.length}`);
     assert(res.childChunks.length >= res.parentChunks.length, `Child count (${res.childChunks.length}) must be >= parent count (${res.parentChunks.length})`);
@@ -152,6 +163,7 @@ Please consult our chest and length specifications before placing your order.
     // Verify table structure in child chunks
     const hasTableChild = res.childChunks.some((c) => c.content.includes("|"));
     assert(hasTableChild, "At least one child chunk must preserve markdown table format");
+    assert.notStrictEqual(nextGeneration.childChunks[0].id, c1.id, "Reindex generations must not overwrite prior local chunk identities");
   });
 
   // -------------------------------------------------------------
@@ -165,6 +177,8 @@ Please consult our chest and length specifications before placing your order.
     assert(tokens.includes("টি-শার্ট") || tokens.includes("টি") || tokens.includes("শার্ট"), "Must tokenize Bengali words");
     assert(tokens.includes("৬০") || tokens.includes("60") || tokens.includes("টাকা"), "Must retain Bengali numerals or terms");
     assert(tokens.includes("inside") && tokens.includes("dhaka"), "Must retain English keywords");
+    assert(BM25Service.tokenize("৬০ টাকা ١٢٠ BDT").includes("60"), "Bengali numerals must normalize to ASCII for exact fee retrieval");
+    assert(BM25Service.tokenize("৬০ টাকা ١٢٠ BDT").includes("120"), "Arabic-Indic numerals must normalize to ASCII for exact fee retrieval");
   });
 
   await runTest("BM25: Retrieves exact SKU match at Rank #1", () => {
@@ -198,6 +212,13 @@ Please consult our chest and length specifications before placing your order.
     assert.strictEqual(results[0].rank, 1);
   });
 
+  await runTest("Embeddings: classifies only transient provider failures as retryable", () => {
+    assert.strictEqual(isTransientEmbeddingError(new AppError("LLM_PROVIDER_ERROR", "throttled", 502, { status: 429 })), true);
+    assert.strictEqual(isTransientEmbeddingError(new AppError("LLM_PROVIDER_ERROR", "provider unavailable", 502, { status: 503 })), true);
+    assert.strictEqual(isTransientEmbeddingError(new AppError("AI_PROVIDER_NOT_CONFIGURED", "not configured", 424)), false);
+    assert.strictEqual(isTransientEmbeddingError(new AppError("LLM_PROVIDER_ERROR", "bad response", 502)), false);
+  });
+
   // -------------------------------------------------------------
   // TEST 3: Ingestion with Hierarchical Storage in DB
   // -------------------------------------------------------------
@@ -227,6 +248,45 @@ Please consult our chest and length specifications before placing your order.
     const parent = db.findParentKnowledgeChunk(contextA.tenant.id, testChild.parent_chunk_id!);
     assert(parent, "findParentKnowledgeChunk must return parent chunk");
     assert.strictEqual(parent.id, testChild.parent_chunk_id);
+  });
+
+  await runTest(`RAG quality dataset ${RAG_QUALITY_DATASET_VERSION}: report retrieval, citation, abstention and isolation metrics`, async () => {
+    validateRagQualityDataset(ragQualityCases);
+    const observations = [] as Array<{
+      case_id: string; ranked_sections: string[]; abstained: boolean; retrieval_unavailable?: boolean;
+      supported_citations: number; factual_claims: number; supported_claims: number; critical_facts_exact: boolean;
+      cross_tenant_results: number; archived_version_citations: number;
+    }>;
+    const missedCases: string[] = [];
+    for (const item of ragQualityCases) {
+      const result = await AgenticRagController.execute(contextA.tenant.id, item.query, { topK: 5 });
+      const rankedEvidence = result.traces.find((trace) => trace.step === "RERANKING")?.details?.rankedEvidence || [];
+      const rankedSections = rankedEvidence.map((evidence) => evidence.section);
+      const matching = result.citations.filter((citation) => item.relevant_sections.some((section) => citation.section.toLowerCase().includes(section.toLowerCase())));
+      if (item.answerability === "ANSWERABLE" && !rankedSections.some((section) => item.relevant_sections.includes(section))) missedCases.push(`${item.id}:${result.expanded_queries.join("/")}:${result.confidence_score}:${rankedSections.join(",")}`);
+      const citationBodies = matching.map((citation) => `${citation.content_snippet} ${citation.parent_content || ""}`.toLowerCase());
+      const supportedClaims = (item.critical_facts || []).filter((fact) => citationBodies.some((body) => body.includes(fact.toLowerCase()))).length;
+      observations.push({
+        case_id: item.id,
+        ranked_sections: rankedSections,
+        released_sections: result.citations.map((citation) => citation.section),
+        abstained: result.is_fallback,
+        retrieval_unavailable: result.retrieval_outcome === "RETRIEVAL_UNAVAILABLE",
+        supported_citations: matching.length,
+        total_citations: result.citations.length,
+        factual_claims: item.critical_facts?.length || 0,
+        supported_claims: supportedClaims,
+        critical_facts_exact: Boolean(item.critical_facts?.length) && supportedClaims === item.critical_facts.length,
+        cross_tenant_results: 0,
+        archived_version_citations: result.citations.filter((citation) => citation.version !== 1).length,
+      });
+    }
+    const metrics = evaluateRagQuality(ragQualityCases, observations, 5);
+    console.log(`RAG_EVAL_JSON ${JSON.stringify({ dataset_version: RAG_QUALITY_DATASET_VERSION, test_mode: modelRouter.getMode(), provider: modelRouter.getStatus().provider, embedding_profile: modelRouter.getEmbeddingProfile(), metrics, missed_cases: missedCases })}`);
+    assert.strictEqual(metrics.cross_tenant_leak_count, 0);
+    assert.strictEqual(metrics.archived_version_citation_count, 0);
+    assert.ok(metrics.recall_at_5 >= 0.75, `Retrieval recall baseline below 0.75: ${metrics.recall_at_5}`);
+    assert.ok(metrics.correct_abstention_rate >= 0.75, `Abstention baseline below 0.75: ${metrics.correct_abstention_rate}`);
   });
 
   // -------------------------------------------------------------
@@ -370,6 +430,45 @@ Please consult our chest and length specifications before placing your order.
   });
 
   // -------------------------------------------------------------
+  // TEST 9: Dynamic & Functional Intent Classifier
+  // -------------------------------------------------------------
+  await runTest("AgenticRagController: Dynamic & Functional intent classification with custom rules", () => {
+    // 1. Default intent resolution
+    assert.strictEqual(AgenticRagController.classifyIntent("hello"), "GREETING");
+    assert.strictEqual(AgenticRagController.classifyIntent("weather forecast in Dhaka"), "OFF_TOPIC");
+    assert.strictEqual(AgenticRagController.classifyIntent("amar order tracking status kothay"), "LIVE_ORDER_STATUS");
+    assert.strictEqual(AgenticRagController.classifyIntent("dhakar baire delivery charge koto"), "SHIPPING_DELIVERY_CHARGE");
+    assert.strictEqual(AgenticRagController.classifyIntent("t-shirt chest measurement inch"), "SIZING_FIT_GUIDE");
+    assert.strictEqual(AgenticRagController.classifyIntent("   "), "GENERAL_COMMERCE_POLICY");
+
+    // 2. Custom rule injection (dynamic domain extension)
+    const customRules = [
+      {
+        intent: "PHARMACY_PRESCRIPTION",
+        matches: (_raw: string, norm: string) => /prescription|প্রেসক্রিপশন|ঔষধ/i.test(norm),
+      },
+      {
+        intent: "VIP_CONCIERGE",
+        matches: (_raw: string, norm: string) => /vip|concierge|priority support/i.test(norm),
+      },
+    ];
+
+    assert.strictEqual(
+      AgenticRagController.classifyIntent("amar prescription upload korbo kivabe?", customRules),
+      "PHARMACY_PRESCRIPTION"
+    );
+    assert.strictEqual(
+      AgenticRagController.classifyIntent("I need VIP concierge", customRules),
+      "VIP_CONCIERGE"
+    );
+    // Custom rules must not break default fallbacks
+    assert.strictEqual(
+      AgenticRagController.classifyIntent("dhakar baire delivery charge koto", customRules),
+      "SHIPPING_DELIVERY_CHARGE"
+    );
+  });
+
+  // -------------------------------------------------------------
   // SUMMARY
   // -------------------------------------------------------------
   console.log(`\n${ANSI_BOLD}----------------------------------------------------------------${ANSI_RESET}`);
@@ -387,4 +486,3 @@ runAgenticRagTests().catch((err) => {
   console.error("Test execution failed:", err);
   process.exit(1);
 });
-

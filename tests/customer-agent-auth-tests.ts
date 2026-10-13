@@ -20,6 +20,7 @@ import type { ChannelType, Message } from "@/types/social";
 import { principalFor, capabilityContext, canSeeOrder, type Capability, type CustomerAgentPrincipal } from "@/domains/ai/customer-agent/principal";
 import { customerMessages, isAffirmative } from "@/domains/ai/customer-agent/confirmation";
 import { CUSTOMER_TOOLS, CUSTOMER_TOOL_NAMES, runCustomerTool } from "@/domains/ai/customer-agent/tools";
+import { synthesizeGroundedResponse } from "@/domains/ai/customer-agent/output";
 
 const GREEN = "\x1b[32m";
 const RED = "\x1b[31m";
@@ -457,6 +458,67 @@ async function main() {
   await runTest("search words keep Bangla vowel signs (কালো stays কালো)", () => {
     assert.ok(searchTokens("কালো গেঞ্জি").includes("black"));
     assert.ok(searchTokens("কালো গেঞ্জি").includes("tshirt"));
+  });
+
+  // ------------------------------------------------------------------ Dynamic Recovery
+  console.log(`\n${BOLD}[Dynamic Recovery] Grounded synthesis on provider failure${RESET}`);
+
+  await runTest("synthesizes quote reply dynamically in Latin/Banglish with exact amounts", () => {
+    const quoteResult = {
+      quote_id: "q_test123",
+      district: "Kushtia",
+      items: [{ name: "Premium Panjabi", quantity: 1, unit_price_bdt: 1850, line_total_bdt: 1850 }],
+      subtotal_bdt: 1850,
+      delivery_charge_bdt: 120,
+      grand_total_bdt: 1970,
+    };
+    const reply = synthesizeGroundedResponse([quoteResult], "latin");
+    assert.ok(reply);
+    assert.ok(reply.includes("Kushtia-e delivery charge ৳120"));
+    assert.ok(reply.includes("grand total ৳1,970"));
+    assert.ok(reply.includes("Cash on delivery"));
+  });
+
+  await runTest("synthesizes quote reply dynamically in Bangla script with exact amounts", () => {
+    const quoteResult = {
+      quote_id: "q_test123",
+      district: "কুষ্টিয়া",
+      items: [{ name: "পাঞ্জাবি", quantity: 2, unit_price_bdt: 1000, line_total_bdt: 2000 }],
+      subtotal_bdt: 2000,
+      delivery_charge_bdt: 120,
+      grand_total_bdt: 2120,
+    };
+    const reply = synthesizeGroundedResponse([quoteResult], "bangla");
+    assert.ok(reply);
+    assert.ok(reply.includes("কুষ্টিয়া-এ ডেলিভারি চার্জ ৳120"));
+    assert.ok(reply.includes("সর্বমোট ৳2,120"));
+    assert.ok(reply.includes("ক্যাশ অন ডেলিভারি"));
+  });
+
+  await runTest("synthesizes placed order reply with order number and total", () => {
+    const placedResult = {
+      status: "PLACED",
+      order_number: "ORD-2026-000099",
+      grand_total_bdt: 1970,
+    };
+    const reply = synthesizeGroundedResponse([placedResult], "latin");
+    assert.ok(reply);
+    assert.ok(reply.includes("ORD-2026-000099"));
+    assert.ok(reply.includes("৳1,970"));
+  });
+
+  await runTest("synthesizes delivery charge reply dynamically", () => {
+    const chargeResult = {
+      district: "Sylhet",
+      delivery_charge_bdt: 120,
+    };
+    const reply = synthesizeGroundedResponse([chargeResult], "latin");
+    assert.strictEqual(reply, "Sylhet-e delivery charge ৳120.");
+  });
+
+  await runTest("returns null when tool results are empty or unusable", () => {
+    assert.strictEqual(synthesizeGroundedResponse([], "latin"), null);
+    assert.strictEqual(synthesizeGroundedResponse([{ error: "SOME_ERROR" }], "latin"), null);
   });
 
   console.log(`\n  Tests Passed: ${passed} | Tests Failed: ${failed}\n`);

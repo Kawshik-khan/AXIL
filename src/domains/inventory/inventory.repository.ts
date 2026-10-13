@@ -15,6 +15,7 @@ import {
   InventoryReservation,
   Warehouse,
 } from '@/types/commerce';
+import type { SqlClient } from '@/infrastructure/store/sql-client';
 
 export class InventoryRepository extends BaseRepository<InventoryItem & Record<string, unknown>> {
   constructor() {
@@ -158,14 +159,54 @@ export class InventoryRepository extends BaseRepository<InventoryItem & Record<s
     });
   }
 
+  /** SQL only when inventory_items is left out of memory (zero-hydration); otherwise the in-memory store is the source of truth. */
+  private getClient(): SqlClient | null {
+    return db.isCollectionHydrated("inventory_items") ? null : db.getSqlClient();
+  }
+
   async getWarehouses(tenantId: string): Promise<Warehouse[]> {
-    if (!this.isNeonConfigured()) {
-      return db.data.warehouses.filter((w) => w.tenant_id === tenantId);
+    const client = this.getClient();
+    if (client) {
+      const res = await client.query<{ data: Warehouse | string }>(
+        `SELECT data FROM commerceos.warehouses WHERE tenant_id = $1 ORDER BY (data->>'name') ASC`,
+        [tenantId]
+      );
+      return res.rows.map((r) => (typeof r.data === "string" ? JSON.parse(r.data) : r.data) as Warehouse);
     }
-    return query<Warehouse>(
-      `SELECT * FROM warehouses WHERE tenant_id = $1 AND is_active = true ORDER BY is_default DESC, name ASC`,
-      [tenantId]
-    );
+    if (this.isNeonConfigured()) {
+      return query<Warehouse>(
+        `SELECT * FROM warehouses WHERE tenant_id = $1 AND is_active = true ORDER BY is_default DESC, name ASC`,
+        [tenantId]
+      );
+    }
+    if (!db.isCollectionHydrated("warehouses")) {
+      return [];
+    }
+    return db.data.warehouses.filter((w) => w.tenant_id === tenantId);
+  }
+
+  async findWarehouseById(tenantId: string, id: string): Promise<Warehouse | null> {
+    const client = this.getClient();
+    if (client) {
+      const res = await client.query<{ data: Warehouse | string }>(
+        `SELECT data FROM commerceos.warehouses WHERE tenant_id = $1 AND id = $2 LIMIT 1`,
+        [tenantId, id]
+      );
+      if (res.rowCount === 0 || !res.rows[0]) return null;
+      const d = res.rows[0].data;
+      return (typeof d === "string" ? JSON.parse(d) : d) as Warehouse;
+    }
+    if (this.isNeonConfigured()) {
+      const rows = await query<Warehouse>(
+        `SELECT * FROM warehouses WHERE tenant_id = $1 AND id = $2 LIMIT 1`,
+        [tenantId, id]
+      );
+      return rows[0] || null;
+    }
+    if (!db.isCollectionHydrated("warehouses")) {
+      return null;
+    }
+    return db.data.warehouses.find((w) => w.tenant_id === tenantId && w.id === id) || null;
   }
 }
 

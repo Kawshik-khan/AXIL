@@ -21,7 +21,7 @@ async function handlePOST(request: Request, { params }: { params: Promise<{ id: 
     requireStepUpAlways(context, "CUSTOMER_ERASE");
     const { reason } = parseOrThrow(Body, await readJson(request));
     const { id } = await params;
-    return apiSuccess(CustomerErasureService.erase(context, id, reason));
+    return apiSuccess(await CustomerErasureService.erase(context, id, reason));
   } catch (err) {
     return apiError(err);
   }

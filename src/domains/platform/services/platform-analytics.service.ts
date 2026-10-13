@@ -1,6 +1,28 @@
 import { db } from "@/infrastructure/db";
 import { PlatformContext } from "@/lib/context";
 import { PlatformAuthorizationService } from "./platform-authorization.service";
+import { PlatformSettingsService } from "./platform-settings.service";
+import { mrrContribution } from "../plan-pricing";
+import { productRepository } from "@/domains/catalog/product.repository";
+import { orderRepository } from "@/domains/orders/order.repository";
+
+export interface ActivationFunnel {
+  /** Workspaces counted (archived ones excluded). */
+  workspaces: number;
+  with_product: number;
+  with_order: number;
+  paying: number;
+  /** Signups per ISO week (Monday start, UTC), oldest first, with how many of each cohort have placed an order. */
+  weekly_cohorts: Array<{ week_start: string; signups: number; with_order: number }>;
+}
+
+function weekStart(iso: string): string {
+  const d = new Date(iso);
+  const day = (d.getUTCDay() + 6) % 7; // Monday = 0
+  d.setUTCHours(0, 0, 0, 0);
+  d.setUTCDate(d.getUTCDate() - day);
+  return d.toISOString().substring(0, 10);
+}
 
 /** SIMULATED: the integration isn't built, so nothing is sent to the provider (FX-31). */
 export type ProviderRailStatus = "HEALTHY" | "DEGRADED" | "DOWN" | "SIMULATED";
@@ -93,23 +115,17 @@ export class PlatformAnalyticsService {
         activeSubsCount++;
         const version = planVersions.find((v) => v.id === sub.plan_version_id);
         if (version) {
-          totalMrrBdt += version.price_bdt;
+          // Annual subscriptions count annual price / 12 (SA-11)
+          totalMrrBdt += mrrContribution(sub, version);
         }
       }
     }
+    totalMrrBdt = Math.round(totalMrrBdt);
     const arrBdt = totalMrrBdt * 12;
     const arpuBdt = activeSubsCount > 0 ? Math.round(totalMrrBdt / activeSubsCount) : 0;
 
     // Commerce Velocity: aggregated across all tenant stores
-    const orders = db.data.orders || [];
-    const validOrders = orders.filter((o) => o.status !== "CANCELLED");
-    const totalGmvBdt = validOrders.reduce((acc, o) => acc + (o.grand_total || 0), 0);
-    const totalOrdersCount = validOrders.length;
-    const avgOrderValue = totalOrdersCount > 0 ? Math.round(totalGmvBdt / totalOrdersCount) : 0;
-    const codCount = validOrders.filter((o) => o.payment_method === "COD").length;
-    // null without orders: these fell back to invented values (70% COD, 94.2% resolution, 100% success) (FX-30)
-    const codPercentage = totalOrdersCount > 0 ? Math.round((codCount / totalOrdersCount) * 100) : null;
-    const digitalPaymentPercentage = codPercentage === null ? null : 100 - codPercentage;
+    const velocity = this.getCommerceVelocitySync();
 
     // AI & Agentic Fleet Telemetry
     const conversations = db.data.conversations || [];
@@ -117,8 +133,10 @@ export class PlatformAnalyticsService {
     const agentRuns = db.data.agent_runs || [];
     const totalTokens = aiUsage.reduce((sum, u) => sum + (u.total_tokens || 0), 0);
     const estCostUsd = aiUsage.reduce((sum, u) => sum + (u.estimated_cost_usd || 0), 0);
+    // A BDT cost recorded at run time wins; otherwise convert USD at the registered rate (finance.usd_to_bdt_rate)
+    const usdToBdt = PlatformSettingsService.getEffectiveSetting<number>("finance.usd_to_bdt_rate");
     const estCostBdt = aiUsage.reduce(
-      (sum, u) => sum + (u.estimated_cost_bdt || (u.estimated_cost_usd ? u.estimated_cost_usd * 120 : 0)),
+      (sum, u) => sum + (u.estimated_cost_bdt || (u.estimated_cost_usd ? u.estimated_cost_usd * usdToBdt : 0)),
       0
     );
     const completedRuns = agentRuns.filter((r) => r.status === "COMPLETED").length;
@@ -174,13 +192,7 @@ export class PlatformAnalyticsService {
         arpu_bdt: arpuBdt,
         currency: "BDT",
       },
-      commerce_velocity: {
-        total_gmv_bdt: totalGmvBdt,
-        total_orders_count: totalOrdersCount,
-        avg_order_value_bdt: avgOrderValue,
-        cod_percentage: codPercentage,
-        digital_payment_percentage: digitalPaymentPercentage,
-      },
+      commerce_velocity: velocity,
       ai_fleet: {
         total_conversations: conversations.length,
         total_tokens: totalTokens,
@@ -213,6 +225,130 @@ export class PlatformAnalyticsService {
           return active.length > 0 ? Math.round((active.filter((m) => m.mfa_enabled).length / active.length) * 100) : null;
         })(), // was a literal 100
       },
+    };
+  }
+
+  public static getCommerceVelocitySync(): {
+    total_gmv_bdt: number;
+    total_orders_count: number;
+    avg_order_value_bdt: number;
+    cod_percentage: number | null;
+    digital_payment_percentage: number | null;
+  } {
+    let orders: any[] = [];
+    try {
+      if (db.isCollectionHydrated?.("orders") !== false) {
+        orders = db.data.orders || [];
+      }
+    } catch {
+      orders = [];
+    }
+    const validOrders = orders.filter((o) => o.status !== "CANCELLED");
+    const totalGmvBdt = validOrders.reduce((acc, o) => acc + (o.grand_total || 0), 0);
+    const totalOrdersCount = validOrders.length;
+    const avgOrderValue = totalOrdersCount > 0 ? Math.round(totalGmvBdt / totalOrdersCount) : 0;
+    const codCount = validOrders.filter((o) => o.payment_method === "COD").length;
+    const codPercentage = totalOrdersCount > 0 ? Math.round((codCount / totalOrdersCount) * 100) : null;
+    const digitalPaymentPercentage = codPercentage === null ? null : 100 - codPercentage;
+
+    return {
+      total_gmv_bdt: totalGmvBdt,
+      total_orders_count: totalOrdersCount,
+      avg_order_value_bdt: avgOrderValue,
+      cod_percentage: codPercentage,
+      digital_payment_percentage: digitalPaymentPercentage,
+    };
+  }
+
+  public static async getCommerceVelocityAsync(): Promise<{
+    total_gmv_bdt: number;
+    total_orders_count: number;
+    avg_order_value_bdt: number;
+    cod_percentage: number | null;
+    digital_payment_percentage: number | null;
+  }> {
+    const client = db.isCollectionHydrated("orders") ? null : db.getSqlClient();
+    if (client) {
+      const res = await client.query<{
+        total_orders: string;
+        total_gmv: string;
+        cod_orders: string;
+      }>(
+        `SELECT
+           count(*)::text AS total_orders,
+           coalesce(sum(grand_total), 0)::text AS total_gmv,
+           count(*) FILTER (WHERE data->>'payment_method' = 'COD')::text AS cod_orders
+         FROM commerceos.orders
+         WHERE status != 'CANCELLED'`
+      );
+      const row = res.rows[0];
+      const totalOrdersCount = Number(row?.total_orders ?? 0);
+      const totalGmvBdt = Number(row?.total_gmv ?? 0);
+      const avgOrderValue = totalOrdersCount > 0 ? Math.round(totalGmvBdt / totalOrdersCount) : 0;
+      const codCount = Number(row?.cod_orders ?? 0);
+      const codPercentage = totalOrdersCount > 0 ? Math.round((codCount / totalOrdersCount) * 100) : null;
+      const digitalPaymentPercentage = codPercentage === null ? null : 100 - codPercentage;
+
+      return {
+        total_gmv_bdt: totalGmvBdt,
+        total_orders_count: totalOrdersCount,
+        avg_order_value_bdt: avgOrderValue,
+        cod_percentage: codPercentage,
+        digital_payment_percentage: digitalPaymentPercentage,
+      };
+    }
+
+    return this.getCommerceVelocitySync();
+  }
+
+  public static async getPlatformOverviewAsync(context: PlatformContext): Promise<PlatformOverviewMetrics> {
+    const overview = this.getPlatformOverview(context);
+    overview.commerce_velocity = await this.getCommerceVelocityAsync();
+    return overview;
+  }
+
+  /**
+   * Activation funnel and weekly signup cohorts from every workspace (analytics read every row; nothing is stored).
+   * Paying = an ACTIVE subscription whose plan version contributes more than 0 to MRR.
+   */
+  public static async getActivationFunnel(context: PlatformContext, weeks = 12): Promise<ActivationFunnel> {
+    PlatformAuthorizationService.assertCan(context, "analytics.platform.read");
+    const tenants = db.getTenants().filter((t) => t.status !== "ARCHIVED");
+    const versions = db.getPlanVersions();
+    let withProduct = 0;
+    let withOrder = 0;
+    let paying = 0;
+    const ordered = new Set<string>();
+    for (const t of tenants) {
+      if ((await productRepository.countByTenant(t.id)) > 0) withProduct++;
+      if ((await orderRepository.countByTenant(t.id)) > 0) {
+        withOrder++;
+        ordered.add(t.id);
+      }
+      const sub = db.findSubscriptionByTenantId(t.id);
+      const version = sub ? versions.find((v) => v.id === sub.plan_version_id) : undefined;
+      if (sub && sub.status === "ACTIVE" && version && mrrContribution(sub, version) > 0) paying++;
+    }
+
+    const since = Date.now() - weeks * 7 * 24 * 60 * 60 * 1000;
+    const byWeek = new Map<string, { signups: number; with_order: number }>();
+    for (let i = weeks - 1; i >= 0; i--) {
+      byWeek.set(weekStart(new Date(Date.now() - i * 7 * 24 * 60 * 60 * 1000).toISOString()), { signups: 0, with_order: 0 });
+    }
+    for (const t of tenants) {
+      if (Date.parse(t.created_at) < since) continue;
+      const bucket = byWeek.get(weekStart(t.created_at));
+      if (!bucket) continue;
+      bucket.signups++;
+      if (ordered.has(t.id)) bucket.with_order++;
+    }
+
+    return {
+      workspaces: tenants.length,
+      with_product: withProduct,
+      with_order: withOrder,
+      paying,
+      weekly_cohorts: [...byWeek.entries()].map(([week_start, v]) => ({ week_start, ...v })),
     };
   }
 }

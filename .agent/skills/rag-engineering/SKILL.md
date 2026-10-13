@@ -12,7 +12,7 @@ Rules: `.agent/rules/rag.md`. Target design: `.agent/RAG_ARCHITECTURE.md` (partl
 |---|---|
 | Ingestion / knowledge API | `src/domains/ai/rag/knowledge.service.ts` |
 | Chunking | `chunking.service.ts`, `parent-child-chunking.service.ts` |
-| Embeddings | `embedding.service.ts` (**fake today**, audit H14) |
+| Embeddings | `embedding.service.ts` (configured provider via `ModelRouter`; mock only in demo mode) |
 | Vector store | `src/infrastructure/qdrant/client.ts` (env-only: `QDRANT_URL`) |
 | Lexical | `bm25.service.ts` |
 | Hybrid + fusion | `hybrid-search.service.ts` |
@@ -21,9 +21,9 @@ Rules: `.agent/rules/rag.md`. Target design: `.agent/RAG_ARCHITECTURE.md` (partl
 | Agent tool | `src/domains/ai/tools/implementations/knowledge-tools.ts` |
 
 ## Rules of thumb
-- Every Pinecone call carries the tenant (namespace or metadata filter); every BM25 index is per tenant.
+- Every Qdrant call carries the tenant payload filter; BM25 retrieval is tenant-scoped.
 - Keep tables, fee schedules, and size charts whole; store `document_id`, `tenant_id`, `category`, `language`, `updated_at` per chunk.
-- Thresholds are constants in code; if you change one, add eval cases and report before/after results.
+- Thresholds are constants in code; current reranking is heuristic, not a learned cross-encoder or calibrated confidence. If a threshold changes, add eval cases and report before/after results.
 - Below the low threshold → `UNKNOWN` → escalate; never generate an answer from weak context.
 - Server-side document parsing only; client `readAsText` on PDF/DOCX produces garbage (audit M16).
 

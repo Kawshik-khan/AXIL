@@ -30,7 +30,7 @@ export class PaymentIntelligenceService {
    */
   public analyzePayments(tenantId: string): PaymentIntelligenceSummary {
     const payments = db.getPayments(tenantId);
-    const orders = db.getAllOrders(tenantId, { hydrate: true });
+    const orders = db.getAllOrders(tenantId);
 
     const methodStats: Record<
       string,

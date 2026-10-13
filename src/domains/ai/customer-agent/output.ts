@@ -155,3 +155,123 @@ export function capLength(text: string, max = 1000): string {
   const end = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf("। "), cut.lastIndexOf("? "), cut.lastIndexOf("! "), cut.lastIndexOf("\n"));
   return (end > max * 0.5 ? cut.slice(0, end + 1) : cut).trim();
 }
+
+/**
+ * Dynamic grounded reply constructed directly from the turn's tool results when the model
+ * was unable to format its final response (e.g. timeout, provider glitch, or turn deadline).
+ * Works dynamically across any district, product, quantities, and scripts (Bangla vs Latin/Banglish).
+ */
+export function synthesizeGroundedResponse(toolResults: unknown[], script: Script): string | null {
+  // 1. First priority: Orders and quotes
+  for (let i = toolResults.length - 1; i >= 0; i--) {
+    const r = toolResults[i] as Record<string, any>;
+    if (!r || typeof r !== "object") continue;
+
+    // Order successfully placed
+    if (r.status === "PLACED" && r.order_number) {
+      const grandTotal = r.grand_total_bdt ?? r.grand_total;
+      const totalPart = typeof grandTotal === "number" ? ` ৳${grandTotal.toLocaleString("en-US")}` : "";
+      if (script === "bangla") {
+        return `ধন্যবাদ! আপনার অর্ডারটি গ্রহণ করা হয়েছে। অর্ডার নম্বর: ${r.order_number}${totalPart ? `। সর্বমোট${totalPart} (ক্যাশ অন ডেলিভারি)` : ""}। আমাদের টিম শীঘ্রই এটি প্রসেস করবে।`;
+      }
+      return `Dhonnobad! Apnar order ti place kora hoyeche. Order number: ${r.order_number}${totalPart ? `. Grand total${totalPart} (Cash on delivery)` : ""}. Amader team shiggiri order ti process korbe.`;
+    }
+
+    // Order confirmation required
+    if (r.status === "CONFIRMATION_REQUIRED" && r.summary) {
+      if (script === "bangla") {
+        return `${r.summary}। অর্ডার কনফার্ম করতে চাইলে অনুগ্রহ করে 'হ্যাঁ' বলুন।`;
+      }
+      return `${r.summary}. Order confirm korte chaile 'Ji' bolun.`;
+    }
+
+    // Quote successfully created
+    if (r.quote_id && typeof r.grand_total_bdt === "number") {
+      const district = typeof r.district === "string" && r.district.trim() ? r.district.trim() : "";
+      const delivery = r.delivery_charge_bdt;
+      const total = r.grand_total_bdt;
+      const discount = r.discount_bdt;
+      const itemsList = Array.isArray(r.items) && r.items.length > 0
+        ? r.items
+            .map((it: any) => `${it.name || "Item"}${it.quantity > 1 ? ` (${it.quantity})` : ""}`)
+            .join(", ")
+        : "";
+
+      if (script === "bangla") {
+        const itemPart = itemsList ? `${itemsList}-এর জন্য ` : "";
+        const districtPart = district ? `${district}-এ ` : "";
+        const discountPart = typeof discount === "number" && discount > 0 ? `, ডিসকাউন্ট ৳${discount.toLocaleString("en-US")}` : "";
+        return `জি, ${itemPart}${districtPart}ডেলিভারি চার্জ ৳${delivery}${discountPart}, সর্বমোট ৳${total.toLocaleString("en-US")} (ক্যাশ অন ডেলিভারি)। অর্ডার কনফার্ম করতে আপনার নাম, মোবাইল নম্বর এবং সম্পূর্ণ ডেলিভারি ঠিকানা একসাথে দিন।`;
+      }
+
+      const itemPart = itemsList ? `${itemsList} er jonno ` : "";
+      const districtPart = district ? `${district}-e ` : "";
+      const discountPart = typeof discount === "number" && discount > 0 ? `, discount ৳${discount.toLocaleString("en-US")}` : "";
+      return `Ji, ${itemPart}${districtPart}delivery charge ৳${delivery}${discountPart}, grand total ৳${total.toLocaleString("en-US")} (Cash on delivery). Order confirm korte apnar name, mobile number o full delivery address ekshathe din.`;
+    }
+
+    // Order status looked up
+    if (r.order_number && (r.status || r.courier_status)) {
+      const statusText = r.courier_status ?? r.status;
+      if (script === "bangla") {
+        return `আপনার অর্ডার ${r.order_number}-এর স্ট্যাটাস: ${statusText}।`;
+      }
+      return `Apnar order ${r.order_number} er status: ${statusText}.`;
+    }
+  }
+
+  // 2. Second priority: Product search results (takes priority over standalone delivery fee check)
+  for (let i = toolResults.length - 1; i >= 0; i--) {
+    const r = toolResults[i] as Record<string, any>;
+    if (!r || typeof r !== "object") continue;
+
+    const list = Array.isArray(r.results) ? r.results : Array.isArray(r.products) ? r.products : null;
+    if (list) {
+      if (list.length > 0) {
+        if (list.length === 1) {
+          const p = list[0];
+          const name = p.name || p.title || "Product";
+          const price = p.variants?.[0]?.price_bdt ?? p.base_price ?? p.min_price_bdt;
+          const priceText = typeof price === "number" ? ` ৳${price.toLocaleString("en-US")}` : "";
+          if (script === "bangla") {
+            return `জি, ${name} স্টকে আছে${priceText ? `, দাম${priceText}` : ""}। আপনি কি এটি নিতে চান?`;
+          }
+          return `Ji, ${name} stock e ache${priceText ? `, dam${priceText}` : ""}. Apni ki eta nite chan?`;
+        }
+
+        const lines = list.slice(0, 5).map((p: any) => {
+          const name = p.name || p.title || "Product";
+          const price = p.variants?.[0]?.price_bdt ?? p.base_price ?? p.min_price_bdt;
+          return typeof price === "number" ? `${name} (৳${price.toLocaleString("en-US")})` : name;
+        }).join("\n- ");
+
+        if (script === "bangla") {
+          return `জি, আমাদের কাছে এই প্রোডাক্টগুলো স্টকে আছে:\n- ${lines}\n\nআপনার কোনটি পছন্দ?`;
+        }
+        return `Ji, amader kache ei product gulo stock e ache:\n- ${lines}\n\nApnar kon ti pochondo?`;
+      }
+
+      // Explicitly returned empty results
+      if (script === "bangla") {
+        return "দুঃখিত, এই মুহূর্তে এই প্রোডাক্টটি আমাদের স্টকে নেই। অন্য কোনো প্রোডাক্ট দেখতে চাইলে জানাতে পারেন।";
+      }
+      return "Dukkhito, ei muhurte ei product ti amader stock e nei. Onno kono product dekhte chaile janate paren.";
+    }
+  }
+
+  // 3. Third priority: Standalone delivery charge check
+  for (let i = toolResults.length - 1; i >= 0; i--) {
+    const r = toolResults[i] as Record<string, any>;
+    if (!r || typeof r !== "object") continue;
+
+    if (typeof r.district === "string" && typeof r.delivery_charge_bdt === "number") {
+      if (script === "bangla") {
+        return `${r.district}-এ ডেলিভারি চার্জ ৳${r.delivery_charge_bdt}।`;
+      }
+      return `${r.district}-e delivery charge ৳${r.delivery_charge_bdt}.`;
+    }
+  }
+
+  return null;
+}
+

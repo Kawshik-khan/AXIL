@@ -63,7 +63,7 @@ export class SearchProductsTool implements IAgentTool<z.infer<typeof SearchProdu
     });
 
     return list.products.map((p) => {
-      const variants = db.getProductVariants(context.tenant.id, p.id);
+      const variants = p.variants && p.variants.length > 0 ? p.variants : db.getProductVariants(context.tenant.id, p.id);
       return {
         id: p.id,
         name: p.name,
@@ -121,7 +121,7 @@ export class GetProductTool implements IAgentTool<z.infer<typeof GetProductInput
 
   public async execute(context: RequestContext, input: z.infer<typeof GetProductInputSchema>) {
     const product = await ProductService.getProductById(context, input.product_id);
-    const variants = db.getProductVariants(context.tenant.id, product.id);
+    const variants = product.variants && product.variants.length > 0 ? product.variants : db.getProductVariants(context.tenant.id, product.id);
 
     return {
       id: product.id,
@@ -196,17 +196,31 @@ export class CheckInventoryTool implements IAgentTool<z.infer<typeof CheckInvent
         return { available: false, quantity: 0, status: "PRODUCT_NOT_FOUND", message: "No product with that id exists." };
       }
       productName = product.name;
-      const variantIds = new Set(db.getProductVariants(context.tenant.id, product.id).map((v) => v.id));
+      const variants = product.variants && product.variants.length > 0 ? product.variants : db.getProductVariants(context.tenant.id, product.id);
+      const variantIds = new Set(variants.map((v) => v.id));
       matched = matched.filter((i) => variantIds.has(i.product_variant_id));
     } else if (input.product_query) {
-      const q = input.product_query.toLowerCase();
-      matched = matched.filter(
-        (i) => i.product_name.toLowerCase().includes(q) || i.sku.toLowerCase().includes(q)
-      );
+      const q = input.product_query.trim();
+      const productResults = await ProductService.listProducts(context, { search: q, limit: 10 });
+      if (productResults.products.length > 0) {
+        const productIds = new Set(productResults.products.map((p) => p.id));
+        const variantIds = new Set(
+          productResults.products.flatMap((p) => (p.variants && p.variants.length > 0 ? p.variants : db.getProductVariants(context.tenant.id, p.id)).map((v) => v.id))
+        );
+        matched = matched.filter((i) => variantIds.has(i.product_variant_id));
+        if (!productName && productResults.products.length > 0) {
+          productName = productResults.products[0].name;
+        }
+      } else {
+        const lowerQ = q.toLowerCase();
+        matched = matched.filter(
+          (i) => i.product_name.toLowerCase().includes(lowerQ) || i.sku.toLowerCase().includes(lowerQ)
+        );
+      }
     }
 
     if (matched.length === 0) {
-      const product = productName ?? db.getProducts(context.tenant.id, { search: input.product_query, limit: 1 }).products[0]?.name;
+      const product = productName ?? (input.product_query ? (await ProductService.listProducts(context, { search: input.product_query, limit: 1 })).products[0]?.name : undefined);
       return {
         ...(product ? { product_name: product } : {}),
         available: false,

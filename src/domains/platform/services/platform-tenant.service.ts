@@ -2,6 +2,9 @@ import { db, TenantRecord, UserRecord, MembershipRecord } from "@/infrastructure
 import { PlatformContext } from "@/lib/context";
 import { PlatformAuthorizationService } from "./platform-authorization.service";
 import { PlatformAuditService } from "./platform-audit.service";
+import { PrivilegedActionGate } from "./privileged-action-gate";
+import { PlatformSettingsService } from "./platform-settings.service";
+import { latestPublished, monthlyPrice } from "../plan-pricing";
 import { DISABLED_PASSWORD_HASH } from "@/lib/security";
 import { InvitationService } from "@/domains/invitations/service";
 import {
@@ -21,7 +24,18 @@ export interface ProvisionTenantInput {
   currency?: string;
   timezone?: string;
   country?: string;
+  /** Start on a trial of the plan instead of an active subscription. */
+  start_trial?: boolean;
 }
+
+/** Options for HIGH tenant actions: the ticket the rules require, and an approval when one applies. */
+export interface TenantActionOptions {
+  ticketRef?: string;
+  approvalId?: string;
+}
+
+/** Minimum days an archived tenant's data is kept after a purge is approved (rules/privileged-actions.md §3.5). */
+export const PURGE_TOMBSTONE_DAYS = 14;
 
 export interface TenantFilterParams {
   search?: string;
@@ -103,9 +117,9 @@ export class PlatformTenantService {
         membership_id: m.id,
         user_id: m.user_id,
         role: m.role,
-        name: u?.name || "Unknown",
-        email: u?.email || "Unknown",
-        status: u?.status || "UNKNOWN",
+        name: u?.name ?? null,
+        email: u?.email ?? null,
+        status: u?.status ?? null,
         created_at: m.created_at,
       };
     });
@@ -131,7 +145,13 @@ export class PlatformTenantService {
    * Idempotently provisions a brand new tenant with initial owner and subscription.
    */
   public static provisionTenant(input: ProvisionTenantInput, context: PlatformContext) {
-    PlatformAuthorizationService.assertCan(context, "tenant.create");
+    PrivilegedActionGate.assert(context, "tenant.create", { payload: { slug: input.slug } });
+
+    // The plan must have a published version: never subscribe to a missing or draft one
+    const plan = db.findPlanById(input.plan_id);
+    if (!plan) throw new NotFoundError(`Plan "${input.plan_id}" not found.`);
+    const planVersion = latestPublished(db.getPlanVersions(plan.id));
+    if (!planVersion) throw new AppError("PLAN_NOT_PUBLISHED", `Plan "${plan.name}" has no published version.`, 409);
 
     // Check slug uniqueness
     const existing = db.findTenantBySlug(input.slug);
@@ -195,19 +215,27 @@ export class PlatformTenantService {
     };
     db.createMembership(membership);
 
-    // 4. Create Initial Subscription
-    const plan = db.findPlanById(input.plan_id) || db.getPlans()[0];
-    const planVersion = db.getPlanVersions(plan.id)[0] || { id: "pv_default_v1" };
-    const nextMonth = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    // 4. Create the initial subscription on the plan's latest published version (SA-10), active or as a trial
+    const billingPeriod: "MONTHLY" | "ANNUAL" = monthlyPrice(planVersion) !== null ? "MONTHLY" : "ANNUAL";
+    const trialDays = input.start_trial
+      ? planVersion.trial_days ?? PlatformSettingsService.getEffectiveSetting<number>("billing.trial_default_days")
+      : 0;
+    const periodStart = new Date(now);
+    const periodEndDate = new Date(periodStart);
+    if (trialDays > 0) periodEndDate.setDate(periodEndDate.getDate() + trialDays);
+    else if (billingPeriod === "ANNUAL") periodEndDate.setFullYear(periodEndDate.getFullYear() + 1);
+    else periodEndDate.setMonth(periodEndDate.getMonth() + 1);
 
     db.saveSubscription({
       id: `sub_${crypto.randomUUID().substring(0, 12)}`,
       tenant_id: tenantId,
       plan_id: plan.id,
       plan_version_id: planVersion.id,
-      status: "ACTIVE",
+      status: trialDays > 0 ? "TRIAL" : "ACTIVE",
+      billing_period: billingPeriod,
+      ...(trialDays > 0 ? { trial_ends_at: periodEndDate.toISOString() } : {}),
       current_period_start: now,
-      current_period_end: nextMonth,
+      current_period_end: periodEndDate.toISOString(),
       cancel_at_period_end: false,
       created_at: now,
       updated_at: now,
@@ -242,18 +270,23 @@ export class PlatformTenantService {
   /**
    * Suspends a tenant with mandatory reason, policy validation, and audit recording.
    */
-  public static suspendTenant(tenantId: string, reason: string, context: PlatformContext) {
-    PlatformAuthorizationService.assertCan(context, "tenant.suspend");
-    PlatformAuthorizationService.assertStepUp(context, "tenant.suspend");
-
-    if (!reason || reason.trim().length < 5) {
-      throw new AppError("REASON_REQUIRED", "Suspension requires a descriptive operational reason (min 5 chars).", 400);
-    }
-
+  public static suspendTenant(tenantId: string, reason: string, context: PlatformContext, options: TenantActionOptions = {}) {
     const tenant = db.findTenantById(tenantId);
     if (!tenant) {
       throw new NotFoundError(`Tenant "${tenantId}" not found.`);
     }
+    if (tenant.status === "ARCHIVED" || tenant.purge_after) {
+      // Suspend → activate would otherwise un-archive a tenant (and leave its purge scheduled)
+      throw new TenantStateInvalidError("An archived or purge-scheduled tenant can't be suspended.");
+    }
+    // HIGH: step-up and a ticket; two-person approval once the tenant is older than 30 days
+    PrivilegedActionGate.assert(context, "tenant.suspend", {
+      reason,
+      ticketRef: options.ticketRef,
+      approvalId: options.approvalId,
+      payload: { tenant: tenantId },
+      facts: { tenantCreatedAt: tenant.created_at },
+    });
 
     if (tenant.status === "SUSPENDED") {
       throw new TenantStateInvalidError(`Tenant "${tenantId}" is already suspended.`);
@@ -290,7 +323,7 @@ export class PlatformTenantService {
    * Activates a suspended or past-due tenant.
    */
   public static activateTenant(tenantId: string, reason: string, context: PlatformContext) {
-    PlatformAuthorizationService.assertCan(context, "tenant.activate");
+    PrivilegedActionGate.assert(context, "tenant.activate", { reason, payload: { tenant: tenantId } });
 
     const tenant = db.findTenantById(tenantId);
     if (!tenant) {
@@ -321,7 +354,7 @@ export class PlatformTenantService {
         resource_type: "tenant",
         resource_id: tenantId,
         target_tenant_id: tenantId,
-        reason: reason || "Reactivated via Platform Control Plane",
+        reason: reason.trim(),
         before_state: beforeState,
         after_state: { status: "ACTIVE" },
         result: "SUCCESS",
@@ -336,14 +369,20 @@ export class PlatformTenantService {
    * Initiates governed tenant deletion workflow with grace period.
    * Invariant: Permanent hard delete is NEVER immediate.
    */
-  public static archiveTenant(tenantId: string, reason: string, context: PlatformContext) {
-    PlatformAuthorizationService.assertCan(context, "tenant.delete");
-    PlatformAuthorizationService.assertStepUp(context, "tenant.delete");
-
+  public static archiveTenant(tenantId: string, reason: string, context: PlatformContext, options: TenantActionOptions = {}) {
     const tenant = db.findTenantById(tenantId);
     if (!tenant) {
       throw new NotFoundError(`Tenant "${tenantId}" not found.`);
     }
+    if (tenant.status === "ARCHIVED") throw new TenantStateInvalidError("The tenant is already archived.");
+    // Same approval rule as suspending: archiving also takes the workspace offline
+    PrivilegedActionGate.assert(context, "tenant.archive", {
+      reason,
+      ticketRef: options.ticketRef,
+      approvalId: options.approvalId,
+      payload: { tenant: tenantId },
+      facts: { tenantCreatedAt: tenant.created_at },
+    });
 
     const beforeState = { status: tenant.status };
     const now = new Date().toISOString();
@@ -360,7 +399,7 @@ export class PlatformTenantService {
         resource_type: "tenant",
         resource_id: tenantId,
         target_tenant_id: tenantId,
-        reason: reason || "Archived for compliance / deletion grace period",
+        reason: reason.trim(),
         before_state: beforeState,
         after_state: { status: "ARCHIVED", archived_at: now },
         result: "SUCCESS",
@@ -369,5 +408,81 @@ export class PlatformTenantService {
     );
 
     return updated;
+  }
+
+  /**
+   * Schedules a tenant purge (CRITICAL: two-person approval and the typed slug). The tenant is archived and its
+   * data kept for the 14-day tombstone (rules/privileged-actions.md §3.5). Nothing deletes data yet: the response
+   * says so instead of claiming a purge happened.
+   */
+  public static schedulePurge(
+    tenantId: string,
+    input: { reason: string; ticketRef?: string; approvalId?: string; confirmation?: string },
+    context: PlatformContext
+  ) {
+    const tenant = db.findTenantById(tenantId);
+    if (!tenant) throw new NotFoundError(`Tenant "${tenantId}" not found.`);
+    if (tenant.purge_after) throw new TenantStateInvalidError("A purge is already scheduled for this tenant.");
+    PrivilegedActionGate.assert(context, "tenant.purge", {
+      reason: input.reason,
+      ticketRef: input.ticketRef,
+      approvalId: input.approvalId,
+      confirmation: input.confirmation,
+      confirmTarget: { id: tenant.id, slug: tenant.slug },
+      payload: { tenant: tenant.id },
+    });
+
+    const now = new Date();
+    const purgeAfter = new Date(now.getTime() + PURGE_TOMBSTONE_DAYS * 24 * 60 * 60 * 1000).toISOString();
+    db.updateTenant(tenantId, {
+      status: "ARCHIVED",
+      archived_at: tenant.archived_at ?? now.toISOString(),
+      purge_requested_at: now.toISOString(),
+      purge_after: purgeAfter,
+      updated_at: now.toISOString(),
+    });
+    PlatformAuditService.record(
+      {
+        action: "tenant.purge_scheduled",
+        resource_type: "tenant",
+        resource_id: tenantId,
+        target_tenant_id: tenantId,
+        reason: input.reason.trim(),
+        before_state: { status: tenant.status },
+        after_state: { status: "ARCHIVED", purge_after: purgeAfter, data_deleted: false },
+        result: "SUCCESS",
+      },
+      context
+    );
+    return {
+      tenant_id: tenantId,
+      status: "PURGE_SCHEDULED" as const,
+      purge_after: purgeAfter,
+      data_deleted: false,
+      note: "The workspace is archived and its data is retained until purge_after. Physical deletion is not implemented yet.",
+    };
+  }
+
+  /** Cancels a scheduled purge during the tombstone period; the tenant stays archived. */
+  public static cancelPurge(tenantId: string, input: { reason: string; ticketRef?: string }, context: PlatformContext) {
+    const tenant = db.findTenantById(tenantId);
+    if (!tenant) throw new NotFoundError(`Tenant "${tenantId}" not found.`);
+    if (!tenant.purge_after) throw new TenantStateInvalidError("No purge is scheduled for this tenant.");
+    PrivilegedActionGate.assert(context, "tenant.purge_cancel", { reason: input.reason, ticketRef: input.ticketRef, payload: { tenant: tenantId } });
+    db.updateTenant(tenantId, { purge_requested_at: undefined, purge_after: undefined, updated_at: new Date().toISOString() });
+    PlatformAuditService.record(
+      {
+        action: "tenant.purge_cancelled",
+        resource_type: "tenant",
+        resource_id: tenantId,
+        target_tenant_id: tenantId,
+        reason: input.reason.trim(),
+        before_state: { purge_after: tenant.purge_after },
+        after_state: { purge_after: null },
+        result: "SUCCESS",
+      },
+      context
+    );
+    return { tenant_id: tenantId, status: "ARCHIVED" as const, purge_after: null };
   }
 }

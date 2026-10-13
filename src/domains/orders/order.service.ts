@@ -11,6 +11,8 @@ import { CustomerService } from "@/domains/customers/customer.service";
 import { InventoryService } from "@/domains/inventory/inventory.service";
 import { OrderStateMachine } from "@/domains/orders/order-state-machine";
 import { BadRequestError, NotFoundError } from "@/lib/errors";
+import { orderRepository } from "./order.repository";
+import { RtoScoringService } from "@/domains/rto/rto-scoring.service";
 
 export class OrderService {
   public static async listOrders(
@@ -22,9 +24,31 @@ export class OrderService {
       search?: string;
       limit?: number;
       offset?: number;
+      cursor?: string;
     }
-  ): Promise<{ orders: (Order & { customer_name: string; customer_phone: string })[]; total: number }> {
+  ): Promise<{
+    orders: (Order & { customer_name?: string; customer_phone?: string })[];
+    total: number;
+    next_cursor?: string | null;
+    has_more?: boolean;
+  }> {
     RbacService.assertCan(context, PERMISSIONS.ORDERS_READ);
+    if (options?.cursor !== undefined) {
+      const res = await orderRepository.listWithCursor(context.tenant.id, {
+        status: options.status,
+        payment_status: options.payment_status,
+        customer_id: options.customer_id,
+        search: options.search,
+        limit: options.limit ?? 20,
+        cursor: options.cursor,
+      });
+      return {
+        orders: res.items as any,
+        total: res.total ?? res.items.length,
+        next_cursor: res.pagination.next_cursor,
+        has_more: res.pagination.has_more,
+      };
+    }
     return db.getOrders(context.tenant.id, { ...options, limit: options?.limit ?? 50 }); // one page; analytics use getAllOrders
   }
 
@@ -37,11 +61,12 @@ export class OrderService {
     reference: string
   ): Promise<(Order & { customer_name: string; customer_phone: string }) | undefined> {
     RbacService.assertCan(context, PERMISSIONS.ORDERS_READ);
-    const ref = reference.trim().toLowerCase();
-    const match = db
-      .getAllOrders(context.tenant.id)
-      .find((o) => o.order_number.toLowerCase() === ref || o.id.toLowerCase() === ref);
-    return match ? db.findOrderById(context.tenant.id, match.id) : undefined;
+    const ref = reference.trim();
+    const byId = await orderRepository.findById(context.tenant.id, ref);
+    if (byId) return byId as any;
+    const byNumber = await orderRepository.findByOrderNumber(context.tenant.id, ref);
+    if (byNumber) return byNumber as any;
+    return undefined;
   }
 
   public static async getOrderById(
@@ -49,11 +74,11 @@ export class OrderService {
     orderId: string
   ): Promise<Order & { customer_name: string; customer_phone: string }> {
     RbacService.assertCan(context, PERMISSIONS.ORDERS_READ);
-    const order = db.findOrderById(context.tenant.id, orderId);
+    const order = (await orderRepository.findById(context.tenant.id, orderId)) ?? db.findOrderById(context.tenant.id, orderId);
     if (!order) {
       throw new NotFoundError(`Order '${orderId}' not found.`);
     }
-    return order;
+    return order as any;
   }
 
   public static async createOrder(
@@ -257,6 +282,13 @@ export class OrderService {
       },
       created_at: now,
     });
+
+    // 10. Pre-shipment RTO & courier fraud risk evaluation
+    try {
+      await RtoScoringService.evaluateOrderRisk(context, createdOrder, customer.phone);
+    } catch {
+      // Evaluation non-blocking for order placement
+    }
 
     return createdOrder;
   }

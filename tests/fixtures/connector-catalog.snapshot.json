@@ -146,7 +146,7 @@
     },
     {
       "id": "ollama",
-      "name": "Ollama (Self-Hosted)",
+      "name": "Ollama (Local & Cloud)",
       "category": "AI_LLM",
       "status": "BETA",
       "default_endpoint": "http://localhost:11434/v1",
@@ -233,6 +233,24 @@
           "name": "webhook_verify_token",
           "type": "password",
           "required": true,
+          "has_default": false
+        },
+        {
+          "name": "instagram_account_id",
+          "type": "text",
+          "required": false,
+          "has_default": false
+        },
+        {
+          "name": "ad_account_id",
+          "type": "text",
+          "required": false,
+          "has_default": false
+        },
+        {
+          "name": "ads_access_token",
+          "type": "password",
+          "required": false,
           "has_default": false
         }
       ]

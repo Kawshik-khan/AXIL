@@ -335,3 +335,57 @@ export interface OutboundWebhookDelivery {
   created_at: string;
   delivered_at?: string;
 }
+
+/** Channels whose post comments can trigger an inbox message (Meta "private replies"). */
+export type CommentTriggerChannel = "FACEBOOK_MESSENGER" | "INSTAGRAM";
+
+/**
+ * A merchant's comment-to-inbox rule: when someone comments one of `keywords` on a post, the commenter gets
+ * `dm_message` in their inbox (one private reply per comment, sent by the background worker).
+ */
+export interface CommentTriggerRule {
+  id: string;
+  tenant_id: string;
+  name: string;
+  /** Lower-cased words or phrases; a comment matches when it contains one as a whole word or phrase. */
+  keywords: string[];
+  channel_types: CommentTriggerChannel[];
+  /** The offer sent to the commenter's inbox. `{name}` and `{keyword}` are filled in. */
+  dm_message: string;
+  /** Only comments on these post / media ids; empty means every post. */
+  post_ids: string[];
+  is_active: boolean;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export type CommentTriggerEventStatus = "PENDING" | "SENDING" | "SENT" | "FAILED" | "SKIPPED";
+
+/** One matched comment and what happened to its inbox message. */
+export interface CommentTriggerEvent {
+  id: string;
+  tenant_id: string;
+  rule_id: string;
+  rule_name: string;
+  channel_id: string;
+  channel_type: CommentTriggerChannel;
+  comment_id: string;
+  post_id?: string;
+  commenter_id: string;
+  commenter_name?: string;
+  comment_text: string;
+  matched_keyword: string;
+  message_text: string;
+  status: CommentTriggerEventStatus;
+  attempts: number;
+  next_attempt_at: string;
+  claimed_at?: string;
+  external_message_id?: string;
+  /** The commenter's inbox id (PSID / IGSID) that Meta returned for the private reply. */
+  recipient_id?: string;
+  failure_reason?: string;
+  sent_at?: string;
+  created_at: string;
+  updated_at: string;
+}

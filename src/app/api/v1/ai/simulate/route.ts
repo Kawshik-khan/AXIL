@@ -25,6 +25,7 @@ async function handlePOST(request: Request) {
       customerName: body.customer_name || "Simulated Customer",
       agentId: body.agent_id,
       conversationId: body.conversation_id,
+      signal: request.signal,
     });
 
     return apiSuccess(result);

@@ -22,17 +22,26 @@ import type { LLMMessage } from "@/domains/ai/providers/llm-provider.interface";
 import type { Message } from "@/types/social";
 import { visibleOrders, type CustomerAgentPrincipal } from "./principal";
 import { CUSTOMER_TOOLS, runCustomerTool, type ToolResult } from "./tools";
+import { isAffirmative } from "./confirmation";
 import {
   PROMISES_HUMAN, allowedAmounts, capLength, guardOrderClaim, guardPaymentClaim, guardPhoneNumbers, notAMessage, replyScript,
-  sanitizeOutbound, stripAmounts, unsupportedAmounts,
+  sanitizeOutbound, stripAmounts, synthesizeGroundedResponse, unsupportedAmounts,
 } from "./output";
+import { PromptInjectionClassifier } from "../safety/prompt-injection";
+import { AiBudgetGuard } from "../safety/budget-guard";
+import { ConfidenceEngine } from "../safety/confidence-engine";
+import { HitlEscalationService } from "../hitl/hitl-escalation.service";
+import type { AgentExecutionTraceRecord, GuardrailTriggerType } from "@/types/ai";
+
+import { envNumber } from "@/lib/env-number";
 
 export const PROMPT_FILE = "customer-agent.system.v2.1-cod.md";
 export const PROMPT_VERSION = PROMPT_FILE.replace(/\.md$/, "");
 const MAX_MODEL_CALLS = 6;
 const MAX_TOOL_CALLS = 8;
-const TURN_BUDGET_MS = 25_000;
+const TURN_BUDGET_MS = envNumber("CUSTOMER_AGENT_BUDGET_MS", 60_000, 5_000);
 const HISTORY_MESSAGES = 10;
+
 
 /**
  * What the customer and the agent actually said in the chat. Internal notes are staff-only (the model would take them
@@ -84,9 +93,24 @@ export function conversationSlots(pr: CustomerAgentPrincipal): string[] {
   const slots: string[] = [];
   const phone = lastMatch(customer, /(?:\+?88)?(01[3-9]\d{8})/g);
   if (phone) slots.push(`phone: ${phone}`);
-  const name = lastMatch(customer, /(?:amar naam|amar nam|my name is|i am|আমার নাম)\s+([A-Za-zঀ-৿]+(?:\s+[A-Za-zঀ-৿]+)?)/gi);
+  let name = lastMatch(
+    customer,
+    /(?:amar naam|amar nam|my name is|i am|আমার নাম|\bname\b|\bনাম\b)\s*[:\-]?\s*([A-Za-z\u0980-\u09FF]+(?:\s+[A-Za-z\u0980-\u09FF]+)?)(?=\s*(?:[,\n;]|phone|মোবাইল|mobile|phn|address|ঠিকানা|$))/gi
+  );
+  if (!name) {
+    for (const t of customer) {
+      const m = t.match(/^\s*([A-Za-z\u0980-\u09FF]{2,20}(?:\s+[A-Za-z\u0980-\u09FF]{2,20})?)\s*[,;\n]/);
+      if (m && !/^(?:hi|hello|hey|vai|bhai|ji|ha|yes|ok|okay|ভাই|হ্যাঁ|জি)$/i.test(m[1].trim())) {
+        name = m[1].trim();
+      }
+    }
+  }
   if (name) slots.push(`name: ${name}`);
-  const address = lastMatch(customer, /((?:address\s*[:\-]?\s*|ঠিকানা\s*[:\-]?\s*)?(?:house|flat|holding|বাসা)\s*[#:]?\s*\w+[^\n]{3,80})/gi);
+  const addressMatch = lastMatch(
+    customer,
+    /((?:address\s*[:\-]?\s*|ঠিকানা\s*[:\-]?\s*)[^\n]{5,100}|(?:house|flat|holding|road|block|sector|বাসা|রোড|ব্লক|সেক্টর|গ্রাম|মহল্লা)\s*[#:]?\s*[^\n]{5,100})/gi
+  );
+  const address = addressMatch ? addressMatch.replace(/^(?:address\s*[:\-]?\s*|ঠিকানা\s*[:\-]?\s*)/i, "").trim() : undefined;
   if (address) slots.push(`address: ${address}`);
   let district: string | undefined;
   for (const t of customer) for (const w of t.split(/[\s,.;:!?।]+/)) {
@@ -97,13 +121,28 @@ export function conversationSlots(pr: CustomerAgentPrincipal): string[] {
   const size = lastMatch(customer, /\b(XXL|XL|L|M|S)\b(?=\s*(?:size|সাইজ))|(?:size|সাইজ)\s*(XXL|XL|L|M|S|\d{2})\b/gi) ?? lastMatch(customer, /\b(XXL|XL)\b/g);
   if (size) slots.push(`size_mentioned: ${size.toUpperCase()}`);
   const productWords = Object.keys(SEARCH_SYNONYMS).filter((k) => !COLOUR_WORDS.has(k));
-  const products = [...new Set(customer.flatMap((t) => searchTokens(t)).filter((k) => productWords.includes(k)))];
+  const allTexts = [...customer, ...agent];
+  const products = [...new Set(allTexts.flatMap((t) => searchTokens(t)).filter((k) => productWords.includes(k)))];
   if (products.length) slots.push(`first_product_asked_for: ${products[0]}`, `products_discussed: ${products.slice(-3).join(", ")}`);
   const orderRefs = [...new Set(customer.flatMap((t) => t.match(/ORD-\d{4}-\d{6}/gi) || []))].slice(-3);
   if (orderRefs.length) slots.push(`order_numbers_the_customer_mentioned: ${orderRefs.join(", ")}`);
   const promise = lastMatch(agent, /([^.।\n]{0,80}\b(?:dibo|pathabo|pathiye dibo|janabo|will send|will share|জানাবো|পাঠাবো|পাঠিয়ে দেব)\b[^.।\n]{0,40})/gi);
   if (promise) slots.push(`your_open_promise: "${promise}"`);
   return slots;
+}
+
+export function extractCustomerOrderDetails(pr: CustomerAgentPrincipal) {
+  const slots = conversationSlots(pr);
+  const getSlot = (prefix: string) => {
+    const s = slots.find((x) => x.startsWith(prefix));
+    return s ? s.slice(prefix.length).trim() : undefined;
+  };
+  return {
+    phone: getSlot("phone: "),
+    name: getSlot("name: "),
+    address: getSlot("address: "),
+    district: getSlot("district: "),
+  };
 }
 
 /** The server's view of this chat, given to the model as authoritative. */
@@ -119,11 +158,19 @@ export function sessionState(pr: CustomerAgentPrincipal, currentText: string): s
   if (orders.length) lines.push(`own_recent_orders: ${orders.map((o) => `${o.order_number} (${o.status})`).join("; ")}`);
   const slots = conversationSlots(pr);
   if (slots.length) lines.push(`customer_stated_in_this_chat (unverified; if the latest message says otherwise, the latest message wins):\n  ${slots.join("\n  ")}`);
-  const open = db
-    .getConversationQuotes(pr.tenantId, pr.conversationId)
+  const quotes = db.getConversationQuotes(pr.tenantId, pr.conversationId);
+  const open = quotes
     .filter((q) => q.status === "QUOTED" && Date.parse(q.expires_at) > Date.now())
     .pop();
   lines.push(open ? `open_quote: ${open.id}, grand total ৳${open.grand_total}, district ${open.district}, waiting for the customer's yes` : "open_quote: none");
+  const lastQuote = quotes[quotes.length - 1];
+  if (lastQuote && lastQuote.status !== "PLACED") {
+    const it = lastQuote.items?.[0];
+    const line = lastQuote.lines?.[0];
+    if (it && line) {
+      lines.push(`recent_quoted_item: ${line.name} (variant_id: "${it.variant_id}"), district: "${lastQuote.district}", total: ৳${lastQuote.grand_total}`);
+    }
+  }
   return lines.join("\n");
 }
 
@@ -248,12 +295,155 @@ export async function runCustomerTurn(pr: CustomerAgentPrincipal, opts: { budget
       total_tokens: promptTokens + completionTokens, cached_tokens: cachedTokens, estimated_cost_usd: costUsd, estimated_cost_bdt: costBdt,
       currency: "BDT", timestamp: new Date().toISOString(),
     });
+
+    // Record spend in tenant AI budget
+    AiBudgetGuard.recordSpend(pr.tenantId, promptTokens + completionTokens, costUsd);
+
+    // Map triggered guardrails
+    const guardrailTriggers: GuardrailTriggerType[] = [];
+    if (guards.includes("amount_stripped")) guardrailTriggers.push("UNGROUNDED_PRICE_DETECTED");
+    if (guards.includes("order_claim_blocked")) guardrailTriggers.push("UNVERIFIED_ORDER_CLAIM");
+    if (guards.includes("number_removed")) guardrailTriggers.push("MALFORMED_PHONE_NUMBER");
+    if (guards.includes("prompt_injection_blocked")) guardrailTriggers.push("PROMPT_INJECTION_DETECTED");
+    if (guards.includes("budget_hard_cap_exceeded")) guardrailTriggers.push("BUDGET_CAP_EXCEEDED");
+
+    // Dynamic confidence evaluation
+    const isCatalogGrounded = !guardrailTriggers.includes("UNGROUNDED_PRICE_DETECTED");
+    const confEval = ConfidenceEngine.evaluate({
+      customerMessage: current,
+      agentReply: reply,
+      isCatalogGrounded,
+      hasToolExecutionError: toolCalls.some((tc) => !tc.ok),
+    });
+
+    // A guard that rewrote the reply (stripped amount, blocked claim, removed number) already protected the customer:
+    // it is traced, but it must not pause the chat. Only an attack or a spent budget needs a person.
+    const needsPerson = guardrailTriggers.includes("PROMPT_INJECTION_DETECTED") || guardrailTriggers.includes("BUDGET_CAP_EXCEEDED");
+    const isEscalated = handoff || confEval.requiresEscalation || needsPerson;
+    const escalationReason = handoffReason || confEval.escalationReason;
+
+    // Auto-create HITL escalation ticket if low confidence or guard triggered and not in shadow mode
+    if (isEscalated && !opts.shadow) {
+      const openDraftQuote = db
+        .getConversationQuotes(pr.tenantId, pr.conversationId)
+        .filter((q) => q.status === "QUOTED" && Date.parse(q.expires_at) > Date.now())
+        .pop();
+
+      HitlEscalationService.createEscalation({
+        tenantId: pr.tenantId,
+        conversationId: pr.conversationId,
+        traceId,
+        triggerReason: escalationReason || "Automated HITL low-confidence escalation",
+        priority: confEval.sentiment === "HOSTILE" || guardrailTriggers.includes("PROMPT_INJECTION_DETECTED") ? "URGENT" : "HIGH",
+        orderDraft: openDraftQuote
+          ? {
+              items: openDraftQuote.lines.map((l) => ({
+                variant_id: l.sku,
+                product_name: l.name,
+                quantity: l.quantity,
+                unit_price: l.unit_price,
+                line_total: l.line_total,
+              })),
+              delivery_district: openDraftQuote.district,
+              subtotal: openDraftQuote.subtotal,
+              delivery_fee: openDraftQuote.delivery_charge,
+              grand_total: openDraftQuote.grand_total,
+              payment_method: "COD",
+            }
+          : undefined,
+      });
+    }
+
+    // Save Execution Trace
+    const traceRecord: AgentExecutionTraceRecord = {
+      id: `trc_${randomUUID().replace(/-/g, "")}`,
+      tenant_id: pr.tenantId,
+      conversation_id: pr.conversationId,
+      agent_run_id: runId,
+      turn_index: recent.length,
+      channel: (pr.channelType as any) || "WEBSITE_CHAT",
+      customer_message_preview: current.slice(0, 100),
+      agent_reply_preview: reply.slice(0, 100),
+      model_id: model,
+      prompt_version: PROMPT_VERSION,
+      latency_ms: Date.now() - started,
+      prompt_tokens: promptTokens,
+      completion_tokens: completionTokens,
+      cached_tokens: cachedTokens,
+      estimated_cost_usd: costUsd,
+      confidence_score: confEval.confidenceScore,
+      sentiment_score: confEval.sentiment,
+      detected_intent: isAffirmative(current) ? "ORDER_CONFIRMATION" : "PRODUCT_INQUIRY",
+      guardrails_evaluated: ["CATALOG_PRICE_GUARD", "ORDER_CLAIM_GUARD", "PHONE_NUMBER_GUARD"],
+      guardrails_triggered: guardrailTriggers,
+      escalation_triggered: isEscalated,
+      escalation_reason: escalationReason,
+      timestamp: new Date().toISOString(),
+    };
+    db.saveAgentExecutionTrace(traceRecord);
+
     return { runId, status, reply, handoff, toolCalls, guards, answeredMessageId: last.id };
   };
   const fallbackReply = () =>
     script === "bangla"
       ? "দুঃখিত, এই মুহূর্তে উত্তর দিতে পারছি না। আমাদের টিমের একজন শীঘ্রই এখানে উত্তর দেবেন।"
       : "Dukkhito, ekhon uttor dite parchi na. Amader team er ekjon shiggiri ekhane reply dibe.";
+
+  // 1. Ingress Security Guard: Multilingual Prompt Injection
+  const injection = PromptInjectionClassifier.analyze(current);
+  if (injection.isInjection) {
+    guards.push("prompt_injection_blocked");
+    const traceRecord: AgentExecutionTraceRecord = {
+      id: `trc_${randomUUID().replace(/-/g, "")}`,
+      tenant_id: pr.tenantId,
+      conversation_id: pr.conversationId,
+      agent_run_id: runId,
+      turn_index: recent.length,
+      channel: (pr.channelType as any) || "WEBSITE_CHAT",
+      customer_message_preview: current.slice(0, 100),
+      agent_reply_preview: injection.fallbackResponse.slice(0, 100),
+      model_id: "pre-guard",
+      prompt_version: PROMPT_VERSION,
+      latency_ms: Date.now() - started,
+      prompt_tokens: 0,
+      completion_tokens: 0,
+      cached_tokens: 0,
+      estimated_cost_usd: 0,
+      confidence_score: 10,
+      sentiment_score: "HOSTILE",
+      detected_intent: "PROMPT_INJECTION",
+      guardrails_evaluated: ["PROMPT_INJECTION_CLASSIFIER"],
+      guardrails_triggered: ["PROMPT_INJECTION_DETECTED"],
+      escalation_triggered: true,
+      escalation_reason: "Multilingual prompt injection attempt intercepted",
+      timestamp: new Date().toISOString(),
+    };
+    db.saveAgentExecutionTrace(traceRecord);
+    HitlEscalationService.createEscalation({
+      tenantId: pr.tenantId,
+      conversationId: pr.conversationId,
+      traceId: traceRecord.id,
+      triggerReason: `Prompt injection attempt: ${injection.matchedPatterns[0] ?? "Jailbreak"}`,
+      priority: "HIGH",
+    });
+    return finish("ESCALATED", injection.fallbackResponse);
+  }
+
+  // 2. Ingress Budget Guard: Hard Cap Check
+  const budgetCheck = AiBudgetGuard.checkBudget(pr.tenantId);
+  if (!budgetCheck.allowed) {
+    guards.push("budget_hard_cap_exceeded");
+    HitlEscalationService.createEscalation({
+      tenantId: pr.tenantId,
+      conversationId: pr.conversationId,
+      triggerReason: "Monthly AI budget hard cap reached",
+      priority: "HIGH",
+    });
+    const budgetReply = script === "bangla"
+      ? "আমাদের মাসিক AI সেবা কোটা পূর্ণ হয়েছে। আমাদের একজন প্রতিনিধি শীঘ্রই আপনার সাথে যোগাযোগ করবেন।"
+      : "Amader monthly AI budget limit reach hoyeche. Amader team er ekjon shiggiri ekhane reply dibe.";
+    return finish("ESCALATED", budgetReply);
+  }
 
   try {
     for (let call = 0; call < MAX_MODEL_CALLS && Date.now() < deadline; call++) {
@@ -352,6 +542,81 @@ export async function runCustomerTurn(pr: CustomerAgentPrincipal, opts: { budget
     logger.warn("customer_agent.turn_failed", { tenant_id: pr.tenantId, conversation_id: pr.conversationId, code: (err as { code?: string }).code ?? "ERROR" });
     guards.push(`provider_failed:${(err as { code?: string }).code ?? "ERROR"}`);
   }
+
+  // If the agent already executed grounded tools this turn (quote, order placement, delivery charge),
+  // dynamically synthesize the grounded reply instead of discarding the completed work and failing into handoff.
+  if (!handoff) {
+    const hasPlacedThisTurn = toolResults.some((r: any) => r && (r.status === "CONFIRMATION_REQUIRED" || r.status === "PLACED"));
+    if (!hasPlacedThisTurn) {
+      const lastQuote = toolResults
+        .slice()
+        .reverse()
+        .find((r: any) => r && typeof r === "object" && typeof r.quote_id === "string") as Record<string, any> | undefined;
+      const openQuote = lastQuote?.quote_id
+        ? lastQuote
+        : db
+            .getConversationQuotes(pr.tenantId, pr.conversationId)
+            .filter((q) => q.status === "QUOTED" && Date.parse(q.expires_at) > Date.now())
+            .pop();
+
+      if (openQuote) {
+        const quoteId = ("quote_id" in openQuote ? (openQuote as any).quote_id : openQuote.id) as string;
+        const details = extractCustomerOrderDetails(pr);
+        if (details.name && details.phone && details.address) {
+          const placeOutcome = await runCustomerTool(pr, "place_order", {
+            quote_id: quoteId,
+            customer_name: details.name,
+            phone: details.phone,
+            address_line: details.address,
+          });
+          toolCalls.push({ name: "place_order", ok: placeOutcome.ok });
+          toolResults.push(placeOutcome.result);
+          if (placeOutcome.result.status === "PLACED" && typeof placeOutcome.result.order_number === "string") {
+            placedOrderNumbers.push(placeOutcome.result.order_number);
+          }
+        } else if (openQuote.confirmation_details && isAffirmative(current)) {
+          const placeOutcome = await runCustomerTool(pr, "place_order", {
+            quote_id: quoteId,
+            customer_name: openQuote.confirmation_details.customer_name,
+            phone: openQuote.confirmation_details.phone,
+            address_line: openQuote.confirmation_details.address_line,
+          });
+          toolCalls.push({ name: "place_order", ok: placeOutcome.ok });
+          toolResults.push(placeOutcome.result);
+          if (placeOutcome.result.status === "PLACED" && typeof placeOutcome.result.order_number === "string") {
+            placedOrderNumbers.push(placeOutcome.result.order_number);
+          }
+        }
+      }
+    }
+
+    const hasProductOrOrderResults = toolResults.some(
+      (r: any) => r && (r.status === "PLACED" || r.status === "CONFIRMATION_REQUIRED" || r.quote_id || Array.isArray(r.results) || Array.isArray(r.products))
+    );
+    if (!hasProductOrOrderResults) {
+      const productWords = Object.keys(SEARCH_SYNONYMS).filter((k) => !COLOUR_WORDS.has(k));
+      const hasProductInquiry =
+        searchTokens(current).some((t) => productWords.includes(t) || t === "shirt" || t === "tshirt") ||
+        /^(?:all|catalog|product|products|collection|shop|ki ki|সব|প্রোডাক্ট|কালেকশন|t-?shirt|panjabi|shirt|saree|গেঞ্জি|পাঞ্জাবি|শার্ট|টি-?শার্ট)/i.test(current.trim());
+      if (hasProductInquiry) {
+        const searchOutcome = await runCustomerTool(pr, "search_products", { query: current });
+        if (searchOutcome.ok) {
+          toolCalls.push({ name: "search_products", ok: true });
+          toolResults.push(searchOutcome.result);
+        }
+      }
+    }
+
+    const grounded = synthesizeGroundedResponse(toolResults, script);
+    if (grounded) {
+      guards.push("synthesized_grounded_fallback");
+      let text = sanitizeOutbound(grounded);
+      text = guardPhoneNumbers(pr.tenantId, pr.conversationId, text).text;
+      text = capLength(text);
+      return finish("COMPLETED", text);
+    }
+  }
+
   await handOff("could_not_answer", "The agent couldn't finish this reply; please take over.");
   return finish("FAILED", fallbackReply());
 }

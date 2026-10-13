@@ -18,6 +18,7 @@ import { KnowledgeService } from "@/domains/ai/rag/knowledge.service";
 import { CspReportService } from "@/domains/platform/services/csp-report.service";
 import type { TenantRecord } from "@/infrastructure/db";
 import type { JobRunRecord } from "@/types/commerce";
+import { orderRepository } from "@/domains/orders/order.repository";
 import { localHour } from "@/lib/local-time";
 
 export { localHour };
@@ -65,27 +66,33 @@ export const JOBS: Record<string, JobDefinition> = {
   "daily-report": {
     cadenceMs: HOUR,
     async run(now) {
-      const tenants = dueTenants()
-        .filter((t) => localHour(t, now) === 21)
-        .flatMap((t) => {
+      const candidates = dueTenants().filter((t) => localHour(t, now) === 21);
+      const results = await Promise.all(
+        candidates.map(async (t) => {
           const chat = settingsOf(t).daily_report_telegram_chat_id;
-          if (typeof chat !== "string" || !chat) return []; // not opted in: no recipient
+          if (typeof chat !== "string" || !chat) return null; // not opted in: no recipient
           const today = localDate(t, now);
-          const orders = db.getAllOrders(t.id).filter((o) => localDate(t, o.created_at) === today);
+          const fromTime = new Date(now - 26 * HOUR).toISOString();
+          const toTime = new Date(now + 2 * HOUR).toISOString();
+          const ordersInWindow = await orderRepository.findInWindow(t.id, fromTime, toTime);
+          const orders = ordersInWindow.filter((o) => localDate(t, o.created_at) === today);
           const live = orders.filter((o) => o.status !== "CANCELLED");
           const low = db.getInventory(t.id).filter((i) => i.reorder_point > 0 && i.quantity_available <= i.reorder_point).length;
           const revenue = live.reduce((n, o) => n + o.grand_total, 0);
-          return [{
+          const pendingCount = (await orderRepository.countByTenant(t.id, "PENDING")) || 0;
+          return {
             tenant_id: t.id,
             telegram_chat_id: chat,
             date: today,
             orders: orders.length,
             revenue_bdt: revenue,
-            pending_orders: db.getAllOrders(t.id).filter((o) => o.status === "PENDING").length,
+            pending_orders: pendingCount,
             low_stock_items: low,
-            text: `${t.name}: ${today}\nOrders: ${orders.length} (${orders.length - live.length} cancelled)\nRevenue: ৳${revenue.toLocaleString("en-BD")}\nPending orders: ${db.getAllOrders(t.id).filter((o) => o.status === "PENDING").length}\nLow-stock items: ${low}`,
-          }];
-        });
+            text: `${t.name}: ${today}\nOrders: ${orders.length} (${orders.length - live.length} cancelled)\nRevenue: ৳${revenue.toLocaleString("en-BD")}\nPending orders: ${pendingCount}\nLow-stock items: ${low}`,
+          };
+        })
+      );
+      const tenants = results.filter((r): r is NonNullable<typeof r> => r !== null);
       return { tenants };
     },
   },

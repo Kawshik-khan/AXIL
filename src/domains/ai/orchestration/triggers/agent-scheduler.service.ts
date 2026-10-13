@@ -18,11 +18,8 @@ export class AgentSchedulerService {
 
       const nextRun = new Date(schedule.next_run_at);
       if (now >= nextRun) {
+        const scheduledFor = schedule.next_run_at;
         // Trigger scheduled workflow
-        const template = db.getWorkflowTemplates(tenantId).find(
-          (t) => t.id === schedule.workflow_template_id || t.code === schedule.workflow_template_id
-        );
-
         const workflow = await workflowEngine.createWorkflow({
           tenantId,
           name: `Scheduled: ${schedule.name}`,
@@ -42,9 +39,7 @@ export class AgentSchedulerService {
           next_run_at: nextDate,
         });
 
-        workflowEngine.startWorkflow(workflow.tenant_id, workflow.id).catch((err) => {
-          console.error(`Error starting scheduled workflow ${workflow.id}:`, err);
-        });
+        await workflowEngine.enqueueAction(tenantId, workflow.id, "START", `schedule:${schedule.id}:${scheduledFor}`);
 
         triggeredIds.push(schedule.id);
       }

@@ -33,7 +33,8 @@ export class CopilotService {
    */
   public static async generateSuggestion(
     context: RequestContext,
-    conversationId: string
+    conversationId: string,
+    signal?: AbortSignal
   ): Promise<CopilotSuggestionResult> {
     RbacService.assertCan(context, PERMISSIONS.AI_RUN);
 
@@ -50,12 +51,13 @@ export class CopilotService {
       messageText: lastCustomerMsg.text,
       simulateOnly: true,
       isCopilot: true,
+      signal,
     });
 
     return {
       suggestion: result.finalResponse,
       suggested_reply: result.finalResponse,
-      confidence: null,
+      confidence: result.confidence ?? null,
       intent: result.intent,
       agent_type: result.agentType,
       citations: result.citations.map((c) => ({

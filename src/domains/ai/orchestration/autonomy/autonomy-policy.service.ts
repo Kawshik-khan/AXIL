@@ -79,6 +79,7 @@ export class AutonomyPolicyService {
   public triggerEmergencyStop(tenantId: string, agentType: AgentType, reason: string): AutonomyPolicy {
     const policy = this.getPolicy(tenantId, agentType);
     policy.is_emergency_stopped = true;
+    policy.version += 1;
     policy.updated_at = new Date().toISOString();
     db.upsertAutonomyPolicy(tenantId, policy);
 
@@ -103,6 +104,7 @@ export class AutonomyPolicyService {
   public clearEmergencyStop(tenantId: string, agentType: AgentType): AutonomyPolicy {
     const policy = this.getPolicy(tenantId, agentType);
     policy.is_emergency_stopped = false;
+    policy.version += 1;
     policy.updated_at = new Date().toISOString();
     db.upsertAutonomyPolicy(tenantId, policy);
 

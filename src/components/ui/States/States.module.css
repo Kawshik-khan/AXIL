@@ -100,3 +100,22 @@
   0% { background-position: 100% 50%; }
   100% { background-position: 0 50%; }
 }
+
+/* Inside a card: no second border, background or outer margin */
+.inline {
+  background-color: transparent;
+  border: none;
+  box-shadow: none;
+  margin: 0;
+  padding: var(--space-24) var(--space-16);
+}
+
+.illustration {
+  margin-bottom: var(--space-4);
+}
+
+/* platform console dark theme: the loading shimmer in light tones */
+:global(html[data-console-theme="dark"]) .skeletonLine {
+  background: linear-gradient(90deg, var(--color-border-subtle) 25%, var(--color-border-medium) 37%, var(--color-border-subtle) 63%);
+  background-size: 400% 100%;
+}

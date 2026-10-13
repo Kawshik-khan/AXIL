@@ -2,7 +2,7 @@ import { PERMISSIONS } from "@/lib/permissions";
 import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { fulfillmentOperationsService } from "@/domains/operations/services/fulfillment-operations.service";
-import { db } from "@/infrastructure/db";
+import { orderRepository } from "@/domains/orders/order.repository";
 import { withStore } from "@/lib/store-unit";
 
 async function handleGET(request: Request) {
@@ -11,8 +11,7 @@ async function handleGET(request: Request) {
     RbacService.assertCan(context, PERMISSIONS.OPERATIONS_READ);
     const tenantId = context.tenant.id;
 
-    const orders = db.getAllOrders(tenantId, { hydrate: true });
-    const readyOrders = orders.filter((o) => o.status === "CONFIRMED" || o.status === "PROCESSING");
+    const readyOrders = await orderRepository.findUnfulfilledOrders(tenantId);
 
     const candidatePlans = readyOrders.slice(0, 10).map((o) => {
       try {

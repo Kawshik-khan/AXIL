@@ -5,7 +5,7 @@ import { withStore } from "@/lib/store-unit";
 async function handleGET(request: Request) {
   try {
     const context = await extractPlatformContext(request);
-    const overview = PlatformAnalyticsService.getPlatformOverview(context);
+    const overview = await PlatformAnalyticsService.getPlatformOverviewAsync(context);
     return apiSuccess(overview);
   } catch (error) {
     return apiError(error);

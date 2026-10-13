@@ -20,4 +20,4 @@ Applies to CommerceOS's **product** agents (`src/domains/ai/agents/`, `src/domai
 
 5. **Structured outputs**: tool inputs/outputs use Zod schemas; free-form text never triggers a state mutation.
 
-6. **Honest provider status**: the LLM is currently `mock-llm.provider.ts` (STATUS: SIMULATED). Don't describe agent answers as model-generated until a real provider is wired.
+6. **Honest provider status**: `ModelRouter` uses an OpenAI-compatible provider only when configured; `AI_DEMO_MODE=1` selects the offline keyword mock and must be labeled DEMO. With neither configured, AI calls fail closed. Check `.agent/STATUS.md` before describing provider verification or availability.

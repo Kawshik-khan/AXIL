@@ -31,11 +31,31 @@ export class AuditService {
     return db.createAuditLog(logRecord);
   }
 
-  public static getLogsForTenant(
+  public static async getLogsForTenant(
     tenantId: string,
     limit = 50,
     offset = 0
-  ): { logs: AuditLogRecord[]; total: number } {
+  ): Promise<{ logs: AuditLogRecord[]; total: number }> {
+    const client = db.isCollectionHydrated("audit_logs") ? null : db.getSqlClient();
+    if (client) {
+      const [dataResult, countResult] = await Promise.all([
+        client.query<{ data: string | AuditLogRecord }>(
+          `SELECT data FROM commerceos.audit_logs WHERE tenant_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
+          [tenantId, limit, offset]
+        ),
+        client.query<{ total: string }>(
+          `SELECT count(*)::text AS total FROM commerceos.audit_logs WHERE tenant_id = $1`,
+          [tenantId]
+        ),
+      ]);
+      const logs: AuditLogRecord[] = dataResult.rows.map((r) =>
+        typeof r.data === "string" ? (JSON.parse(r.data) as AuditLogRecord) : (r.data as AuditLogRecord)
+      );
+      return {
+        logs,
+        total: Number(countResult.rows[0]?.total ?? 0),
+      };
+    }
     return db.getAuditLogsByTenant(tenantId, limit, offset);
   }
 }

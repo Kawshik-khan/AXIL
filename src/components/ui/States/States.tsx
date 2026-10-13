@@ -5,17 +5,23 @@ import { AlertTriangle, ShieldAlert, FolderOpen } from "lucide-react";
 import { Button } from "../Button/Button";
 import styles from "./States.module.css";
 
-export const LoadingSkeleton: React.FC<{ lines?: number; height?: string }> = ({
+export const LoadingSkeleton: React.FC<{ lines?: number; height?: string; inline?: boolean }> = ({
   lines = 3,
   height,
+  inline = false,
 }) => {
   return (
-    <div className={styles.skeletonCard} style={height ? { minHeight: height } : undefined}>
-      <div className={`${styles.skeletonLine} ${styles.skeletonTitle}`} />
+    <div
+      className={`${styles.skeletonCard} ${inline ? styles.inline : ""}`}
+      style={height ? { minHeight: height } : undefined}
+      suppressHydrationWarning
+    >
+      <div className={`${styles.skeletonLine} ${styles.skeletonTitle}`} suppressHydrationWarning />
       {Array.from({ length: lines }).map((_, i) => (
         <div
           key={i}
           className={`${styles.skeletonLine} ${i % 2 === 0 ? styles.skeletonMedium : styles.skeletonShort}`}
+          suppressHydrationWarning
         />
       ))}
     </div>
@@ -26,7 +32,7 @@ export const LoadingState: React.FC<{ message?: string }> = ({
   message = "Loading data...",
 }) => {
   return (
-    <div className={styles.stateContainer}>
+    <div className={styles.stateContainer} suppressHydrationWarning>
       <div className={styles.skeletonLine} style={{ width: "40px", height: "40px", borderRadius: "50%", margin: "0 auto 16px" }} />
       <h3 className={styles.title}>{message}</h3>
       <p className={styles.description}>Accessing authoritative cryptographic records...</p>
@@ -42,12 +48,20 @@ export const EmptyState: React.FC<{
   actionText?: string;
   onAction?: () => void;
   icon?: React.ReactNode;
-}> = ({ title, description, actionText, onAction, icon }) => {
+  /** A larger illustration (e.g. a Hairline figure) shown instead of the round icon. */
+  illustration?: React.ReactNode;
+  /** Drop the container chrome when the state sits inside a card. */
+  inline?: boolean;
+}> = ({ title, description, actionText, onAction, icon, illustration, inline = false }) => {
   return (
-    <div className={styles.stateContainer}>
-      <div className={styles.iconWrapper}>
-        {icon || <FolderOpen size={28} />}
-      </div>
+    <div className={`${styles.stateContainer} ${inline ? styles.inline : ""}`} suppressHydrationWarning>
+      {illustration ? (
+        <div className={styles.illustration}>{illustration}</div>
+      ) : (
+        <div className={styles.iconWrapper}>
+          {icon || <FolderOpen size={28} />}
+        </div>
+      )}
       <h3 className={styles.title}>{title}</h3>
       <p className={styles.description}>{description}</p>
       {actionText && onAction && (
@@ -66,14 +80,16 @@ export const ErrorState: React.FC<{
   message?: string;
   requestId?: string;
   onRetry?: () => void;
+  inline?: boolean;
 }> = ({
   title = "Something went wrong",
   message = "An error occurred while loading this view.",
   requestId,
   onRetry,
+  inline = false,
 }) => {
   return (
-    <div className={styles.stateContainer}>
+    <div className={`${styles.stateContainer} ${inline ? styles.inline : ""}`} suppressHydrationWarning>
       <div className={styles.iconWrapper} style={{ color: "var(--color-danger)" }}>
         <AlertTriangle size={28} />
       </div>
@@ -98,9 +114,10 @@ export const ErrorState: React.FC<{
 export const PermissionDenied: React.FC<{
   resource?: string;
   requiredPermission?: string;
-}> = ({ resource = "this section", requiredPermission }) => {
+  inline?: boolean;
+}> = ({ resource = "this section", requiredPermission, inline = false }) => {
   return (
-    <div className={styles.stateContainer}>
+    <div className={`${styles.stateContainer} ${inline ? styles.inline : ""}`} suppressHydrationWarning>
       <div className={styles.iconWrapper} style={{ color: "var(--color-warning)" }}>
         <ShieldAlert size={28} />
       </div>

@@ -10,6 +10,7 @@ async function handleGET(request: Request) {
     const category_id = searchParams.get("category_id") || undefined;
     const status = searchParams.get("status") || undefined;
     const search = searchParams.get("search") || undefined;
+    const cursor = searchParams.get("cursor") || undefined;
     const limit = searchParams.get("limit") ? parseInt(searchParams.get("limit")!, 10) : undefined;
     const offset = searchParams.get("offset") ? parseInt(searchParams.get("offset")!, 10) : undefined;
 
@@ -19,9 +20,14 @@ async function handleGET(request: Request) {
       search,
       limit,
       offset,
+      cursor,
     });
 
-    return apiSuccess(result.products, { total: result.total });
+    return apiSuccess(result.products, {
+      total: result.total,
+      next_cursor: result.next_cursor ?? null,
+      has_more: result.has_more ?? false,
+    });
   } catch (err) {
     return apiError(err);
   }

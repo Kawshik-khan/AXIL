@@ -57,6 +57,7 @@ export interface LLMProviderOptions {
   model?: string;
   /** Absolute time (epoch ms) by which the call, including waits and retries, must finish (FX-79). */
   deadline_ms?: number;
+  signal?: AbortSignal;
 }
 
 export interface LLMProvider {
@@ -70,7 +71,7 @@ export interface LLMProvider {
 
   generate(
     prompt: string,
-    options?: { systemPrompt?: string; temperature?: number; max_tokens?: number }
+    options?: { systemPrompt?: string; temperature?: number; max_tokens?: number; signal?: AbortSignal }
   ): Promise<string>;
 
   structuredOutput<T>(

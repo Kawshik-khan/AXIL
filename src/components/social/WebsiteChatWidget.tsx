@@ -31,16 +31,48 @@ export const WebsiteChatWidget: React.FC<WebsiteChatWidgetProps> = ({
       .then((res) => (res.ok ? res.json() : null))
       .then((json: { data?: { channels?: Array<{ id: string; type: string; status: string }> } } | null) => {
         const channel = json?.data?.channels?.find((c) => c.type === "WEBSITE_CHAT" && c.status === "ACTIVE");
-        setChannelId(channel?.id ?? null);
+        if (channel?.id) {
+          setChannelId(channel.id);
+        } else {
+          return fetch("/api/v1/social/widget/config")
+            .then((r) => (r.ok ? r.json() : null))
+            .then((cfg: { widget?: { channelId?: string } } | null) => {
+              setChannelId(cfg?.widget?.channelId ?? "chn_web_chat");
+            });
+        }
       })
-      .catch(() => setChannelId(null))
+      .catch(() => {
+        fetch("/api/v1/social/widget/config")
+          .then((r) => (r.ok ? r.json() : null))
+          .then((cfg: { widget?: { channelId?: string } } | null) => {
+            setChannelId(cfg?.widget?.channelId ?? "chn_web_chat");
+          })
+          .catch(() => setChannelId("chn_web_chat"));
+      })
       .finally(() => setChannelLookupDone(true));
   }, [channelIdProp]);
 
   // 128 random bits: the id addresses the visitor's conversation, so it must not be guessable.
-  const [anonymousId] = useState(
+  const [anonymousId, setAnonymousId] = useState(
     () => `anon_vis_${Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("")}`
   );
+
+  const handleResetSession = () => {
+    const newId = `anon_vis_${Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("")}`;
+    setAnonymousId(newId);
+    setMessages([
+      {
+        id: "init_1",
+        sender: "agent",
+        text: "Assalamu Alaikum! Welcome to our store. How can we assist you today?",
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      },
+    ]);
+    setIsAiTyping(false);
+    setStatusMsg("Session reset. Ready for a new customer interaction.");
+    setTimeout(() => setStatusMsg(null), 3000);
+  };
+
   const [visitorName, setVisitorName] = useState("Tanvir Rahman");
   const [visitorPhone, setVisitorPhone] = useState("01711223344");
   const [inputText, setInputText] = useState("");
@@ -53,7 +85,53 @@ export const WebsiteChatWidget: React.FC<WebsiteChatWidgetProps> = ({
     },
   ]);
   const [isSending, setIsSending] = useState(false);
+  const [isAiTyping, setIsAiTyping] = useState(false);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
+
+  // Poll for automated AI responses and new messages in real time
+  useEffect(() => {
+    if (!channelId || !anonymousId) return;
+
+    let active = true;
+    const pollMessages = async () => {
+      try {
+        const res = await fetch(`/api/v1/social/widget/message?channel_id=${encodeURIComponent(channelId)}&anonymous_id=${encodeURIComponent(anonymousId)}`);
+        if (!res.ok) return;
+        const data = (await res.json().catch(() => null)) as { success?: boolean; messages?: Array<{ id: string; sender: "visitor" | "agent"; text: string; timestamp: string }> } | null;
+        if (active && data?.success && Array.isArray(data.messages) && data.messages.length > 0) {
+          const serverMsgs: WidgetMessage[] = data.messages.map((m) => ({
+            id: m.id,
+            sender: m.sender,
+            text: m.text,
+            timestamp: m.timestamp,
+          }));
+
+          const welcome: WidgetMessage = {
+            id: "init_1",
+            sender: "agent",
+            text: "Assalamu Alaikum! Welcome to our store. How can we assist you today?",
+            timestamp: messages[0]?.timestamp || new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          };
+
+          setMessages([welcome, ...serverMsgs]);
+
+          const lastMsg = serverMsgs[serverMsgs.length - 1];
+          if (lastMsg.sender === "agent") {
+            setIsAiTyping(false);
+          }
+        }
+      } catch {
+        // Silent polling error
+      }
+    };
+
+    pollMessages();
+    const interval = setInterval(pollMessages, 2000);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [channelId, anonymousId]);
 
   const samplePrompts = [
     "Aapnader premium silk panjabi er price koto?",
@@ -83,6 +161,7 @@ export const WebsiteChatWidget: React.FC<WebsiteChatWidgetProps> = ({
     setMessages((prev) => [...prev, userMsg]);
     if (!textToSend) setInputText("");
     setIsSending(true);
+    setIsAiTyping(true);
     setStatusMsg("Sending to CommerceOS Ingress...");
 
     try {
@@ -105,9 +184,11 @@ export const WebsiteChatWidget: React.FC<WebsiteChatWidgetProps> = ({
         setTimeout(() => setStatusMsg(null), 3000);
         if (onNewMessageSent) onNewMessageSent();
       } else {
+        setIsAiTyping(false);
         setStatusMsg(`Failed: ${data?.error?.message || "Message was not accepted"}`);
       }
     } catch (err) {
+      setIsAiTyping(false);
       setStatusMsg("Delivery error (check network)");
     } finally {
       setIsSending(false);
@@ -152,9 +233,31 @@ export const WebsiteChatWidget: React.FC<WebsiteChatWidgetProps> = ({
             />
           </div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "0.6875rem", color: "var(--color-text-muted)" }}>
-          <Globe size={12} /> ID: <code>{anonymousId}</code> • Channel: <code>{channelId ?? (channelLookupDone ? "none connected" : "…")}</code>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "6px", fontSize: "0.6875rem", color: "var(--color-text-muted)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+            <Globe size={12} /> ID: <code>{anonymousId}</code> • Channel: <code>{channelId ?? (channelLookupDone ? "none connected" : "…")}</code>
+          </div>
+          <button
+            type="button"
+            onClick={handleResetSession}
+            title="Start a fresh visitor session"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "4px",
+              background: "#2e3036",
+              border: "1px solid #444750",
+              color: "#e1e3e8",
+              borderRadius: "4px",
+              padding: "3px 8px",
+              fontSize: "0.6875rem",
+              cursor: "pointer",
+            }}
+          >
+            <RotateCw size={11} /> New Session
+          </button>
         </div>
+
       </div>
 
       {/* Suggested Banglish Quick Prompts */}
@@ -222,6 +325,12 @@ export const WebsiteChatWidget: React.FC<WebsiteChatWidgetProps> = ({
               <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
                 <RotateCw size={12} className="spin" /> Sending...
               </div>
+            </div>
+          )}
+          {isAiTyping && !isSending && (
+            <div className={styles.widgetAgentBubble} style={{ opacity: 0.85, display: "flex", alignItems: "center", gap: "8px" }}>
+              <RotateCw size={12} className="spin" />
+              <span style={{ fontSize: "0.75rem", fontStyle: "italic" }}>AI agent is evaluating and replying...</span>
             </div>
           )}
         </div>

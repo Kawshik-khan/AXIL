@@ -224,6 +224,21 @@ export class InstagramAdapter implements IChannelProvider {
     return { externalMessageId: msgId, status: "SENT", providerTimestamp: new Date().toISOString() };
   }
 
+  public async sendPrivateReply(
+    credentials: ChannelCredentials,
+    commentId: string,
+    text: string
+  ): Promise<SendMessageResult & { recipientId?: string }> {
+    const result = await graphCall(credentials, "/me/messages", {
+      recipient: { comment_id: commentId },
+      message: { text: text.slice(0, 1000) },
+    });
+    const msgId = typeof result.message_id === "string" ? result.message_id : "";
+    if (!msgId) throw new AppError("INSTAGRAM_API_ERROR", "Instagram did not return a message id.", 502);
+    const recipientId = typeof result.recipient_id === "string" ? result.recipient_id : undefined;
+    return { externalMessageId: msgId, status: "SENT", providerTimestamp: new Date().toISOString(), recipientId };
+  }
+
   public async markMessageRead(
     _credentials: ChannelCredentials,
     _recipientId: string,

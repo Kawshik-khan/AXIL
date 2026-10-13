@@ -2,23 +2,28 @@ import { AppError } from "@/lib/errors";
 import { randomUUID } from 'crypto';
 import {
   AgentWorkflow,
+  AgentTask,
   WorkflowStatus,
   WorkflowTriggerType,
   WorkflowBudget,
   WorkflowContext,
   WorkflowCheckpoint,
   TaskStatus,
+  ActionReceipt,
 } from '@/types/orchestration';
 import { db } from '@/infrastructure/db';
+import { WorkflowJob } from '@/types/orchestration';
 import { workflowStateMachine } from './workflow-state-machine';
 import { taskPlanner } from '../planning/task-planner';
 import { taskExecutor } from './task-executor';
+import { workflowBudgetService } from './workflow-budget.service';
 
 export interface CreateWorkflowParams {
   tenantId: string;
   name: string;
   description?: string;
   objective: string;
+  templateCode?: string;
   triggerType?: WorkflowTriggerType;
   triggerSource?: string;
   triggerPayload?: Record<string, unknown>;
@@ -29,6 +34,54 @@ export interface CreateWorkflowParams {
 }
 
 export class WorkflowEngine {
+  /** Atomically enqueue a workflow command. The same key returns the original job. */
+  public async enqueueAction(
+    tenantId: string,
+    workflowId: string,
+    action: WorkflowJob['action'],
+    idempotencyKey: string
+  ): Promise<WorkflowJob> {
+    const workflow = db.getWorkflowById(tenantId, workflowId);
+    if (!workflow) throw new AppError("NOT_FOUND", `Workflow not found: ${workflowId}`, 404);
+    if (!idempotencyKey || idempotencyKey.length > 200) {
+      throw new AppError("VALIDATION_ERROR", "A valid workflow command idempotency key is required.", 400);
+    }
+    return db.unit(async () => {
+      const existing = db.findWorkflowJobByIdempotencyKey(tenantId, idempotencyKey);
+      if (existing) {
+        if (existing.workflow_id !== workflowId || existing.action !== action) {
+          throw new AppError("CONFLICT", "Idempotency key is already used for another workflow command.", 409);
+        }
+        return existing;
+      }
+      const now = new Date().toISOString();
+      return db.createWorkflowJob({
+        id: `wjob_${randomUUID()}`,
+        tenant_id: tenantId,
+        workflow_id: workflowId,
+        action,
+        idempotency_key: idempotencyKey,
+        status: "PENDING",
+        attempt_count: 0,
+        max_attempts: 5,
+        fence_version: 0,
+        created_at: now,
+        updated_at: now,
+      });
+    }, () => true);
+  }
+
+  /** Called only by the background worker after it has claimed the durable job. */
+  public async executeQueuedAction(job: WorkflowJob, signal?: AbortSignal): Promise<AgentWorkflow> {
+    const current = db.getWorkflowJobById(job.tenant_id, job.id);
+    if (!current || current.status !== "IN_FLIGHT" || current.claim_token !== job.claim_token) {
+      throw new AppError("CONFLICT", "Workflow job lease is no longer owned by this worker.", 409);
+    }
+    if (job.action === "RESUME") return this.resumeWorkflow(job.tenant_id, job.workflow_id, signal);
+    if (job.action === "RETRY") return this.retryWorkflow(job.tenant_id, job.workflow_id, signal);
+    return this.startWorkflow(job.tenant_id, job.workflow_id, signal);
+  }
+
   /**
    * Plans and creates a new multi-agent workflow
    */
@@ -38,32 +91,64 @@ export class WorkflowEngine {
     const now = new Date().toISOString();
 
     // 1. Decompose & Validate DAG Plan
-    const { steps, rawPlanSteps, validation } = await taskPlanner.planObjective(
+    const { steps, rawPlanSteps, validation, templateCode, templateVersion, clarification } = await taskPlanner.planObjective(
       tenantId,
       params.objective,
-      params.contextEntities
+      params.contextEntities,
+      params.templateCode
     );
 
     if (!validation.isValid) {
-      throw new Error(`Invalid workflow plan: ${validation.errors.join(', ')}`);
+      throw new AppError(
+        "VALIDATION_ERROR",
+        clarification && steps.length === 0
+          ? clarification
+          : validation.errors.length
+            ? `Invalid workflow plan: ${validation.errors.join(', ')}`
+            : clarification || "No supported workflow plan matches this objective.",
+        400
+      );
     }
 
-    // 2. Instantiate Tasks in DB
-    const tasks = taskPlanner.createTasksFromPlan(tenantId, workflowId, steps);
-    const taskIds = tasks.map((t) => t.id);
-
-    // 3. Initialize Budget
+    // 2. Validate the immutable limits. Caller-supplied used counters/reservations are never accepted.
+    const requestedBudget = params.budget || {};
     const defaultBudget: WorkflowBudget = {
-      max_tokens: 50000,
-      max_cost_usd: 1.0,
-      max_tool_calls: 30,
-      max_tasks: 20,
-      max_duration_ms: 180000,
+      max_tokens: requestedBudget.max_tokens ?? 50000,
+      max_cost_usd: requestedBudget.max_cost_usd ?? 1.0,
+      max_tool_calls: requestedBudget.max_tool_calls ?? 30,
+      max_tasks: requestedBudget.max_tasks ?? 20,
+      max_duration_ms: requestedBudget.max_duration_ms ?? 180000,
       used_tokens: 0,
       used_cost_usd: 0,
       used_tool_calls: 0,
-      ...params.budget,
     };
+    if (
+      !Number.isInteger(defaultBudget.max_tokens) || defaultBudget.max_tokens < 0 ||
+      !Number.isFinite(defaultBudget.max_cost_usd) || defaultBudget.max_cost_usd < 0 ||
+      !Number.isInteger(defaultBudget.max_tool_calls) || defaultBudget.max_tool_calls < 0 ||
+      !Number.isInteger(defaultBudget.max_tasks) || defaultBudget.max_tasks < 1 ||
+      !Number.isInteger(defaultBudget.max_duration_ms) || defaultBudget.max_duration_ms < 1
+    ) {
+      throw new AppError("VALIDATION_ERROR", "Workflow budget limits must be finite, non-negative values with positive task and duration limits.", 400);
+    }
+    if (steps.length > defaultBudget.max_tasks) {
+      throw new AppError("WORKFLOW_BUDGET_EXCEEDED", `Workflow has ${steps.length} tasks but its task limit is ${defaultBudget.max_tasks}.`, 400);
+    }
+
+    // 3. Instantiate tasks with per-task ceilings whose totals cannot exceed the workflow caps.
+    const tasks = taskPlanner.createTasksFromPlan(tenantId, workflowId, steps);
+    const taskIds = tasks.map((t) => t.id);
+    tasks.forEach((task, index) => {
+      const budget: AgentTask["budget"] = {
+        max_tokens: integerShare(defaultBudget.max_tokens, tasks.length, index),
+        max_cost_usd: decimalShare(defaultBudget.max_cost_usd, tasks.length, index),
+        max_tool_calls: integerShare(defaultBudget.max_tool_calls, tasks.length, index),
+        used_tokens: 0,
+        used_cost_usd: 0,
+        used_tool_calls: 0,
+      };
+      db.updateTask(tenantId, task.id, { budget });
+    });
 
     // 4. Initialize Context
     const contextId = `ctx_${randomUUID().substring(0, 8)}`;
@@ -103,6 +188,7 @@ export class WorkflowEngine {
       created_by: params.createdBy || "system",
       // No creator means a system-started workflow (it runs with read-only access, FX-19), not a "USER" named "system".
       created_by_type: params.createdByType || (params.createdBy ? "USER" : "SYSTEM"),
+      metadata: { template_code: templateCode, template_version: templateVersion },
       created_at: now,
       updated_at: now,
     };
@@ -118,40 +204,104 @@ export class WorkflowEngine {
   /**
    * Starts executing tasks in a workflow
    */
-  public async startWorkflow(tenantId: string, workflowId: string): Promise<AgentWorkflow> {
+  public async startWorkflow(tenantId: string, workflowId: string, signal?: AbortSignal): Promise<AgentWorkflow> {
     const workflow = db.getWorkflowById(tenantId, workflowId);
     if (!workflow) throw new AppError("NOT_FOUND", `Workflow not found: ${workflowId}`, 404);
 
     workflowStateMachine.assertWorkflowTransition(workflow.status, WorkflowStatus.RUNNING);
+    const startedAt = workflow.started_at || new Date().toISOString();
+    const deadlineAt = workflow.deadline_at || new Date(Date.parse(startedAt) + workflow.budget.max_duration_ms).toISOString();
     const runningWf = db.updateWorkflow(tenantId, workflowId, {
       status: WorkflowStatus.RUNNING,
-      started_at: workflow.started_at || new Date().toISOString(),
+      started_at: startedAt,
+      deadline_at: deadlineAt,
     });
 
-    return this.executeWorkflowLoop(runningWf);
+    return this.executeWorkflowLoop(runningWf, signal);
   }
 
   /**
    * Primary execution loop processing tasks topologically
    */
-  private async executeWorkflowLoop(workflow: AgentWorkflow): Promise<AgentWorkflow> {
+  private async executeWorkflowLoop(workflow: AgentWorkflow, signal?: AbortSignal): Promise<AgentWorkflow> {
     const tenantId = workflow.tenant_id;
     let currentWorkflow = workflow;
     const context = db.getWorkflowContext(tenantId, workflow.id);
 
-    while (true) {
+    executionLoop: while (true) {
+      await workflowBudgetService.reconcileExpiredReservations(tenantId, currentWorkflow.id);
+      const latestWorkflow = db.getWorkflowById(tenantId, currentWorkflow.id);
+      if (!latestWorkflow) throw new AppError("NOT_FOUND", `Workflow not found: ${currentWorkflow.id}`, 404);
+      if (latestWorkflow.status === WorkflowStatus.PAUSED || latestWorkflow.status === WorkflowStatus.CANCELLED) {
+        return latestWorkflow;
+      }
+      if (signal?.aborted) throw new AppError("CONFLICT", "Workflow worker lease was cancelled or lost.", 409);
+      currentWorkflow = latestWorkflow;
+      if (currentWorkflow.deadline_at && Date.parse(currentWorkflow.deadline_at) <= Date.now()) {
+        for (const task of db.getTasks(tenantId, currentWorkflow.id)) {
+          if ([TaskStatus.PENDING, TaskStatus.READY, TaskStatus.WAITING_DEPENDENCY, TaskStatus.RUNNING, TaskStatus.WAITING_APPROVAL, TaskStatus.WAITING_HUMAN].some((status) => status === task.status)) {
+            db.updateTask(tenantId, task.id, { status: TaskStatus.EXPIRED, completed_at: new Date().toISOString(), error: "Workflow duration budget exceeded." });
+          }
+        }
+        currentWorkflow = db.updateWorkflow(tenantId, currentWorkflow.id, {
+          status: WorkflowStatus.FAILED,
+          error: "Workflow duration budget exceeded.",
+          completed_at: new Date().toISOString(),
+        });
+        this.createCheckpoint(currentWorkflow, "Workflow duration budget exceeded");
+        return currentWorkflow;
+      }
       const allTasks = db.getTasks(tenantId, currentWorkflow.id);
+      const failedTask = allTasks.find((task) => task.status === TaskStatus.FAILED || task.status === TaskStatus.EXPIRED);
+      if (failedTask) {
+        currentWorkflow = db.updateWorkflow(tenantId, currentWorkflow.id, {
+          status: WorkflowStatus.FAILED,
+          error: failedTask.error || `Task ${failedTask.id} failed or expired.`,
+          completed_at: new Date().toISOString(),
+        });
+        this.createCheckpoint(currentWorkflow, `Task ${failedTask.id} failed or expired`);
+        return currentWorkflow;
+      }
+      const runningTask = allTasks.find((task) => task.status === TaskStatus.RUNNING);
+      if (runningTask) {
+        await this.waitForRunningTask(tenantId, currentWorkflow, runningTask, signal);
+        continue executionLoop;
+      }
+      const unknownTask = allTasks.find((task) => task.status === TaskStatus.OUTCOME_UNKNOWN);
+      if (unknownTask) {
+        currentWorkflow = db.updateWorkflow(tenantId, currentWorkflow.id, {
+          status: WorkflowStatus.WAITING,
+          error: `Task ${unknownTask.id} has an uncertain external outcome and needs reconciliation.`,
+        });
+        this.createCheckpoint(currentWorkflow, `Task ${unknownTask.id} outcome requires reconciliation`);
+        return currentWorkflow;
+      }
+      const retryWaitTask = allTasks.find((task) => task.status === TaskStatus.RETRY_WAIT);
+      if (retryWaitTask) {
+        const remaining = Math.max(0, Date.parse(retryWaitTask.next_attempt_at || "") - Date.now());
+        if (remaining > 0) {
+          await new Promise<void>((resolve) => {
+            const timer = setTimeout(resolve, Math.min(remaining, 1_000));
+            const abort = () => { clearTimeout(timer); resolve(); };
+            signal?.addEventListener("abort", abort, { once: true });
+            timer.unref?.();
+          });
+          if (signal?.aborted) throw new AppError("CONFLICT", "Workflow worker lease was cancelled or lost.", 409);
+          continue executionLoop;
+        }
+      }
       const pendingTasks = allTasks.filter(
-        (t) => t.status === TaskStatus.PENDING || t.status === TaskStatus.WAITING_DEPENDENCY
+        (t) => t.status === TaskStatus.PENDING || t.status === TaskStatus.WAITING_DEPENDENCY ||
+          (t.status === TaskStatus.RETRY_WAIT && (!t.next_attempt_at || Date.parse(t.next_attempt_at) <= Date.now()))
       );
 
       // If no tasks left to run
       if (pendingTasks.length === 0) {
-        const hasFailed = allTasks.some((t) => t.status === TaskStatus.FAILED);
+        const hasFailed = allTasks.some((t) => t.status === TaskStatus.FAILED || t.status === TaskStatus.EXPIRED);
         const hasWaiting = allTasks.some(
           (t) =>
             t.status === TaskStatus.WAITING_APPROVAL ||
-            t.status === TaskStatus.WAITING_HUMAN
+            t.status === TaskStatus.WAITING_HUMAN || t.status === TaskStatus.OUTCOME_UNKNOWN
         );
 
         if (hasFailed) {
@@ -206,7 +356,16 @@ export class WorkflowEngine {
 
       // Execute ready tasks in parallel
       for (const task of readyTasks) {
-        const result = await taskExecutor.executeTask(task, context?.relevant_entities);
+        const result = await taskExecutor.executeTask(task, context?.relevant_entities, signal);
+
+        const currentAfterTask = db.getWorkflowById(tenantId, currentWorkflow.id);
+        if (currentAfterTask?.status === WorkflowStatus.CANCELLED || currentAfterTask?.status === WorkflowStatus.PAUSED) {
+          return currentAfterTask;
+        }
+        if (result.status === TaskStatus.RUNNING) {
+          await this.waitForRunningTask(tenantId, currentAfterTask || currentWorkflow, task, signal);
+          continue executionLoop;
+        }
 
         if (result.approvalRequired || result.status === TaskStatus.WAITING_APPROVAL) {
           currentWorkflow = db.updateWorkflow(tenantId, currentWorkflow.id, {
@@ -216,7 +375,7 @@ export class WorkflowEngine {
           return currentWorkflow;
         }
 
-        if (result.status === TaskStatus.FAILED) {
+        if (result.status === TaskStatus.FAILED || result.status === TaskStatus.EXPIRED) {
           currentWorkflow = db.updateWorkflow(tenantId, currentWorkflow.id, {
             status: WorkflowStatus.FAILED,
             error: result.error || `Task ${task.id} failed`,
@@ -232,6 +391,40 @@ export class WorkflowEngine {
       });
       this.createCheckpoint(currentWorkflow, `Step ${currentWorkflow.current_step} completed`);
     }
+  }
+
+  private async waitForRunningTask(tenantId: string, workflow: AgentWorkflow, task: AgentTask, signal?: AbortSignal): Promise<void> {
+    const currentTask = db.getTaskById(tenantId, task.id) || task;
+    const now = Date.now();
+    const taskDeadline = currentTask.deadline ? Date.parse(currentTask.deadline) : Number.NaN;
+    const workflowDeadline = workflow.deadline_at ? Date.parse(workflow.deadline_at) : Number.NaN;
+    const deadlineAt = Number.isFinite(taskDeadline) ? taskDeadline
+      : Number.isFinite(workflowDeadline) ? workflowDeadline
+        : now + 1_000;
+    if (deadlineAt <= now) {
+      await workflowBudgetService.reconcileExpiredReservations(tenantId, workflow.id);
+      const latest = db.getTaskById(tenantId, currentTask.id);
+      if (latest?.status === TaskStatus.RUNNING) {
+        db.updateTask(tenantId, currentTask.id, {
+          status: TaskStatus.EXPIRED,
+          completed_at: new Date().toISOString(),
+          error: "Task deadline expired while recovering a prior worker.",
+        });
+      }
+      return;
+    }
+    await db.syncIfDue();
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(done, Math.min(500, deadlineAt - now));
+      const onAbort = () => done();
+      function done() {
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+        resolve();
+      }
+      if (signal?.aborted) done();
+      else signal?.addEventListener("abort", onAbort, { once: true });
+    });
   }
 
   /**
@@ -250,13 +443,16 @@ export class WorkflowEngine {
   /**
    * Resumes a paused or waiting workflow
    */
-  public async resumeWorkflow(tenantId: string, workflowId: string): Promise<AgentWorkflow> {
+  public async resumeWorkflow(tenantId: string, workflowId: string, signal?: AbortSignal): Promise<AgentWorkflow> {
     const workflow = db.getWorkflowById(tenantId, workflowId);
     if (!workflow) throw new AppError("NOT_FOUND", `Workflow not found: ${workflowId}`, 404);
 
     workflowStateMachine.assertWorkflowTransition(workflow.status, WorkflowStatus.RUNNING);
     const updated = db.updateWorkflow(tenantId, workflowId, { status: WorkflowStatus.RUNNING });
-    return this.executeWorkflowLoop(updated);
+    for (const task of db.getTasks(tenantId, workflowId)) {
+      if (task.status === TaskStatus.PAUSED) db.updateTask(tenantId, task.id, { status: TaskStatus.PENDING });
+    }
+    return this.executeWorkflowLoop(updated, signal);
   }
 
   /**
@@ -275,7 +471,7 @@ export class WorkflowEngine {
 
     const tasks = db.getTasks(workflow.tenant_id, workflowId);
     for (const t of tasks) {
-      if (t.status !== TaskStatus.COMPLETED && t.status !== TaskStatus.FAILED) {
+      if (![TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.EXPIRED, TaskStatus.CANCELLED].some((terminal) => terminal === t.status)) {
         db.updateTask(tenantId, t.id, { status: TaskStatus.CANCELLED });
       }
     }
@@ -287,7 +483,7 @@ export class WorkflowEngine {
   /**
    * Retries a failed workflow by resetting failed tasks
    */
-  public async retryWorkflow(tenantId: string, workflowId: string): Promise<AgentWorkflow> {
+  public async retryWorkflow(tenantId: string, workflowId: string, signal?: AbortSignal): Promise<AgentWorkflow> {
     const workflow = db.getWorkflowById(tenantId, workflowId);
     if (!workflow) throw new AppError("NOT_FOUND", `Workflow not found: ${workflowId}`, 404);
 
@@ -299,16 +495,68 @@ export class WorkflowEngine {
 
     const tasks = db.getTasks(workflow.tenant_id, workflowId);
     for (const t of tasks) {
-      if (t.status === TaskStatus.FAILED) {
+      if (t.status === TaskStatus.FAILED && (t.failure_class === "RETRYABLE" || t.failure_class === "RATE_LIMITED")) {
         db.updateTask(tenantId, t.id, {
           status: TaskStatus.PENDING,
-          attempt_count: 0,
+          deadline: undefined,
+          next_attempt_at: undefined,
           error: undefined,
+          failure_class: undefined,
         });
       }
     }
 
-    return this.startWorkflow(tenantId, workflowId);
+    return this.startWorkflow(tenantId, workflowId, signal);
+  }
+
+  /** Resolve an uncertain action only after an operator has checked the provider/domain system of record. */
+  public async reconcileTaskOutcome(
+    tenantId: string,
+    taskId: string,
+    resolution: "APPLIED" | "NOT_APPLIED",
+    actorId: string,
+    evidenceReference: string,
+    confirmedResult?: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<AgentWorkflow> {
+    const task = db.getTaskById(tenantId, taskId);
+    if (!task) throw new AppError("NOT_FOUND", `Task not found: ${taskId}`, 404);
+    if (task.status !== TaskStatus.OUTCOME_UNKNOWN) throw new AppError("CONFLICT", "Only tasks with unknown outcomes can be reconciled.", 409);
+    if (!actorId.trim() || !evidenceReference.trim()) throw new AppError("VALIDATION_ERROR", "Reconciliation requires an actor and evidence reference.", 400);
+    if (resolution === "APPLIED" && !confirmedResult) throw new AppError("VALIDATION_ERROR", "Confirmed applied outcomes require the authoritative result.", 400);
+
+    await db.unit(async () => {
+      const current = db.getTaskById(tenantId, taskId);
+      if (!current || current.status !== TaskStatus.OUTCOME_UNKNOWN) throw new AppError("CONFLICT", "Task outcome was already reconciled.", 409);
+      const now = new Date().toISOString();
+      const history = Array.isArray(current.metadata?.reconciliations) ? current.metadata.reconciliations : [];
+      if (resolution === "APPLIED") {
+        const existing = db.getActionReceiptByIdempotencyKey(tenantId, current.idempotency_key);
+        if (!existing) {
+          const receipt: ActionReceipt = {
+            id: `rcpt_${randomUUID().substring(0, 8)}`, tenant_id: tenantId, workflow_id: current.workflow_id,
+            task_id: current.id, action: current.task_type, actor_agent: current.agent_type,
+            target_entity: (current.input.target_entity as string) || "DOMAIN_OBJECT",
+            target_id: (current.input.target_id as string) || current.id, status: "SUCCESS",
+            idempotency_key: current.idempotency_key, provider_reference: evidenceReference,
+            result: confirmedResult!, created_at: now,
+          };
+          db.insertActionReceipt(receipt);
+        }
+        db.updateTask(tenantId, taskId, {
+          status: TaskStatus.COMPLETED, output: existing?.result || confirmedResult,
+          completed_at: now, error: undefined, failure_class: undefined,
+          metadata: { ...current.metadata, reconciliations: [...history, { resolution, actor_id: actorId, evidence_reference: evidenceReference, created_at: now }] },
+        });
+      } else {
+        db.updateTask(tenantId, taskId, {
+          status: TaskStatus.PENDING, error: undefined, failure_class: undefined,
+          next_attempt_at: undefined,
+          metadata: { ...current.metadata, reconciliations: [...history, { resolution, actor_id: actorId, evidence_reference: evidenceReference, created_at: now }] },
+        });
+      }
+    }, () => true);
+    return this.resumeWorkflow(tenantId, task.workflow_id, signal);
   }
 
   /**
@@ -350,6 +598,16 @@ export class WorkflowEngine {
     db.insertWorkflowCheckpoint(checkpoint);
     return checkpoint;
   }
+}
+
+function integerShare(total: number, count: number, index: number): number {
+  const base = Math.floor(total / count);
+  return base + (index < total % count ? 1 : 0);
+}
+
+function decimalShare(total: number, count: number, index: number): number {
+  const base = total / count;
+  return Number((index === count - 1 ? total - base * index : base).toFixed(8));
 }
 
 export const workflowEngine = new WorkflowEngine();

@@ -11,6 +11,9 @@ export class CustomerSupportAgent extends BaseAgent {
   public readonly agentType: AgentType = "CUSTOMER_SUPPORT";
   public readonly modelTier: ModelTier = "TIER_1_FAST";
   public readonly allowedTools = [
+    "search_products",
+    "get_product",
+    "check_inventory",
     "search_knowledge",
     "get_order_status",
     "get_shipment_status",

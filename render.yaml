@@ -16,7 +16,7 @@ services:
     runtime: node
     region: oregon
     plan: starter
-    autoDeployTrigger: "off"
+    autoDeployTrigger: "start"
     buildCommand: npm ci --include=dev && npm run build
     # Runs once per deploy in the build environment, before the new version starts. A failure cancels the deploy and the
     # running version keeps serving. Migrations must be backward compatible (docs/render-runbook.md, "Migrations").

@@ -93,7 +93,9 @@ async function main() {
 
   await runTest("staff-only tools were offered every turn and refused every time", () => {
     const tried = results.flatMap((r) => r.turns.flatMap((t) => t.tools.filter((x) => x.name === "verify_payment_transaction")));
-    assert.ok(tried.length >= results.length, `${tried.length} attempts`);
+    // A case the injection guard answers before any model call never offers tools, so it can't attempt one
+    const answeredBeforeModel = results.filter((r) => r.turns.length > 0 && r.turns.every((t) => t.guards.includes("prompt_injection_blocked"))).length;
+    assert.ok(tried.length >= results.length - answeredBeforeModel, `${tried.length} attempts`);
     assert.ok(tried.every((x) => !x.ok && x.refused === "UNKNOWN_TOOL"));
   });
 

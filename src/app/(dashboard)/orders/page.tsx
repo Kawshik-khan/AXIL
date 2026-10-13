@@ -62,6 +62,9 @@ export default function OrdersPage() {
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null);
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
   const [isTransitioning, setIsTransitioning] = useState(false);
+  const [rtoEvaluation, setRtoEvaluation] = useState<any | null>(null);
+  const [isRequestingAdvanceFee, setIsRequestingAdvanceFee] = useState(false);
+  const [advanceFeeSuccess, setAdvanceFeeSuccess] = useState<string | null>(null);
 
   const loadOrders = async (p = page, status = statusFilter, q = searchQuery) => {
     try {
@@ -123,14 +126,46 @@ export default function OrdersPage() {
 
   const openOrderDetails = async (orderId: string) => {
     try {
+      setRtoEvaluation(null);
+      setAdvanceFeeSuccess(null);
       const res = await fetch(`/api/v1/orders/${orderId}`);
       if (res.ok) {
         const json = await res.json();
         setSelectedOrder(json.data);
         setIsDetailsOpen(true);
+        // Fetch RTO evaluation
+        fetch(`/api/v1/rto/evaluate/${orderId}`)
+          .then((r) => (r.ok ? r.json() : null))
+          .then((d) => {
+            if (d?.data) setRtoEvaluation(d.data);
+          })
+          .catch(() => {});
       }
     } catch (err) {
       console.error("Failed to load order details:", err);
+    }
+  };
+
+  const handleRequestAdvanceFee = async () => {
+    if (!selectedOrder?.order?.id) return;
+    try {
+      setIsRequestingAdvanceFee(true);
+      setAdvanceFeeSuccess(null);
+      const res = await fetch("/api/v1/rto/advance-fee/request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ order_id: selectedOrder.order.id, amount_bdt: 120, channel: "WHATSAPP" }),
+      });
+      if (res.ok) {
+        setAdvanceFeeSuccess("bKash payment link generated and sent to customer!");
+        // Refresh RTO evaluation
+        const updated = await fetch(`/api/v1/rto/evaluate/${selectedOrder.order.id}`).then((r) => r.json());
+        if (updated?.data) setRtoEvaluation(updated.data);
+      }
+    } catch (err) {
+      console.error("Advance fee request failed:", err);
+    } finally {
+      setIsRequestingAdvanceFee(false);
     }
   };
 
@@ -667,6 +702,101 @@ export default function OrdersPage() {
               </div>
             </div>
 
+            {/* Cross-Tenant RTO & Courier Fraud Shield */}
+            {rtoEvaluation && (
+              <div
+                style={{
+                  padding: "12px 14px",
+                  borderRadius: "var(--radius-card)",
+                  border: `1px solid ${
+                    rtoEvaluation.risk_tier === "HIGH" || rtoEvaluation.risk_tier === "VERY_HIGH"
+                      ? "#f87171"
+                      : rtoEvaluation.risk_tier === "MEDIUM"
+                      ? "#fbbf24"
+                      : "#34d399"
+                  }`,
+                  backgroundColor:
+                    rtoEvaluation.risk_tier === "HIGH" || rtoEvaluation.risk_tier === "VERY_HIGH"
+                      ? "rgba(239, 68, 68, 0.06)"
+                      : rtoEvaluation.risk_tier === "MEDIUM"
+                      ? "rgba(245, 158, 11, 0.06)"
+                      : "rgba(16, 185, 129, 0.06)",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "8px",
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <ShieldAlert
+                      size={16}
+                      style={{
+                        color:
+                          rtoEvaluation.risk_tier === "HIGH" || rtoEvaluation.risk_tier === "VERY_HIGH"
+                            ? "#ef4444"
+                            : rtoEvaluation.risk_tier === "MEDIUM"
+                            ? "#f59e0b"
+                            : "#10b981",
+                      }}
+                    />
+                    <span style={{ fontWeight: 600, fontSize: "13px" }}>
+                      Cross-Tenant RTO Risk: {rtoEvaluation.risk_tier.replace("_", " ")} ({rtoEvaluation.risk_score}/100)
+                    </span>
+                  </div>
+                  <span
+                    style={{
+                      fontSize: "11px",
+                      fontWeight: 600,
+                      padding: "2px 8px",
+                      borderRadius: "12px",
+                      backgroundColor:
+                        rtoEvaluation.risk_tier === "HIGH" || rtoEvaluation.risk_tier === "VERY_HIGH"
+                          ? "#fee2e2"
+                          : rtoEvaluation.risk_tier === "MEDIUM"
+                          ? "#fef3c7"
+                          : "#d1fae5",
+                      color:
+                        rtoEvaluation.risk_tier === "HIGH" || rtoEvaluation.risk_tier === "VERY_HIGH"
+                          ? "#b91c1c"
+                          : rtoEvaluation.risk_tier === "MEDIUM"
+                          ? "#b45309"
+                          : "#047857",
+                    }}
+                  >
+                    {rtoEvaluation.recommended_action.replace(/_/g, " ")}
+                  </span>
+                </div>
+
+                <div style={{ fontSize: "12px", color: "var(--color-text-secondary)" }}>
+                  {rtoEvaluation.factors?.summary_reason}
+                </div>
+
+                {rtoEvaluation.recommended_action === "REQUIRE_ADVANCE_COURIER_FEE" && !rtoEvaluation.advance_fee_paid && (
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px", marginTop: "4px" }}>
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      onClick={handleRequestAdvanceFee}
+                      isLoading={isRequestingAdvanceFee}
+                      style={{ backgroundColor: "#e11d48", borderColor: "#e11d48" }}
+                    >
+                      Request Advance Courier Fee via bKash
+                    </Button>
+                    {advanceFeeSuccess && (
+                      <span style={{ fontSize: "12px", color: "#10b981", fontWeight: 600 }}>
+                        ✓ {advanceFeeSuccess}
+                      </span>
+                    )}
+                  </div>
+                )}
+                {rtoEvaluation.advance_fee_paid && (
+                  <div style={{ fontSize: "12px", color: "#10b981", fontWeight: 600 }}>
+                    ✓ Advance delivery fee confirmed paid via bKash. Safe to dispatch parcel.
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Customer & Address Snapshot */}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
               <div
@@ -677,8 +807,10 @@ export default function OrdersPage() {
                 }}
               >
                 <div style={{ fontWeight: 600, marginBottom: "4px" }}>Customer Snapshot</div>
-                <div>{selectedOrder.order.customer_name}</div>
-                <div style={{ color: "var(--color-text-muted)" }}>{selectedOrder.order.customer_phone}</div>
+                <div>{selectedOrder.order.customer_name || "Customer"}</div>
+                <div style={{ color: "var(--color-text-muted)" }}>
+                  {selectedOrder.order.customer_phone || selectedOrder.order.shipping_address_snapshot?.phone || "—"}
+                </div>
               </div>
               <div
                 style={{
@@ -688,10 +820,18 @@ export default function OrdersPage() {
                 }}
               >
                 <div style={{ fontWeight: 600, marginBottom: "4px" }}>Delivery Address</div>
-                <div>{selectedOrder.order.delivery_address?.address_line_1}</div>
+                <div>
+                  {selectedOrder.order.shipping_address_snapshot?.address_line_1 ||
+                    selectedOrder.order.delivery_address?.address_line_1 ||
+                    "No street address provided"}
+                </div>
                 <div style={{ color: "var(--color-text-muted)" }}>
-                  {selectedOrder.order.delivery_address?.district},{" "}
-                  {selectedOrder.order.delivery_address?.division}
+                  {[
+                    selectedOrder.order.shipping_address_snapshot?.district || selectedOrder.order.delivery_address?.district,
+                    selectedOrder.order.shipping_address_snapshot?.division || selectedOrder.order.delivery_address?.division,
+                  ]
+                    .filter(Boolean)
+                    .join(", ") || "—"}
                 </div>
               </div>
             </div>
@@ -709,18 +849,24 @@ export default function OrdersPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {(selectedOrder.order.items || []).map((item: any) => (
-                    <tr key={item.id} style={{ borderBottom: "1px solid var(--color-border-subtle)" }}>
-                      <td style={{ padding: "8px 6px" }}>
-                        <strong>{item.title_snapshot}</strong> ({item.variant_title_snapshot})
-                      </td>
-                      <td style={{ padding: "8px 6px" }}>{item.quantity}</td>
-                      <td style={{ padding: "8px 6px" }}>{item.unit_price} ৳</td>
-                      <td style={{ padding: "8px 6px", textAlign: "right", fontWeight: 600 }}>
-                        {item.total_price} ৳
-                      </td>
-                    </tr>
-                  ))}
+                  {(selectedOrder.order.items || []).map((item: any) => {
+                    const title = item.product_name_snapshot || item.title_snapshot || item.name || "Item";
+                    const variant = item.sku_snapshot || item.variant_title_snapshot || "";
+                    const unitPrice = item.unit_price || 0;
+                    const lineTotal = item.line_total ?? item.total_price ?? (unitPrice * (item.quantity || 1));
+                    return (
+                      <tr key={item.id} style={{ borderBottom: "1px solid var(--color-border-subtle)" }}>
+                        <td style={{ padding: "8px 6px" }}>
+                          <strong>{title}</strong>{variant ? ` (${variant})` : ""}
+                        </td>
+                        <td style={{ padding: "8px 6px" }}>{item.quantity}</td>
+                        <td style={{ padding: "8px 6px" }}>{unitPrice.toLocaleString("en-BD")} ৳</td>
+                        <td style={{ padding: "8px 6px", textAlign: "right", fontWeight: 600 }}>
+                          {lineTotal.toLocaleString("en-BD")} ৳
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

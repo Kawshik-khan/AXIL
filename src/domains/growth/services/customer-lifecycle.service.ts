@@ -5,6 +5,7 @@ import { randomSuffix } from "@/lib/ids";
  */
 
 import { db } from "@/infrastructure/db";
+import { orderRepository } from "@/domains/orders/order.repository";
 import { NotFoundError } from "@/lib/errors";
 import {
   LifecycleStage,
@@ -89,21 +90,17 @@ export class CustomerLifecycleService {
     customerId: string,
     triggerEvent: string
   ): { record: CustomerLifecycleRecord; transition?: CustomerLifecycleTransition } {
-    const orders = db.getAllOrders(tenantId).filter((o) => o.customer_id === customerId);
+    const summary = orderRepository.getCustomerOrderSummarySync(tenantId, customerId);
     const existing = db.getCustomerLifecycleByCustomerId(tenantId, customerId);
 
-    const totalSpend = orders.reduce((sum, o) => sum + (o.grand_total || 0), 0);
-    const orderCount = orders.length;
+    const totalSpend = summary.totalSpend;
+    const orderCount = summary.orderCount;
     const aov = orderCount > 0 ? Math.round(totalSpend / orderCount) : 0;
 
-    const timestamps = orders
-      .map((o) => new Date(o.created_at).getTime())
-      .filter((t) => !isNaN(t))
-      .sort((a, b) => b - a);
-
+    const timestamps = summary.timestamps;
     const now = Date.now();
     const daysSinceLastOrder = timestamps.length > 0 ? Math.floor((now - timestamps[0]) / 86400000) : 999;
-    const lastOrderAt = timestamps.length > 0 ? new Date(timestamps[0]).toISOString() : undefined;
+    const lastOrderAt = summary.lastOrderAt;
 
     const newStage = this.determineLifecycleStage({
       orderCount,
@@ -179,20 +176,8 @@ export class CustomerLifecycleService {
     totalEvaluated: number;
   } {
     const customers = db.getAllCustomers(tenantId);
-    const allOrders = db.getAllOrders(tenantId);
+    const orderSummaries = orderRepository.getAllCustomerOrderSummariesSync(tenantId);
     const existingLifecycles = db.getCustomerLifecycles(tenantId);
-
-    // Build O(1) order lookup map by customer_id
-    const ordersByCustomer = new Map<string, typeof allOrders>();
-    for (const order of allOrders) {
-      if (!order.customer_id) continue;
-      let list = ordersByCustomer.get(order.customer_id);
-      if (!list) {
-        list = [];
-        ordersByCustomer.set(order.customer_id, list);
-      }
-      list.push(order);
-    }
 
     // Build O(1) existing lifecycle lookup map
     const lifecycleMap = new Map<string, CustomerLifecycleRecord>();
@@ -219,20 +204,16 @@ export class CustomerLifecycleService {
     const nowIso = new Date().toISOString();
 
     for (const c of customers) {
-      const orders = ordersByCustomer.get(c.id) || [];
+      const summary = orderSummaries.get(c.id);
       const existing = lifecycleMap.get(c.id);
 
-      const totalSpend = orders.reduce((sum, o) => sum + (o.grand_total || 0), 0);
-      const orderCount = orders.length;
+      const totalSpend = summary ? summary.totalSpend : 0;
+      const orderCount = summary ? summary.orderCount : 0;
       const aov = orderCount > 0 ? Math.round(totalSpend / orderCount) : 0;
 
-      const timestamps = orders
-        .map((o) => new Date(o.created_at).getTime())
-        .filter((t) => !isNaN(t))
-        .sort((a, b) => b - a);
-
-      const daysSinceLastOrder = timestamps.length > 0 ? Math.floor((now - timestamps[0]) / 86400000) : 999;
-      const lastOrderAt = timestamps.length > 0 ? new Date(timestamps[0]).toISOString() : undefined;
+      const lastOrderAt = summary?.lastOrderAt;
+      const lastOrderTime = lastOrderAt ? new Date(lastOrderAt).getTime() : NaN;
+      const daysSinceLastOrder = !isNaN(lastOrderTime) ? Math.floor((now - lastOrderTime) / 86400000) : 999;
 
       const newStage = this.determineLifecycleStage({
         orderCount,

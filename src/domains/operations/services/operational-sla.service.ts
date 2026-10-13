@@ -5,7 +5,9 @@
  */
 
 import { db } from "@/infrastructure/db";
+import { orderRepository } from "@/domains/orders/order.repository";
 import { SLAPolicy, SLABreach, SLARisk, SLADomain } from "@/types/operations";
+import type { Order } from "@/types/commerce";
 
 export class OperationalSLAService {
   /**
@@ -15,8 +17,25 @@ export class OperationalSLAService {
     active_breaches: SLABreach[];
     risks_at_warning: SLARisk[];
   } {
+    return this.evaluateSLAsWithOrders(tenantId, orderRepository.findUnfulfilledOrdersSync(tenantId));
+  }
+
+  public async auditSLAsAsync(tenantId: string): Promise<{
+    active_breaches: SLABreach[];
+    risks_at_warning: SLARisk[];
+  }> {
+    const unfulfilled = await orderRepository.findUnfulfilledOrders(tenantId);
+    return this.evaluateSLAsWithOrders(tenantId, unfulfilled);
+  }
+
+  private evaluateSLAsWithOrders(
+    tenantId: string,
+    unfulfilledOrders: Order[]
+  ): {
+    active_breaches: SLABreach[];
+    risks_at_warning: SLARisk[];
+  } {
     const policies = db.getSLAPolicies(tenantId).filter((p) => p.enabled);
-    const orders = db.getAllOrders(tenantId, { hydrate: true });
     const shipments = db.getShipments(tenantId);
     const tickets = db.getSupportTickets(tenantId);
     const now = Date.now();
@@ -26,10 +45,7 @@ export class OperationalSLAService {
 
     for (const policy of policies) {
       if (policy.domain === "ORDER_FULFILLMENT") {
-        const unfulfilled = orders.filter(
-          (o) => o.status === "CONFIRMED" || o.status === "PROCESSING"
-        );
-        for (const order of unfulfilled) {
+        for (const order of unfulfilledOrders) {
           const elapsedMins = (now - new Date(order.created_at).getTime()) / 60000;
           if (elapsedMins >= policy.target_duration_minutes) {
             const breach: SLABreach = {

@@ -100,6 +100,16 @@ export interface IChannelProvider {
   ): Promise<SendMessageResult>;
 
   /**
+   * Meta "private reply": one inbox message to the author of a post comment, addressed by the comment id.
+   * Only Facebook Pages and Instagram support it; Meta allows one per comment, within 7 days of the comment.
+   */
+  sendPrivateReply?(
+    credentials: ChannelCredentials,
+    commentId: string,
+    text: string
+  ): Promise<SendMessageResult & { recipientId?: string }>;
+
+  /**
    * Mark message or thread as read in external provider
    */
   markMessageRead(

@@ -6,118 +6,126 @@ This document tracks foundational architectural decisions. No decision documente
 
 One line per ADR. Read the full entry only when relevant. New ADRs: append below using `templates/adr.md` and add a row here.
 
-| ADR | Title |
-|---|---|
-| [ADR-001](#adr-001-nextjs-app-router--vanilla-css-with-custom-tokens) | Next.js App Router + Vanilla CSS with Custom Tokens |
-| [ADR-002](#adr-002-postgresql-16-with-pgvector-for-hybrid-persistence) | PostgreSQL 16+ with `pgvector` for Hybrid Persistence |
-| [ADR-003](#adr-003-strict-separation-of-n8n-as-orchestration-hub-not-core-backend) | Strict Separation of n8n as Orchestration Hub (Not Core Backend) |
-| [ADR-004](#adr-004-multi-agent-gateway-with-deterministic-policy-engine) | Multi-Agent Gateway with Deterministic Policy Engine |
-| [ADR-005](#adr-005-cryptographic-multi-tenant-context-resolution) | Cryptographic Multi-Tenant Context Resolution |
-| [ADR-006](#adr-006-provider-adapter-pattern-for-bangladesh-couriers--payments) | Provider Adapter Pattern for Bangladesh Couriers & Payments |
-| [ADR-007](#adr-007-server-side-authoritative-pricing-engine--client-totals-rejection) | Server-Side Authoritative Pricing Engine & Client Totals Rejection |
-| [ADR-008](#adr-008-strict-finite-state-machine-for-order-lifecycle--reservation-invariants) | Strict Finite State Machine for Order Lifecycle & Reservation Invariants |
-| [ADR-009](#adr-009-zero-negative-stock-invariant--atomic-inventory-movements) | Zero Negative-Stock Invariant & Atomic Inventory Movements |
-| [ADR-010](#adr-010-bangladeshi-e164-phone-normalization-880--deduplication) | Bangladeshi E.164 Phone Normalization (+880) & Deduplication |
-| [ADR-011](#adr-011-delivery-triggered-cod-financial-reconciliation--idempotency) | Delivery-Triggered COD Financial Reconciliation & Idempotency |
-| [ADR-012](#adr-012-live-authoritative-aggregations-for-control-plane-telemetry-zero-synthetic-data) | Live Authoritative Aggregations for Control Plane Telemetry (Zero Synthetic Data) |
-| [ADR-013](#adr-013-canonical-message-normalization--lossless-banglish-preservation) | Canonical Message Normalization & Lossless Banglish Preservation |
-| [ADR-014](#adr-014-authoritative-commerce-separation-for-social-order-drafts) | Authoritative Commerce Separation for Social Order Drafts |
-| [ADR-015](#adr-015-strict-customer-isolation-for-internal-operator-notes) | Strict Customer Isolation for Internal Operator Notes |
-| [ADR-016](#adr-016-aes-256-gcm-symmetrical-encryption-for-channel-credentials--secret-masking) | AES-256-GCM Symmetrical Encryption for Channel Credentials & Secret Masking |
-| [ADR-017](#adr-017-multi-agent-specialization--hybrid-supervisor-routing) | Multi-Agent Specialization & Hybrid Supervisor Routing |
-| [ADR-018](#adr-018-3-second-inbound-message-debouncing-window) | 3-Second Inbound Message Debouncing Window |
-| [ADR-019](#adr-019-zero-trust-tool-gateway--authoritative-commerce-core-enforcement) | Zero-Trust Tool Gateway & Authoritative Commerce Core Enforcement |
-| [ADR-020](#adr-020-multi-tenant-vector-rag-isolation-with-pgvector-cosine-search) | Multi-Tenant Vector RAG Isolation with pgvector Cosine Search |
-| [ADR-021](#adr-021-pii-redaction--5-layer-context-assembly-with-anti-injection-hierarchy) | PII Redaction & 5-Layer Context Assembly with Anti-Injection Hierarchy |
-| [ADR-022](#adr-022-human-takeover-lock--dual-operating-modes-autonomous-vs-copilot) | Human Takeover Lock & Dual Operating Modes (Autonomous vs Copilot) |
-| [ADR-023](#adr-023-golden-dataset-quantitative-benchmark-governance) | Golden Dataset Quantitative Benchmark Governance |
-| [ADR-024](#adr-024-multi-agent-orchestration-topology-hierarchical-supervisor-with-subordinate-task-decomposition) | Multi-Agent Orchestration Topology (Hierarchical Supervisor with Subordinate Task Decomposition) |
-| [ADR-025](#adr-025-directed-acyclic-graph-dag-task-planning-kahns-topological-sort-and-static-cycle-rejection) | Directed Acyclic Graph (DAG) Task Planning, Kahn's Topological Sort, and Static Cycle Rejection |
-| [ADR-026](#adr-026-deterministic-physical-verifier-agent-zero-hallucination-evidence-matching-against-db-state) | Deterministic Physical Verifier Agent (Zero-Hallucination Evidence Matching against DB State) |
-| [ADR-027](#adr-027-5-tier-autonomy-matrix--action-risk-categorization) | 5-Tier Autonomy Matrix & Action Risk Categorization |
-| [ADR-028](#adr-028-pre-execution-entity-state-revalidation-optimistic-concurrency--anti-stale-action-shield) | Pre-Execution Entity State Revalidation (Optimistic Concurrency & Anti-Stale Action Shield) |
-| [ADR-029](#adr-029-immutable-idempotent-action-receipts-and-multi-agent-audit-bus) | Immutable Idempotent Action Receipts and Multi-Agent Audit Bus |
-| [ADR-030](#adr-030-inter-agent-communication-bus-and-capability-bounded-delegation-containment) | Inter-Agent Communication Bus and Capability-Bounded Delegation Containment |
-| [ADR-031](#adr-031-durable-workflow-state-machine-with-step-level-checkpointing--crash-resilience) | Durable Workflow State Machine with Step-Level Checkpointing & Crash Resilience |
-| [ADR-032](#adr-032-event-driven-reactive-automation-engine-with-cooldown-buffers--daily-quotas) | Event-Driven Reactive Automation Engine with Cooldown Buffers & Daily Quotas |
-| [ADR-033](#adr-033-autonomous-multi-agent-cron-scheduling-architecture-with-timezone-awareness) | Autonomous Multi-Agent Cron Scheduling Architecture with Timezone Awareness |
-| [ADR-034](#adr-034-pre-execution-workflow-simulation--token-spend-projection-engine) | Pre-Execution Workflow Simulation & Token Spend Projection Engine |
-| [ADR-035](#adr-035-canonical-metric-registry-with-formal-aggregation-rules--tenant-scoping) | Canonical Metric Registry with Formal Aggregation Rules & Tenant Scoping |
-| [ADR-036](#adr-036-zero-injection-parameterized-analytics-query-engine) | Zero-Injection Parameterized Analytics Query Engine |
-| [ADR-037](#adr-037-real-time-intelligence-ingestion--streaming-rollup-aggregator) | Real-Time Intelligence Ingestion & Streaming Rollup Aggregator |
-| [ADR-038](#adr-038-dual-method-statistical-anomaly-detection-z-score--static-invariants) | Dual-Method Statistical Anomaly Detection (Z-Score + Static Invariants) |
-| [ADR-039](#adr-039-multi-horizon-forecasting-engine-with-bangladesh-retail-seasonality--confidence-intervals) | Multi-Horizon Forecasting Engine with Bangladesh Retail Seasonality & Confidence Intervals |
-| [ADR-040](#adr-040-zero-mutation-what-if-simulation-sandbox-with-microeconomic-elasticity-modeling) | Zero-Mutation What-If Simulation Sandbox with Microeconomic Elasticity Modeling |
-| [ADR-041](#adr-041-rfm-quantile-segmentation--probabilistic-ltv-modeling) | RFM Quantile Segmentation & Probabilistic LTV Modeling |
-| [ADR-042](#adr-042-7-factor-explainable-recommendation-synthesis-framework) | 7-Factor Explainable Recommendation Synthesis Framework |
-| [ADR-043](#adr-043-controlled-autonomous-decision-proposal-bridge-to-phase-5-policy--approval-engine) | Controlled Autonomous Decision Proposal Bridge to Phase 5 Policy & Approval Engine |
-| [ADR-044](#adr-044-post-decision-feedback-loop--empirical-outcome-tracking) | Post-Decision Feedback Loop & Empirical Outcome Tracking |
-| [ADR-045](#adr-045-data-quality-governance-boundary-isolation--machine-learning-model-registry) | Data Quality Governance, Boundary Isolation & Machine Learning Model Registry |
-| [ADR-046](#adr-046-dual-dynamic--predictive-audience-segmentation-engine-with-immutable-snapshot-cryptographic-hashing) | Dual Dynamic & Predictive Audience Segmentation Engine with Immutable Snapshot Cryptographic Hashing |
-| [ADR-047](#adr-047-10-stage-deterministic-customer-lifecycle-state-machine--transition-auditing) | 10-Stage Deterministic Customer Lifecycle State Machine & Transition Auditing |
-| [ADR-048](#adr-048-multi-node-customer-journey-engine-with-step-level-checkpoints--durable-execution) | Multi-Node Customer Journey Engine with Step-Level Checkpoints & Durable Execution |
-| [ADR-049](#adr-049-campaign-risk-tiering--phase-5-approval-gating-with-multi-level-emergency-kill-switches) | Campaign Risk Tiering & Phase 5 Approval Gating with Multi-Level Emergency Kill Switches |
-| [ADR-050](#adr-050-granular-multi-channel-consent-management-suppression-lists--frequency-capping-dailyweekly) | Granular Multi-Channel Consent Management, Suppression Lists & Frequency Capping (Daily/Weekly) |
-| [ADR-051](#adr-051-grounded-multilingual-copy-synthesis-with-live-catalog-price--stock-factuality-verification) | Grounded Multilingual Copy Synthesis with Live Catalog Price & Stock Factuality Verification |
-| [ADR-052](#adr-052-promotional-offer-engine-with-margin-floor-protection--elasticity-based-simulation) | Promotional Offer Engine with Margin-Floor Protection & Elasticity-Based Simulation |
-| [ADR-053](#adr-053-co-purchase-affinity-matrix--anti-duplicate-abandoned-checkout-recovery) | Co-Purchase Affinity Matrix & Anti-Duplicate Abandoned Checkout Recovery |
-| [ADR-054](#adr-054-frequentist-ab-testing-engine-with-deterministic-hash-assignment--sample-size-guardrails) | Frequentist A/B Testing Engine with Deterministic Hash Assignment & Sample Size Guardrails |
+| ADR                                                                                                                                          | Title                                                                                                                         |
+| -------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| [ADR-001](#adr-001-nextjs-app-router--vanilla-css-with-custom-tokens)                                                                        | Next.js App Router + Vanilla CSS with Custom Tokens                                                                           |
+| [ADR-002](#adr-002-postgresql-16-with-pgvector-for-hybrid-persistence)                                                                       | PostgreSQL 16+ with `pgvector` for Hybrid Persistence                                                                         |
+| [ADR-003](#adr-003-strict-separation-of-n8n-as-orchestration-hub-not-core-backend)                                                           | Strict Separation of n8n as Orchestration Hub (Not Core Backend)                                                              |
+| [ADR-004](#adr-004-multi-agent-gateway-with-deterministic-policy-engine)                                                                     | Multi-Agent Gateway with Deterministic Policy Engine                                                                          |
+| [ADR-005](#adr-005-cryptographic-multi-tenant-context-resolution)                                                                            | Cryptographic Multi-Tenant Context Resolution                                                                                 |
+| [ADR-006](#adr-006-provider-adapter-pattern-for-bangladesh-couriers--payments)                                                               | Provider Adapter Pattern for Bangladesh Couriers & Payments                                                                   |
+| [ADR-007](#adr-007-server-side-authoritative-pricing-engine--client-totals-rejection)                                                        | Server-Side Authoritative Pricing Engine & Client Totals Rejection                                                            |
+| [ADR-008](#adr-008-strict-finite-state-machine-for-order-lifecycle--reservation-invariants)                                                  | Strict Finite State Machine for Order Lifecycle & Reservation Invariants                                                      |
+| [ADR-009](#adr-009-zero-negative-stock-invariant--atomic-inventory-movements)                                                                | Zero Negative-Stock Invariant & Atomic Inventory Movements                                                                    |
+| [ADR-010](#adr-010-bangladeshi-e164-phone-normalization-880--deduplication)                                                                  | Bangladeshi E.164 Phone Normalization (+880) & Deduplication                                                                  |
+| [ADR-011](#adr-011-delivery-triggered-cod-financial-reconciliation--idempotency)                                                             | Delivery-Triggered COD Financial Reconciliation & Idempotency                                                                 |
+| [ADR-012](#adr-012-live-authoritative-aggregations-for-control-plane-telemetry-zero-synthetic-data)                                          | Live Authoritative Aggregations for Control Plane Telemetry (Zero Synthetic Data)                                             |
+| [ADR-013](#adr-013-canonical-message-normalization--lossless-banglish-preservation)                                                          | Canonical Message Normalization & Lossless Banglish Preservation                                                              |
+| [ADR-014](#adr-014-authoritative-commerce-separation-for-social-order-drafts)                                                                | Authoritative Commerce Separation for Social Order Drafts                                                                     |
+| [ADR-015](#adr-015-strict-customer-isolation-for-internal-operator-notes)                                                                    | Strict Customer Isolation for Internal Operator Notes                                                                         |
+| [ADR-016](#adr-016-aes-256-gcm-symmetrical-encryption-for-channel-credentials--secret-masking)                                               | AES-256-GCM Symmetrical Encryption for Channel Credentials & Secret Masking                                                   |
+| [ADR-017](#adr-017-multi-agent-specialization--hybrid-supervisor-routing)                                                                    | Multi-Agent Specialization & Hybrid Supervisor Routing                                                                        |
+| [ADR-018](#adr-018-3-second-inbound-message-debouncing-window)                                                                               | 3-Second Inbound Message Debouncing Window                                                                                    |
+| [ADR-019](#adr-019-zero-trust-tool-gateway--authoritative-commerce-core-enforcement)                                                         | Zero-Trust Tool Gateway & Authoritative Commerce Core Enforcement                                                             |
+| [ADR-020](#adr-020-multi-tenant-vector-rag-isolation-with-pgvector-cosine-search)                                                            | Multi-Tenant Vector RAG Isolation with pgvector Cosine Search                                                                 |
+| [ADR-021](#adr-021-pii-redaction--5-layer-context-assembly-with-anti-injection-hierarchy)                                                    | PII Redaction & 5-Layer Context Assembly with Anti-Injection Hierarchy                                                        |
+| [ADR-022](#adr-022-human-takeover-lock--dual-operating-modes-autonomous-vs-copilot)                                                          | Human Takeover Lock & Dual Operating Modes (Autonomous vs Copilot)                                                            |
+| [ADR-023](#adr-023-golden-dataset-quantitative-benchmark-governance)                                                                         | Golden Dataset Quantitative Benchmark Governance                                                                              |
+| [ADR-024](#adr-024-multi-agent-orchestration-topology-hierarchical-supervisor-with-subordinate-task-decomposition)                           | Multi-Agent Orchestration Topology (Hierarchical Supervisor with Subordinate Task Decomposition)                              |
+| [ADR-025](#adr-025-directed-acyclic-graph-dag-task-planning-kahns-topological-sort-and-static-cycle-rejection)                               | Directed Acyclic Graph (DAG) Task Planning, Kahn's Topological Sort, and Static Cycle Rejection                               |
+| [ADR-026](#adr-026-deterministic-physical-verifier-agent-zero-hallucination-evidence-matching-against-db-state)                              | Deterministic Physical Verifier Agent (Zero-Hallucination Evidence Matching against DB State)                                 |
+| [ADR-027](#adr-027-5-tier-autonomy-matrix--action-risk-categorization)                                                                       | 5-Tier Autonomy Matrix & Action Risk Categorization                                                                           |
+| [ADR-028](#adr-028-pre-execution-entity-state-revalidation-optimistic-concurrency--anti-stale-action-shield)                                 | Pre-Execution Entity State Revalidation (Optimistic Concurrency & Anti-Stale Action Shield)                                   |
+| [ADR-029](#adr-029-immutable-idempotent-action-receipts-and-multi-agent-audit-bus)                                                           | Immutable Idempotent Action Receipts and Multi-Agent Audit Bus                                                                |
+| [ADR-030](#adr-030-inter-agent-communication-bus-and-capability-bounded-delegation-containment)                                              | Inter-Agent Communication Bus and Capability-Bounded Delegation Containment                                                   |
+| [ADR-031](#adr-031-durable-workflow-state-machine-with-step-level-checkpointing--crash-resilience)                                           | Durable Workflow State Machine with Step-Level Checkpointing & Crash Resilience                                               |
+| [ADR-032](#adr-032-event-driven-reactive-automation-engine-with-cooldown-buffers--daily-quotas)                                              | Event-Driven Reactive Automation Engine with Cooldown Buffers & Daily Quotas                                                  |
+| [ADR-033](#adr-033-autonomous-multi-agent-cron-scheduling-architecture-with-timezone-awareness)                                              | Autonomous Multi-Agent Cron Scheduling Architecture with Timezone Awareness                                                   |
+| [ADR-034](#adr-034-pre-execution-workflow-simulation--token-spend-projection-engine)                                                         | Pre-Execution Workflow Simulation & Token Spend Projection Engine                                                             |
+| [ADR-035](#adr-035-canonical-metric-registry-with-formal-aggregation-rules--tenant-scoping)                                                  | Canonical Metric Registry with Formal Aggregation Rules & Tenant Scoping                                                      |
+| [ADR-036](#adr-036-zero-injection-parameterized-analytics-query-engine)                                                                      | Zero-Injection Parameterized Analytics Query Engine                                                                           |
+| [ADR-037](#adr-037-real-time-intelligence-ingestion--streaming-rollup-aggregator)                                                            | Real-Time Intelligence Ingestion & Streaming Rollup Aggregator                                                                |
+| [ADR-038](#adr-038-dual-method-statistical-anomaly-detection-z-score--static-invariants)                                                     | Dual-Method Statistical Anomaly Detection (Z-Score + Static Invariants)                                                       |
+| [ADR-039](#adr-039-multi-horizon-forecasting-engine-with-bangladesh-retail-seasonality--confidence-intervals)                                | Multi-Horizon Forecasting Engine with Bangladesh Retail Seasonality & Confidence Intervals                                    |
+| [ADR-040](#adr-040-zero-mutation-what-if-simulation-sandbox-with-microeconomic-elasticity-modeling)                                          | Zero-Mutation What-If Simulation Sandbox with Microeconomic Elasticity Modeling                                               |
+| [ADR-041](#adr-041-rfm-quantile-segmentation--probabilistic-ltv-modeling)                                                                    | RFM Quantile Segmentation & Probabilistic LTV Modeling                                                                        |
+| [ADR-042](#adr-042-7-factor-explainable-recommendation-synthesis-framework)                                                                  | 7-Factor Explainable Recommendation Synthesis Framework                                                                       |
+| [ADR-043](#adr-043-controlled-autonomous-decision-proposal-bridge-to-phase-5-policy--approval-engine)                                        | Controlled Autonomous Decision Proposal Bridge to Phase 5 Policy & Approval Engine                                            |
+| [ADR-044](#adr-044-post-decision-feedback-loop--empirical-outcome-tracking)                                                                  | Post-Decision Feedback Loop & Empirical Outcome Tracking                                                                      |
+| [ADR-045](#adr-045-data-quality-governance-boundary-isolation--machine-learning-model-registry)                                              | Data Quality Governance, Boundary Isolation & Machine Learning Model Registry                                                 |
+| [ADR-046](#adr-046-dual-dynamic--predictive-audience-segmentation-engine-with-immutable-snapshot-cryptographic-hashing)                      | Dual Dynamic & Predictive Audience Segmentation Engine with Immutable Snapshot Cryptographic Hashing                          |
+| [ADR-047](#adr-047-10-stage-deterministic-customer-lifecycle-state-machine--transition-auditing)                                             | 10-Stage Deterministic Customer Lifecycle State Machine & Transition Auditing                                                 |
+| [ADR-048](#adr-048-multi-node-customer-journey-engine-with-step-level-checkpoints--durable-execution)                                        | Multi-Node Customer Journey Engine with Step-Level Checkpoints & Durable Execution                                            |
+| [ADR-049](#adr-049-campaign-risk-tiering--phase-5-approval-gating-with-multi-level-emergency-kill-switches)                                  | Campaign Risk Tiering & Phase 5 Approval Gating with Multi-Level Emergency Kill Switches                                      |
+| [ADR-050](#adr-050-granular-multi-channel-consent-management-suppression-lists--frequency-capping-dailyweekly)                               | Granular Multi-Channel Consent Management, Suppression Lists & Frequency Capping (Daily/Weekly)                               |
+| [ADR-051](#adr-051-grounded-multilingual-copy-synthesis-with-live-catalog-price--stock-factuality-verification)                              | Grounded Multilingual Copy Synthesis with Live Catalog Price & Stock Factuality Verification                                  |
+| [ADR-052](#adr-052-promotional-offer-engine-with-margin-floor-protection--elasticity-based-simulation)                                       | Promotional Offer Engine with Margin-Floor Protection & Elasticity-Based Simulation                                           |
+| [ADR-053](#adr-053-co-purchase-affinity-matrix--anti-duplicate-abandoned-checkout-recovery)                                                  | Co-Purchase Affinity Matrix & Anti-Duplicate Abandoned Checkout Recovery                                                      |
+| [ADR-054](#adr-054-frequentist-ab-testing-engine-with-deterministic-hash-assignment--sample-size-guardrails)                                 | Frequentist A/B Testing Engine with Deterministic Hash Assignment & Sample Size Guardrails                                    |
 | [ADR-055](#adr-055-multi-touch-attribution-engine-first-touch-last-touch-linear-time-decay-distinguishing-attributed-vs-incremental-revenue) | Multi-Touch Attribution Engine (First-Touch, Last-Touch, Linear, Time-Decay) Distinguishing Attributed vs Incremental Revenue |
-| [ADR-056](#adr-056-7-factor-explainable-growth-recommendation-synthesis-with-strategy-categorization) | 7-Factor Explainable Growth Recommendation Synthesis with Strategy Categorization |
-| [ADR-057](#adr-057-multi-agent-growth-supervisor-dag-decomposition--centralized-marketing-tool-execution) | Multi-Agent Growth Supervisor DAG Decomposition & Centralized Marketing Tool Execution |
-| [ADR-058](#adr-058-operational-digital-twin-projection-as-read-only-aggregate-mirror) | Operational Digital Twin Projection as Read-Only Aggregate Mirror |
-| [ADR-059](#adr-059-governed-11-stage-operations-loop-with-verification-and-cryptographic-actionreceipts) | Governed 11-Stage Operations Loop with Verification and Cryptographic ActionReceipts |
-| [ADR-060](#adr-060-deterministic-replenishment--moq-optimization-for-purchase-orders) | Deterministic Replenishment & MOQ Optimization for Purchase Orders |
-| [ADR-061](#adr-061-elasticity-aware-dynamic-pricing-with-immutable-margin-floor-safeguard) | Elasticity-Aware Dynamic Pricing with Immutable Margin-Floor Safeguard |
-| [ADR-062](#adr-062-multi-warehouse-order-fulfillment-planning-and-routing) | Multi-Warehouse Order Fulfillment Planning and Routing |
-| [ADR-063](#adr-063-courier-in-transit-delay-detection-and-automated-carrier-failover) | Courier In-Transit Delay Detection and Automated Carrier Failover |
-| [ADR-064](#adr-064-deterministic-mfs--financial-ledger-reconciliation) | Deterministic MFS & Financial Ledger Reconciliation |
-| [ADR-065](#adr-065-centralized-operational-exception-management-engine) | Centralized Operational Exception Management Engine |
-| [ADR-066](#adr-066-external-provider-health-monitoring-and-automated-circuit-breakers) | External Provider Health Monitoring and Automated Circuit Breakers |
-| [ADR-067](#adr-067-progressive-bulk-mutation-safeguards-with-sample-previews-and-execution-gates) | Progressive Bulk Mutation Safeguards with Sample Previews and Execution Gates |
-| [ADR-068](#adr-068-multi-tier-autonomy-budget-enforcement-and-emergency-kill-switch) | Multi-Tier Autonomy Budget Enforcement and Emergency Kill Switch |
-| [ADR-069](#adr-069-multi-entity-hierarchy--server-side-scope-authorization) | Multi-Entity Hierarchy & Server-Side Scope Authorization |
-| [ADR-070](#adr-070-governed-semantic-metrics-layer--cross-store-benchmarking) | Governed Semantic Metrics Layer & Cross-Store Benchmarking |
-| [ADR-071](#adr-071-integration-hub-with-checkpointed-sync-engine--conflict-resolution) | Integration Hub with Checkpointed Sync Engine & Conflict Resolution |
-| [ADR-072](#adr-072-zero-trust-developer-platform--hmac-sha256-signed-webhooks) | Zero-Trust Developer Platform & HMAC-SHA256 Signed Webhooks |
-| [ADR-073](#adr-073-enterprise-data-governance-pii-masking--customer-identity-resolution) | Enterprise Data Governance, PII Masking & Customer Identity Resolution |
-| [ADR-074](#adr-074-autonomous-platform-architecture--6-layer-operational-model) | Autonomous Platform Architecture & 6-Layer Operational Model |
-| [ADR-075](#adr-075-objective-driven-governance--multi-tier-hierarchy-resolution) | Objective-Driven Governance & Multi-Tier Hierarchy Resolution |
-| [ADR-076](#adr-076-global-decision-engine--mandatory-human-approval-gates) | Global Decision Engine & Mandatory Human Approval Gates |
-| [ADR-077](#adr-077-strategy-formulation-non-destructive-simulation--trade-off-engine) | Strategy Formulation, Non-Destructive Simulation & Trade-Off Engine |
-| [ADR-078](#adr-078-structured-inter-agent-protocol--consensus-conflict-resolution) | Structured Inter-Agent Protocol & Consensus Conflict Resolution |
-| [ADR-079](#adr-079-unified-real-time-cross-domain-context-aggregator) | Unified Real-Time Cross-Domain Context Aggregator |
-| [ADR-080](#adr-080-continuous-learning-pipeline-with-staged-safe-promotion) | Continuous Learning Pipeline with Staged Safe Promotion |
-| [ADR-081](#adr-081-model-governance-registry-lineage-tracking--provider-abstraction) | Model Governance Registry, Lineage Tracking & Provider Abstraction |
-| [ADR-082](#adr-082-policy-governed-task-aware-model-routing--latencycost-optimization) | Policy-Governed Task-Aware Model Routing & Latency/Cost Optimization |
-| [ADR-083](#adr-083-evidence-based-autonomy-adaptation-with-mandatory-board-oversight) | Evidence-Based Autonomy Adaptation with Mandatory Board Oversight |
-| [ADR-084](#adr-084-11-dimension-platform-health-scoring--autonomous-quality-scorecard) | 11-Dimension Platform Health Scoring & Autonomous Quality Scorecard |
-| [ADR-085](#adr-085-cost-aware-autonomy-economics--unit-decision-efficiency-tracking) | Cost-Aware Autonomy Economics & Unit Decision Efficiency Tracking |
-| [ADR-086](#adr-086-two-tier-rollback-state-restoration--compensating-action-architecture) | Two-Tier Rollback: State Restoration & Compensating Action Architecture |
-| [ADR-087](#adr-087-cross-domain-incident-management-blast-radius--auto-remediation) | Cross-Domain Incident Management, Blast Radius & Auto-Remediation |
-| [ADR-088](#adr-088-multi-region-data-residency--slo-error-budget-burn-rate-governance) | Multi-Region Data Residency & SLO Error Budget Burn Rate Governance |
-| [ADR-089](#adr-089-architectural-separation-of-n8n-orchestration-hub--commerceos-authority-adr-automation-n8n-boundary) | Architectural Separation of n8n Orchestration Hub & CommerceOS Authority (ADR-Automation-N8n-Boundary) |
-| [ADR-090](#adr-090-deterministic-granular-idempotency-engine--distributed-mutation-locking-adr-automation-idempotency) | Deterministic Granular Idempotency Engine & Distributed Mutation Locking (ADR-Automation-Idempotency) |
-| [ADR-091](#adr-091-cryptographic-inbound-webhook-gateway-with-replay--drift-defense-adr-automation-webhooks) | Cryptographic Inbound Webhook Gateway with Replay & Drift Defense (ADR-Automation-Webhooks) |
-| [ADR-092](#adr-092-bangladeshi-courier-status-normalization--autonomous-shipment-sync-adr-courier-synchronization) | Bangladeshi Courier Status Normalization & Autonomous Shipment Sync (ADR-Courier-Synchronization) |
-| [ADR-093](#adr-093-bounded-exponential-backoff-with-jitter-for-automation-retries-adr-automation-retry) | Bounded Exponential Backoff with Jitter for Automation Retries (ADR-Automation-Retry) |
-| [ADR-094](#adr-094-dead-letter-queue-dlq-lifecycle-root-cause-categorization--replay-adr-automation-dead-letter) | Dead Letter Queue (DLQ) Lifecycle, Root Cause Categorization & Replay (ADR-Automation-Dead-Letter) |
-| [ADR-095](#adr-095-production-n8n-integration-credential-isolation--environment-injection-adr-n8n-integration) | Production n8n Integration, Credential Isolation & Environment Injection (ADR-N8n-Integration) |
-| [ADR-096](#adr-096-semantic-workflow-versioning-migration-lifecycle--template-library-adr-automation-workflow-versioning) | Semantic Workflow Versioning, Migration Lifecycle & Template Library (ADR-Automation-Workflow-Versioning) |
-| [ADR-097](#adr-097-multi-layer-automation-safety-recursion-depth-rate-limiting--emergency-kill-switch-adr-automation-loop-protection) | Multi-Layer Automation Safety: Recursion Depth, Rate Limiting & Emergency Kill Switch (ADR-Automation-Loop-Protection) |
-| [ADR-098](#adr-098-multi-provider-automation-abstraction--health-circuit-breakers-adr-automation-provider-abstraction) | Multi-Provider Automation Abstraction & Health Circuit Breakers (ADR-Automation-Provider-Abstraction) |
-| [ADR-099](#adr-099-super-admin-role-platform-control-plane-connector-segregation--automations-isolation-adr-super-admin-platform-control) | Super Admin Role, Platform Control Plane, Connector Segregation & Automations Isolation (ADR-Super-Admin-Platform-Control) |
-| [ADR-100](#adr-100-authoritative-separation-of-platform-scope-and-tenant-scope-authorization-boundary-adr-platform-scope-separation) | Authoritative Separation of Platform Scope and Tenant Scope Authorization Boundary (ADR-Platform-Scope-Separation) |
-| [ADR-101](#adr-101-integration-of-typesafe-ai-jev-system-one-model-for-sub-20ms-decisions-and-policy-guardrails) | Integration of TypeSafe AI Jev (System One) Model for Sub-20ms Decisions and Policy Guardrails |
-| [ADR-102](#adr-102-agent-governance-restructure-status-as-source-of-truth) | Agent governance restructure: STATUS as source of truth |
-| [ADR-103](#adr-103-fail-closed-authentication-secrets-and-webhook-signatures-phase-0-containment) | Fail-closed authentication, secrets and webhook signatures (Phase 0 containment) |
-| [ADR-104](#adr-104-access-control-and-integrity-phase-1) | Access control and integrity (Phase 1) |
+| [ADR-056](#adr-056-7-factor-explainable-growth-recommendation-synthesis-with-strategy-categorization)                                        | 7-Factor Explainable Growth Recommendation Synthesis with Strategy Categorization                                             |
+| [ADR-057](#adr-057-multi-agent-growth-supervisor-dag-decomposition--centralized-marketing-tool-execution)                                    | Multi-Agent Growth Supervisor DAG Decomposition & Centralized Marketing Tool Execution                                        |
+| [ADR-058](#adr-058-operational-digital-twin-projection-as-read-only-aggregate-mirror)                                                        | Operational Digital Twin Projection as Read-Only Aggregate Mirror                                                             |
+| [ADR-059](#adr-059-governed-11-stage-operations-loop-with-verification-and-cryptographic-actionreceipts)                                     | Governed 11-Stage Operations Loop with Verification and Cryptographic ActionReceipts                                          |
+| [ADR-060](#adr-060-deterministic-replenishment--moq-optimization-for-purchase-orders)                                                        | Deterministic Replenishment & MOQ Optimization for Purchase Orders                                                            |
+| [ADR-061](#adr-061-elasticity-aware-dynamic-pricing-with-immutable-margin-floor-safeguard)                                                   | Elasticity-Aware Dynamic Pricing with Immutable Margin-Floor Safeguard                                                        |
+| [ADR-062](#adr-062-multi-warehouse-order-fulfillment-planning-and-routing)                                                                   | Multi-Warehouse Order Fulfillment Planning and Routing                                                                        |
+| [ADR-063](#adr-063-courier-in-transit-delay-detection-and-automated-carrier-failover)                                                        | Courier In-Transit Delay Detection and Automated Carrier Failover                                                             |
+| [ADR-064](#adr-064-deterministic-mfs--financial-ledger-reconciliation)                                                                       | Deterministic MFS & Financial Ledger Reconciliation                                                                           |
+| [ADR-065](#adr-065-centralized-operational-exception-management-engine)                                                                      | Centralized Operational Exception Management Engine                                                                           |
+| [ADR-066](#adr-066-external-provider-health-monitoring-and-automated-circuit-breakers)                                                       | External Provider Health Monitoring and Automated Circuit Breakers                                                            |
+| [ADR-067](#adr-067-progressive-bulk-mutation-safeguards-with-sample-previews-and-execution-gates)                                            | Progressive Bulk Mutation Safeguards with Sample Previews and Execution Gates                                                 |
+| [ADR-068](#adr-068-multi-tier-autonomy-budget-enforcement-and-emergency-kill-switch)                                                         | Multi-Tier Autonomy Budget Enforcement and Emergency Kill Switch                                                              |
+| [ADR-069](#adr-069-multi-entity-hierarchy--server-side-scope-authorization)                                                                  | Multi-Entity Hierarchy & Server-Side Scope Authorization                                                                      |
+| [ADR-070](#adr-070-governed-semantic-metrics-layer--cross-store-benchmarking)                                                                | Governed Semantic Metrics Layer & Cross-Store Benchmarking                                                                    |
+| [ADR-071](#adr-071-integration-hub-with-checkpointed-sync-engine--conflict-resolution)                                                       | Integration Hub with Checkpointed Sync Engine & Conflict Resolution                                                           |
+| [ADR-072](#adr-072-zero-trust-developer-platform--hmac-sha256-signed-webhooks)                                                               | Zero-Trust Developer Platform & HMAC-SHA256 Signed Webhooks                                                                   |
+| [ADR-073](#adr-073-enterprise-data-governance-pii-masking--customer-identity-resolution)                                                     | Enterprise Data Governance, PII Masking & Customer Identity Resolution                                                        |
+| [ADR-074](#adr-074-autonomous-platform-architecture--6-layer-operational-model)                                                              | Autonomous Platform Architecture & 6-Layer Operational Model                                                                  |
+| [ADR-075](#adr-075-objective-driven-governance--multi-tier-hierarchy-resolution)                                                             | Objective-Driven Governance & Multi-Tier Hierarchy Resolution                                                                 |
+| [ADR-076](#adr-076-global-decision-engine--mandatory-human-approval-gates)                                                                   | Global Decision Engine & Mandatory Human Approval Gates                                                                       |
+| [ADR-077](#adr-077-strategy-formulation-non-destructive-simulation--trade-off-engine)                                                        | Strategy Formulation, Non-Destructive Simulation & Trade-Off Engine                                                           |
+| [ADR-078](#adr-078-structured-inter-agent-protocol--consensus-conflict-resolution)                                                           | Structured Inter-Agent Protocol & Consensus Conflict Resolution                                                               |
+| [ADR-079](#adr-079-unified-real-time-cross-domain-context-aggregator)                                                                        | Unified Real-Time Cross-Domain Context Aggregator                                                                             |
+| [ADR-080](#adr-080-continuous-learning-pipeline-with-staged-safe-promotion)                                                                  | Continuous Learning Pipeline with Staged Safe Promotion                                                                       |
+| [ADR-081](#adr-081-model-governance-registry-lineage-tracking--provider-abstraction)                                                         | Model Governance Registry, Lineage Tracking & Provider Abstraction                                                            |
+| [ADR-082](#adr-082-policy-governed-task-aware-model-routing--latencycost-optimization)                                                       | Policy-Governed Task-Aware Model Routing & Latency/Cost Optimization                                                          |
+| [ADR-083](#adr-083-evidence-based-autonomy-adaptation-with-mandatory-board-oversight)                                                        | Evidence-Based Autonomy Adaptation with Mandatory Board Oversight                                                             |
+| [ADR-084](#adr-084-11-dimension-platform-health-scoring--autonomous-quality-scorecard)                                                       | 11-Dimension Platform Health Scoring & Autonomous Quality Scorecard                                                           |
+| [ADR-085](#adr-085-cost-aware-autonomy-economics--unit-decision-efficiency-tracking)                                                         | Cost-Aware Autonomy Economics & Unit Decision Efficiency Tracking                                                             |
+| [ADR-086](#adr-086-two-tier-rollback-state-restoration--compensating-action-architecture)                                                    | Two-Tier Rollback: State Restoration & Compensating Action Architecture                                                       |
+| [ADR-087](#adr-087-cross-domain-incident-management-blast-radius--auto-remediation)                                                          | Cross-Domain Incident Management, Blast Radius & Auto-Remediation                                                             |
+| [ADR-088](#adr-088-multi-region-data-residency--slo-error-budget-burn-rate-governance)                                                       | Multi-Region Data Residency & SLO Error Budget Burn Rate Governance                                                           |
+| [ADR-089](#adr-089-architectural-separation-of-n8n-orchestration-hub--commerceos-authority-adr-automation-n8n-boundary)                      | Architectural Separation of n8n Orchestration Hub & CommerceOS Authority (ADR-Automation-N8n-Boundary)                        |
+| [ADR-090](#adr-090-deterministic-granular-idempotency-engine--distributed-mutation-locking-adr-automation-idempotency)                       | Deterministic Granular Idempotency Engine & Distributed Mutation Locking (ADR-Automation-Idempotency)                         |
+| [ADR-091](#adr-091-cryptographic-inbound-webhook-gateway-with-replay--drift-defense-adr-automation-webhooks)                                 | Cryptographic Inbound Webhook Gateway with Replay & Drift Defense (ADR-Automation-Webhooks)                                   |
+| [ADR-092](#adr-092-bangladeshi-courier-status-normalization--autonomous-shipment-sync-adr-courier-synchronization)                           | Bangladeshi Courier Status Normalization & Autonomous Shipment Sync (ADR-Courier-Synchronization)                             |
+| [ADR-093](#adr-093-bounded-exponential-backoff-with-jitter-for-automation-retries-adr-automation-retry)                                      | Bounded Exponential Backoff with Jitter for Automation Retries (ADR-Automation-Retry)                                         |
+| [ADR-094](#adr-094-dead-letter-queue-dlq-lifecycle-root-cause-categorization--replay-adr-automation-dead-letter)                             | Dead Letter Queue (DLQ) Lifecycle, Root Cause Categorization & Replay (ADR-Automation-Dead-Letter)                            |
+| [ADR-095](#adr-095-production-n8n-integration-credential-isolation--environment-injection-adr-n8n-integration)                               | Production n8n Integration, Credential Isolation & Environment Injection (ADR-N8n-Integration)                                |
+| [ADR-096](#adr-096-semantic-workflow-versioning-migration-lifecycle--template-library-adr-automation-workflow-versioning)                    | Semantic Workflow Versioning, Migration Lifecycle & Template Library (ADR-Automation-Workflow-Versioning)                     |
+| [ADR-097](#adr-097-multi-layer-automation-safety-recursion-depth-rate-limiting--emergency-kill-switch-adr-automation-loop-protection)        | Multi-Layer Automation Safety: Recursion Depth, Rate Limiting & Emergency Kill Switch (ADR-Automation-Loop-Protection)        |
+| [ADR-098](#adr-098-multi-provider-automation-abstraction--health-circuit-breakers-adr-automation-provider-abstraction)                       | Multi-Provider Automation Abstraction & Health Circuit Breakers (ADR-Automation-Provider-Abstraction)                         |
+| [ADR-099](#adr-099-super-admin-role-platform-control-plane-connector-segregation--automations-isolation-adr-super-admin-platform-control)    | Super Admin Role, Platform Control Plane, Connector Segregation & Automations Isolation (ADR-Super-Admin-Platform-Control)    |
+| [ADR-100](#adr-100-authoritative-separation-of-platform-scope-and-tenant-scope-authorization-boundary-adr-platform-scope-separation)         | Authoritative Separation of Platform Scope and Tenant Scope Authorization Boundary (ADR-Platform-Scope-Separation)            |
+| [ADR-101](#adr-101-integration-of-typesafe-ai-jev-system-one-model-for-sub-20ms-decisions-and-policy-guardrails)                             | Integration of TypeSafe AI Jev (System One) Model for Sub-20ms Decisions and Policy Guardrails                                |
+| [ADR-102](#adr-102-agent-governance-restructure-status-as-source-of-truth)                                                                   | Agent governance restructure: STATUS as source of truth                                                                       |
+| [ADR-103](#adr-103-fail-closed-authentication-secrets-and-webhook-signatures-phase-0-containment)                                            | Fail-closed authentication, secrets and webhook signatures (Phase 0 containment)                                              |
+| [ADR-104](#adr-104-access-control-and-integrity-phase-1)                                                                                     | Access control and integrity (Phase 1)                                                                                        |
+| [ADR-105](#adr-105-coalesced-persistence-write-free-reads-and-complete-analytics-phase-2)                                                    | Coalesced persistence, write-free reads and complete analytics (Phase 2)                                                      |
+| [ADR-106](#adr-106-truthful-data-and-honest-integrations-phase-3)                                                                            | Truthful data and honest integrations (Phase 3)                                                                               |
+| [ADR-107](#adr-107-enforced-safety-controls-one-order-writer-and-a-real-ai-provider-phase-3-completion)                                      | Enforced safety controls, one order writer and a real AI provider                                                             |
+| [ADR-108](#adr-108-postgres-as-the-system-of-record-behind-the-existing-store-api-phase-4-first-stage)                                       | Postgres as the system of record (Phase 4, first stage)                                                                       |
+| [ADR-109](#adr-109-several-app-servers--units-of-work-over-a-shared-versioned-store)                                                         | Several app servers — units of work over a shared, versioned store                                                            |
+| [ADR-110](#adr-110-safe-outbound-http-live-connector-checks-signed-webhooks-and-n8n-phase-5-stage-1)                                         | Safe outbound HTTP, live connector checks, signed webhooks and n8n                                                            |
+| [ADR-111](#adr-111-durable-bounded-ai-workflow-execution)                                                                                    | Durable, bounded AI workflow execution                                                                                        |
 
-> Several ADRs assume PostgreSQL/pgvector, Redis Streams, and real providers. Where the code differs (JSON store, Pinecone, mocked LLM), STATUS.md describes reality; the ADR still records the intended decision. Supersede an ADR with a new one rather than editing it.
+> Earlier ADRs may describe target architecture. `.agent/STATUS.md` is the source of truth for current implementation and verification. Supersede an ADR with a new one rather than editing an approved decision.
 
 ---
 
 ## ADR-001: Next.js App Router + Vanilla CSS with Custom Tokens
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: The platform requires a bespoke, state-of-the-art Bento Grid interface with subtle glassmorphism, floating navigation dock, and lime accent tokens.
@@ -127,6 +135,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-002: PostgreSQL 16+ with `pgvector` for Hybrid Persistence
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: The platform requires an ACID-compliant transactional database for financial and order state, plus vector storage for semantic RAG retrieval.
@@ -136,6 +145,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-003: Strict Separation of n8n as Orchestration Hub (Not Core Backend)
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: n8n provides workflow automation, but must not become an unmaintainable monolithic backend or source of truth.
@@ -145,6 +155,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-004: Multi-Agent Gateway with Deterministic Policy Engine
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Direct LLM execution introduces risks of hallucinated pricing, unauthorized inventory modifications, and prompt injection exploits.
@@ -154,6 +165,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-005: Cryptographic Multi-Tenant Context Resolution
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: In a multi-tenant SaaS, tenant data leakage is a catastrophic failure.
@@ -163,6 +175,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-006: Provider Adapter Pattern for Bangladesh Couriers & Payments
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Bangladeshi logistics (Steadfast, Pathao, RedX) and MFS providers (bKash, Nagad) frequently update API endpoints, error structures, and authentication protocols.
@@ -172,6 +185,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-007: Server-Side Authoritative Pricing Engine & Client Totals Rejection
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Client applications or conversational AI agents might miscalculate subtotal, shipping fees (e.g. Inside Dhaka ৳60 vs Outside Dhaka ৳120), or coupon discount limits.
@@ -181,6 +195,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-008: Strict Finite State Machine for Order Lifecycle & Reservation Invariants
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Omnichannel commerce workflows can lead to race conditions, double shipments, or invalid state jumps (e.g., from PENDING directly to DELIVERED, or cancelling already DELIVERED orders).
@@ -192,6 +207,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-009: Zero Negative-Stock Invariant & Atomic Inventory Movements
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: High-demand sales campaigns (e.g., Eid flash sales) can induce race conditions causing overselling beyond physical warehouse capacity.
@@ -201,6 +217,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-010: Bangladeshi E.164 Phone Normalization (+880) & Deduplication
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: In Bangladeshi F-commerce, customers provide phone numbers in diverse formats (`017...`, `+88017...`, `88017...`, `017..-..`), causing customer profile fragmentation and inaccurate lifetime spend records.
@@ -210,6 +227,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-011: Delivery-Triggered COD Financial Reconciliation & Idempotency
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Over 85% of Bangladeshi e-commerce transactions utilize Cash on Delivery (COD). Manual reconciliation often leaves orders in unpaid status even after successful courier delivery.
@@ -219,6 +237,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-012: Live Authoritative Aggregations for Control Plane Telemetry (Zero Synthetic Data)
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Demo or placeholder mock numbers in SaaS control planes deceive operators and conceal integration defects.
@@ -228,6 +247,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-013: Canonical Message Normalization & Lossless Banglish Preservation
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Bangladeshi social commerce relies heavily on Banglish (phonetic Bengali in Latin script). Mutating or blindly translating user messages causes loss of critical customer context and nuanced customer sentiment.
@@ -237,6 +257,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-014: Authoritative Commerce Separation for Social Order Drafts
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Direct creation of orders in chat or by AI agents poses extreme risks of incorrect line pricing, discount tampering, and out-of-stock commitments.
@@ -246,6 +267,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-015: Strict Customer Isolation for Internal Operator Notes
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Operators and human agents leave internal notes on customer conversation threads containing sensitive internal comments (e.g. discount approvals, fraud notes).
@@ -255,6 +277,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-016: AES-256-GCM Symmetrical Encryption for Channel Credentials & Secret Masking
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Multi-tenant social commerce requires storing highly sensitive third-party credentials (Meta Page Access Tokens, WhatsApp Cloud API keys, Webhook secrets). Plaintext storage in the database or exposure via APIs is a catastrophic security vulnerability.
@@ -264,18 +287,20 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-017: Multi-Agent Specialization & Hybrid Supervisor Routing
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Monolithic LLM agents attempting to handle customer support, sales qualification, order tracking, and product sizing suffer from high prompt bloat, high cost, and hallucination risks.
 - **Decision**: Implemented a specialized multi-agent architecture (`SUPERVISOR`, `CUSTOMER_SUPPORT`, `SALES`, `ORDER_ASSISTANT`, `PRODUCT_INFO`). Routing uses a 3-stage hybrid supervisor:
-  1. *Deterministic Fast Path* (Zero-cost, sub-millisecond regex rules for greetings, thanks, prompt injections, human handoffs).
-  2. *Banglish Domain Heuristics* (Lossless keyword and entity extraction).
-  3. *Lightweight Tier 1 Classifier* (Structured output schema).
+  1. _Deterministic Fast Path_ (Zero-cost, sub-millisecond regex rules for greetings, thanks, prompt injections, human handoffs).
+  2. _Banglish Domain Heuristics_ (Lossless keyword and entity extraction).
+  3. _Lightweight Tier 1 Classifier_ (Structured output schema).
 - **Consequences**: Greetings and simple queries bypass expensive LLM calls completely (0 token cost, <2ms latency); complex inquiries are routed to focused agents with constrained toolsets.
 
 ---
 
 ## ADR-018: 3-Second Inbound Message Debouncing Window
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Bangladeshi social commerce customers frequently send 3–4 rapid burst messages in Latin/Banglish ("hi", "price?", "black shoe 42 ache?"). Triggering independent LLM runs for each burst message wastes tokens, triggers conflicting replies, and causes race conditions.
@@ -285,6 +310,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-019: Zero-Trust Tool Gateway & Authoritative Commerce Core Enforcement
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: LLMs must never be trusted to directly execute SQL queries, mutate database records, or hallucinate inventory counts, prices, or payment states.
@@ -299,6 +325,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-020: Multi-Tenant Vector RAG Isolation with pgvector Cosine Search
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Store policies (return windows, shipping zones, sizing specs) must be retrieved with semantic search without cross-tenant vector leakage.
@@ -308,6 +335,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-021: PII Redaction & 5-Layer Context Assembly with Anti-Injection Hierarchy
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Customer phone numbers, emails, and payment credentials passed into LLM prompts risk training leakage, prompt injection attacks, and privacy violations.
@@ -322,18 +350,20 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-022: Human Takeover Lock & Dual Operating Modes (Autonomous vs Copilot)
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: When a human customer support agent takes over a conversation, or when high-risk disputes arise, automated AI replies must halt instantly without disabling human-facing assistance.
 - **Decision**: Dual operational modes:
-  - *AI_AUTONOMOUS*: Directly delivers outbound messages to social channels.
-  - *AI_COPILOT*: Generates draft suggestions for human inbox operators without sending messages.
-  - *Human Takeover Lock*: When `conversation.mode === "HUMAN"` or `automation_paused === true`, autonomous runs are hard-blocked (`status: "BLOCKED"`). Human operators retain access to Copilot (`isCopilot: true`) for interactive suggested replies.
+  - _AI_AUTONOMOUS_: Directly delivers outbound messages to social channels.
+  - _AI_COPILOT_: Generates draft suggestions for human inbox operators without sending messages.
+  - _Human Takeover Lock_: When `conversation.mode === "HUMAN"` or `automation_paused === true`, autonomous runs are hard-blocked (`status: "BLOCKED"`). Human operators retain access to Copilot (`isCopilot: true`) for interactive suggested replies.
 - **Consequences**: Guaranteed human primacy; zero unwanted automated messages sent while human operators converse with customers.
 
 ---
 
 ## ADR-023: Golden Dataset Quantitative Benchmark Governance
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Continuous prompt updates and model router changes require regression testing against authentic Bangladeshi retail scenarios (Bangla, Banglish, and adversarial inputs).
@@ -343,6 +373,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-024: Multi-Agent Orchestration Topology (Hierarchical Supervisor with Subordinate Task Decomposition)
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Autonomous multi-step commerce workflows (abandoned cart recovery, restock calculation, delivery exception escalation) require coordinated actions across multiple specialized agents without single-agent prompt bloat.
@@ -352,6 +383,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-025: Directed Acyclic Graph (DAG) Task Planning, Kahn's Topological Sort, and Static Cycle Rejection
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Inter-task dependencies (e.g. inventory must be checked before generating promotional discount) must execute in strict dependency order while permitting parallel execution of independent tasks. Cyclic dependencies must be caught before execution.
@@ -361,6 +393,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-026: Deterministic Physical Verifier Agent (Zero-Hallucination Evidence Matching against DB State)
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Generative AI agents may assert that an order was created, inventory reserved, or payment confirmed even when an API call failed or hallucinated.
@@ -370,6 +403,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-027: 5-Tier Autonomy Matrix & Action Risk Categorization
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Enterprise merchants require fine-grained control over autonomous agent capabilities, ranging from advisory copilots to conditional autonomy.
@@ -379,6 +413,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-028: Pre-Execution Entity State Revalidation (Optimistic Concurrency & Anti-Stale Action Shield)
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: In high-throughput commerce, an entity (e.g. Order #1002) may mutate between when an agent plans an action (e.g. Cancel Order) and when a human operator reviews and approves the request minutes or hours later.
@@ -388,6 +423,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-029: Immutable Idempotent Action Receipts and Multi-Agent Audit Bus
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Network retries and multi-agent coordination can inadvertently trigger duplicate mutations (e.g., duplicate stock reservations or double refund processing).
@@ -397,6 +433,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-030: Inter-Agent Communication Bus and Capability-Bounded Delegation Containment
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Uncontrolled agent-to-agent delegation can cause infinite execution loops (`Agent A -> Agent B -> Agent A`) or privilege escalation where an agent delegates actions beyond its authorized scope.
@@ -409,6 +446,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-031: Durable Workflow State Machine with Step-Level Checkpointing & Crash Resilience
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Long-running multi-agent workflows may pause for human approval, hit external rate limits, or encounter container restarts.
@@ -418,6 +456,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-032: Event-Driven Reactive Automation Engine with Cooldown Buffers & Daily Quotas
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: High-frequency domain events (`inventory.low_stock`, `payment.failed`, `order.cancelled`) can cause runaway agent execution loops and budget exhaustion if triggered excessively.
@@ -427,6 +466,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-033: Autonomous Multi-Agent Cron Scheduling Architecture with Timezone Awareness
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Routine commerce operations (daily inventory reconciliation, morning abandoned cart digest, weekly margin audit) require automated recurring scheduling aligned to local merchant business hours.
@@ -436,6 +476,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-034: Pre-Execution Workflow Simulation & Token Spend Projection Engine
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Merchants need visibility into what an autonomous multi-agent workflow will do, how much it will cost, and where human intervention will be required BEFORE deploying it.
@@ -445,6 +486,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-035: Canonical Metric Registry with Formal Aggregation Rules & Tenant Scoping
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Different commerce modules, reports, and AI agents frequently recalculate critical commerce metrics (e.g. gross revenue, net margin, return rate, stockout rate) with subtly conflicting definitions, leading to inconsistent analytics and hallucinated summaries.
@@ -454,6 +496,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-036: Zero-Injection Parameterized Analytics Query Engine
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Analytical querying must support dynamic filters (time range, product category, courier, customer segment) while guaranteeing zero SQL/code injection, zero LLM runtime mutation, and tenant isolation.
@@ -463,6 +506,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-037: Real-Time Intelligence Ingestion & Streaming Rollup Aggregator
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Calculating metrics across hundreds of thousands of historical transactions on every page load or agent inquiry incurs prohibitive computational overhead.
@@ -472,6 +516,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-038: Dual-Method Statistical Anomaly Detection (Z-Score + Static Invariants)
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: E-commerce anomalies span both gradual statistical drifts (e.g. return rate increasing by 2.5 standard deviations) and sudden critical failures (e.g. payment gateway failure rate exceeding 25% or checkout abandonments spiking above 80%).
@@ -481,6 +526,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-039: Multi-Horizon Forecasting Engine with Bangladesh Retail Seasonality & Confidence Intervals
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Merchants require predictive projections across 7, 14, 30, and 90-day horizons to plan inventory purchases and cash flow, particularly accounting for Bangladeshi retail patterns (e.g. Friday/Saturday order spikes).
@@ -490,6 +536,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-040: Zero-Mutation What-If Simulation Sandbox with Microeconomic Elasticity Modeling
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Merchants and agents need to evaluate the downstream impact of commercial adjustments (e.g. a 10% price increase, 15% promotional discount, or 20% inventory buffer increase) without mutating actual catalog or inventory records.
@@ -499,6 +546,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-041: RFM Quantile Segmentation & Probabilistic LTV Modeling
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Customer retention and targeted marketing require dynamic segmentation based on transaction recency, frequency, and monetary contribution rather than arbitrary static rules.
@@ -508,6 +556,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-042: 7-Factor Explainable Recommendation Synthesis Framework
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Black-box AI recommendations ("You should order 200 shirts") are distrusted by merchants and lead to ignored advice or dangerous misconfigurations.
@@ -524,6 +573,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-043: Controlled Autonomous Decision Proposal Bridge to Phase 5 Policy & Approval Engine
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Recommendations must not remain dead-end dashboard cards; high-confidence recommendations should seamlessly transition into executable actions under Phase 5 governance.
@@ -533,6 +583,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-044: Post-Decision Feedback Loop & Empirical Outcome Tracking
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Systems that recommend actions without measuring post-execution results cannot improve, detect deteriorating models, or calibrate risk scoring.
@@ -542,6 +593,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-045: Data Quality Governance, Boundary Isolation & Machine Learning Model Registry
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Machine learning and statistical algorithms are vulnerable to corrupted input data, schema drift, uncalibrated model versions, and cross-tenant leakage.
@@ -551,6 +603,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-046: Dual Dynamic & Predictive Audience Segmentation Engine with Immutable Snapshot Cryptographic Hashing
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Growth campaigns require flexible cohort targeting using dynamic multi-criteria rule trees (`AND`/`OR` conjunctions) while guaranteeing that audience membership at execution time is strictly auditable and reproducible without being distorted by subsequent data changes.
@@ -560,6 +613,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-047: 10-Stage Deterministic Customer Lifecycle State Machine & Transition Auditing
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Customer progression across awareness, purchase, retention, and churn is non-linear and requires standardized operational stages to coordinate automated growth workflows across Bangladeshi social commerce and web channels.
@@ -569,6 +623,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-048: Multi-Node Customer Journey Engine with Step-Level Checkpoints & Durable Execution
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Automated lifecycle nurture programs require multi-step branching logic (`TRIGGER`, `ELIGIBILITY`, `CONDITION`, `ACTION`, `WAIT`, `SPLIT`, `EXPERIMENT`, `EXIT`) that can pause for days or weeks across time delays without losing execution state or relying on fragile long-running process memory.
@@ -578,6 +633,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-049: Campaign Risk Tiering & Phase 5 Approval Gating with Multi-Level Emergency Kill Switches
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Outbound marketing automation across SMS, WhatsApp, and Facebook can cause financial damage (e.g. runaway discount codes, oversized ad spend) or reputational harm if deployed without safeguards.
@@ -587,6 +643,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-050: Granular Multi-Channel Consent Management, Suppression Lists & Frequency Capping (Daily/Weekly)
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Aggressive marketing across personal channels (WhatsApp, SMS, Messenger) causes customer fatigue, spam complaints, and platform bans if opt-outs and message frequencies are not rigorously enforced.
@@ -596,6 +653,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-051: Grounded Multilingual Copy Synthesis with Live Catalog Price & Stock Factuality Verification
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Marketing copy generated in localized Bangla, Banglish, and English often hallucinates incorrect prices, promises unavailable products, or creates deceptive urgency ("miracle cure", "fake discount").
@@ -605,6 +663,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-052: Promotional Offer Engine with Margin-Floor Protection & Elasticity-Based Simulation
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Blanket promotional discounts frequently erode product gross margins and attract unprofitable or abusive redemption patterns.
@@ -614,6 +673,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-053: Co-Purchase Affinity Matrix & Anti-Duplicate Abandoned Checkout Recovery
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Cross-selling and abandoned checkout recovery are primary revenue drivers in Bangladeshi commerce, but generic product suggestions and premature checkout recovery messages annoy customers who already ordered.
@@ -623,6 +683,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-054: Frequentist A/B Testing Engine with Deterministic Hash Assignment & Sample Size Guardrails
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Marketing teams frequently declare false winners in A/B tests after small, noisy sample sizes or deploy split tests that assign different variants to the same user across different visits.
@@ -632,6 +693,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-055: Multi-Touch Attribution Engine (First-Touch, Last-Touch, Linear, Time-Decay) Distinguishing Attributed vs Incremental Revenue
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Single-touch attribution (e.g. last-click only) distorts marketing ROI by penalizing top-of-funnel awareness campaigns and rewarding low-effort retargeting, while failing to distinguish attributed revenue from baseline organic transactions.
@@ -641,6 +703,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-056: 7-Factor Explainable Growth Recommendation Synthesis with Strategy Categorization
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Automated growth recommendations must be immediately understandable to non-technical merchants and align directly with core e-commerce business goals (acquisition, activation, retention, revenue, referral).
@@ -650,6 +713,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-057: Multi-Agent Growth Supervisor DAG Decomposition & Centralized Marketing Tool Execution
+
 - **Date**: 2026-09-19
 - **Status**: Approved
 - **Context**: Complex commercial objectives (e.g. "Increase repeat purchases by 15% through personalized Banglish WhatsApp retention campaigns") require coordinated specialization across audience analysis, product affinities, copy generation, and margin verification.
@@ -659,6 +723,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-058: Operational Digital Twin Projection as Read-Only Aggregate Mirror
+
 - **Date**: 2026-09-20
 - **Status**: Approved
 - **Context**: Autonomous commerce operations across inventory, procurement, pricing, orders, fulfillment, shipping, payments, finance, support, and returns require real-time system visibility without putting transactional locking strain on the ACID commerce core database.
@@ -668,6 +733,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-059: Governed 11-Stage Operations Loop with Verification and Cryptographic ActionReceipts
+
 - **Date**: 2026-09-20
 - **Status**: Approved
 - **Context**: Autonomous AI agents must never be permitted to execute unconstrained database mutations or opaque operations without physical verification, auditability, and rollback capability.
@@ -677,6 +743,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-060: Deterministic Replenishment & MOQ Optimization for Purchase Orders
+
 - **Date**: 2026-09-20
 - **Status**: Approved
 - **Context**: Automated restocking must account for real sales velocity, supplier minimum order quantities (MOQ), unit costs, lead times, and warehouse capacities without LLM hallucination of inventory or pricing math.
@@ -686,6 +753,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-061: Elasticity-Aware Dynamic Pricing with Immutable Margin-Floor Safeguard
+
 - **Date**: 2026-09-20
 - **Status**: Approved
 - **Context**: Dynamic pricing adjustments and clearance markdowns carry the catastrophic risk of selling below cost price or eroding retailer profitability if unconstrained.
@@ -695,6 +763,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-062: Multi-Warehouse Order Fulfillment Planning and Routing
+
 - **Date**: 2026-09-20
 - **Status**: Approved
 - **Context**: Multi-location retail operations in Bangladesh (Dhaka hub, Chittagong depot, regional fulfillment centers) require optimal order splitting, inventory allocation, and carrier assignment to minimize transit times and delivery costs.
@@ -704,6 +773,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-063: Courier In-Transit Delay Detection and Automated Carrier Failover
+
 - **Date**: 2026-09-20
 - **Status**: Approved
 - **Context**: Bangladeshi third-party logistics (Steadfast, Pathao, RedX) suffer from frequent regional transit delays, hub congestions, and delivery exceptions.
@@ -713,6 +783,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-064: Deterministic MFS & Financial Ledger Reconciliation
+
 - **Date**: 2026-09-20
 - **Status**: Approved
 - **Context**: Mobile Financial Services (bKash, Nagad) and Courier COD settlements frequently involve payment reference typos, transaction mismatches, and delayed settlement batches.
@@ -722,6 +793,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-065: Centralized Operational Exception Management Engine
+
 - **Date**: 2026-09-20
 - **Status**: Approved
 - **Context**: Operational issues across shipping, inventory, payments, and fulfillment must be triaged, prioritized, assigned to domain agents or humans, and tracked through to verified resolution.
@@ -731,6 +803,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-066: External Provider Health Monitoring and Automated Circuit Breakers
+
 - **Date**: 2026-09-20
 - **Status**: Approved
 - **Context**: Third-party APIs (SMS gateways, courier tracking, bKash webhook ingress) experience intermittent downtime, rate limits, and latency spikes that can cascade into system failures.
@@ -740,6 +813,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-067: Progressive Bulk Mutation Safeguards with Sample Previews and Execution Gates
+
 - **Date**: 2026-09-20
 - **Status**: Approved
 - **Context**: Mass operational actions (e.g. updating prices on 500 SKUs, cancelling 50 unfulfilled orders) carry systemic risk if applied instantaneously without preview or intervention mechanisms.
@@ -749,6 +823,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-068: Multi-Tier Autonomy Budget Enforcement and Emergency Kill Switch
+
 - **Date**: 2026-09-20
 - **Status**: Approved
 - **Context**: Autonomous agent operations must have strict, bounded financial and transactional guardrails that can never be exceeded without explicit human elevation.
@@ -758,6 +833,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-069: Multi-Entity Hierarchy & Server-Side Scope Authorization
+
 - **Date**: 2026-09-20
 - **Status**: Approved
 - **Context**: Scaling commerce organizations manage multiple distinct brands, business units, physical outlets, and online storefronts under a shared corporate umbrella without compromising data boundaries.
@@ -767,6 +843,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-070: Governed Semantic Metrics Layer & Cross-Store Benchmarking
+
 - **Date**: 2026-09-20
 - **Status**: Approved
 - **Context**: Different business units often compute vital metrics (e.g. Gross Margin, Delivery SLA, Stockout Rate) inconsistently, producing disputed executive reports and distorted performance reviews.
@@ -776,6 +853,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-071: Integration Hub with Checkpointed Sync Engine & Conflict Resolution
+
 - **Date**: 2026-09-20
 - **Status**: Approved
 - **Context**: Enterprise ERPs (SAP, NetSuite), CRMs (Salesforce, HubSpot), and Marketplaces (Daraz, Shopify) exchange asynchronous catalog and order updates that can generate contradictory transactional states.
@@ -785,6 +863,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-072: Zero-Trust Developer Platform & HMAC-SHA256 Signed Webhooks
+
 - **Date**: 2026-09-20
 - **Status**: Approved
 - **Context**: External partner applications and developer integrations require secure API authentication and real-time event notifications without risking credential exposure.
@@ -794,6 +873,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-073: Enterprise Data Governance, PII Masking & Customer Identity Resolution
+
 - **Date**: 2026-09-20
 - **Status**: Approved
 - **Context**: Multi-store operations must comply with data protection regulations, prevent unauthorized employee access to customer PII, and stitch fragmented customer identities across channels.
@@ -803,6 +883,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-074: Autonomous Platform Architecture & 6-Layer Operational Model
+
 - **Date**: 2026-09-20
 - **Status**: Approved
 - **Context**: Autonomous commerce operations across Commerce, Social, Intelligence, Growth, Operations, and Enterprise must operate as one unified, governed operating system rather than fragmented point solutions.
@@ -818,6 +899,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-075: Objective-Driven Governance & Multi-Tier Hierarchy Resolution
+
 - **Date**: 2026-09-20
 - **Status**: Approved
 - **Context**: Autonomous agents require top-down guidance to align operational actions with corporate financial targets and risk limits.
@@ -827,6 +909,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-076: Global Decision Engine & Mandatory Human Approval Gates
+
 - **Date**: 2026-09-20
 - **Status**: Approved
 - **Context**: Autonomous decisions involving pricing, inventory liquidation, or budget reallocation carry financial and reputation risk if executed without verification.
@@ -836,6 +919,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-077: Strategy Formulation, Non-Destructive Simulation & Trade-Off Engine
+
 - **Date**: 2026-09-20
 - **Status**: Approved
 - **Context**: Complex business strategies span multiple domains and can produce unintended cross-domain side effects (e.g. ad spend surge depleting stock).
@@ -845,6 +929,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-078: Structured Inter-Agent Protocol & Consensus Conflict Resolution
+
 - **Date**: 2026-09-20
 - **Status**: Approved
 - **Context**: Autonomous domain agents (Inventory, Marketing, Support, Finance) can develop contradictory proposals (e.g. Marketing wants to run flash sale; Inventory wants to preserve low stock).
@@ -854,6 +939,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-079: Unified Real-Time Cross-Domain Context Aggregator
+
 - **Date**: 2026-09-20
 - **Status**: Approved
 - **Context**: Autonomous decision-makers require an atomic, holistic view of commerce metrics, operational health, growth signals, and active risks to make informed decisions.
@@ -863,6 +949,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-080: Continuous Learning Pipeline with Staged Safe Promotion
+
 - **Date**: 2026-09-20
 - **Status**: Approved
 - **Context**: Continuously learning platforms must never train directly on raw production events or auto-apply unvalidated prompt/policy adjustments.
@@ -872,6 +959,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-081: Model Governance Registry, Lineage Tracking & Provider Abstraction
+
 - **Date**: 2026-09-20
 - **Status**: Approved
 - **Context**: Enterprise operations cannot depend on a single AI provider or unversioned foundation models without drift tracking and regulatory compliance.
@@ -881,6 +969,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-082: Policy-Governed Task-Aware Model Routing & Latency/Cost Optimization
+
 - **Date**: 2026-09-20
 - **Status**: Approved
 - **Context**: Routing every task to the largest frontier model produces excessive operational expenditure and high latency on simple classification tasks.
@@ -890,6 +979,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-083: Evidence-Based Autonomy Adaptation with Mandatory Board Oversight
+
 - **Date**: 2026-09-20
 - **Status**: Approved
 - **Context**: Dynamic autonomy levels must adjust based on empirical operational accuracy, but agents must NEVER have the capability to elevate their own autonomy permissions.
@@ -899,6 +989,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-084: 11-Dimension Platform Health Scoring & Autonomous Quality Scorecard
+
 - **Date**: 2026-09-20
 - **Status**: Approved
 - **Context**: Multi-domain autonomous platforms require deep, multi-dimensional health visibility to detect subtle degradation before catastrophic service failures occur.
@@ -908,6 +999,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-085: Cost-Aware Autonomy Economics & Unit Decision Efficiency Tracking
+
 - **Date**: 2026-09-20
 - **Status**: Approved
 - **Context**: Autonomous operations must demonstrate economic viability by tracking the exact cost-to-value ratio of every automated decision and agent run.
@@ -917,6 +1009,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-086: Two-Tier Rollback: State Restoration & Compensating Action Architecture
+
 - **Date**: 2026-09-20
 - **Status**: Approved
 - **Context**: Real-world operations include both reversible actions (price updates, catalog configuration) and irreversible actions (dispatched SMS messages, courier parcel pickups, executed payments).
@@ -928,6 +1021,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-087: Cross-Domain Incident Management, Blast Radius & Auto-Remediation
+
 - **Date**: 2026-09-20
 - **Status**: Approved
 - **Context**: High-severity incidents in one domain (e.g. payment gateway timeout) rapidly cascade across domains (checkout drops, order confirmation retries, customer support queues explode).
@@ -937,6 +1031,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-088: Multi-Region Data Residency & SLO Error Budget Burn Rate Governance
+
 - **Date**: 2026-09-20
 - **Status**: Approved
 - **Context**: Enterprise internationalization requires strict compliance with regional data sovereignty laws (e.g. Bangladesh Data Protection, GDPR) and mathematical service level objective (SLO) enforcement.
@@ -946,6 +1041,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-089: Architectural Separation of n8n Orchestration Hub & CommerceOS Authority (ADR-Automation-N8n-Boundary)
+
 - **Date**: 2026-09-20
 - **Status**: Approved
 - **Context**: Workflow automation engines like n8n excel at external messaging, notification fanout, scheduling, and third-party SaaS synchronization, but risk becoming fragile, unversioned monolithic backends if allowed to own transactional state or business invariants.
@@ -958,6 +1054,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-090: Deterministic Granular Idempotency Engine & Distributed Mutation Locking (ADR-Automation-Idempotency)
+
 - **Date**: 2026-09-20
 - **Status**: Approved
 - **Context**: Asynchronous workflows, courier retries, and network blips frequently trigger duplicate delivery attempts for critical commerce operations (order state updates, stock decrements, SMS dispatch).
@@ -970,6 +1067,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-091: Cryptographic Inbound Webhook Gateway with Replay & Drift Defense (ADR-Automation-Webhooks)
+
 - **Date**: 2026-09-20
 - **Status**: Approved
 - **Context**: Bangladeshi logistics providers and external webhook producers deliver status updates over public internet endpoints vulnerable to spoofing, eavesdropping, and replay attacks.
@@ -982,6 +1080,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-092: Bangladeshi Courier Status Normalization & Autonomous Shipment Sync (ADR-Courier-Synchronization)
+
 - **Date**: 2026-09-20
 - **Status**: Approved
 - **Context**: Bangladesh delivery providers (Steadfast, Pathao, RedX, Paperfly, eCourier, Sundarban) use wildly disparate status strings (`in_review`, `parcel_at_hub`, `assigned_to_rider`, `delivered_approval_pending`) and incompatible payload structures.
@@ -993,6 +1092,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-093: Bounded Exponential Backoff with Jitter for Automation Retries (ADR-Automation-Retry)
+
 - **Date**: 2026-09-20
 - **Status**: Approved
 - **Context**: Uncontrolled retry loops on transient network failures or rate limits cause thundering herd problems that worsen provider outages.
@@ -1005,6 +1105,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-094: Dead Letter Queue (DLQ) Lifecycle, Root Cause Categorization & Replay (ADR-Automation-Dead-Letter)
+
 - **Date**: 2026-09-20
 - **Status**: Approved
 - **Context**: Failed workflow executions must not disappear silently, and manual inspection requires categorized error context and controlled single/bulk replay capabilities.
@@ -1016,6 +1117,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-095: Production n8n Integration, Credential Isolation & Environment Injection (ADR-N8n-Integration)
+
 - **Date**: 2026-09-20
 - **Status**: Approved
 - **Context**: Distributing workflow templates containing hardcoded credentials, static URLs, or insecure code nodes risks token leakage and breaks cross-environment portability (local dev vs staging vs production).
@@ -1029,6 +1131,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-096: Semantic Workflow Versioning, Migration Lifecycle & Template Library (ADR-Automation-Workflow-Versioning)
+
 - **Date**: 2026-09-20
 - **Status**: Approved
 - **Context**: Upgrading automation workflows across active tenants requires non-breaking version transitions, backward compatibility, and catalog-driven instantiation.
@@ -1041,6 +1144,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-097: Multi-Layer Automation Safety: Recursion Depth, Rate Limiting & Emergency Kill Switch (ADR-Automation-Loop-Protection)
+
 - **Date**: 2026-09-20
 - **Status**: Approved
 - **Context**: Event-driven automation systems can trigger runaway feedback loops (e.g. Order Updated triggers Webhook, which updates Order, triggering Webhook again), incurring prohibitive billing costs and database exhaustion.
@@ -1055,6 +1159,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-098: Multi-Provider Automation Abstraction & Health Circuit Breakers (ADR-Automation-Provider-Abstraction)
+
 - **Date**: 2026-09-20
 - **Status**: Approved
 - **Context**: Relying exclusively on a single automation engine creates single-point-of-failure vulnerabilities. The system must support native internal execution alongside external orchestrators (n8n, webhook engines).
@@ -1066,6 +1171,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-099: Super Admin Role, Platform Control Plane, Connector Segregation & Automations Isolation (ADR-Super-Admin-Platform-Control)
+
 - **Date**: 2026-09-24
 - **Status**: Approved
 - **Context**: As CommerceOS matures into a multi-tenant B2B SaaS platform, regular store staff were exposed to sensitive infrastructure credentials (raw database URIs, vector DB indexes, Redis ports, and n8n circuit breakers). Additionally, platform operators lacked an omnipotent Super Admin role for multi-tenant provisioning, cross-tenant telemetry, global kill-switches, and safe tenant impersonation.
@@ -1079,9 +1185,10 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-100: Authoritative Separation of Platform Scope and Tenant Scope Authorization Boundary (ADR-Platform-Scope-Separation)
+
 - **Date**: 2026-09-24
 - **Status**: Approved (Authoritative Architecture Standard)
-- **Context**: 
+- **Context**:
   - Earlier iterations (e.g., ADR-099) initially treated `SUPER_ADMIN` as a role within tenant RBAC or mixed platform permissions (`PLATFORM_PERMISSIONS.*`) into tenant catalogs, where `ROLE_PERMISSIONS.OWNER = Object.values(PERMISSIONS)`.
   - Conflating platform administration with tenant tenancy creates grave architectural vulnerabilities:
     1. Tenant Owners could inadvertently inherit platform privileges (e.g. cross-tenant tenant management, global automation kill switch, platform billing governance).
@@ -1112,10 +1219,11 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-101: Integration of TypeSafe AI Jev (System One) Model for Sub-20ms Decisions and Policy Guardrails
+
 - **Date**: 2026-09-25
 - **Status**: Approved & Implemented
 - **Context**:
-  - High-throughput Bangladeshi social commerce (Facebook comments, Messenger, WhatsApp DMs) produces thousands of routine inquiries daily (*"dam koto?"*, *"stock ache?"*).
+  - High-throughput Bangladeshi social commerce (Facebook comments, Messenger, WhatsApp DMs) produces thousands of routine inquiries daily (_"dam koto?"_, _"stock ache?"_).
   - Calling Tier 1/2 generative LLMs (Gemini 1.5 Pro/Flash, GPT-4o) for every simple routing or classification decision introduced 400ms–1,200ms latency and high operational cost ($0.003–$0.015/turn).
   - TypeSafe AI introduced **Jev**, a specialized **System One model** trained via RLCD (Reinforcement Learning for Calibrated Decisions) that evaluates structured state and returns typed `Choice`, `Score`, and `Noul` (calibrated probabilities) in ~15ms at 400x lower cost.
 - **Decision**:
@@ -1133,6 +1241,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-102: Agent Governance Restructure: STATUS as Source of Truth
+
 - **Date**: 2026-09-27
 - **Status**: Approved
 - **Context**: `.agent/` docs described the target design in the present tense; `PROJECT_STATE.md` claimed "Phase 12 complete" while the 2026-09-27 audit found CRITICAL auth bypasses and mostly simulated integrations. Docs duplicated invariants and contradicted each other (tokens, thresholds, fees, roles). Product-agent personas were filed as coding-agent skills. Nothing was auto-loaded by coding tools.
@@ -1142,6 +1251,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-103: Fail-Closed Authentication, Secrets and Webhook Signatures (Phase 0 Containment)
+
 - **Date**: 2026-09-27
 - **Status**: Approved. Amends ADR-016 (key source) and ADR-100 (where the platform role comes from).
 - **Context**: The 2026-09-27 audit found that anyone could get in:
@@ -1152,7 +1262,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
   - step-up MFA accepted any 6 characters (H10);
   - courier/payment webhooks were unsigned, took the tenant from headers and auto-created rows (C4);
   - social webhooks fell back to built-in secrets (H5).
-  Stored provider credentials were encrypted with a key derived from that same public secret (M14).
+    Stored provider credentials were encrypted with a key derived from that same public secret (M14).
 - **Decision**:
   1. **Secrets fail closed.** `JWT_SECRET` and `CREDENTIALS_ENCRYPTION_KEY` are read lazily. Each must be at least 32 characters, the two must differ, and neither may start with the published default. A bad value throws; the only exception is `NODE_ENV=test`, which uses a fixed test value. Stored credentials use `sha256(CREDENTIALS_ENCRYPTION_KEY)`. `scripts/rotate-credential-key.ts` re-encrypts old ciphertext.
   2. **One audience per token purpose.** Every JWT has issuer `commerceos` and one audience: `commerceos:tenant`, `commerceos:platform`, `commerceos:step-up` or `commerceos:impersonation`. Verification pins both, so a token can't be used for a different purpose.
@@ -1201,6 +1311,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-104: Access Control and Integrity (Phase 1)
+
 - **Date**: 2026-09-28
 - **Status**: Approved. Builds on ADR-103; amends ADR-005 (organizations are workspace-owned) and ADR-100 (operators get no implicit workspace role).
 - **Context**: After Phase 0, authenticated users could still:
@@ -1213,6 +1324,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
   - no rate limiting (M13) and no real MFA (H10);
   - platform staff became OWNER of the first tenant (M10);
   - AI workflows ran as a synthetic OWNER (M12).
+
 - **Decision**:
   1. **Permissions on every route.**
      - The six unguarded domains call `RbacService.assertCan` right after `extractRequestContext`, as listed in FIX_IMPLEMENTATION_PLAN Appendix A. New permissions: `payments.verify`, `marketing.approve`, `analytics.manage`, `notifications.send` and `service_tokens.manage`.
@@ -1280,6 +1392,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ---
 
 ## ADR-105: Coalesced Persistence, Write-Free Reads and Complete Analytics (Phase 2)
+
 - **Date**: 2026-09-28
 - **Status**: Approved. Builds on ADR-104. Interim until the Postgres cutover (FX-45); decision D3 (one replica) stays in force.
 - **Context**: The audit measured:
@@ -1333,6 +1446,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
   - Also done in Phase 2: tenant-scoped cohort records (N9), a complete frequency cap (N10), per-tenant lookups in `getInventory`, the payment-exception and lifecycle read fixes, O(n) rewrites of the loops the 50-row cap had hidden (audiences, marketing, stockout, reconciliation, order health, pricing), AI order lookup over every order, and enterprise defaults stored when an organization is created.
 
 ## ADR-106: Truthful Data and Honest Integrations (Phase 3)
+
 - **Date**: 2026-09-28
 - **Status**: Approved. Builds on ADR-105. Covers FX-30, FX-31, FX-39 and audit N11; FX-32…FX-38 are separate work.
 - **Context**: The audit found numbers invented in code and shown as business metrics (H7): synthetic baselines, fixed period changes, revenue split across stores by list position, literal fallbacks such as `?? 4999`, random latencies. It also found external effects reported as successful without contacting anyone (H9): social and marketing sends, courier bookings, connector tests, enterprise syncs and webhooks, and an n8n branch that returned success for any localhost URL. The Command Center showed another dataset and made-up customers (FX-39). Enterprise benchmarks built a synthetic all-access admin (N11).
@@ -1374,6 +1488,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
   - Beyond the plan: courier failover refuses; the enterprise overview and autonomous unified context were scoped (security review); identity resolution no longer invents phones (N6); continuous learning can't promote a candidate without real evaluation.
 
 ## ADR-107: Enforced Safety Controls, One Order Writer and a Real AI Provider (Phase 3 completion)
+
 - **Date**: 2026-09-29
 - **Status**: Approved. Completes Phase 3 (FX-32…FX-38) after ADR-106; also closes N8, N12–N15.
 - **Context**: Kill switches, plan limits and feature flags were stored and shown but never checked (H11). Twelve code paths wrote order status directly (H12), reservations never expired and order numbers were "count + 1" (M2, M3). The AI was a keyword mock presented as a model (H14). Support impersonation issued a token nothing accepted; provisioned owners couldn't sign in (N8); invitation tokens were listed to every `user.read` holder. The build had 12 type errors (H15).
@@ -1402,8 +1517,8 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
   - FX-37: accepting an invitation signs you in and goes to `/`, not `/login`.
   - FX-33: Telegram and Shopify advertise no webhook URL instead of a placeholder.
 
-
 ## ADR-108: Postgres as the System of Record Behind the Existing Store API (Phase 4, first stage)
+
 - **Date**: 2026-09-29
 - **Status**: Approved (staged scope chosen by the owner). Implements FX-40…FX-44 for a single replica; FX-45 (async services, several replicas) is the next stage.
 - **Context**: The JSON file `.data/commerceos.json` is the only store: one process, whole-file snapshots, a crash loses the last write window, and nothing can query it. The plan (FX-40) asked for async store interfaces and every service rewritten to `await` them. The app reaches the store through 1,455 synchronous `db.` calls in 309 files (plus 481 in tests and scripts), over ~240 collections, and 142 places edit `db.data` directly. Doing that rewrite in one step would leave nothing mergeable for weeks. The Neon schema from migrations 001–005 had drifted from the TypeScript types and mixed seed data into migrations; the old runner split files on `;`; `withTransaction` silently re-ran a failed transaction over HTTP (M8).
@@ -1436,8 +1551,8 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
   - FX-45: not done (see Consequences).
   - The seed scripts (`db:seed:*`) write the JSON file directly and refuse to run with `DATA_BACKEND=pg`; seed before the cutover or backfill afterwards. The backfill needs the dev dependencies (its rehearsal runs on PGlite).
 
-
 ## ADR-109: Several App Servers — Units of Work over a Shared, Versioned Store (Phase 4, stage 2)
+
 - **Date**: 2026-09-29
 - **Status**: Approved (the owner chose this design over rewriting every store method as async SQL). Implements FX-45 with a different mechanism than the plan's "async SQL services"; exit criterion the same: several servers, no lost writes, consistent reads.
 - **Context**: After ADR-108 Postgres is the system of record, but one server holds a writer lease and serves everything from memory. The plan's route to several servers — 592 store methods rewritten as async queries and ~2,030 call sites awaited — is weeks of work and would make every screen network-bound (the owner's dev machine is far from the database). The store's reads are synchronous and correct within one server; what several servers need is (1) that no server acknowledges a change it hasn't committed, (2) that two servers never overwrite each other, and (3) that each server sees the others' changes.
@@ -1465,6 +1580,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 - **Security review (2026-09-29):** codemod, awaits, SQL and tenant guards clean. Fixed: writes stalled by junk or slow requests (F1: body first, lock wait timeout, no full compare per request), failed platform sign-ins and denied support-session audits undone with their request (F2: `keepEvenIfRequestFails`), unbounded read staleness (F3), constraint and collection names in 409 bodies (F4, F5), unreported changes of failed requests saved later (F6). Done-check follow-ups: rejected webhook deliveries kept on 4xx, the automation kill switch stored, late background writes kept out of later units; and a pre-existing hole closed: `POST /automation/health` accepted any `scope` and `target_id`, so a workspace user with `automation.disable` could pause every workspace, a provider or another workspace (now its own workspace or workflows only; GLOBAL/PROVIDER are platform actions). Open: the backfill's "no server is writing" check is a pre-check, not a lock (F7) — the runbook's "stop every app server" step stays mandatory.
 
 ## ADR-110: Safe Outbound HTTP, Live Connector Checks, Signed Webhooks and n8n (Phase 5, stage 1)
+
 - **Date**: 2026-09-29
 - **Status**: Approved (the owner chose to stage Phase 5 "safety first": the shared outbound layer and the integrations that need nothing else, then WhatsApp Cloud, Steadfast and bKash one per stage). Implements FX-53, FX-54, FX-55; closes audit M17.
 - **Context**: Before Phase 5 the server called external URLs in four places with ad-hoc `fetch` and timeouts, there was no SSRF guard anywhere, enterprise webhook dispatch signed and recorded `NOT_SENT` but nothing ever called it, the n8n call had no authentication and no URL check (M17), and connector tests verified only four AI providers. Every later provider integration needs the same safe outbound path first.
@@ -1491,69 +1607,69 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
   - **I15** subscribe, resume and manual retry are written to the workspace audit log.
 - **Later stages (planned)**: FX-50 WhatsApp Cloud send/templates/statuses, FX-51 Steadfast booking and status sync, FX-52 bKash verification — each on this client.
 
-## ADR-111: The Customer Agent Acts as the Customer (AI fix plan Stage 1)
-- **Date**: 2026-10-06
-- **Status**: Approved (owner, 6 October 2026: COD-only launch, Telegram pilot). Implements FX-72, FX-73, FX-74, FX-75 and FX-97 Part A of `audit/IMPLEMENTATION_PLAN_AI.md`. It builds the fix for audit F02, F04 (customer side), F11, F23 and the structural part of F28; F02 and F04 close only when the Stage 2 runtime (FX-76/FX-77) runs customer replies through these tools, because nothing calls them in production yet and the old four-agent runtime still exists. Design source: `audit/design/customer-agent-auth.md`.
-- **Context**: The AI agents ran with the request context of whoever triggered them, a staff member, and their order tools found any order in the workspace by its sequential number. In red-team case R06 the agent told a customer another customer's order status. Orders were created on the model's say-so, with no confirmation and no idempotency.
-- **Decision**:
-  1. **Principal, not role.** The customer agent (`src/domains/ai/customer-agent/`) acts as the conversation: workspace and channel from the stored conversation (itself created from a signed webhook), the customer from the provider-authenticated identity. Assurance: `VERIFIED_PHONE` (WhatsApp `wa_id`), `CHANNEL` (Messenger, Instagram, Telegram), `ANONYMOUS` (website widget and anything else).
-  2. **Capability contexts.** Each tool runs with a `RequestContext` of role `SERVICE`, user `svc_customer_agent:<conversation>`, and only its capability's permissions: catalog (products.read, inventory.read), orders_read, orders_create (orders.create, customers.read, customers.create), knowledge, handoff. Nothing moves money, changes prices or touches settings.
-  3. **Ownership.** An order is visible iff it was placed in this conversation (`orders.source_conversation_id`) or it belongs to the conversation's customer and the chat isn't anonymous. Anything else gets the exact answer a missing order gets (no existence oracle). A phone number typed in the chat never links the chat to a customer: an order placed with someone else's phone is tagged with this conversation and the chat is never relinked.
-  4. **Quote → yes → place.** `quote_order` prices on the server and stores a quote (collection `quotes`, JSONB; 30-minute expiry) with the lines, delivery charge and total shown. `place_order` places it only after a later customer message is an explicit yes (deterministic Bangla/Banglish/English matcher, negations win); otherwise it returns `CONFIRMATION_REQUIRED` with that summary. The quote is claimed (`QUOTED → PLACING`) in one unit of work, re-priced (`PRICE_CHANGED` if the total moved), and placed with the quote marked `PLACED` in the same unit; any failure releases it. One quote places at most one order; a second server loses the version check (409). Re-quoting the identical order keeps the original confirmation point; a changed order needs a new yes. Cash on delivery only until prepaid payments ship (FX-89).
-  5. **Nine tools, strict schemas** (`search_products`, `get_product`, `get_delivery_charge`, `quote_order`, `place_order`, `get_my_orders`, `get_order_status`, `search_policy`, `handoff_to_human`); an unknown tool or argument is refused as a structured result. Catalog search matches tokens with a Banglish/Bangla/English synonym table (`src/domains/catalog/search-synonyms.ts`); stock comes from inventory rows per variant; savings are computed by the tool.
-  6. **Bangla district names** for all 64 districts, normalised (NFC, "জেলা", punctuation) in `findDistrict`.
-- **Migration 009** (`009_customer_agent.sql`, forward-only, rollback in the file): generated columns `orders.source_conversation_id` / `source_identity_id` from `data`, and a partial index. The values live in the order's JSON like every other field.
-- **Consequences**:
-  - The existing four-agent runtime and the staff copilot are unchanged (copilot is read-only since Stage 0). The customer agent runtime, the job queue and the output guards are Stage 2 (FX-76, FX-77, FX-78); nothing replies to customers autonomously yet.
-  - Cross-channel order access (a Messenger chat asking about an order placed on WhatsApp) needs a verified link or the OTP upgrade; until then the agent hands off.
-  - Abuse limits from the design (turns per identity, open quotes, orders per day) are not built yet; they come with the runtime (Stage 2).
+## ADR-111: Durable, Bounded AI Workflow Execution
 
-## ADR-112: Customer Agent Jobs and Runtime (AI fix plan Stage 2)
+- **Date**: 2026-10-03
+- **Status**: Approved (owner approval received 2026-10-03).
+- **Deciders**: CommerceOS owner and implementation team
 
-- **Status**: Accepted (2026-10-06). Implements FX-76 to FX-79 on top of ADR-111.
-- **Context**: Stage 1 built a customer agent that acts as the customer but nothing called it. A webhook request holds the store lock (ADR-109), so a model turn of several seconds can't run inside it, and provider limits (Ollama Cloud Pro: 3 concurrent requests) mean bursts must queue rather than fail.
-- **Decision**:
-  - **Jobs.** Ingress stores the message and, in the same unit, upserts one `agent_jobs` row per conversation: PENDING with a 2-second debounce, or `rerun` if a turn is running. A worker in each server claims due jobs one at a time in a short unit (stale claims after 2 minutes), runs the turn with no lock held, and finishes in another unit. Failures retry once, then hand off.
-  - **Eligibility.** The workspace's own AI policy decides first: AI off or `DISABLED` means OFF, `AI_COPILOT` (the default) means shadow at most, and only `AI_AUTONOMOUS` allows sending. Within that, the agent acts only when the workspace has `customer_agent_autonomous` (or `customer_agent_shadow`) as an existing, enabled flag (a missing flag is OFF, the reverse of `isFeatureEnabled`), the workspace and channel are active, and the chat isn't paused. New chats start as mode `HUMAN` with automation not paused, and that counts as "nobody took it over": the agent may answer, and its replies set mode `AI`. A staff reply or any handoff sets `automation_paused`, and from then on only people answer.
-  - **Never against people.** An agent reply never takes a chat back: after a handoff it keeps mode HUMAN and status WAITING_AGENT, and if staff replied after the turn started the reply is refused (409 AGENT_SUPERSEDED, job CANCELLED). Internal notes and failed sends are never in the model's history.
-  - **Delivered quotes only.** A quote becomes confirmable only when the reply carrying it (or its summary) is delivered: the worker sets `shown_message_id` and moves the confirmation point to that moment. Only a reply that still shows the quote's grand total after the output guards counts. A shadow draft, a failed send or a guard-replaced reply never makes a quote confirmable; an identical re-quote inherits the marker. A chat paused during the turn by anyone but the turn's own handoff gets no bot reply. The channel must also be in the policy's `allowed_channel_types`.
-  - **Cost and fairness.** No jobs for channels that can't receive replies (website chat). Each worker pass takes at most one job per workspace; a workspace is limited to 300 turns an hour (jobs wait), a chat to 20 turns in 10 minutes (hand off), and the workspace's daily AI budget stops turns. Kill switches stop shadow turns too.
-  - **Sending.** The reply goes through `OutboundMessageService.sendMessage` with a `send` capability context and `asAgent` (sender BOT, chat not paused, unread count kept), idempotency key `agent:<job>:<the message the turn answered>`. Kill switches, `real_messaging`, channel policy and rate limits all apply. A kill switch is also checked before the model call.
-  - **Shadow mode.** Same turn, but `place_order` and `handoff_to_human` are not run (the model gets `SHADOW_MODE`), and the draft is stored on the conversation instead of sent.
-  - **Runtime.** One agent (no router, no summarizer), the reviewed prompt file with a version recorded per run, deterministic slots from customer messages labelled unverified, the server's session state as a separate system message before the current message, and the FX-78 output pipeline. A failed turn sends a fixed apology in the customer's script and hands off.
-  - **Resilience.** Provider-neutral: retries depend only on HTTP status, all waits fit one deadline, a FIFO semaphore per provider, and a fallback exists only with its own model names.
-- **Consequences**:
-  - Turning the agent on is a platform flag per workspace; there is no merchant setting yet. Shadow first, then autonomous.
-  - Per-identity and per-day order limits don't exist yet.
-  - The worker polls every second per server; with Postgres the claim is a version-checked write, so two servers can't run one job twice, but a server that dies mid-turn delays that chat by up to 5 minutes.
-  - Website chat replies are recorded FAILED until the widget can receive messages.
+### 1. Context & Problem Statement
 
-## ADR-113: Agent Quality, Privacy and Scheduled Work (AI fix plan Stage 3)
+The AI audit found that the customer-facing `AgentRuntime` and the long-running `WorkflowEngine` are separate paths, but the latter is described more dynamically than it behaves. `SupervisorAgent.decomposeObjective` selects fixed plans using keyword matches. `WorkflowEngine.executeWorkflowLoop` executes work inline, while `WorkflowBudget` is initialized and checkpointed without comprehensive enforcement. The plan needs durable recovery, bounded costs and actions, safe approvals, and truthful observability.
 
-- **Status**: Accepted (2026-10-07). Implements FX-80 to FX-85 and FX-99 Part B. (The plan reserved ADR-113 for payments; that decision takes the next free number when FX-89 starts.)
-- **Decisions**:
-  - **Evals test the production runtime.** One harness (`tests/agent-evals/harness.ts`) drives `runCustomerTurn`; offline in `npm test` with an adversarial scripted model (plumbing only), live in CI against the configured provider profile. Every result records prompt version, model, dataset hash and git SHA.
-  - **Traces hold numbers, not text.** Per-call token, latency and tool-name records; no prompt or reply text in traces. The job id is the trace id.
-  - **The agent judges relevance.** Policy search always returns the two closest documents (labelled untrusted, with a note that they may not answer); no score cutoff hides a weakly matching but correct document. Recall@2 replaces the plan's Recall@3 because the tool returns two documents, and the "irrelevant document injected" metric counts an irrelevant document ranked first.
-  - **Erasure anonymises, it doesn't delete the books.** Orders keep amounts, items and status; everything that identifies the person is removed or deleted, then an allow-list of free-text collections (events, outbox, webhook/automation logs, tickets, leads, analytics events, chats) is swept for their phone forms, email and full name as whole tokens, replacing only the matched text. Single-word names are never swept. It always needs a fresh step-up (no grace period) and a reason. The suppression list is kept.
-  - **Retention of chats is the owner's call.** Diagnostics are purged on fixed periods; messages and runs only when `CUSTOMER_DATA_RETENTION_DAYS` is set.
-  - **Outbox in the store's event write.** `db.recordEvent` adds the outbox row for the event types automations use, so it shares the change's unit of work without touching every caller; the worker delivers outside the lock. A kill-switch cancellation counts as delivered.
-  - **Platform job token.** One credential that only reaches `/api/v1/jobs/*`; the server keeps its SHA-256. Jobs pick workspaces and recipients; n8n only holds the clock. One run per job and time bucket.
-- **Consequences**:
-  - The live eval and retrieval gates need the `evals` environment secrets before they mean anything.
-  - The super-admin agent-health view reads every workspace's runs (platform operators only, numbers only).
-  - Alerts are platform incidents; there is no paging integration yet.
+CommerceOS already has Postgres as the production system of record (ADR-108/109) and an at-least-once outbox worker pattern for enterprise webhook delivery (ADR-110). Any AI workflow execution design must preserve the store unit-of-work and tenant-scope invariants. Exactly-once external effects cannot be promised; uncertain provider outcomes must not be blindly retried.
 
-## ADR-114: Launch Tooling: Staging, CSP Rollout and the Pilot (AI fix plan Stage 4)
+### 2. Options Considered
 
-- **Status**: Accepted (2026-10-07). Implements the code side of FX-86 and FX-87; the rollout itself follows docs/customer-agent-rollout.md.
-- **Decisions**:
-  - **Staging mirrors production in `render.yaml`.** The staging service is generated from the production block, so a setting can't exist in one and not the other; only secrets differ (entered separately). Staging enforces the CSP first.
-  - **CSP goes enforcing on evidence.** Reports are counted (day, directive, origin; no URLs) and the monitoring job says when a week was clean; reports that couldn't be counted (rate-limited, over the daily cap) make the week not clean. `CSP_ENFORCE` is read when the app is built, so changing it on Render needs a redeploy.
-  - **The eval gate blocks deploys only when switched on** (`AGENT_EVAL_GATE=on`), so infrastructure deploys aren't blocked before the eval key exists; once on, a missing key fails the deploy. Every deploy job requires a push to `main` in this repository (a fork's PR from a branch named `main` also triggers CI), and the eval key is set only on the steps that call the model, never in `npm ci`'s environment.
-  - **Restore rehearsals are read-only checks on a branch**, never on production; the result is logged by hand.
-  - **Pilot hours are a shop setting**, enforced by the worker before any model call.
-  - **Telegram own-contact = verified phone.** Telegram sets the contact's `user_id` to the account the number belongs to, so a contact whose `user_id` is the sender's proves the number. The identity is marked verified only on a customer whose phone IS that number: the one customer who has it, its own profile customer if that has no phone, or else a new customer with the number. A customer the chat was linked to by a claimed phone or email is never kept, and when several customers share the number nothing is linked (staff decide). A typed number or another person's contact never links. Accepted risk, as with WhatsApp: a recycled or mistyped number gives its new holder that customer's orders.
-  - **Go/no-go is computed, not asserted.** Ratings, guards, latency and handoff queue age come from recorded data; what can't be measured is listed as a manual check.
-- **Consequences**: the launch checklist (§8 of the plan) still needs owner actions and calendar time; nothing in this ADR turns the agent on.
+- **Option 1 — Keep synchronous execution in API requests.** Smallest change, but request lifetime, process restarts, and worker concurrency make long workflows difficult to recover and operate safely.
+- **Option 2 — Reuse the existing store and Postgres outbox/claim-worker patterns.** Atomic enqueue with workflow/task state in the existing store; workers claim with leases and fencing/version checks; domain handlers remain idempotent. Avoids a new service and dependency, but initially inherits store collection performance characteristics and requires careful claim concurrency tests.
+- **Option 3 — Add a dedicated queue/broker or workflow engine.** Could provide throughput and mature queue features, but adds operational complexity, another dependency/service, and consistency boundaries before measured need.
 
+### 3. Proposed Decision
+
+Recommend Option 2 for the first durable implementation:
+
+1. Persist workflow, tasks, and runnable work atomically using the existing store unit-of-work and Postgres system of record. Reuse ADR-110 outbox claim/lease/retry principles; do not add Redis, a broker, or a workflow framework in this stage.
+2. Define explicit state transitions and a typed handler registry. Existing keyword plans become named, versioned deterministic templates. Unknown or ambiguous objectives stop for clarification. LLM-proposed plans remain disabled until validation, policy, budget, and evaluation gates are implemented.
+3. Treat execution as at-least-once. Each task has stable idempotency identity, lease/fencing data, retry class, deadline, and deterministic outcome verification. For uncertain external effects, enter `OUTCOME_UNKNOWN` and require reconciliation.
+4. Enforce tenant/platform kill switches, RBAC, entitlements, action approvals, and atomic budget reservations in deterministic services before side effects. Model confidence and Jev results cannot authorize actions.
+5. Add bounded wall time, model/tool/task/token/cost/concurrency budgets and structured traces. Separate demo policy regression from live-model quality evaluation.
+6. Revisit dedicated relational queue tables or a broker only after queue load and collection contention are measured and documented.
+
+### 4. Consequences & Trade-Offs
+
+- **Positive**: Reuses deployed persistence and worker patterns; creates durable and inspectable execution; avoids a new operational dependency; makes retries and approval boundaries explicit.
+- **Negative / debt**: Requires careful multi-worker claim/fencing semantics over store units; Postgres JSONB-backed collections may not meet high queue throughput; operators need worker health and replay runbooks.
+- **Impact on agents and workflows**: Replaces direct inline workflow execution with queued task execution. It does not make the planner more autonomous by itself. Existing templates remain deterministic; any later LLM planning is proposal-only until validated.
+- **Migration / rollback**: Add worker/queue behavior behind a feature flag. Existing workflows remain readable; only newly queued work uses the worker. On rollback, stop new enqueues and drain or explicitly reconcile queued/running work before disabling workers. No existing workflow records are deleted.
+- **Security**: Every worker task derives tenant scope from the persisted, server-created workflow; worker claims recheck workspace state and kill switches. Approval binds to canonical action payload and entity version and is revalidated before execution.
+
+### 5. Approval Gate
+
+Owner approval received 2026-10-03. Option 2 establishes the persistence and execution contract for the workflow worker; proceed with staged implementation and verification described in `docs/ai-agent-workflow-remediation-plan.md`.
+
+---
+
+## ADR-116: Super Admin Console, Privileged-Action Gate and Two-Person Approval
+
+**Date**: 2026-10-12 · **Status**: Accepted (implemented on the working tree; see STATUS change log) · **Plan**: `docs/super-admin-console-implementation-plan.md` · ADR-112…115 are recorded on other branches (customer-agent runtime and UI work); this number avoids them
+
+### 1. Context
+
+The platform API had about 36 routes and 16 services, but `/super-admin` was one page whose KPIs read field names the overview API never sent (tenants "—", MRR always ৳0, health a literal 100%) and whose role badge always said SUPER_ADMIN. Rules required two-person approval for CRITICAL actions (`rules/privileged-actions.md` §3.3) but nothing implemented it. Plans stored any key as a "limit" though only four were enforced; settings and flags could be edited although no code read them.
+
+### 2. Decision
+
+1. **One shell.** The console lives in the route group `src/app/super-admin/(console)/` and uses the merchant dock (`src/components/navigation/Dock.tsx`, extracted from `FloatingNav`), `ProgressiveBlur` and `Shell.module.css`. Values come from `tokens.css` only.
+2. **Declarations drive customization.** `privileged-actions.ts` (risk, permission, step-up, approval policy, reason/ticket, typed confirmation), `entitlement-catalog.ts` (what a plan can limit and the code that enforces it), `settings-registry.ts` (typed settings and their reader) and `feature-flag-registry.ts` (flags the code evaluates). Anything not declared, or declared but not enforced/read, is refused by the server and shown locked in the console.
+3. **One gate.** `PrivilegedActionGate.assert` checks permission → step-up → reason/ticket → typed confirmation → approval. It fails closed with `STEP_UP_REQUIRED`, `APPROVAL_REQUIRED` (returning the canonical input to approve) or `CONFIRMATION_REQUIRED`.
+4. **Two-person approval** (`platform_approval_requests`): binds the SHA-256 of the canonical action input; the approver is never the requester, holds `approval.decide` plus the action's permission and steps up; the requester executes once; expiry is derived on read.
+5. **Hairline figures are illustration only** (empty, all-clear, disconnected, sign-in states); no count-up animation on numbers.
+6. **Plans are versioned**: drafts are editable, published versions immutable, retired versions keep their subscribers; tenants move between versions only through an impact-previewed migration.
+
+### 3. Consequences
+
+- Positive: every console number traces to an API field; critical actions can't be taken by one operator; customization can't create fake controls.
+- Negative: a deployment with a single operator holding `approval.decide` can't run CRITICAL actions (no break-glass, plan D3). Scoped kill switches stay single-operator (HIGH) so containment isn't delayed; only the GLOBAL switch needs two operators.
+- Purge only schedules (archive + 14-day tombstone); no deletion job exists yet and the API says so.
+- New collections (`platform_approval_requests`, `platform_addons`, `tenant_addons`) are JSONB documents; no SQL migration.

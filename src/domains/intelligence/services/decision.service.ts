@@ -225,10 +225,14 @@ export class DecisionService {
       },
     });
 
-    // Start execution loop
-    await workflowEngine.startWorkflow(workflow.tenant_id, workflow.id);
+    const executionJob = await workflowEngine.enqueueAction(
+      workflow.tenant_id,
+      workflow.id,
+      "START",
+      `decision:${decision.id}:workflow-start`
+    );
 
-    return workflow;
+    return { workflow, execution_job: executionJob };
   }
 }
 

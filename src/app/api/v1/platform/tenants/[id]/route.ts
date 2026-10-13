@@ -1,26 +1,36 @@
+import { z } from "zod";
 import { apiSuccess, apiError, extractPlatformContext } from "@/lib/api-response";
 import { PlatformTenantService } from "@/domains/platform";
+import { parseOrThrow, readJson } from "@/lib/validation";
 import { withStore } from "@/lib/store-unit";
 
-async function handleGET(request: Request, { params }: { params: Promise<{ id: string }> }) {
+type Params = { params: Promise<{ id: string }> };
+
+async function handleGET(request: Request, { params }: Params) {
   try {
     const context = await extractPlatformContext(request);
     const { id } = await params;
-    const detail = PlatformTenantService.getTenantDetail(id, context);
-    return apiSuccess(detail);
+    return apiSuccess(PlatformTenantService.getTenantDetail(id, context));
   } catch (error) {
     return apiError(error);
   }
 }
 
-async function handleDELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
+const ArchiveBody = z
+  .object({
+    reason: z.string().trim().min(10, "Give a reason of at least 10 characters.").max(1000),
+    ticket_ref: z.string().trim().min(1).max(100).optional(),
+    approval_id: z.string().trim().min(1).max(100).optional(),
+  })
+  .strict();
+
+/** Archives the tenant in the path (HIGH: step-up and a ticket; two-person for tenants older than 30 days). Data is kept; nothing is hard-deleted here. */
+async function handleDELETE(request: Request, { params }: Params) {
   try {
     const context = await extractPlatformContext(request);
     const { id } = await params;
-    const body = await request.json().catch(() => ({}));
-    const reason = body.reason || "Tenant archived via Platform Control Plane";
-    const archived = PlatformTenantService.archiveTenant(id, reason, context);
-    return apiSuccess(archived);
+    const body = parseOrThrow(ArchiveBody, await readJson(request));
+    return apiSuccess(PlatformTenantService.archiveTenant(id, body.reason, context, { ticketRef: body.ticket_ref, approvalId: body.approval_id }));
   } catch (error) {
     return apiError(error);
   }

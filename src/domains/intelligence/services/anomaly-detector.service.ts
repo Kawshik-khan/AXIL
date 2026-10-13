@@ -5,6 +5,7 @@
  */
 
 import { db } from "@/infrastructure/db";
+import { orderRepository } from "@/domains/orders/order.repository";
 import { Anomaly, InsightSeverity } from "@/types/intelligence";
 import { evidenceService } from "./evidence.service";
 import { intelligenceSnapshots } from "./intelligence-snapshot.service";
@@ -17,19 +18,36 @@ export class AnomalyDetectorService {
     return intelligenceSnapshots.persist(tenantId, "anomalies", this.computeAnomalies(tenantId));
   }
 
+  /**
+   * Database-native async evaluation using aggregated daily metrics (Phase E).
+   */
+  public async computeAnomaliesAsync(tenantId: string): Promise<Anomaly[]> {
+    const dailyMetrics = await orderRepository.getDailyOrderMetrics(tenantId, 30);
+    const dailyCounts: Record<string, number> = {};
+    for (const m of dailyMetrics) {
+      dailyCounts[m.day] = m.count;
+    }
+    return this.computeAnomalies(tenantId, { dailyCounts });
+  }
+
   /** Pure (FX-21): anomalies detected now. Ids are `anom_${tenant}_${metric}_${day}`, so re-detection is an update. */
-  public computeAnomalies(tenantId: string): Anomaly[] {
+  public computeAnomalies(tenantId: string, overrides?: { dailyCounts?: Record<string, number> }): Anomaly[] {
     const detected: Anomaly[] = [];
     const day = new Date().toISOString().slice(0, 10);
-    const orders = db.getAllOrders(tenantId, { hydrate: true }).filter((o) => o.status !== "CANCELLED");
     const payments = db.getPayments(tenantId);
     const shipments = db.getShipments(tenantId);
 
     // 1. Revenue Shock / Order Surge Anomaly Check (using daily order distribution)
-    const dailyCounts: Record<string, number> = {};
-    for (const o of orders) {
-      const d = o.created_at ? o.created_at.slice(0, 10) : "";
-      if (d) dailyCounts[d] = (dailyCounts[d] || 0) + 1;
+    let dailyCounts = overrides?.dailyCounts;
+    if (!dailyCounts) {
+      dailyCounts = {};
+      const orders = db.isCollectionHydrated("orders")
+        ? db.getAllOrders(tenantId).filter((o) => o.status !== "CANCELLED")
+        : [];
+      for (const o of orders) {
+        const d = o.created_at ? o.created_at.slice(0, 10) : "";
+        if (d) dailyCounts[d] = (dailyCounts[d] || 0) + 1;
+      }
     }
 
     const counts = Object.values(dailyCounts);

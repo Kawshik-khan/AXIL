@@ -2,6 +2,27 @@ import { ActionRiskLevel } from '@/types/orchestration';
 import { agentRegistry } from '../agent-registry';
 import { AgentType } from '@/types/ai';
 
+const TASK_AGENT_CONTRACT: Readonly<Record<string, AgentType>> = Object.freeze({
+  IDENTIFY_ABANDONED_CARTS: "ORDER_ASSISTANT", RETRIEVE_CUSTOMER_CONTEXT: "CUSTOMER_SUPPORT",
+  CHECK_PRODUCT_AVAILABILITY: "INVENTORY", GENERATE_PERSONALIZED_MESSAGE: "SALES",
+  OUTBOUND_MESSAGE_APPROVAL: "SUPERVISOR", AUDIT_WAREHOUSE_STOCK: "INVENTORY",
+  CALCULATE_SALES_VELOCITY: "SALES", PREPARE_REORDER_PROPOSAL: "ORDER_ASSISTANT",
+  TRACK_PARCEL_STATUS: "SHIPPING", NOTIFY_CUSTOMER_EMPATHY: "CUSTOMER_SUPPORT",
+  VERIFY_PAYMENT_TRX: "PAYMENT", INSPECT_ORDER_RETURN_STATE: "ORDER_ASSISTANT",
+  APPROVAL_REFUND_DISBURSEMENT: "SUPERVISOR", VALIDATE_PRODUCT_SPEC: "SALES",
+  AUDIT_BULK_STOCK: "INVENTORY", CALCULATE_BULK_SHIPPING: "SHIPPING",
+  FORMULATE_WHOLESALE_QUOTE: "SALES",
+});
+const RISK_LEVELS = new Set<ActionRiskLevel>(Object.values(ActionRiskLevel));
+const FORBIDDEN_PARAMETER_KEYS = new Set(["tenant_id", "tenantid", "workflow_id", "workflowid", "agent_id", "agent_type", "permissions", "required_tools", "dependencies", "risk_level"]);
+
+function containsForbiddenParameter(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(containsForbiddenParameter);
+  if (!value || typeof value !== "object") return false;
+  return Object.entries(value as Record<string, unknown>).some(([key, child]) =>
+    FORBIDDEN_PARAMETER_KEYS.has(key.toLowerCase()) || containsForbiddenParameter(child));
+}
+
 export interface PlanStepDefinition {
   id: string;
   task_type?: string;
@@ -67,12 +88,40 @@ export class PlanValidator {
       stepIds.add(step.id);
       stepMap.set(step.id, step);
 
+      const taskType = step.task_type || step.action;
+      if (!/^[A-Z][A-Z0-9_]{1,79}$/.test(taskType || "")) {
+        errors.push(`Step "${step.id}" has an invalid task type.`);
+      } else if (!TASK_AGENT_CONTRACT[taskType]) {
+        errors.push(`Step "${step.id}" uses an unregistered task type "${taskType}".`);
+      } else if (TASK_AGENT_CONTRACT[taskType] !== step.agent_type) {
+        errors.push(`Step "${step.id}" assigns task type "${taskType}" to the wrong agent.`);
+      }
+      if (!step.name || step.name.length > 240 || (step.objective && step.objective.length > 1000)) {
+        errors.push(`Step "${step.id}" must have a bounded name and objective.`);
+      }
+      if (!Array.isArray(step.dependencies) || new Set(step.dependencies).size !== step.dependencies.length) {
+        errors.push(`Step "${step.id}" has invalid or duplicate dependencies.`);
+      }
+      const parameters = step.parameters ?? {};
+      if (!parameters || Array.isArray(parameters) || typeof parameters !== "object" || Object.keys(parameters).length > 40 || containsForbiddenParameter(parameters)) {
+        errors.push(`Step "${step.id}" has invalid or untrusted execution parameters.`);
+      }
+      if (step.risk_level && !RISK_LEVELS.has(step.risk_level)) {
+        errors.push(`Step "${step.id}" has an invalid risk level.`);
+      }
+
       // Verify agent registered
       const agentProfile = agentRegistry.getAgent(step.agent_type as AgentType);
       if (!agentProfile) {
         errors.push(`Step "${step.id}" references unknown or unpermitted agent: "${step.agent_type}"`);
       } else if (!agentProfile.enabled) {
         errors.push(`Step "${step.id}" references disabled agent: "${step.agent_type}"`);
+      } else {
+        for (const tool of step.required_tools || []) {
+          if (!agentProfile.allowed_tools.includes(tool)) {
+            errors.push(`Step "${step.id}" requests tool "${tool}" outside agent "${step.agent_type}" capabilities.`);
+          }
+        }
       }
 
       // Check risk levels

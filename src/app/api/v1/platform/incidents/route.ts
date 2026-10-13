@@ -12,6 +12,15 @@ const IncidentPatch = z
   })
   .strict();
 
+const IncidentCreate = z
+  .object({
+    title: z.string().trim().min(5).max(200),
+    severity: z.enum(["SEV1", "SEV2", "SEV3", "SEV4"]),
+    affected_components: z.array(z.string().trim().min(1).max(80)).max(30).default([]),
+    impact_summary: z.string().trim().max(2000).optional(),
+  })
+  .strict();
+
 async function handleGET(request: Request) {
   try {
     const context = await extractPlatformContext(request);
@@ -25,7 +34,7 @@ async function handleGET(request: Request) {
 async function handlePOST(request: Request) {
   try {
     const context = await extractPlatformContext(request);
-    const body = await request.json();
+    const body = parseOrThrow(IncidentCreate, await readJson(request));
     const incident = PlatformIncidentService.declareIncident(body, context);
     return apiSuccess(incident, undefined, 201);
   } catch (error) {
