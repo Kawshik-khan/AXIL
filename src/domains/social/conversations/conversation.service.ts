@@ -7,6 +7,7 @@ import { PERMISSIONS } from "@/lib/permissions";
 import { AuditService } from "@/domains/audit/service";
 import { NotFoundError, BadRequestError } from "@/lib/errors";
 import { ConversationStateMachine } from "./state-machine";
+import { loadCustomerRows } from "@/infrastructure/db/tenant-rows";
 
 export class ConversationService {
   public static async listConversations(
@@ -26,6 +27,9 @@ export class ConversationService {
     }
   ) {
     RbacService.assertCan(context, PERMISSIONS.SOCIAL_CONVERSATION_READ);
+    // Zero-hydration: the customers the inbox shows and searches (name, phone), from Postgres in one query each
+    const customerIds = [...new Set(db.getAllConversations(context.tenant.id).map((c) => c.customer_id).filter(Boolean))];
+    await loadCustomerRows(context.tenant.id, customerIds);
     return db.getConversations(context.tenant.id, options);
   }
 

@@ -670,6 +670,13 @@ async function zeroHydratedRouteTests(client: SqlClient) {
   (db as any).unhydratedCollections = unhydrated;
   (db as any).pg = { client };
 
+  // An inbox conversation with this shop's customer (conversations and messages stay in memory)
+  (db.data as any).conversations.push({
+    id: "conv_zh_1", tenant_id: T, customer_id: "cus_zh_1", channel_id: "chn_zh", channel_type: "WHATSAPP", status: "OPEN", priority: "NORMAL",
+    unread_count: 1, tags: [], external_conversation_id: "wa_zh_1", last_message_at: iso, created_at: iso, updated_at: iso,
+  });
+  (db.data as any).messages.push({ id: "msg_zh_1", tenant_id: T, conversation_id: "conv_zh_1", sender_type: "CUSTOMER", content: "Is ZH Product 1 in stock?", created_at: iso });
+
   await runTest("the business collections are only in Postgres (reading them from memory throws)", () => {
     for (const c of ["orders", "products", "customers", "inventory_items", "warehouses", "audit_logs"]) {
       assert.throws(() => (db.data as any)[c], CollectionNotHydratedError, c);
@@ -747,7 +754,7 @@ async function zeroHydratedRouteTests(client: SqlClient) {
   await call("POST", "enterprise/organizations", "enterprise/organizations", auth, {}, { name: "Phase D Group" });
 
   await runTest("no tenant GET route answers COLLECTION_NOT_HYDRATED, and none queues a write", async () => {
-    const REAL: Record<string, string> = { orders: "ord_zh_1", evaluate: "ord_zh_1", customers: "cus_zh_1", lifecycle: "cus_zh_1", products: "prod_zh_1" };
+    const REAL: Record<string, string> = { orders: "ord_zh_1", evaluate: "ord_zh_1", customers: "cus_zh_1", lifecycle: "cus_zh_1", products: "prod_zh_1", conversations: "conv_zh_1" };
     const failures: string[] = [];
     let saves = 0;
     const rowSaved = (db as any).rowSaved;

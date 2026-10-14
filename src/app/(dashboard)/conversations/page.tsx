@@ -80,7 +80,8 @@ export default function ConversationsPage() {
       }
       if (!res.ok) {
         const data = await res.json();
-        throw new Error(data.error || "Failed to fetch conversations");
+        // The API's error is { code, message }: show the message, not "[object Object]"
+        throw new Error(data.error?.message || "Failed to fetch conversations");
       }
 
       const data = await res.json();
