@@ -154,6 +154,9 @@ services:
       # n8n first. Leave N8N_HOST unset too; scheduled jobs run from the commerceos-jobs cron below.
       - key: SOCIAL_N8N_MODE
         value: "off"
+      # Merchant alerts (Settings → Notifications): one platform bot token from @BotFather
+      - key: TELEGRAM_ALERTS_BOT_TOKEN
+        sync: false
       # Deliberately absent: DEV_AUTH_BYPASS, AI_DEMO_MODE, COMMERCEOS_FORCE_LOCK, SEED_ADMIN_PASSWORD.
   # ── Scheduled jobs (FX-99 Part B), without n8n ─────────────────────────────────────────────────────────────────────
   # Every 5 minutes, calls POST /api/v1/jobs/<job>/run for each job; the app runs each at most once per its own period
@@ -317,5 +320,10 @@ services:
       # (POST /api/v1/jobs/monitoring/run) reports csp.ready_to_enforce = true for a full week.
       - key: CSP_ENFORCE
         value: "1" # staging enforces first, so a violating change shows up here before production
+      - key: SOCIAL_N8N_MODE
+        value: "off"
+      # Its own bot from @BotFather, never production's: a bot has one webhook
+      - key: TELEGRAM_ALERTS_BOT_TOKEN
+        sync: false
       # Deliberately absent: DEV_AUTH_BYPASS, AI_DEMO_MODE, COMMERCEOS_FORCE_LOCK, SEED_ADMIN_PASSWORD.
 # Background worker and cron entries are added in R1b (job queue); nothing runs out of process yet.

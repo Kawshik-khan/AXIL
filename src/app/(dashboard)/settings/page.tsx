@@ -11,10 +11,11 @@ import { Modal } from "@/components/ui/Modal/Modal";
 import { LoadingSkeleton, PermissionDenied } from "@/components/ui/States/States";
 import styles from "./settings.module.css";
 import { ServiceTokensPanel } from "@/components/settings/ServiceTokensPanel";
+import { NotificationsPanel } from "@/components/settings/NotificationsPanel";
 import dashStyles from "../dashboard.module.css";
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<"workspace" | "users" | "security" | "service-tokens">("workspace");
+  const [activeTab, setActiveTab] = useState<"workspace" | "users" | "notifications" | "security" | "service-tokens">("workspace");
   const [session, setSession] = useState<any>(null);
   const [tenant, setTenant] = useState<any>(null);
   const [users, setUsers] = useState<any[]>([]);
@@ -44,7 +45,7 @@ export default function SettingsPage() {
   useEffect(() => {
     if (typeof window !== "undefined" && window.location.hash) {
       const hash = window.location.hash.replace("#", "");
-      if (hash === "users" || hash === "security" || hash === "workspace") {
+      if (hash === "users" || hash === "security" || hash === "workspace" || hash === "notifications") {
         setActiveTab(hash as any);
       }
     }
@@ -246,6 +247,12 @@ export default function SettingsPage() {
           onClick={() => setActiveTab("users")}
         >
           Team Members &amp; Roles ({users.length})
+        </button>
+        <button
+          className={`${dashStyles.tabButton} ${activeTab === "notifications" ? dashStyles.tabActive : ""}`}
+          onClick={() => setActiveTab("notifications")}
+        >
+          Notifications
         </button>
         <button
           className={`${dashStyles.tabButton} ${activeTab === "security" ? dashStyles.tabActive : ""}`}
@@ -551,6 +558,9 @@ export default function SettingsPage() {
           )}
         </>
       )}
+
+      {/* Owner alerts on Telegram, delivered by the scheduled jobs */}
+      {activeTab === "notifications" && <NotificationsPanel />}
 
       {/* Tab 4: Service tokens for automations (FX-18) */}
       {activeTab === "service-tokens" && canManageServiceTokens && <ServiceTokensPanel />}

@@ -16,6 +16,7 @@ import { DISABLED_PASSWORD_HASH, encryptCredential } from "@/lib/security";
 import { PgStorePersistence, StoreConflictError, logUnwritable, type QueuedRow, type RejectedRow } from "@/infrastructure/store/pg-store";
 import { createNeonSqlClient, isDataRejected, pgErrorFields, storeConnectionString, type SqlClient } from "@/infrastructure/store/sql-client";
 import { ConnectorConfigRecord } from "@/types/connector";
+import type { NotificationSettingsRecord } from "@/types/notifications";
 import {
   NetworkDeliveryReputationRecord,
   OrderRtoEvaluationRecord,
@@ -466,6 +467,7 @@ export interface DatabaseSchema {
   agent_jobs: AgentJob[];
   domain_events: DomainEventOutboxRecord[];
   job_runs: JobRunRecord[];
+  notification_settings: NotificationSettingsRecord[];
   csp_reports: CspReportRecord[];
   agent_tool_calls: AgentToolCallRecord[];
   agent_prompts: AgentPrompt[];
@@ -1402,6 +1404,7 @@ export class CommerceDatabase {
       agent_jobs: parsed.agent_jobs || [],
       domain_events: parsed.domain_events || [],
       job_runs: parsed.job_runs || [],
+      notification_settings: parsed.notification_settings || [],
       csp_reports: parsed.csp_reports || [],
       agent_tool_calls: parsed.agent_tool_calls || [],
       agent_prompts: parsed.agent_prompts || [],
@@ -1704,6 +1707,7 @@ export class CommerceDatabase {
       agent_jobs: [],
       domain_events: [],
       job_runs: [],
+      notification_settings: [],
       csp_reports: [],
       agent_tool_calls: [],
       agent_prompts: [],
@@ -6530,6 +6534,24 @@ export class CommerceDatabase {
     return this.rowsOf("csp_reports", PLATFORM_SCOPE, "loaded").filter((r) => r.day >= sinceDay);
   }
 
+  // ---- Merchant notifications (owner alerts): one record per workspace
+  public findNotificationSettings(tenantId: string): NotificationSettingsRecord | undefined {
+    return this.data.notification_settings.find((r) => r.tenant_id === tenantId);
+  }
+
+  /** Every workspace's record, for the alerts bot: a pending link by its code, or the workspaces linked to one chat. */
+  public getAllNotificationSettings(): NotificationSettingsRecord[] {
+    return this.data.notification_settings;
+  }
+
+  public saveNotificationSettings(record: NotificationSettingsRecord): NotificationSettingsRecord {
+    const idx = this.data.notification_settings.findIndex((r) => r.tenant_id === record.tenant_id);
+    if (idx === -1) this.data.notification_settings.push(record);
+    else this.data.notification_settings[idx] = record;
+    this.persist(["notification_settings"]);
+    return record;
+  }
+
   // ---- Scheduled job runs (FX-99 Part B), platform scope
   public findJobRun(id: string): JobRunRecord | undefined {
     return this.data.job_runs.find((r) => r.id === id);
@@ -9745,6 +9767,7 @@ export class CommerceDatabase {
       agent_jobs: [],
       domain_events: [],
       job_runs: [],
+      notification_settings: [],
       csp_reports: [],
       agent_tool_calls: [],
       agent_prompts: [],

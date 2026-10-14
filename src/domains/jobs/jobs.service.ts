@@ -22,6 +22,7 @@ import { orderRepository } from "@/domains/orders/order.repository";
 import { localHour } from "@/lib/local-time";
 import { inventoryRepository } from "@/domains/inventory/inventory.repository";
 import { loadOrderRows } from "@/infrastructure/db/tenant-rows";
+import { NotificationService } from "@/domains/notifications/notification.service";
 
 export { localHour };
 
@@ -43,8 +44,6 @@ export function dueTenants(): TenantRecord[] {
   return db.getTenants().filter((t) => t.status === "ACTIVE" && !PlatformSafetyService.isExecutionBlocked("TENANT", t.id));
 }
 
-const settingsOf = (t: TenantRecord) => (t.settings ?? {}) as Record<string, unknown>;
-
 export const JOBS: Record<string, JobDefinition> = {
   /** Shipments in the courier's hands with no update for 6 hours: n8n asks the courier and posts the status back. */
   "courier-poll": {
@@ -64,15 +63,13 @@ export const JOBS: Record<string, JobDefinition> = {
     },
   },
 
-  /** 9 PM in each shop's timezone: the day's numbers to the shop's admin Telegram chat (settings.daily_report_telegram_chat_id). */
+  /** 9 PM in each shop's timezone: the day's numbers, to shops that switched the daily summary on (Settings → Notifications). */
   "daily-report": {
     cadenceMs: HOUR,
     async run(now) {
-      const candidates = dueTenants().filter((t) => localHour(t, now) === 21);
+      const candidates = dueTenants().filter((t) => localHour(t, now) === 21 && NotificationService.wants(t.id, "daily_summary"));
       const results = await Promise.all(
         candidates.map(async (t) => {
-          const chat = settingsOf(t).daily_report_telegram_chat_id;
-          if (typeof chat !== "string" || !chat) return null; // not opted in: no recipient
           const today = localDate(t, now);
           const fromTime = new Date(now - 26 * HOUR).toISOString();
           const toTime = new Date(now + 2 * HOUR).toISOString();
@@ -82,20 +79,12 @@ export const JOBS: Record<string, JobDefinition> = {
           const low = (await inventoryRepository.getStockLevels(t.id)).filter((i) => i.reorder_point > 0 && i.quantity_available <= i.reorder_point).length;
           const revenue = live.reduce((n, o) => n + o.grand_total, 0);
           const pendingCount = (await orderRepository.countByTenant(t.id, "PENDING")) || 0;
-          return {
-            tenant_id: t.id,
-            telegram_chat_id: chat,
-            date: today,
-            orders: orders.length,
-            revenue_bdt: revenue,
-            pending_orders: pendingCount,
-            low_stock_items: low,
-            text: `${t.name}: ${today}\nOrders: ${orders.length} (${orders.length - live.length} cancelled)\nRevenue: ৳${revenue.toLocaleString("en-BD")}\nPending orders: ${pendingCount}\nLow-stock items: ${low}`,
-          };
+          const text = `📊 ${t.name}: ${today}\nOrders: ${orders.length} (${orders.length - live.length} cancelled)\nRevenue: ৳${revenue.toLocaleString("en-BD")}\nPending orders: ${pendingCount}\nLow-stock items: ${low}`;
+          const delivery = await NotificationService.deliver(t.id, "daily_summary", text);
+          return { tenant_id: t.id, date: today, orders: orders.length, revenue_bdt: revenue, pending_orders: pendingCount, low_stock_items: low, delivery: delivery.status };
         })
       );
-      const tenants = results.filter((r): r is NonNullable<typeof r> => r !== null);
-      return { tenants };
+      return { tenants: results };
     },
   },
 
@@ -103,20 +92,27 @@ export const JOBS: Record<string, JobDefinition> = {
   "low-stock": {
     cadenceMs: HOUR,
     async run(now) {
-      const due = dueTenants().filter((t) => localHour(t, now) === 8);
-      for (const t of due) await inventoryRepository.getStockLevels(t.id); // zero-hydration: each shop's stock and catalog
-      const tenants = due
-        .map((t) => ({
-          tenant_id: t.id,
-          proposals: db
-            .getInventory(t.id)
-            .filter((i) => i.reorder_point > 0 && i.quantity_available <= i.reorder_point)
-            .map((i) => {
-              const variant = db.findVariantById(t.id, i.product_variant_id);
-              return { product_variant_id: i.product_variant_id, sku: variant?.sku ?? null, warehouse_id: i.warehouse_id, available: i.quantity_available, reorder_point: i.reorder_point, suggested_quantity: Math.max(1, i.reorder_point * 2 - i.quantity_available) };
-            }),
-        }))
-        .filter((t) => t.proposals.length);
+      const due = dueTenants().filter((t) => localHour(t, now) === 8 && NotificationService.wants(t.id, "low_stock"));
+      const tenants = [];
+      for (const t of due) {
+        const low = (await inventoryRepository.getStockLevels(t.id)) // zero-hydration: each shop's stock and catalog
+          .filter((i) => i.reorder_point > 0 && i.quantity_available <= i.reorder_point);
+        if (!low.length) continue;
+        const proposals = low.map((i) => ({
+          product_variant_id: i.product_variant_id,
+          sku: i.sku,
+          name: i.product_name,
+          warehouse_id: i.warehouse_id,
+          available: i.quantity_available,
+          reorder_point: i.reorder_point,
+          suggested_quantity: Math.max(1, i.reorder_point * 2 - i.quantity_available),
+        }));
+        const lines = proposals.slice(0, 15).map((p) => `• ${p.name} (${p.sku}): ${p.available} left, reorder ~${p.suggested_quantity}`);
+        const more = proposals.length > 15 ? `\n…and ${proposals.length - 15} more in Inventory.` : "";
+        const text = `⚠️ ${t.name}: ${proposals.length} item${proposals.length === 1 ? " is" : "s are"} low on stock\n${lines.join("\n")}${more}\n\nSuggestions only: nothing has been ordered.`;
+        const delivery = await NotificationService.deliver(t.id, "low_stock", text);
+        tenants.push({ tenant_id: t.id, proposals, delivery: delivery.status });
+      }
       return { tenants, note: "Proposals only. A person creates any purchase order." };
     },
   },
@@ -126,15 +122,19 @@ export const JOBS: Record<string, JobDefinition> = {
     cadenceMs: DAY,
     async run(now) {
       const since = new Date(now - DAY).toISOString();
-      const tenants = dueTenants()
-        .map((t) => ({
-          tenant_id: t.id,
-          shipments: db
-            .getShipments(t.id)
-            .filter((s) => (s.status === "FAILED" || s.status === "RETURNED") && s.updated_at >= since)
-            .map((s) => ({ shipment_id: s.id, order_id: s.order_id, status: s.status, courier_provider: s.courier_provider, tracking_number: s.tracking_number })),
-        }))
-        .filter((t) => t.shipments.length);
+      const tenants = [];
+      for (const t of dueTenants().filter((x) => NotificationService.wants(x.id, "failed_deliveries"))) {
+        const shipments = db
+          .getShipments(t.id)
+          .filter((s) => (s.status === "FAILED" || s.status === "RETURNED") && s.updated_at >= since)
+          .map((s) => ({ shipment_id: s.id, order_id: s.order_id, status: s.status, courier_provider: s.courier_provider, tracking_number: s.tracking_number }));
+        if (!shipments.length) continue;
+        const lines = shipments.slice(0, 15).map((s) => `• ${s.status === "RETURNED" ? "Returned" : "Failed"}: ${s.courier_provider} ${s.tracking_number ?? ""}`.trimEnd());
+        const more = shipments.length > 15 ? `\n…and ${shipments.length - 15} more in Shipments.` : "";
+        const text = `🚚 ${t.name}: ${shipments.length} deliver${shipments.length === 1 ? "y" : "ies"} failed or came back in the last day\n${lines.join("\n")}${more}\n\nCall these customers before re-sending.`;
+        const delivery = await NotificationService.deliver(t.id, "failed_deliveries", text);
+        tenants.push({ tenant_id: t.id, shipments, delivery: delivery.status });
+      }
       return { tenants };
     },
   },
@@ -144,7 +144,7 @@ export const JOBS: Record<string, JobDefinition> = {
     cadenceMs: 7 * DAY,
     async run(now) {
       const since = new Date(now - 7 * DAY).toISOString();
-      const due = dueTenants();
+      const due = dueTenants().filter((t) => NotificationService.wants(t.id, "cod_weekly"));
       for (const t of due) {
         // Zero-hydration: the delivered orders checked below
         const delivered = db.getShipments(t.id).filter((x) => x.status === "DELIVERED" && (x.delivered_at ?? x.updated_at) >= since);
@@ -162,9 +162,14 @@ export const JOBS: Record<string, JobDefinition> = {
             c.order_ids.push(order.id);
             byCourier.set(s.courier_provider, c);
           }
-          return { tenant_id: t.id, couriers: [...byCourier.entries()].map(([courier, c]) => ({ courier, ...c })) };
+          return { tenant_id: t.id, name: t.name, couriers: [...byCourier.entries()].map(([courier, c]) => ({ courier, ...c })) };
         })
         .filter((t) => t.couriers.length);
+      for (const t of tenants) {
+        const lines = t.couriers.map((c) => `• ${c.courier}: ${c.orders} order${c.orders === 1 ? "" : "s"}, ৳${c.amount_bdt.toLocaleString("en-BD")} to collect`);
+        const text = `💵 ${t.name}: cash on delivery, last 7 days\n${lines.join("\n")}\n\nCheck these against each courier's payout.`;
+        (t as typeof t & { delivery?: string }).delivery = (await NotificationService.deliver(t.tenant_id, "cod_weekly", text)).status;
+      }
       return { tenants };
     },
   },

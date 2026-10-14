@@ -551,14 +551,21 @@ async function main() {
     // 15:00 UTC is 21:00 in Dhaka
     const at = Date.parse("2026-10-07T15:10:00Z");
     assert.strictEqual(localHour({ timezone: "Asia/Dhaka" }, at), 21);
-    const tenant = db.findTenantById(tenantId)!;
-    db.updateTenant(tenantId, { settings: { ...(tenant.settings as R), daily_report_telegram_chat_id: "-100123" } } as never);
+    // Opted in through Settings → Notifications: a connected Telegram chat with the daily summary on
+    const iso = new Date().toISOString();
+    db.saveNotificationSettings({
+      id: `ns_${tenantId}`, tenant_id: tenantId, created_at: iso, updated_at: iso,
+      alerts: { daily_summary: true, low_stock: true, failed_deliveries: true, cod_weekly: false },
+      telegram: { chat_id: "-100123", chat_label: "Shop team", linked_at: iso, linked_by_user_id: reg.user.id },
+    });
     const other = await AuthService.registerTenantWithOwner({ workspaceName: "Not Opted In", name: "Other Owner", email: `s3o-${stamp}@example.com`, password: "Stage3-Test-Pass-2026!", currency: "BDT" });
     let runs = 0;
     const first = (await JobsService.run("daily-report", "daily-report:a", at)) as R;
     const ids = (first.tenants as R[]).map((t) => t.tenant_id);
     assert.ok(ids.includes(tenantId) && !ids.includes(other.tenant.id), "only opted-in shops");
-    assert.strictEqual((first.tenants as R[])[0].telegram_chat_id, "-100123", "the recipient comes from CommerceOS settings");
+    const mine = (first.tenants as R[]).find((t) => t.tenant_id === tenantId)!;
+    assert.strictEqual(mine.delivery, "NOT_SENT", "no alerts bot in this suite: reported as not sent, never as sent");
+    assert.ok(!JSON.stringify(first).includes("-100123"), "the stored result has no chat id");
     const again = (await JobsService.run("daily-report", "daily-report:b", at + 60_000)) as R;
     assert.strictEqual(again.replayed, true);
     assert.deepStrictEqual(again.tenants, first.tenants);
