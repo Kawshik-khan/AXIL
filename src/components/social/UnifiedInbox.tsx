@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useMemo } from "react";
 import { Search, MessageSquare, Phone, Globe, RefreshCw } from "lucide-react";
 import { Conversation, ChannelType } from "@/types/social";
 import styles from "./SocialInbox.module.css";
@@ -80,12 +80,20 @@ export const UnifiedInbox: React.FC<UnifiedInboxProps> = ({
   };
 
   // Counts for pills
-  const totalCount = conversations.length;
-  const unreadCount = conversations.filter((c) => c.unread_count > 0).length;
-  const waCount = conversations.filter((c) => c.channel_type === "WHATSAPP").length;
-  const fbCount = conversations.filter((c) => c.channel_type === "FACEBOOK_MESSENGER").length;
-  const igCount = conversations.filter((c) => c.channel_type === "INSTAGRAM").length;
-  const webCount = conversations.filter((c) => c.channel_type === "WEBSITE_CHAT").length;
+  const { totalCount, unreadCount, waCount, fbCount, igCount, webCount } = useMemo(() => {
+    return conversations.reduce(
+      (acc, c) => {
+        acc.totalCount++;
+        if (c.unread_count > 0) acc.unreadCount++;
+        if (c.channel_type === "WHATSAPP") acc.waCount++;
+        else if (c.channel_type === "FACEBOOK_MESSENGER") acc.fbCount++;
+        else if (c.channel_type === "INSTAGRAM") acc.igCount++;
+        else if (c.channel_type === "WEBSITE_CHAT") acc.webCount++;
+        return acc;
+      },
+      { totalCount: 0, unreadCount: 0, waCount: 0, fbCount: 0, igCount: 0, webCount: 0 }
+    );
+  }, [conversations]);
 
   return (
     <div className={styles.conversationsPanel}>

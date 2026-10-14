@@ -1,4 +1,9 @@
 {
-  "_comment": "Accepted npm audit advisories. Each needs a reason and an expiry (YYYY-MM-DD); the gate fails once one expires. Empty since the Next 16.3.7 upgrade.",
-  "exceptions": []
+  "exceptions": [
+    {
+      "id": "GHSA-cjq9-62q9-8jv4",
+      "reason": "Next.js image optimization SSRF is mitigated by our domain allowlist; awaiting patch in next 16.4.0",
+      "expires": "2026-11-01"
+    }
+  ]
 }
