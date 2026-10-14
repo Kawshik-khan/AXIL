@@ -28,6 +28,9 @@ import { AuthService } from "@/domains/auth/service";
 import { userRepository } from "@/domains/auth/user.repository";
 import { hashPassword, PLATFORM_AUTH_COOKIE_NAME, signSessionToken } from "@/lib/security";
 import { loadTenantRows, readTenantRows } from "@/infrastructure/db/tenant-rows";
+import { runCustomerTool } from "@/domains/ai/customer-agent/tools";
+import { runCustomerTurn } from "@/domains/ai/customer-agent/runtime";
+import type { CustomerAgentPrincipal } from "@/domains/ai/customer-agent/principal";
 import { resetRateLimitsForTesting } from "@/lib/rate-limit";
 import { db, CommerceDatabase, CollectionNotHydratedError } from "@/infrastructure/db";
 import { runMigrations } from "@/infrastructure/store/migrations";
@@ -675,7 +678,7 @@ async function zeroHydratedRouteTests(client: SqlClient) {
     id: "conv_zh_1", tenant_id: T, customer_id: "cus_zh_1", channel_id: "chn_zh", channel_type: "WHATSAPP", status: "OPEN", priority: "NORMAL",
     unread_count: 1, tags: [], external_conversation_id: "wa_zh_1", last_message_at: iso, created_at: iso, updated_at: iso,
   });
-  (db.data as any).messages.push({ id: "msg_zh_1", tenant_id: T, conversation_id: "conv_zh_1", sender_type: "CUSTOMER", content: "Is ZH Product 1 in stock?", created_at: iso });
+  (db.data as any).messages.push({ id: "msg_zh_1", tenant_id: T, conversation_id: "conv_zh_1", sender_type: "CUSTOMER", direction: "INBOUND", text: "Is ZH Product 1 in stock?", status: "RECEIVED", created_at: iso });
 
   await runTest("the business collections are only in Postgres (reading them from memory throws)", () => {
     for (const c of ["orders", "products", "customers", "inventory_items", "warehouses", "audit_logs"]) {
@@ -781,6 +784,27 @@ async function zeroHydratedRouteTests(client: SqlClient) {
       (db as any).rowSaved = rowSaved;
     }
     assert.deepStrictEqual(failures, []);
+  });
+
+  await runTest("the customer agent: its turn, its order tools and its handoff read the chat's orders from SQL", async () => {
+    // Was live: every turn failed (session state scanned all orders in memory) and so did the handoff card
+    const pr: CustomerAgentPrincipal = {
+      tenantId: T, tenantName: "Phase D Shop", channelId: "chn_zh", channelType: "WHATSAPP", conversationId: "conv_zh_1",
+      customerId: "cus_zh_1", assurance: "VERIFIED_PHONE",
+    };
+    await db.withTenantReads(async () => {
+      const mine = await runCustomerTool(pr, "get_my_orders", {});
+      assert.strictEqual(mine.ok, true, JSON.stringify(mine.result));
+      assert.deepStrictEqual(
+        (mine.result.orders as Array<{ order_number: string }>).map((o) => o.order_number).sort(),
+        ["ORD-2026-000002", "ORD-2026-000008"]
+      );
+      const handoff = await runCustomerTool(pr, "handoff_to_human", { reason: "other", summary: "Customer asked for a person." });
+      assert.strictEqual(handoff.ok, true, JSON.stringify(handoff.result));
+      const turn = await runCustomerTurn(pr);
+      assert.ok(!JSON.stringify(turn).includes("COLLECTION_NOT_HYDRATED"), JSON.stringify(turn).slice(0, 300));
+      assert.notStrictEqual(turn.status, "ERROR", JSON.stringify(turn).slice(0, 300));
+    });
   });
 
   await runTest("a caller without the route's permission causes no whole-tenant read (403 first)", async () => {

@@ -20,7 +20,7 @@ import { logger } from "@/lib/logger";
 import { SEARCH_SYNONYMS, COLOUR_WORDS, searchTokens } from "@/domains/catalog/search-synonyms";
 import type { LLMMessage } from "@/domains/ai/providers/llm-provider.interface";
 import type { Message } from "@/types/social";
-import { visibleOrders, type CustomerAgentPrincipal } from "./principal";
+import { findVisibleOrders, type CustomerAgentPrincipal } from "./principal";
 import { CUSTOMER_TOOLS, runCustomerTool, type ToolResult } from "./tools";
 import { isAffirmative } from "./confirmation";
 import {
@@ -34,6 +34,7 @@ import { HitlEscalationService } from "../hitl/hitl-escalation.service";
 import type { AgentExecutionTraceRecord, GuardrailTriggerType } from "@/types/ai";
 
 import { envNumber } from "@/lib/env-number";
+import type { Order } from "@/types/commerce";
 
 export const PROMPT_FILE = "customer-agent.system.v2.1-cod.md";
 export const PROMPT_VERSION = PROMPT_FILE.replace(/\.md$/, "");
@@ -146,14 +147,13 @@ export function extractCustomerOrderDetails(pr: CustomerAgentPrincipal) {
 }
 
 /** The server's view of this chat, given to the model as authoritative. */
-export function sessionState(pr: CustomerAgentPrincipal, currentText: string): string {
+export function sessionState(pr: CustomerAgentPrincipal, currentText: string, orders: Order[]): string {
   const lines: string[] = [];
   lines.push(
     replyScript(currentText) === "bangla"
       ? "reply_script: bangla (the customer wrote in Bangla script; reply in Bangla script)"
       : "reply_script: latin (the customer wrote in English letters; reply only in English letters: Banglish if they wrote Banglish, English if they wrote English)"
   );
-  const orders = visibleOrders(pr, 3);
   lines.push(`customer_linked: ${pr.customerId && pr.assurance !== "ANONYMOUS" ? "yes" : "no"}`);
   if (orders.length) lines.push(`own_recent_orders: ${orders.map((o) => `${o.order_number} (${o.status})`).join("; ")}`);
   const slots = conversationSlots(pr);
@@ -241,7 +241,8 @@ export async function runCustomerTurn(pr: CustomerAgentPrincipal, opts: { budget
 
   const current = cap(last.text, 4000);
   const script = replyScript(current);
-  const state = sessionState(pr, current);
+  // The chat's own orders from SQL under zero-hydration (a scan of every order in memory isn't possible there)
+  const state = sessionState(pr, current, await findVisibleOrders(pr, 3));
   const dynamic =
     `<store_context>\nshop_name: ${pr.tenantName}\ncurrency: BDT\nchannel: ${pr.channelType}\ntoday: ${new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Dhaka" })}\n</store_context>\n` +
     `<session_state source="server">\n${state}\n</session_state>`;

@@ -5,9 +5,9 @@
  */
 import { db } from "@/infrastructure/db";
 import type { CustomerAgentPrincipal } from "./principal";
-import { visibleOrders } from "./principal";
 import { conversationSlots, chatMessages } from "./runtime";
 import { replyScript } from "./output";
+import type { Order } from "@/types/commerce";
 
 export interface HandoffCard {
   reason: string;
@@ -39,7 +39,7 @@ export function slaDueAt(priority: HandoffCard["priority"], from = Date.now()): 
 }
 
 /** The parts of the card only the customer agent knows (slots, quote, orders, script). */
-export function customerAgentCardContext(pr: CustomerAgentPrincipal, reason: string): Partial<HandoffCard> {
+export function customerAgentCardContext(pr: CustomerAgentPrincipal, reason: string, orders: Order[]): Partial<HandoffCard> {
   const open = db
     .getConversationQuotes(pr.tenantId, pr.conversationId)
     .filter((q) => q.status === "QUOTED" && Date.parse(q.expires_at) > Date.now())
@@ -49,7 +49,7 @@ export function customerAgentCardContext(pr: CustomerAgentPrincipal, reason: str
     intent: INTENT[reason] ?? reason,
     slots: conversationSlots(pr),
     ...(open ? { open_quote: { id: open.id, grand_total: open.grand_total, district: open.district, expires_at: open.expires_at } } : {}),
-    order_refs: visibleOrders(pr, 5).map((o) => `${o.order_number} (${o.status})`),
+    order_refs: orders.map((o) => `${o.order_number} (${o.status})`),
     script: replyScript(lastCustomer?.text ?? ""),
   };
 }
