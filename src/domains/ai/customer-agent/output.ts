@@ -23,6 +23,14 @@ export function replyScript(text: string): Script {
   return letters.length && bn / letters.length >= 0.3 ? "bangla" : "latin";
 }
 
+/**
+ * Bangla-script letters in a reply to a customer who writes in English letters ("ekhানে দিন"): the model sometimes
+ * slips into Bangla script mid-sentence. The taka sign ৳ is in the same Unicode block but is fine in both scripts.
+ */
+export function mixedScript(text: string, script: Script): boolean {
+  return script === "latin" && /[ঀ-৲৴-৿]/u.test(text);
+}
+
 /** A reply that is not something to send to a person. */
 export function notAMessage(text: string): boolean {
   const t = text.trim();

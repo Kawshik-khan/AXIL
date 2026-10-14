@@ -24,7 +24,7 @@ import { findVisibleOrders, type CustomerAgentPrincipal } from "./principal";
 import { CUSTOMER_TOOLS, runCustomerTool, type ToolResult } from "./tools";
 import { isAffirmative } from "./confirmation";
 import {
-  PROMISES_HUMAN, allowedAmounts, capLength, guardOrderClaim, guardPaymentClaim, guardPhoneNumbers, notAMessage, replyScript,
+  PROMISES_HUMAN, allowedAmounts, capLength, guardOrderClaim, guardPaymentClaim, guardPhoneNumbers, mixedScript, notAMessage, replyScript,
   sanitizeOutbound, stripAmounts, synthesizeGroundedResponse, unsupportedAmounts,
 } from "./output";
 import { PromptInjectionClassifier } from "../safety/prompt-injection";
@@ -36,7 +36,7 @@ import type { AgentExecutionTraceRecord, GuardrailTriggerType } from "@/types/ai
 import { envNumber } from "@/lib/env-number";
 import type { Order } from "@/types/commerce";
 
-export const PROMPT_FILE = "customer-agent.system.v2.1-cod.md";
+export const PROMPT_FILE = "customer-agent.system.v2.2-cod.md";
 export const PROMPT_VERSION = PROMPT_FILE.replace(/\.md$/, "");
 const MAX_MODEL_CALLS = 6;
 const MAX_TOOL_CALLS = 8;
@@ -268,6 +268,7 @@ export async function runCustomerTurn(pr: CustomerAgentPrincipal, opts: { budget
   let model = "unknown";
   let retriedShape = false;
   let retriedAmounts = false;
+  let retriedScript = false;
   const calls: CallTrace[] = [];
   let handoffReason: string | undefined;
 
@@ -489,6 +490,17 @@ export async function runCustomerTurn(pr: CustomerAgentPrincipal, opts: { budget
         if (bad.length) {
           guards.push("amount_stripped");
           text = stripAmounts(text, bad);
+        }
+        if (mixedScript(text, script)) {
+          if (!retriedScript) {
+            retriedScript = true;
+            guards.push("script_retry");
+            messages.push({ role: "assistant", content: text });
+            messages.push({ role: "system", content: "The customer writes in English letters, but your reply has Bangla-script words. Rewrite the same reply using English letters only (Banglish), keeping every amount and name exactly as it is." });
+            continue;
+          }
+          guards.push("script_mixed");
+          logger.warn("agent.output.script_mixed", { tenant_id: pr.tenantId, conversation_id: pr.conversationId });
         }
         const claim = guardOrderClaim(text, placedOrderNumbers, script);
         if (claim.blocked) {

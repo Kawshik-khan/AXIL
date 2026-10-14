@@ -13,14 +13,14 @@ import { ConversationService } from "@/domains/social/conversations/conversation
 import { CouponService } from "@/domains/promotions/coupon.service";
 import { InventoryService } from "@/domains/inventory/inventory.service";
 import { PERMISSIONS } from "@/lib/permissions";
-import { BD_64_DISTRICTS, BANGLA_DISTRICT_NAMES, findDistrict } from "@/lib/bd-geography";
+import { BD_64_DISTRICTS, BANGLA_DISTRICT_NAMES, findDistrict, mentionsDistrict } from "@/lib/bd-geography";
 import { searchTokens } from "@/domains/catalog/search-synonyms";
 import type { RequestContext } from "@/lib/context";
 import type { ChannelType, Message } from "@/types/social";
 import { principalFor, capabilityContext, canSeeOrder, type Capability, type CustomerAgentPrincipal } from "@/domains/ai/customer-agent/principal";
 import { customerMessages, isAffirmative } from "@/domains/ai/customer-agent/confirmation";
 import { CUSTOMER_TOOLS, CUSTOMER_TOOL_NAMES, runCustomerTool } from "@/domains/ai/customer-agent/tools";
-import { synthesizeGroundedResponse } from "@/domains/ai/customer-agent/output";
+import { mixedScript, synthesizeGroundedResponse } from "@/domains/ai/customer-agent/output";
 
 const GREEN = "\x1b[32m";
 const RED = "\x1b[31m";
@@ -280,6 +280,32 @@ async function main() {
     assert.strictEqual((await runCustomerTool(prA, "quote_order", { items: [{ variant_id: "x", quantity: -5 }], district: "Dhaka" })).refused, "INVALID_ARGS");
     const xxl = await variant(prA, "black t-shirt", "XXL");
     assert.strictEqual((await run(prA, "quote_order", { items: [{ variant_id: xxl.variant_id, quantity: 1 }], district: "Dhaka" })).error, "INSUFFICIENT_STOCK");
+  });
+
+  await runTest("quote_order needs a district the customer gave: never a guessed Dhaka (live chat 2026-10-14)", async () => {
+    const pr = await conversation(messenger, "FACEBOOK_MESSENGER");
+    say(pr, "customer", "Apnader kache t-shirt ache");
+    say(pr, "customer", "Casual graphics t-shirt");
+    const tee = await variant(pr, "black t-shirt", "L");
+    const guessed = await run(pr, "quote_order", { items: [{ variant_id: tee.variant_id, quantity: 1 }], district: "Dhaka" });
+    assert.strictEqual(guessed.error, "DISTRICT_NOT_GIVEN", "no district in the chat: no total with delivery");
+    assert.strictEqual(guessed.quote_id, undefined);
+
+    say(pr, "customer", "Rahim, 01711000001, House 12, Road 5, Mirpur 10");
+    const viaArea = await run(pr, "quote_order", { items: [{ variant_id: tee.variant_id, quantity: 1 }], district: "Dhaka" });
+    assert.ok(viaArea.quote_id, `a Dhaka area counts as Dhaka: ${JSON.stringify(viaArea)}`);
+    assert.strictEqual((await run(pr, "quote_order", { items: [{ variant_id: tee.variant_id, quantity: 1 }], district: "Sylhet" })).error, "DISTRICT_NOT_GIVEN", "another district still has to be said");
+
+    assert.ok(mentionsDistrict("amar basa সিলেট জেলা", findDistrict("Sylhet")!));
+    assert.ok(mentionsDistrict("Cox's Bazar e pathan", findDistrict("Cox's Bazar")!));
+    assert.ok(mentionsDistrict("chittagong", findDistrict("Chattogram")!), "old spellings count");
+    assert.ok(!mentionsDistrict("dhakai jamdani ache?", findDistrict("Dhaka")!), "a product name isn't an address");
+  });
+
+  await runTest("a Banglish reply with Bangla-script words is caught; the taka sign and Bangla replies are fine", () => {
+    assert.strictEqual(mixedScript("Order confirm korte apnar name o address ekshাথে দিন।", "latin"), true);
+    assert.strictEqual(mixedScript("Ji, grand total ৳610 (Cash on delivery).", "latin"), false);
+    assert.strictEqual(mixedScript("অর্ডার কনফার্ম করতে আপনার নাম দিন।", "bangla"), false);
   });
 
   await runTest("place_order is cash on delivery only for now", async () => {

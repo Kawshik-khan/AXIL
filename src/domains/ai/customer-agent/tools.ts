@@ -14,7 +14,7 @@ import { RequestHumanHandoffTool } from "@/domains/ai/tools/implementations/huma
 import { searchTokens } from "@/domains/catalog/search-synonyms";
 import { productRepository } from "@/domains/catalog/product.repository";
 import { orderRepository } from "@/domains/orders/order.repository";
-import { findDistrict } from "@/lib/bd-geography";
+import { findDistrict, mentionsDistrict } from "@/lib/bd-geography";
 import { assertNotKilled } from "@/lib/safety-gate";
 import { logger } from "@/lib/logger";
 import type { LLMToolDefinition } from "@/domains/ai/providers/llm-provider.interface";
@@ -213,6 +213,14 @@ async function quoteOrder(pr: CustomerAgentPrincipal, a: z.infer<typeof QuoteArg
     if (q < it.quantity) {
       return { error: "INSUFFICIENT_STOCK", variant_id: it.variant_id, available_qty: Math.max(0, q), message: "Not enough stock; tell the customer and offer what is available." };
     }
+  }
+  // The delivery charge depends on the district, so it must come from the customer, never from a guess (the model used
+  // to quote "Dhaka" for a customer who hadn't said where they live, and called the total "delivery included")
+  if (!customerMessages(pr.tenantId, pr.conversationId).some((m) => mentionsDistrict(m ?? "", place))) {
+    return {
+      error: "DISTRICT_NOT_GIVEN",
+      message: `The customer hasn't said they are in ${place.district}. Don't quote yet: confirm the item and its price, and ask for name, mobile number and full delivery address (with district) together in one message.`,
+    };
   }
   let pricing;
   try {
@@ -448,7 +456,7 @@ export const CUSTOMER_TOOLS: Record<string, CustomerTool> = {
   quote_order: {
     def: def(
       "quote_order",
-      "Price a possible order on the server: item prices, coupon discount, delivery charge and grand total in BDT. It automatically computes the delivery charge for the district on the server (do not call get_delivery_charge first). Returns a quote_id that place_order needs. Use whenever the customer wants a total or wants to buy. Quantities are 1-10 per item. Example: {\"items\": [{\"variant_id\": \"var_1\", \"quantity\": 2}], \"district\": \"Dhaka\"}",
+      "Price a possible order on the server: item prices, coupon discount, delivery charge and grand total in BDT. It automatically computes the delivery charge for the district on the server (do not call get_delivery_charge first). Returns a quote_id that place_order needs. Use whenever the customer wants a total or wants to buy, once the customer has told you their district (never guess one). Quantities are 1-10 per item. Example: {\"items\": [{\"variant_id\": \"var_1\", \"quantity\": 2}], \"district\": \"Dhaka\"}",
       {
         type: "object",
         properties: {

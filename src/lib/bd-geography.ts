@@ -116,3 +116,30 @@ export function findDistrict(name: string | null | undefined): DistrictSpec | un
   const key = normalize(name);
   return BY_NAME.get(key) ?? BY_NAME.get(normalize(ALIASES[key] ?? ""));
 }
+
+/** Well-known areas of Dhaka city that customers name instead of the district ("Mirpur 10", "Uttara sector 7"). */
+const DHAKA_AREAS = new Set(
+  [
+    "mirpur", "uttara", "dhanmondi", "gulshan", "banani", "baridhara", "bashundhara", "mohammadpur", "badda", "rampura",
+    "motijheel", "nikunja", "khilgaon", "khilkhet", "jatrabari", "tejgaon", "farmgate", "malibagh", "mogbazar", "moghbazar",
+    "shyamoli", "lalbagh", "wari", "basabo", "shantinagar", "paltan", "azimpur", "mohakhali", "cantonment", "savar",
+    "keraniganj", "demra", "shahbagh", "hazaribagh", "agargaon", "pallabi", "kafrul", "kalabagan", "segunbagicha",
+    "মিরপুর", "উত্তরা", "ধানমন্ডি", "গুলশান", "বনানী", "মোহাম্মদপুর", "বাড্ডা", "রামপুরা", "মতিঝিল", "যাত্রাবাড়ী", "সাভার",
+  ].map(normalize)
+);
+
+/**
+ * Whether the text names this district: the district itself (English, old spellings or Bangla) or, for Dhaka, a
+ * well-known area of the city. Used to check that a district came from the customer, not from a guess.
+ */
+export function mentionsDistrict(text: string, district: DistrictSpec): boolean {
+  const words = text.normalize("NFC").split(/[^\p{L}\p{M}'’]+/u).filter(Boolean);
+  for (let i = 0; i < words.length; i++) {
+    for (let n = 1; n <= 3 && i + n <= words.length; n++) {
+      const phrase = words.slice(i, i + n).join(" ");
+      if (findDistrict(phrase)?.district === district.district) return true;
+      if (n === 1 && district.district === "Dhaka" && DHAKA_AREAS.has(normalize(phrase))) return true;
+    }
+  }
+  return false;
+}

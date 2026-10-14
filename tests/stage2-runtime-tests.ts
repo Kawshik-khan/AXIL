@@ -408,6 +408,14 @@ async function main() {
     assert.ok(!turn.reply.includes("499"));
   });
 
+  await runTest("a Banglish reply that slips into Bangla script is rewritten once (live chat 2026-10-14)", async () => {
+    await inbound("rt_chat", "apnar address kothay dibo?");
+    scripted.steps = [say("Apnar name o full address ekshাথে দিন।"), say("Apnar name o full address ekshathe din.")];
+    const turn = await runCustomerTurn(pr);
+    assert.ok(turn.guards.includes("script_retry"), turn.guards.join(","));
+    assert.strictEqual(turn.reply, "Apnar name o full address ekshathe din.");
+  });
+
   await runTest("tool-call text is retried, then the turn hands off with the standard reply", async () => {
     await inbound("rt_chat", "hello?");
     scripted.steps = [say('{"name":"search_products"}'), say('{"name":"search_products"}')];
@@ -415,7 +423,7 @@ async function main() {
     assert.strictEqual(turn.status, "FAILED");
     assert.ok(turn.handoff && turn.reply.length > 0);
     const run = db.getAgentRuns(tenantId, { conversation_id: pr.conversationId }).find((r) => r.id === turn.runId)!;
-    assert.strictEqual(run.prompt_version, "customer-agent.system.v2.1-cod");
+    assert.strictEqual(run.prompt_version, "customer-agent.system.v2.2-cod");
   });
 
   await runTest("tool-call arguments are stored redacted", () => {
