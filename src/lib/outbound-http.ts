@@ -44,8 +44,8 @@ export class OutboundCancelledError extends AppError {
 }
 
 export class OutboundNetworkError extends AppError {
-  constructor(host: string, code: string) {
-    super("OUTBOUND_UNREACHABLE", `${host} could not be reached (${code}).`, 502);
+  constructor(host: string, readonly networkCode: string) {
+    super("OUTBOUND_UNREACHABLE", `${host} could not be reached (${networkCode}).`, 502);
   }
 }
 

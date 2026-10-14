@@ -4,8 +4,10 @@
  * model router; nothing here is tenant-controlled, so the base URL isn't user input.
  */
 import { AppError } from "@/lib/errors";
+import { logger } from "@/lib/logger";
 import {
   OutboundCancelledError,
+  OutboundNetworkError,
   OutboundTimeoutError,
   outboundRequest,
   type OutboundResponse,
@@ -203,6 +205,15 @@ export class OpenAICompatibleProvider implements LLMProvider {
       );
     } catch (err) {
       if (err instanceof OutboundCancelledError) throw err;
+      // The low-level reason goes to the server log only (DNS failure, connection reset, a blocked address...)
+      logger.warn("llm.provider_unreachable", {
+        provider: this.providerName,
+        reason:
+          err instanceof OutboundNetworkError ? err.networkCode
+          : err instanceof OutboundTimeoutError ? "TIMEOUT"
+          : err instanceof AppError ? err.code
+          : (err as Error)?.name ?? "unknown",
+      });
       // Network errors name the provider's host (it can be internal): tenants see only that it failed (Phase 3 F3)
       const code =
         err instanceof OutboundTimeoutError

@@ -27,8 +27,21 @@ async function main() {
   const only = process.env.EVAL_CASES ? new Set(process.env.EVAL_CASES.split(",")) : null;
   const limit = Number(process.env.EVAL_LIMIT) || Infinity;
 
+  // The model name is read before the provider is wrapped (a wrapped provider reports "not-configured")
+  const modelName = modelRouter.resolveModelName("TIER_1_FAST");
   // The router was configured from the environment at import; wrap its provider so every call is recorded
   const live = (modelRouter as unknown as { primaryProvider: LLMProvider }).primaryProvider;
+
+  // One tiny call first: if the provider can't be reached, say so instead of scoring ~100 cases of fallback replies
+  // as hallucinations (every nightly run from 2026-10-08 failed that way: "could not be reached" on the runner)
+  try {
+    await live.chat([{ role: "user", content: "Reply with: ok" }], undefined, { max_tokens: 64, timeout_ms: 60_000 });
+  } catch (err) {
+    console.error(`EVAL ABORTED: the model provider didn't answer a one-line test call (${(err as Error).message}).`);
+    console.error("Check the eval key (secret OLLAMA_EVAL_API_KEY in the evals environment), LLM_BASE_URL and the provider's status;");
+    console.error("For \"could not be reached\", the llm.provider_unreachable log line above gives the network reason (ENOTFOUND, ECONNRESET, ...).");
+    process.exit(1);
+  }
   modelRouter.setPrimaryProvider(new RecordingProvider(live));
   modelRouter.setFallbackProvider(null);
   if (!(process.env.EVAL_REAL_EMBEDDINGS === "1" && process.env.LLM_EMBEDDING_BASE_URL)) {
@@ -38,7 +51,7 @@ async function main() {
   const runId = new Date().toISOString().replace(/[:.]/g, "-");
   const outDir = path.join(EVAL_DIR, "results", `live-${runId}`);
   fs.mkdirSync(outDir, { recursive: true });
-  const meta = { run: runId, provider: process.env.LLM_PROVIDER_NAME || new URL(process.env.LLM_BASE_URL!).host, ...runStamp(modelRouter.resolveModelName("TIER_1_FAST")) };
+  const meta = { run: runId, provider: process.env.LLM_PROVIDER_NAME || new URL(process.env.LLM_BASE_URL!).host, ...runStamp(modelName) };
   console.log(JSON.stringify(meta));
 
   const summary: Record<string, unknown> = { meta };
