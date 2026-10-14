@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * Scheduled jobs without n8n (FX-99 Part B): run by the Render Cron Job `commerceos-jobs` every 5 minutes.
+ * Scheduled jobs without n8n (FX-99 Part B): run every 10 minutes by the GitHub Actions
+ * workflow .github/workflows/scheduled-jobs.yml (free; a Render Cron Job running this script works the same).
  *
  * Calls POST /api/v1/jobs/<job>/run for every job. The server runs a job at most once per its own time bucket
  * (monitoring every 5 min, courier-poll every 30 min, daily-report and low-stock hourly at the shop's local hour,
@@ -9,7 +10,7 @@
  *
  * Environment: APP_URL (https address of the app) and JOBS_TOKEN (the token whose SHA-256 is JOBS_TOKEN_SHA256 on the
  * app). Exits 1 when a job fails or the app refuses the token, so Render shows the run as failed.
- * Node built-ins only: the cron needs no install step.
+ * Node built-ins only: no install step.
  */
 
 /** Must list every job in JOBS (src/domains/jobs/jobs.service.ts); tests/stage3-quality-tests.ts checks it. */

@@ -126,7 +126,7 @@ services:
       # Customer-agent job worker (ADR-112); idle unless a workspace has the agent flags on
       - key: CUSTOMER_AGENT_WORKER
         value: "1"
-      # FX-99 Part B: SHA-256 (hex) of the n8n job token; the token itself stays in n8n
+      # FX-99 Part B: SHA-256 (hex) of the job token; the token itself is the JOBS_TOKEN GitHub secret
       - key: JOBS_TOKEN_SHA256
         sync: false
       # FX-83: customer message retention in days (owner decision; unset keeps everything)
@@ -151,30 +151,15 @@ services:
       - key: CSP_ENFORCE
         value: "0"
       # n8n is switched off (2026-10-14): social messages are handled by CommerceOS directly, without a failed call to
-      # n8n first. Leave N8N_HOST unset too; scheduled jobs run from the commerceos-jobs cron below.
+      # n8n first. Leave N8N_HOST unset too; scheduled jobs run from GitHub Actions (see below).
       - key: SOCIAL_N8N_MODE
         value: "off"
       # Merchant alerts (Settings → Notifications): one platform bot token from @BotFather
       - key: TELEGRAM_ALERTS_BOT_TOKEN
         sync: false
       # Deliberately absent: DEV_AUTH_BYPASS, AI_DEMO_MODE, COMMERCEOS_FORCE_LOCK, SEED_ADMIN_PASSWORD.
-  # ── Scheduled jobs (FX-99 Part B), without n8n ─────────────────────────────────────────────────────────────────────
-  # Every 5 minutes, calls POST /api/v1/jobs/<job>/run for each job; the app runs each at most once per its own period
-  # (scripts/run-scheduled-jobs.mjs). Node built-ins only, so there is nothing to install. Set JOBS_TOKEN here and its
-  # SHA-256 as JOBS_TOKEN_SHA256 on the commerceos service (one-liner in .env.example).
-  - type: cron
-    name: commerceos-jobs
-    runtime: node
-    region: oregon
-    plan: starter
-    schedule: "*/5 * * * *"
-    buildCommand: echo "no build needed"
-    startCommand: node scripts/run-scheduled-jobs.mjs
-    envVars:
-      - key: APP_URL
-        sync: false
-      - key: JOBS_TOKEN
-        sync: false
+  # Scheduled jobs (FX-99 Part B) run from GitHub Actions for free (.github/workflows/scheduled-jobs.yml), not from a
+  # paid Render Cron Job: set JOBS_TOKEN_SHA256 below, and JOBS_TOKEN + APP_URL as repository secrets.
   # ── Staging (FX-86, audit F27) ─────────────────────────────────────────────────────────────────────────────────────
   # Same build and settings as production, with its OWN stores and keys: a Neon branch (never the production database),
   # its own Qdrant collection, Upstash database, LLM provider key (an Ollama Cloud staging/eval key) and Gemini key, a
@@ -296,7 +281,7 @@ services:
       # Customer-agent job worker (ADR-112); idle unless a workspace has the agent flags on
       - key: CUSTOMER_AGENT_WORKER
         value: "1"
-      # FX-99 Part B: SHA-256 (hex) of the n8n job token; the token itself stays in n8n
+      # FX-99 Part B: SHA-256 (hex) of the job token; the token itself is the JOBS_TOKEN GitHub secret
       - key: JOBS_TOKEN_SHA256
         sync: false
       # FX-83: customer message retention in days (owner decision; unset keeps everything)

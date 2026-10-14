@@ -523,7 +523,14 @@ async function main() {
     }
   });
 
-  await runTest("the Render cron script (no n8n) lists every job and calls each with the job token and an Idempotency-Key", async () => {
+  await runTest("the scheduled-jobs script (no n8n) lists every job and calls each with the job token and an Idempotency-Key", async () => {
+    // Run for free by GitHub Actions: on a schedule, read-only, the token only from a secret
+    const wf = fs.readFileSync(path.resolve(__dirname, "../.github/workflows/scheduled-jobs.yml"), "utf8");
+    assert.match(wf, /schedule:\n\s+- cron: "\*\/10 \* \* \* \*"/);
+    assert.match(wf, /permissions:\n\s+contents: read/);
+    assert.match(wf, /JOBS_TOKEN: \$\{\{ secrets\.JOBS_TOKEN \}\}/);
+    assert.match(wf, /run: node scripts\/run-scheduled-jobs\.mjs/);
+    assert.doesNotMatch(wf, /pull_request/, "never on pull requests (forks must not reach the secret)");
     const script = path.resolve(__dirname, "../scripts/run-scheduled-jobs.mjs");
     const listed = [...fs.readFileSync(script, "utf8").matchAll(/^\s+"([a-z-]+)",$/gm)].map((m) => m[1]);
     assert.deepStrictEqual([...listed].sort(), Object.keys(JOBS).sort(), "scripts/run-scheduled-jobs.mjs must list every job");
