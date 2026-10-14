@@ -289,6 +289,10 @@ export class KnowledgeService {
       topK: 10,
       rerankTopK: 10,
       minRerankScore: 0,
+      // No confidence cutoff either: the tool returns the closest documents and the agent decides relevance. The
+      // reranker scores shared words, so a Bangla question about an English policy scored ~0.35 against the default
+      // 0.65 and the tool returned nothing (retrieval eval 2026-10-14: bn Recall@2 57%) though dense search ranked it first
+      confidenceThresholdLow: 0,
       resolveParentContext: true,
       enableQueryExpansion: true,
     });
