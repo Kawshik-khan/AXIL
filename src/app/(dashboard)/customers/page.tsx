@@ -25,6 +25,7 @@ export default function CustomersPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState("");
@@ -70,13 +71,19 @@ export default function CustomersPage() {
   };
 
   useEffect(() => {
-    loadCustomers(page, searchQuery);
-  }, [page]);
+    const id = window.setTimeout(() => {
+      setDebouncedSearch(searchQuery.trim());
+      setPage(0);
+    }, 300);
+    return () => window.clearTimeout(id);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    loadCustomers(page, debouncedSearch);
+  }, [page, debouncedSearch]);
 
   const handleSearch = (val: string) => {
     setSearchQuery(val);
-    setPage(0);
-    loadCustomers(0, val);
   };
 
   const openCustomerDetails = async (id: string) => {

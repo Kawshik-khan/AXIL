@@ -49,6 +49,7 @@ export default function ConversationsPage() {
   // Filters & Search
   const [selectedChannel, setSelectedChannel] = useState<ChannelType | "ALL">("ALL");
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [unreadOnly, setUnreadOnly] = useState(false);
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
 
@@ -62,6 +63,13 @@ export default function ConversationsPage() {
   const loadedConvIdRef = useRef<string | null>(null);
   const isFetchingThreadRef = useRef<boolean>(false);
 
+  useEffect(() => {
+    const id = window.setTimeout(() => {
+      setDebouncedSearch(searchQuery.trim());
+    }, 300);
+    return () => window.clearTimeout(id);
+  }, [searchQuery]);
+
   // Fetch conversations list
   const loadConversations = useCallback(async () => {
     try {
@@ -69,7 +77,7 @@ export default function ConversationsPage() {
       let url = "/api/v1/social/conversations?";
       if (selectedChannel !== "ALL") url += `channel_type=${selectedChannel}&`;
       if (unreadOnly) url += "unread_only=true&";
-      if (searchQuery.trim()) url += `search=${encodeURIComponent(searchQuery.trim())}&`;
+      if (debouncedSearch) url += `search=${encodeURIComponent(debouncedSearch)}&`;
       if (selectedTag) url += `tag=${encodeURIComponent(selectedTag)}&`;
 
       const res = await fetch(url);
@@ -103,7 +111,7 @@ export default function ConversationsPage() {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, [selectedChannel, unreadOnly, searchQuery, selectedTag]);
+  }, [selectedChannel, unreadOnly, debouncedSearch, selectedTag]);
 
   // Initial load
   useEffect(() => {

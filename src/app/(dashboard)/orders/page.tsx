@@ -37,6 +37,7 @@ export default function OrdersPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [totalCount, setTotalCount] = useState(0);
   const [page, setPage] = useState(0);
   const PAGE_SIZE = 25;
@@ -105,8 +106,16 @@ export default function OrdersPage() {
   };
 
   useEffect(() => {
-    loadOrders(page, statusFilter, searchQuery);
-  }, [page, statusFilter]);
+    const id = window.setTimeout(() => {
+      setDebouncedSearch(searchQuery.trim());
+      setPage(0);
+    }, 300);
+    return () => window.clearTimeout(id);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    loadOrders(page, statusFilter, debouncedSearch);
+  }, [page, statusFilter, debouncedSearch]);
 
   useEffect(() => {
     loadProducts();
@@ -114,14 +123,11 @@ export default function OrdersPage() {
 
   const handleSearch = (val: string) => {
     setSearchQuery(val);
-    setPage(0);
-    loadOrders(0, statusFilter, val);
   };
 
   const handleStatusChange = (newStatus: string) => {
     setStatusFilter(newStatus);
     setPage(0);
-    loadOrders(0, newStatus, searchQuery);
   };
 
   const openOrderDetails = async (orderId: string) => {
