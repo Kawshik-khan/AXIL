@@ -7,6 +7,8 @@ import assert from "assert";
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
+import http from "http";
+import { spawn } from "child_process";
 import { db } from "@/infrastructure/db";
 import { AuthService } from "@/domains/auth/service";
 import { ProductService } from "@/domains/catalog/product.service";
@@ -31,7 +33,7 @@ import { CustomerErasureService } from "@/domains/privacy/customer-erasure.servi
 import { RbacService } from "@/domains/rbac/service";
 import { AutomationRouterService } from "@/domains/automation/services/automation-router.service";
 import { dispatchOutboxOnce, MAX_DISPATCH_ATTEMPTS } from "@/domains/automation/outbox/dispatcher";
-import { JobsService, bucketOf, localHour } from "@/domains/jobs/jobs.service";
+import { JOBS, JobsService, bucketOf, localHour } from "@/domains/jobs/jobs.service";
 import { signSessionToken, signStepUpToken, WORKSPACE_STEP_UP_PREFIX } from "@/lib/security";
 import { PERMISSIONS } from "@/lib/permissions";
 import type { RequestContext } from "@/lib/context";
@@ -519,6 +521,30 @@ async function main() {
     } finally {
       delete process.env.JOBS_TOKEN_SHA256;
     }
+  });
+
+  await runTest("the Render cron script (no n8n) lists every job and calls each with the job token and an Idempotency-Key", async () => {
+    const script = path.resolve(__dirname, "../scripts/run-scheduled-jobs.mjs");
+    const listed = [...fs.readFileSync(script, "utf8").matchAll(/^\s+"([a-z-]+)",$/gm)].map((m) => m[1]);
+    assert.deepStrictEqual([...listed].sort(), Object.keys(JOBS).sort(), "scripts/run-scheduled-jobs.mjs must list every job");
+
+    const calls: Array<{ url: string; auth: string; key: string }> = [];
+    const server = http.createServer((req, res) => {
+      calls.push({ url: req.url ?? "", auth: String(req.headers.authorization ?? ""), key: String(req.headers["idempotency-key"] ?? "") });
+      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ data: { replayed: false } }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as { port: number }).port;
+    const token = crypto.randomBytes(32).toString("base64url");
+    const exitCode = await new Promise<number>((resolve) => {
+      const child = spawn(process.execPath, [script], { env: { ...process.env, APP_URL: `http://127.0.0.1:${port}`, JOBS_TOKEN: token }, stdio: "ignore" });
+      child.on("exit", (code) => resolve(code ?? 1));
+    });
+    server.close();
+    assert.strictEqual(exitCode, 0);
+    assert.deepStrictEqual(calls.map((c) => c.url).sort(), Object.keys(JOBS).map((j) => `/api/v1/jobs/${j}/run`).sort());
+    assert.ok(calls.every((c) => c.auth === `Bearer ${token}`));
+    assert.ok(calls.every((c) => c.key.startsWith(`${c.url.split("/")[4]}:`)), "each key starts with its job name");
   });
 
   await runTest("each job runs once per bucket; shops are chosen by CommerceOS (opt-in, local time, kill switch)", async () => {

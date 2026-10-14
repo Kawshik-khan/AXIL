@@ -150,7 +150,28 @@ services:
       # (POST /api/v1/jobs/monitoring/run) reports csp.ready_to_enforce = true for a full week.
       - key: CSP_ENFORCE
         value: "0"
+      # n8n is switched off (2026-10-14): social messages are handled by CommerceOS directly, without a failed call to
+      # n8n first. Leave N8N_HOST unset too; scheduled jobs run from the commerceos-jobs cron below.
+      - key: SOCIAL_N8N_MODE
+        value: "off"
       # Deliberately absent: DEV_AUTH_BYPASS, AI_DEMO_MODE, COMMERCEOS_FORCE_LOCK, SEED_ADMIN_PASSWORD.
+  # ── Scheduled jobs (FX-99 Part B), without n8n ─────────────────────────────────────────────────────────────────────
+  # Every 5 minutes, calls POST /api/v1/jobs/<job>/run for each job; the app runs each at most once per its own period
+  # (scripts/run-scheduled-jobs.mjs). Node built-ins only, so there is nothing to install. Set JOBS_TOKEN here and its
+  # SHA-256 as JOBS_TOKEN_SHA256 on the commerceos service (one-liner in .env.example).
+  - type: cron
+    name: commerceos-jobs
+    runtime: node
+    region: oregon
+    plan: starter
+    schedule: "*/5 * * * *"
+    buildCommand: echo "no build needed"
+    startCommand: node scripts/run-scheduled-jobs.mjs
+    envVars:
+      - key: APP_URL
+        sync: false
+      - key: JOBS_TOKEN
+        sync: false
   # ── Staging (FX-86, audit F27) ─────────────────────────────────────────────────────────────────────────────────────
   # Same build and settings as production, with its OWN stores and keys: a Neon branch (never the production database),
   # its own Qdrant collection, Upstash database, LLM provider key (an Ollama Cloud staging/eval key) and Gemini key, a
