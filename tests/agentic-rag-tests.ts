@@ -16,7 +16,7 @@ import { ragQualityCases, RAG_QUALITY_DATASET_VERSION, validateRagQualityDataset
 import { evaluateRagQuality } from "@/domains/ai/eval/rag-evaluation";
 import { modelRouter } from "@/domains/ai/providers/model-router";
 import { AppError } from "@/lib/errors";
-import { isTransientEmbeddingError } from "@/domains/ai/rag/embedding.service";
+import { EmbeddingService, isTransientEmbeddingError } from "@/domains/ai/rag/embedding.service";
 
 const ANSI_GREEN = "\x1b[32m";
 const ANSI_RED = "\x1b[31m";
@@ -302,6 +302,30 @@ Please consult our chest and length specifications before placing your order.
     assert(results.length > 0, "Hybrid search must return candidates");
     assert(results[0].rrf_score > 0, "Results must have computed RRF score");
     assert(results[0].chunk.content.toLowerCase().includes("dhaka") || results[0].chunk.content.toLowerCase().includes("delivery"), "Top candidate should match query topics");
+    // The dense channel itself finds the chunks: it compared the chunks' router stamp with the bare model name, so it
+    // matched nothing (INCOMPATIBLE_INDEX) and retrieval was keyword-only (retrieval eval 2026-10-14)
+    const { diagnostics } = await HybridSearchService.searchWithDiagnostics(contextA.tenant.id, "delivery charge outside dhaka", { topK: 5, minVectorSimilarity: -1 });
+    assert.strictEqual(diagnostics.dense.status, "SUCCESS", JSON.stringify(diagnostics.dense));
+    assert(diagnostics.dense.candidate_count > 0, "dense search returns candidates");
+  });
+
+  await runTest("Embeddings: a rate-limited call (HTTP 429) is retried after the provider's wait, not 200 ms later", async () => {
+    const router = modelRouter as unknown as { generateEmbedding: (t: string) => Promise<number[]> };
+    const original = router.generateEmbedding;
+    const at: number[] = [];
+    process.env.EMBEDDING_RATE_LIMIT_MAX_WAIT_MS = "400";
+    router.generateEmbedding = async () => {
+      at.push(Date.now());
+      if (at.length < 3) throw new AppError("LLM_PROVIDER_ERROR", "AI provider embeddings answered HTTP 429.", 502, { status: 429, retryAfterMs: 5000 });
+      return [0.1, 0.2];
+    };
+    try {
+      assert.deepStrictEqual(await EmbeddingService.embedText("hello"), [0.1, 0.2]);
+      assert.ok(at[1] - at[0] >= 390 && at[2] - at[1] >= 390, `waited the (capped) Retry-After: ${at[1] - at[0]} ms, ${at[2] - at[1]} ms`);
+    } finally {
+      router.generateEmbedding = original;
+      delete process.env.EMBEDDING_RATE_LIMIT_MAX_WAIT_MS;
+    }
   });
 
   // -------------------------------------------------------------

@@ -153,8 +153,11 @@ export class HybridSearchService {
 
       const activeDocuments = db.getKnowledgeDocuments(tenantId).filter((doc) => doc.status === "ACTIVE");
       const activeVersions = new Map(activeDocuments.map((doc) => [doc.id, doc.version]));
+      // Chunks are stamped with the router's stamp ("embeddings/gemini-embedding-001"), as ingestion, re-embedding and the
+      // re-index job all write it; comparing with the bare model name matched nothing, so dense search found no chunk
+      const stampedModel = EmbeddingService.currentStamp().embedding_model;
       const compatibleChunk = (chunk: KnowledgeChunk | undefined) => !!chunk && activeVersions.get(chunk.document_id) === chunk.metadata.version &&
-        chunk.metadata.embedding_model === profile.model && chunk.metadata.embedding_provider === profile.provider &&
+        chunk.metadata.embedding_model === stampedModel && chunk.metadata.embedding_provider === profile.provider &&
         chunk.metadata.embedding_dimensions === profile.dimensions && chunk.metadata.index_version === profile.index_version;
 
       // 1. Use Qdrant when configured (QDRANT_URL)

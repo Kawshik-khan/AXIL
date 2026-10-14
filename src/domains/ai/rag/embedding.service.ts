@@ -9,9 +9,22 @@
 import { modelRouter } from "@/domains/ai/providers/model-router";
 import { logger } from "@/lib/logger";
 import { isAppError } from "@/lib/errors";
+import { envNumber } from "@/lib/env-number";
 
 const RETRIES = 2;
 const BASE_BACKOFF_MS = 200;
+
+/**
+ * How long to wait before retrying an HTTP 429 (rate limited): the provider's Retry-After, else 1 s, 2 s, capped. A
+ * 200 ms retry of a per-minute limit just failed again. The cap stays short by default so a customer's reply is never
+ * held up for long (dense search falls back to keywords); the nightly retrieval eval raises it.
+ */
+function rateLimitWaitMs(err: unknown, attempt: number): number | null {
+  if (!isAppError(err) || Number(err.details?.status) !== 429) return null;
+  const hinted = Number(err.details?.retryAfterMs);
+  const wait = Number.isFinite(hinted) && hinted > 0 ? hinted : 1000 * 2 ** attempt;
+  return Math.min(wait, envNumber("EMBEDDING_RATE_LIMIT_MAX_WAIT_MS", 2000, 0));
+}
 const counters = { calls: 0, failures: 0, retries: 0, since: new Date().toISOString() };
 
 /** This server's embedding calls and failures since start (FX-82 metric). */
@@ -69,7 +82,7 @@ export class EmbeddingService {
         }
         if (attempt < RETRIES) {
           counters.retries++;
-          await new Promise((r) => setTimeout(r, BASE_BACKOFF_MS * 2 ** attempt));
+          await new Promise((r) => setTimeout(r, rateLimitWaitMs(err, attempt) ?? BASE_BACKOFF_MS * 2 ** attempt));
         }
       }
     }
