@@ -5,7 +5,8 @@ name: Scheduled jobs
 # stock at the shop's local hour, courier poll every 30 min, ...), so calling all of them every 10 minutes is safe.
 # GitHub may start a scheduled run a few minutes late; nothing here depends on the exact minute.
 #
-# Repository secrets: JOBS_TOKEN (its SHA-256 is JOBS_TOKEN_SHA256 on the Render web service) and APP_URL (https).
+# Repository secret JOBS_TOKEN (its SHA-256 is JOBS_TOKEN_SHA256 on the Render web service, not here). The app's https
+# address is the APP_URL secret, or else the PRODUCTION_BASE_URL repository variable the deploy workflow already uses.
 # Schedules only run on the default branch; "Run workflow" (workflow_dispatch) needs write access to the repository.
 on:
   schedule:
@@ -38,6 +39,6 @@ jobs:
       # Node built-ins only: no npm install
       - name: Call the jobs
         env:
-          APP_URL: ${{ secrets.APP_URL }}
+          APP_URL: ${{ secrets.APP_URL || vars.PRODUCTION_BASE_URL }}
           JOBS_TOKEN: ${{ secrets.JOBS_TOKEN }}
         run: node scripts/run-scheduled-jobs.mjs
