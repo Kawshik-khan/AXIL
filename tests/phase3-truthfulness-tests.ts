@@ -41,6 +41,7 @@ import { PlatformSupportService } from "@/domains/platform/services/platform-sup
 import { PLATFORM_ROLE_PERMISSIONS } from "@/lib/permissions";
 import { signPlatformSessionToken } from "@/lib/security";
 import { ModelRouter } from "@/domains/ai/providers/model-router";
+import type { OpenAICompatibleProvider } from "@/domains/ai/providers/openai-compatible.provider";
 import { globalDecisionEngineService } from "@/domains/autonomous/services";
 import { isFeatureEnabled } from "@/lib/safety-gate";
 import { ResolveSemanticMetricTool } from "@/domains/ai/tools/implementations/enterprise-tools";
@@ -427,6 +428,18 @@ async function main() {
       await router.chatWithRouting("TIER_1_FAST", [{ role: "user", content: "x" }]);
       assert.strictEqual(calls[1].url, "http://chat.p3/v1/chat/completions");
       assert.strictEqual(calls[1].auth, "Bearer chat-key");
+      assert.strictEqual(calls[1].body.model, "chat-model");
+      // A wrapped provider (the live eval records calls this way) still gets the real model name, not "not-configured"
+      const inner = (router as unknown as { primaryProvider: OpenAICompatibleProvider }).primaryProvider;
+      router.setPrimaryProvider({
+        providerName: inner.providerName,
+        chat: (m, t, o) => inner.chat(m, t, o),
+        generate: (p, o) => inner.generate(p, o),
+        modelFor: (tier: "TIER_1_FAST") => inner.modelFor(tier),
+      } as unknown as OpenAICompatibleProvider);
+      await router.chatWithRouting("TIER_1_FAST", [{ role: "user", content: "x" }]);
+      assert.strictEqual(calls[2].body.model, "chat-model");
+      assert.strictEqual(router.resolveModelName("TIER_1_FAST"), "chat-model");
     } finally {
       setOutboundTransportForTesting(null);
       setOutboundLookupForTesting(null);

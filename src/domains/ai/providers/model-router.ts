@@ -13,6 +13,11 @@ import { OutboundCancelledError } from "@/lib/outbound-http";
 
 export type ModelTier = "TIER_1_FAST" | "TIER_2_REASONING" | "TIER_3_EMBEDDING";
 
+/** A provider that knows its model names per tier (OpenAICompatibleProvider, or a wrapper that delegates to one). */
+function namesModels(p: LLMProvider | null | undefined): p is LLMProvider & { modelFor(tier: ModelTier): string } {
+  return Boolean(p) && typeof (p as { modelFor?: unknown }).modelFor === "function";
+}
+
 export interface ModelPricing {
   promptCostPer1M: number;
   completionCostPer1M: number;
@@ -230,7 +235,7 @@ export class ModelRouter {
 
   /** The model a tier uses: from the configuration, not the hard-coded gemini-1.5 names (FX-32). */
   public resolveModelName(tier: ModelTier): string {
-    if (this.primaryProvider instanceof OpenAICompatibleProvider) return this.primaryProvider.modelFor(tier);
+    if (namesModels(this.primaryProvider)) return this.primaryProvider.modelFor(tier);
     if (this.primaryProvider instanceof MockLLMProvider) return "demo-keyword-mock";
     return "not-configured";
   }
@@ -256,7 +261,9 @@ export class ModelRouter {
 
   /** The model a given provider uses for a tier: each provider has its own names (FX-79, audit F24). */
   private modelOf(provider: LLMProvider, tier: ModelTier): string {
-    if (provider instanceof OpenAICompatibleProvider) return provider.modelFor(tier);
+    // Any provider that names its models, not only OpenAICompatibleProvider: a wrapper (the eval's RecordingProvider)
+    // used to fall through to "not-configured", and the provider answered 404 for that model
+    if (namesModels(provider)) return provider.modelFor(tier);
     return this.resolveModelName(tier);
   }
 
