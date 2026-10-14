@@ -17,13 +17,22 @@ export const ProductSearchModal: React.FC<ProductSearchModalProps> = ({
   onSelectProduct,
 }) => {
   const [query, setQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [products, setProducts] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+
+  // Bolt performance optimization: Debounce search input to reduce API calls
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedQuery(query);
+    }, 300);
+    return () => clearTimeout(handler);
+  }, [query]);
 
   useEffect(() => {
     if (!isOpen) return;
     setIsLoading(true);
-    fetch(`/api/v1/products?search=${encodeURIComponent(query)}&limit=8`)
+    fetch(`/api/v1/products?search=${encodeURIComponent(debouncedQuery)}&limit=8`)
       .then((res) => res.json())
       .then((data) => {
         if (data.data) {
@@ -32,7 +41,7 @@ export const ProductSearchModal: React.FC<ProductSearchModalProps> = ({
       })
       .catch(() => {})
       .finally(() => setIsLoading(false));
-  }, [isOpen, query]);
+  }, [isOpen, debouncedQuery]);
 
   if (!isOpen) return null;
 
