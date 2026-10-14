@@ -108,8 +108,8 @@ export class ModelRouter {
       );
     } else if (env.LLM_BASE_URL) {
       this.primaryProvider = new OpenAICompatibleProvider({
-        baseUrl: env.LLM_BASE_URL,
-        apiKey: env.LLM_API_KEY,
+        baseUrl: env.LLM_BASE_URL.trim(),
+        apiKey: env.LLM_API_KEY?.trim(), // a pasted key often ends in a newline, which Node refuses in a header
         name: env.LLM_PROVIDER_NAME,
         models,
         maxConcurrency: concurrencyShare(env.LLM_MAX_CONCURRENCY, env),
@@ -124,7 +124,7 @@ export class ModelRouter {
     this.embeddingProvider = env.LLM_EMBEDDING_BASE_URL
       ? new OpenAICompatibleProvider({
           baseUrl: env.LLM_EMBEDDING_BASE_URL,
-          apiKey: env.LLM_EMBEDDING_API_KEY,
+          apiKey: env.LLM_EMBEDDING_API_KEY?.trim(),
           name: env.LLM_EMBEDDING_PROVIDER_NAME || "embeddings",
           models,
           embeddingDimensions: Number.isInteger(dims) && dims > 0 ? dims : undefined,
@@ -137,7 +137,7 @@ export class ModelRouter {
       env.LLM_FALLBACK_BASE_URL && fallbackFast
         ? new OpenAICompatibleProvider({
             baseUrl: env.LLM_FALLBACK_BASE_URL,
-            apiKey: env.LLM_FALLBACK_API_KEY,
+            apiKey: env.LLM_FALLBACK_API_KEY?.trim(),
             name: env.LLM_FALLBACK_PROVIDER_NAME || "fallback",
             models: { TIER_1_FAST: fallbackFast, TIER_2_REASONING: env.LLM_FALLBACK_MODEL_REASONING?.trim() || fallbackFast, TIER_3_EMBEDDING: "" },
             maxConcurrency: concurrencyShare(env.LLM_FALLBACK_MAX_CONCURRENCY, env),

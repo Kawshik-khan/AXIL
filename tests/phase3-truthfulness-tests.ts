@@ -414,8 +414,9 @@ async function main() {
     });
     try {
       router.configure({
-        LLM_BASE_URL: "http://chat.p3/v1", LLM_API_KEY: "chat-key", LLM_MODEL_FAST: "chat-model",
-        LLM_EMBEDDING_BASE_URL: "http://embed.p3/v1", LLM_EMBEDDING_API_KEY: "embed-key", LLM_EMBEDDING_MODEL: "embed-model", LLM_EMBEDDING_DIMENSIONS: "768",
+        // Keys pasted with a trailing newline (the GitHub eval secret had one: every call failed with a TypeError)
+        LLM_BASE_URL: "http://chat.p3/v1", LLM_API_KEY: "chat-key\n", LLM_MODEL_FAST: "chat-model",
+        LLM_EMBEDDING_BASE_URL: "http://embed.p3/v1", LLM_EMBEDDING_API_KEY: " embed-key\r\n", LLM_EMBEDDING_MODEL: "embed-model", LLM_EMBEDDING_DIMENSIONS: "768",
       } as NodeJS.ProcessEnv);
       assert.strictEqual(router.getStatus().embedding_provider, "embeddings");
       assert.deepStrictEqual(await router.generateEmbedding("hello"), [0.1, 0.2, 0.3]);
