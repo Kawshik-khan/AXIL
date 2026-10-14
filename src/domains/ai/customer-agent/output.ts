@@ -164,6 +164,77 @@ export function capLength(text: string, max = 1000): string {
   return (end > max * 0.5 ? cut.slice(0, end + 1) : cut).trim();
 }
 
+/** A quote_order result, as the tool returns it. */
+interface QuoteResult {
+  quote_id: string;
+  district?: string;
+  items?: Array<{ name?: string; size?: string; quantity?: number; line_total_bdt?: number }>;
+  discount_bdt?: number;
+  delivery_charge_bdt?: number;
+  grand_total_bdt: number;
+}
+
+/** What the customer has already given for the order (from the chat), so the quote asks only for what's missing. */
+export interface QuoteCustomerDetails {
+  name?: string;
+  phone?: string;
+  address?: string;
+}
+
+const taka = (n: number) => `৳${n.toLocaleString("en-US")}`;
+
+/**
+ * The quote message, built by the server so every quote looks the same and every amount comes from the tool: one line
+ * per item with size and quantity, any discount, the delivery charge with its district, the grand total (cash on
+ * delivery), then either "say Ji to confirm" or a request for exactly the details still missing.
+ */
+export function formatQuote(r: QuoteResult, script: Script, details: QuoteCustomerDetails = {}): string {
+  const bn = script === "bangla";
+  const lines: string[] = [];
+  for (const it of r.items ?? []) {
+    const name = it.name || (bn ? "পণ্য" : "Item");
+    // No size for one-size items, or when the product name already says it ("Black T-Shirt (L)")
+    const showSize = it.size && !/^(?:default|default title|free|one size)$/i.test(it.size) && !name.toLowerCase().includes(`(${it.size.toLowerCase()})`);
+    const size = showSize ? ` (${it.size})` : "";
+    const qty = it.quantity ?? 1;
+    const amount = typeof it.line_total_bdt === "number" ? ` – ${taka(it.line_total_bdt)}` : "";
+    lines.push(`- ${name}${size} – ${qty} ${bn ? "পিস" : "pcs"}${amount}`);
+  }
+  if (typeof r.discount_bdt === "number" && r.discount_bdt > 0) lines.push(`- ${bn ? "ডিসকাউন্ট" : "Discount"} – -${taka(r.discount_bdt)}`);
+  if (typeof r.delivery_charge_bdt === "number") {
+    const where = r.district ? ` (${r.district})` : "";
+    lines.push(`- ${bn ? "ডেলিভারি চার্জ" : "Delivery charge"}${where} – ${taka(r.delivery_charge_bdt)}`);
+  }
+  const total = `${bn ? "সর্বমোট" : "Grand total"} – ${taka(r.grand_total_bdt)} (${bn ? "ক্যাশ অন ডেলিভারি" : "Cash on delivery"})`;
+
+  const missing: string[] = [];
+  if (!details.name) missing.push(bn ? "নাম" : "name");
+  if (!details.phone) missing.push(bn ? "মোবাইল নম্বর (০১XXXXXXXXX)" : "mobile number (01XXXXXXXXX)");
+  if (!details.address) missing.push(bn ? "সম্পূর্ণ ডেলিভারি ঠিকানা" : "full delivery address (house, road, area)");
+  const list = (words: string[], and: string) => (words.length > 1 ? `${words.slice(0, -1).join(", ")} ${and} ${words[words.length - 1]}` : words[0]);
+  const next = missing.length
+    ? bn
+      ? `অর্ডার কনফার্ম করতে আপনার ${list(missing, "ও")}${missing.length > 1 ? " একসাথে" : ""} দিন।`
+      : `Order confirm korte apnar ${list(missing, "o")}${missing.length > 1 ? " ekshathe" : ""} din.`
+    : bn
+      ? `সব ঠিক থাকলে "জি" লিখুন, অর্ডার কনফার্ম করে দিচ্ছি।`
+      : `Sob thik thakle "Ji" likhun, order confirm kore dicchi.`;
+
+  const greeting = bn ? `জি${details.name ? ` ${details.name}` : ""}, আপনার অর্ডারের কোট:` : `Ji${details.name ? ` ${details.name}` : ""}, apnar order er quote:`;
+  return [greeting, "", ...lines, total, "", next].join("\n");
+}
+
+/** The quote this turn ends on: the last quote_order result, unless the order moved on (confirmation or placed) after it. */
+export function quoteToShow(toolResults: unknown[]): QuoteResult | null {
+  for (let i = toolResults.length - 1; i >= 0; i--) {
+    const r = toolResults[i] as Record<string, unknown> | null;
+    if (!r || typeof r !== "object") continue;
+    if (r.status === "PLACED" || r.status === "CONFIRMATION_REQUIRED") return null;
+    if (typeof r.quote_id === "string" && typeof r.grand_total_bdt === "number") return r as unknown as QuoteResult;
+  }
+  return null;
+}
+
 /**
  * Dynamic grounded reply constructed directly from the turn's tool results when the model
  * was unable to format its final response (e.g. timeout, provider glitch, or turn deadline).
@@ -194,29 +265,7 @@ export function synthesizeGroundedResponse(toolResults: unknown[], script: Scrip
     }
 
     // Quote successfully created
-    if (r.quote_id && typeof r.grand_total_bdt === "number") {
-      const district = typeof r.district === "string" && r.district.trim() ? r.district.trim() : "";
-      const delivery = r.delivery_charge_bdt;
-      const total = r.grand_total_bdt;
-      const discount = r.discount_bdt;
-      const itemsList = Array.isArray(r.items) && r.items.length > 0
-        ? r.items
-            .map((it: any) => `${it.name || "Item"}${it.quantity > 1 ? ` (${it.quantity})` : ""}`)
-            .join(", ")
-        : "";
-
-      if (script === "bangla") {
-        const itemPart = itemsList ? `${itemsList}-এর জন্য ` : "";
-        const districtPart = district ? `${district}-এ ` : "";
-        const discountPart = typeof discount === "number" && discount > 0 ? `, ডিসকাউন্ট ৳${discount.toLocaleString("en-US")}` : "";
-        return `জি, ${itemPart}${districtPart}ডেলিভারি চার্জ ৳${delivery}${discountPart}, সর্বমোট ৳${total.toLocaleString("en-US")} (ক্যাশ অন ডেলিভারি)। অর্ডার কনফার্ম করতে আপনার নাম, মোবাইল নম্বর এবং সম্পূর্ণ ডেলিভারি ঠিকানা একসাথে দিন।`;
-      }
-
-      const itemPart = itemsList ? `${itemsList} er jonno ` : "";
-      const districtPart = district ? `${district}-e ` : "";
-      const discountPart = typeof discount === "number" && discount > 0 ? `, discount ৳${discount.toLocaleString("en-US")}` : "";
-      return `Ji, ${itemPart}${districtPart}delivery charge ৳${delivery}${discountPart}, grand total ৳${total.toLocaleString("en-US")} (Cash on delivery). Order confirm korte apnar name, mobile number o full delivery address ekshathe din.`;
-    }
+    if (r.quote_id && typeof r.grand_total_bdt === "number") return formatQuote(r as unknown as QuoteResult, script);
 
     // Order status looked up
     if (r.order_number && (r.status || r.courier_status)) {

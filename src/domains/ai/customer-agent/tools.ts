@@ -268,7 +268,12 @@ async function quoteOrder(pr: CustomerAgentPrincipal, a: z.infer<typeof QuoteArg
   return {
     quote_id: quote.id,
     district: place.district,
-    items: quote.lines.map((l) => ({ name: l.name, sku: l.sku, unit_price_bdt: l.unit_price, quantity: l.quantity, line_total_bdt: l.line_total })),
+    items: quote.lines.map((l, i) => {
+      // The size the customer sees in the quote message (pricing keeps the order of the requested items)
+      const v = pricing.items[i] ? db.findVariantById(pr.tenantId, pricing.items[i].variant_id) : undefined;
+      const size = v ? v.attributes?.size ?? v.title : undefined;
+      return { name: l.name, sku: l.sku, ...(size ? { size } : {}), unit_price_bdt: l.unit_price, quantity: l.quantity, line_total_bdt: l.line_total };
+    }),
     subtotal_bdt: quote.subtotal,
     discount_bdt: quote.discount_total,
     delivery_charge_bdt: quote.delivery_charge,

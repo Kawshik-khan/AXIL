@@ -716,7 +716,7 @@ async function main() {
     assert.strictEqual(second.status, "PLACED", JSON.stringify(second));
   });
 
-  await runTest("only a delivered reply that still shows the total makes a quote confirmable", async () => {
+  await runTest("a quote turn always shows the server's quote layout, even when the model claims the order is placed", async () => {
     setMode(true, false);
     const convo = await inbound("rf_guarded", "black t-shirt L size Dhaka, Rahim Uddin 01711000001 House 12 Road 5 Mirpur 10");
     makeDue(convo.id);
@@ -724,19 +724,17 @@ async function main() {
     scripted.steps = [
       call("search_products", () => ({ query: "black t-shirt" })),
       call("quote_order", (m) => ({ items: [{ variant_id: (lastTool(m).results[0].variants as R[]).find((v) => v.size === "L")!.variant_id, quantity: 1 }], district: "Dhaka" })),
-      (m) => ((qid = lastTool(m).quote_id), { content: "Your order has been placed!" }), // replaced by the order-claim guard
+      (m) => ((qid = lastTool(m).quote_id), { content: "Your order has been placed!" }),
     ];
     await runAgentJobsOnce();
-    assert.strictEqual(db.findQuote(tenantId, convo.id, qid)!.shown_message_id, undefined, "the replaced reply showed no total");
-    await inbound("rf_guarded", "ok");
-    makeDue(convo.id);
-    let r: R = {};
-    scripted.steps = [
-      call("place_order", () => ({ quote_id: qid, customer_name: "Rahim Uddin", phone: "01711000001", address_line: "House 12 Road 5 Mirpur 10", payment_method: "COD" })),
-      (m) => ((r = lastTool(m)), { content: "Confirm korben?" }),
-    ];
-    await runAgentJobsOnce();
-    assert.strictEqual(r.status, "CONFIRMATION_REQUIRED");
+    const q = db.findQuote(tenantId, convo.id, qid)!;
+    const sent = db.getMessages(tenantId, convo.id, { limit: 50 }).messages.filter((m) => m.sender_type !== "CUSTOMER").pop()!;
+    assert.ok(!/has been placed/i.test(sent.text), "no false order claim reaches the customer");
+    assert.ok(sent.text.includes(`Grand total – ৳${q.grand_total.toLocaleString("en-US")} (Cash on delivery)`), sent.text);
+    assert.ok(sent.text.includes("Black Cotton T-Shirt (L) – 1 pcs"), `the size once: ${sent.text}`);
+    // Phone and address were in the message, but no name the server could pick out: it asks for exactly that
+    assert.ok(sent.text.endsWith("Order confirm korte apnar name din."), sent.text);
+    assert.ok(q.shown_message_id, "the delivered quote is confirmable");
   });
 
   await runTest("a chat paused during the turn (no staff reply) gets no bot reply", async () => {

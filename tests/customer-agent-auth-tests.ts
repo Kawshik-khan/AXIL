@@ -20,7 +20,7 @@ import type { ChannelType, Message } from "@/types/social";
 import { principalFor, capabilityContext, canSeeOrder, type Capability, type CustomerAgentPrincipal } from "@/domains/ai/customer-agent/principal";
 import { customerMessages, isAffirmative } from "@/domains/ai/customer-agent/confirmation";
 import { CUSTOMER_TOOLS, CUSTOMER_TOOL_NAMES, runCustomerTool } from "@/domains/ai/customer-agent/tools";
-import { mixedScript, synthesizeGroundedResponse } from "@/domains/ai/customer-agent/output";
+import { formatQuote, mixedScript, quoteToShow, synthesizeGroundedResponse } from "@/domains/ai/customer-agent/output";
 
 const GREEN = "\x1b[32m";
 const RED = "\x1b[31m";
@@ -308,6 +308,33 @@ async function main() {
     assert.strictEqual(mixedScript("অর্ডার কনফার্ম করতে আপনার নাম দিন।", "bangla"), false);
   });
 
+  await runTest("the quote message: one fixed layout with the tool's amounts, asking only for what's missing", () => {
+    const q = {
+      quote_id: "q_1", district: "Dhaka", discount_bdt: 0, delivery_charge_bdt: 60, grand_total_bdt: 1910,
+      items: [{ name: "Premium Embroidered Cotton Panjabi", size: "Regular", quantity: 1, line_total_bdt: 1850 }],
+    };
+    assert.strictEqual(
+      formatQuote(q, "latin", { name: "Kawshik", phone: "01996990184", address: "House 9, Road 19, Nikunja 2" }),
+      [
+        "Ji Kawshik, apnar order er quote:",
+        "",
+        "- Premium Embroidered Cotton Panjabi (Regular) – 1 pcs – ৳1,850",
+        "- Delivery charge (Dhaka) – ৳60",
+        "Grand total – ৳1,910 (Cash on delivery)",
+        "",
+        'Sob thik thakle "Ji" likhun, order confirm kore dicchi.',
+      ].join("\n")
+    );
+    assert.ok(formatQuote(q, "latin", { phone: "01996990184" }).endsWith("Order confirm korte apnar name o full delivery address (house, road, area) ekshathe din."));
+    const withCoupon = formatQuote({ ...q, discount_bdt: 100, grand_total_bdt: 1810, items: [{ name: "Jamdani Saree", size: "Free", quantity: 2, line_total_bdt: 1850 }] }, "latin");
+    assert.ok(withCoupon.includes("- Jamdani Saree – 2 pcs – ৳1,850\n- Discount – -৳100\n"), "no size for a one-size item; the discount is its own line");
+    const bangla = formatQuote(q, "bangla", {});
+    assert.ok(bangla.includes("ডেলিভারি চার্জ (Dhaka) – ৳60") && bangla.includes("সর্বমোট – ৳1,910 (ক্যাশ অন ডেলিভারি)"), bangla);
+    assert.ok(!mixedScript(formatQuote(q, "latin", {}), "latin"), "the Banglish layout has no Bangla-script letters");
+    assert.strictEqual(quoteToShow([q, { status: "CONFIRMATION_REQUIRED", summary: "..." }]), null, "after a confirmation summary the quote isn't shown again");
+    assert.strictEqual(quoteToShow([{ results: [] }, q])?.quote_id, "q_1");
+  });
+
   await runTest("place_order is cash on delivery only for now", async () => {
     assert.strictEqual((await runCustomerTool(prA, "place_order", { ...details, quote_id: "q_x", payment_method: "BKASH" })).refused, "INVALID_ARGS");
   });
@@ -500,8 +527,8 @@ async function main() {
     };
     const reply = synthesizeGroundedResponse([quoteResult], "latin");
     assert.ok(reply);
-    assert.ok(reply.includes("Kushtia-e delivery charge ৳120"));
-    assert.ok(reply.includes("grand total ৳1,970"));
+    assert.ok(reply.includes("Delivery charge (Kushtia) – ৳120"), reply);
+    assert.ok(reply.includes("Grand total – ৳1,970"), reply);
     assert.ok(reply.includes("Cash on delivery"));
   });
 
@@ -516,8 +543,8 @@ async function main() {
     };
     const reply = synthesizeGroundedResponse([quoteResult], "bangla");
     assert.ok(reply);
-    assert.ok(reply.includes("কুষ্টিয়া-এ ডেলিভারি চার্জ ৳120"));
-    assert.ok(reply.includes("সর্বমোট ৳2,120"));
+    assert.ok(reply.includes(`ডেলিভারি চার্জ (${quoteResult.district}) – ৳120`), reply);
+    assert.ok(reply.includes("সর্বমোট – ৳2,120"), reply);
     assert.ok(reply.includes("ক্যাশ অন ডেলিভারি"));
   });
 

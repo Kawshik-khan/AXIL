@@ -24,7 +24,7 @@ import { findVisibleOrders, type CustomerAgentPrincipal } from "./principal";
 import { CUSTOMER_TOOLS, runCustomerTool, type ToolResult } from "./tools";
 import { isAffirmative } from "./confirmation";
 import {
-  PROMISES_HUMAN, allowedAmounts, capLength, guardOrderClaim, guardPaymentClaim, guardPhoneNumbers, mixedScript, notAMessage, replyScript,
+  PROMISES_HUMAN, allowedAmounts, capLength, guardOrderClaim, guardPaymentClaim, guardPhoneNumbers, formatQuote, mixedScript, notAMessage, quoteToShow, replyScript,
   sanitizeOutbound, stripAmounts, synthesizeGroundedResponse, unsupportedAmounts,
 } from "./output";
 import { PromptInjectionClassifier } from "../safety/prompt-injection";
@@ -473,6 +473,12 @@ export async function runCustomerTurn(pr: CustomerAgentPrincipal, opts: { budget
           break; // → handoff below
         }
         text = sanitizeOutbound(text);
+        // A turn that ends on a fresh quote always shows it in the same server-built layout, with the tool's amounts
+        const quote = quoteToShow(toolResults);
+        if (quote) {
+          guards.push("quote_template");
+          text = formatQuote(quote, script, extractCustomerOrderDetails(pr));
+        }
         const phones = guardPhoneNumbers(pr.tenantId, pr.conversationId, text);
         if (phones.removed) {
           guards.push("number_removed");
