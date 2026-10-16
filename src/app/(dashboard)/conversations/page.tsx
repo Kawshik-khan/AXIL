@@ -29,6 +29,7 @@ import {
   ChannelType,
 } from "@/types/social";
 import { Order, Product } from "@/types/commerce";
+import { useDebounce } from "@/hooks/useDebounce";
 
 export default function ConversationsPage() {
   const [activeTab, setActiveTab] = useState<"inbox" | "dashboard" | "simulator">("inbox");
@@ -49,6 +50,8 @@ export default function ConversationsPage() {
   // Filters & Search
   const [selectedChannel, setSelectedChannel] = useState<ChannelType | "ALL">("ALL");
   const [searchQuery, setSearchQuery] = useState("");
+  // ⚡ Bolt: Debounce search query to reduce API calls while typing
+  const debouncedSearchQuery = useDebounce(searchQuery, 300);
   const [unreadOnly, setUnreadOnly] = useState(false);
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
 
@@ -69,7 +72,7 @@ export default function ConversationsPage() {
       let url = "/api/v1/social/conversations?";
       if (selectedChannel !== "ALL") url += `channel_type=${selectedChannel}&`;
       if (unreadOnly) url += "unread_only=true&";
-      if (searchQuery.trim()) url += `search=${encodeURIComponent(searchQuery.trim())}&`;
+      if (debouncedSearchQuery.trim()) url += `search=${encodeURIComponent(debouncedSearchQuery.trim())}&`;
       if (selectedTag) url += `tag=${encodeURIComponent(selectedTag)}&`;
 
       const res = await fetch(url);
@@ -103,7 +106,7 @@ export default function ConversationsPage() {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, [selectedChannel, unreadOnly, searchQuery, selectedTag]);
+  }, [selectedChannel, unreadOnly, debouncedSearchQuery, selectedTag]);
 
   // Initial load
   useEffect(() => {
