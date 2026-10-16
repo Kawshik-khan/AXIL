@@ -17,7 +17,9 @@ export class CohortAnalysisService {
 
   /** Pure (FX-21): monthly acquisition cohorts, scoped to the tenant. */
   public computeCohorts(tenantId: string): CohortRecord[] {
-    const orders = db.getAllOrders(tenantId, { hydrate: true }).filter((o) => o.status !== "CANCELLED");
+    const orders = db.isCollectionHydrated("orders")
+      ? db.getAllOrders(tenantId).filter((o) => o.status !== "CANCELLED")
+      : [];
 
     // 1. Determine each customer's first purchase month
     const customerFirstMonth: Record<string, string> = {};

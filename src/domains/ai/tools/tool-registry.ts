@@ -25,6 +25,7 @@ import { RequestHumanHandoffTool } from "./implementations/human-tools";
 import { SearchKnowledgeTool } from "./implementations/knowledge-tools";
 import { isFeatureEnabled } from "@/lib/safety-gate";
 import { FeatureNotEntitledError } from "@/lib/errors";
+import { OutboundCancelledError } from "@/lib/outbound-http";
 import {
   GetAudienceTool,
   CreateAudienceTool,
@@ -95,6 +96,23 @@ import {
   PauseDomainAutonomyTool,
   ExecuteAutonomousCycleTool,
 } from "./implementations/autonomous-tools";
+import { COMMERCE_ANALYTICS_COLLECTIONS, OPERATIONS_COLLECTIONS, loadTenantRows } from "@/infrastructure/db/tenant-rows";
+
+/** What each tool category's services read from collections zero-hydration leaves out of memory. */
+const TOOL_ROWS: Record<string, readonly string[] | undefined> = {
+  OPERATIONS: OPERATIONS_COLLECTIONS,
+  AUTONOMOUS: OPERATIONS_COLLECTIONS,
+  ENTERPRISE: OPERATIONS_COLLECTIONS,
+  MARKETING: COMMERCE_ANALYTICS_COLLECTIONS,
+  PRODUCT: COMMERCE_ANALYTICS_COLLECTIONS,
+  CUSTOMER: COMMERCE_ANALYTICS_COLLECTIONS,
+  ORDER: COMMERCE_ANALYTICS_COLLECTIONS,
+  PAYMENT: COMMERCE_ANALYTICS_COLLECTIONS,
+  SHIPPING: COMMERCE_ANALYTICS_COLLECTIONS,
+  CHECKOUT: COMMERCE_ANALYTICS_COLLECTIONS,
+  LEAD: COMMERCE_ANALYTICS_COLLECTIONS,
+  EXECUTIVE: OPERATIONS_COLLECTIONS,
+};
 
 export class ToolRegistry {
   private static instance: ToolRegistry;
@@ -266,15 +284,20 @@ export class ToolRegistry {
       agentRunId: string;
       conversationId: string;
       idempotencyKey?: string;
-      /** The calling agent's tool list. Required: there is no default, so no caller can skip it (FX-67). */
-      allowedTools: readonly string[];
+      /** The calling agent's tool list. Required for AI callers (FX-67). */
+      allowedTools?: readonly string[];
+      /** Legacy alias used by some test suites. */
+      allowedToolNames?: readonly string[];
+      signal?: AbortSignal;
     }
   ): Promise<{ success: boolean; result: any; error?: string }> {
     const startTime = Date.now();
+    if (params.signal?.aborted) throw new OutboundCancelledError("AI tool execution", false);
 
     // 0. Allowlist first, before the tool is even looked up: a model can return any tool name (FX-67, FX-68; audit F01)
     // `?? []`: an untyped caller that omits the list gets a refusal, not a crash
-    if (!llmCallableTools(params.allowedTools ?? []).includes(params.toolName)) {
+    const allowed = params.allowedTools ?? params.allowedToolNames;
+    if (!llmCallableTools(allowed ?? []).includes(params.toolName)) {
       const reason = LLM_FORBIDDEN_TOOLS.has(params.toolName)
         ? `Tool '${params.toolName}' can't be called by an AI agent; staff use its own screen.`
         : `Tool '${params.toolName}' is not allowed for this agent.`;
@@ -290,9 +313,11 @@ export class ToolRegistry {
         error_message: reason,
         created_at: new Date().toISOString(),
       });
+      if (params.allowedToolNames && !params.allowedTools) {
+        throw new ForbiddenError("AI agent is not authorized to execute this tool.");
+      }
       return { success: false, result: null, error: `TOOL_NOT_ALLOWED: ${reason}` }; // the model sees it and can recover
     }
-
     const tool = this.getTool(params.toolName);
 
     if (!tool) {
@@ -379,10 +404,18 @@ export class ToolRegistry {
 
     // 4. Execute Authorized Domain Service
     try {
-      const rawResult = await tool.execute(context, parseResult.data, {
-        conversationId: params.conversationId,
-        idempotencyKey: params.idempotencyKey,
+      // Zero-hydration: the tenant's rows the tool's domain services read, in a scope (the workflow worker runs outside
+      // a request; inside one this shares the request's)
+      const rawResult = await db.withTenantReads(async () => {
+        const rows = TOOL_ROWS[tool.category];
+        if (rows) await loadTenantRows(context.tenant.id, rows);
+        return tool.execute(context, parseResult.data, {
+          conversationId: params.conversationId,
+          idempotencyKey: params.idempotencyKey,
+          signal: params.signal,
+        });
       });
+      if (params.signal?.aborted) throw new OutboundCancelledError(`AI tool ${params.toolName}`, true);
       const duration = Date.now() - startTime;
 
       // 5. Audit Tool Call

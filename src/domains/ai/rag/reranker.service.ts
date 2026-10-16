@@ -14,6 +14,7 @@ export interface RerankerOptions {
   minRerankScore?: number;         // Threshold cutoff for reranker (default: 0.40)
   resolveParentContext?: boolean;  // Automatically resolve child to parent chunk (default: true)
   deduplicateParents?: boolean;    // Deduplicate sibling children sharing the same parent (default: true)
+  queryVariants?: string[];        // Expanded equivalents may ground lexical matches across scripts/languages.
 }
 
 export class RerankerService {
@@ -35,8 +36,8 @@ export class RerankerService {
     const resolveParent = options.resolveParentContext !== false;
     const deduplicateParents = options.deduplicateParents !== false;
 
-    const queryTokens = BM25Service.tokenize(query);
-    const normalizedQuery = query.toLowerCase().trim();
+    const queryVariants = Array.from(new Set([query, ...(options.queryVariants || [])].map((value) => value.trim()).filter(Boolean)));
+    const queryTokenSets = queryVariants.map((variant) => ({ text: variant.toLowerCase(), tokens: BM25Service.tokenize(variant) })).filter((variant) => variant.tokens.length > 0);
 
     // 1. Cross-Score each candidate
     const scoredList: Array<{
@@ -51,46 +52,45 @@ export class RerankerService {
       const parentHeading = (chunk.metadata.parent_heading || "").toLowerCase();
 
       // Signal 1: Lexical Coverage with root stem handling (e.g. dhakar -> dhaka, baire -> outside)
-      let matchedTokenCount = 0;
-      for (const qt of queryTokens) {
-        const root = qt.endsWith("r") || qt.endsWith("e") ? qt.slice(0, -1) : qt;
-        const matchesContent = content.includes(qt) || (root.length >= 3 && content.includes(root));
-        const matchesHeading = heading.includes(qt) || (root.length >= 3 && heading.includes(root));
-        const matchesParentHeading = parentHeading.includes(qt) || (root.length >= 3 && parentHeading.includes(root));
-
-        // Special handling for common Banglish translation concepts
-        const matchesConcept =
-          (qt === "baire" && (content.includes("outside") || heading.includes("outside"))) ||
-          (qt === "vetore" && (content.includes("inside") || heading.includes("inside"))) ||
-          (qt === "ferot" && (content.includes("return") || heading.includes("return")));
-
-        if (matchesContent || matchesHeading || matchesParentHeading || matchesConcept) {
-          matchedTokenCount++;
+      let lexicalCoverage = 0;
+      for (const variant of queryTokenSets) {
+        let matchedTokenCount = 0;
+        for (const qt of variant.tokens) {
+          const root = qt.endsWith("r") || qt.endsWith("e") ? qt.slice(0, -1) : qt;
+          const matchesContent = content.includes(qt) || (root.length >= 3 && content.includes(root));
+          const matchesHeading = heading.includes(qt) || (root.length >= 3 && heading.includes(root));
+          const matchesParentHeading = parentHeading.includes(qt) || (root.length >= 3 && parentHeading.includes(root));
+          const matchesConcept =
+            (qt === "baire" && (content.includes("outside") || heading.includes("outside"))) ||
+            (qt === "vetore" && (content.includes("inside") || heading.includes("inside"))) ||
+            (qt === "ferot" && (content.includes("return") || heading.includes("return")));
+          if (matchesContent || matchesHeading || matchesParentHeading || matchesConcept) matchedTokenCount++;
         }
+        lexicalCoverage = Math.max(lexicalCoverage, matchedTokenCount / variant.tokens.length);
       }
-      const lexicalCoverage = queryTokens.length > 0 ? matchedTokenCount / queryTokens.length : 0;
 
       // Signal 2: Exact Phrase Match / Bi-gram Boost
       let phraseBoost = 0;
-      if (normalizedQuery.length > 5 && content.includes(normalizedQuery)) {
-        phraseBoost = 0.35;
-      } else if (queryTokens.length >= 2) {
-        let biGramMatches = 0;
-        for (let i = 0; i < queryTokens.length - 1; i++) {
-          const bigram = `${queryTokens[i]} ${queryTokens[i + 1]}`;
-          if (content.includes(bigram)) {
-            biGramMatches++;
-          }
-        }
-        phraseBoost = Math.min(0.30, biGramMatches * 0.15);
-      }
-
-      // Signal 3: Heading & Section Affinity
       let headingAffinity = 0;
-      for (const qt of queryTokens) {
-        if (heading.includes(qt) || parentHeading.includes(qt)) headingAffinity += 0.15;
+      for (const variant of queryTokenSets) {
+        let variantPhraseBoost = 0;
+        if (variant.text.length > 5 && content.includes(variant.text)) {
+          variantPhraseBoost = 0.35;
+        } else if (variant.tokens.length >= 2) {
+          let biGramMatches = 0;
+          for (let i = 0; i < variant.tokens.length - 1; i++) {
+            const bigram = `${variant.tokens[i]} ${variant.tokens[i + 1]}`;
+            if (content.includes(bigram)) biGramMatches++;
+          }
+          variantPhraseBoost = Math.min(0.30, biGramMatches * 0.15);
+        }
+        phraseBoost = Math.max(phraseBoost, variantPhraseBoost);
+        let variantHeadingAffinity = 0;
+        for (const qt of variant.tokens) {
+          if (heading.includes(qt) || parentHeading.includes(qt)) variantHeadingAffinity += 0.15;
+        }
+        headingAffinity = Math.max(headingAffinity, Math.min(0.25, variantHeadingAffinity));
       }
-      headingAffinity = Math.min(0.25, headingAffinity);
 
       // Signal 4: Baseline RRF & Dense Vector Anchor
       const baseAnchor = Math.min(0.50, cand.rrf_score * 35.0);
@@ -134,7 +134,8 @@ export class RerankerService {
 
         // Fetch parent chunk from database
         const parent = db.findParentKnowledgeChunk(tenantId, chunk.parent_chunk_id);
-        if (parent) {
+        if (parent && parent.tenant_id === tenantId && parent.document_id === chunk.document_id &&
+            parent.metadata.version === chunk.metadata.version && parent.chunk_type === "PARENT") {
           parentChunk = parent;
           resolvedContent = parent.content;
           seenParentIds.add(chunk.parent_chunk_id);

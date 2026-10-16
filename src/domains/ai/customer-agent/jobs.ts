@@ -20,8 +20,32 @@ export function strictFlag(key: string, tenantId: string): boolean {
   return Boolean(db.findPlatformFeatureFlag(key)) && isFeatureEnabled(key, tenantId);
 }
 
+/**
+ * Makes sure the worker is running and takes this turn right after its debounce, so a reply doesn't wait for the next
+ * interval (and works where the boot hook didn't start the worker). Suites drive `runAgentJobsOnce` themselves.
+ */
+function kickWorker(): void {
+  if (process.env.NODE_ENV === "test") return;
+  void import("./worker").then((m) => {
+    // Outside the request's zero-hydration scope: the worker's timers must not inherit (and keep alive) its rows
+    db.outsideTenantReads(() => {
+      m.startCustomerAgentWorker();
+      setTimeout(() => {
+        void m.runAgentJobsOnce().catch(() => undefined);
+      }, DEBOUNCE_MS + 200);
+    });
+  }).catch(() => undefined);
+}
+
 /** Whether the agent may answer on this channel: it can deliver there, and the workspace's AI policy allows it. */
-export function channelAllowed(tenantId: string, channelType: ChannelType): boolean {
+export function channelAllowed(tenantId: string, channelType: ChannelType, channelId?: string): boolean {
+  if (channelType === "WEBSITE_CHAT") {
+    const channel = channelId
+      ? db.findConnectedChannelById(tenantId, channelId)
+      : db.getConnectedChannels(tenantId).find((c) => c.type === "WEBSITE_CHAT" && c.status === "ACTIVE");
+    const isLiveStorefront = channel?.id === "chn_web_chat" || (channel?.configuration?.auto_reply_enabled === true && channel?.provider_account_id === "web_chat_dhaka_01");
+    return Boolean(isLiveStorefront) && db.getAIPolicy(tenantId).allowed_channel_types.includes(channelType);
+  }
   return !NO_REPLY_CHANNELS.has(channelType) && db.getAIPolicy(tenantId).allowed_channel_types.includes(channelType);
 }
 
@@ -38,7 +62,7 @@ export function agentMode(tenantId: string): "AUTONOMOUS" | "SHADOW" | "OFF" {
  * message moves its start (2-second debounce), and a message during a running turn asks for one more turn.
  */
 export function enqueueCustomerTurn(conversation: Conversation, messageId: string): void {
-  if (!channelAllowed(conversation.tenant_id, conversation.channel_type)) return;
+  if (!channelAllowed(conversation.tenant_id, conversation.channel_type, conversation.channel_id)) return;
   if (agentMode(conversation.tenant_id) === "OFF") return;
   // A handoff or a staff reply pauses automation: from then on a person answers this chat
   if (conversation.automation_paused) return;
@@ -47,6 +71,7 @@ export function enqueueCustomerTurn(conversation: Conversation, messageId: strin
   const existing = db.findAgentJob(conversation.tenant_id, conversation.id);
   if (existing?.status === "RUNNING") {
     db.saveAgentJob({ ...existing, rerun: true, last_message_id: messageId });
+    kickWorker();
     return;
   }
   db.saveAgentJob({
@@ -61,4 +86,6 @@ export function enqueueCustomerTurn(conversation: Conversation, messageId: strin
     created_at: existing?.created_at ?? now.toISOString(),
     updated_at: now.toISOString(),
   });
+  kickWorker();
 }
+

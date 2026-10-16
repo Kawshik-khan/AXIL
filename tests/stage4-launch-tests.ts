@@ -147,7 +147,7 @@ async function main() {
 
   await runTest("staging is a separate service with every production setting and its own secrets", () => {
     const yaml = fs.readFileSync(path.join(ROOT, "render.yaml"), "utf8");
-    const blocks = yaml.split(/\n  - type: web\n/).slice(1);
+    const blocks = yaml.split(/\n  - type: \w+\n/).slice(1); // every service, so the cron's keys never count as a web service's
     const named = (n: string) => blocks.find((b) => new RegExp(`^    name: ${n}\\n`).test(b))!;
     const prod = named("commerceos");
     const staging = named("commerceos-staging");

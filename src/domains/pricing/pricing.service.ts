@@ -1,6 +1,7 @@
 import { db } from "@/infrastructure/db";
 import { CouponService } from "@/domains/promotions/coupon.service";
 import { BadRequestError } from "@/lib/errors";
+import { loadVariantRows } from "@/infrastructure/db/tenant-rows";
 
 export interface PricingCalculationResult {
   items: Array<{
@@ -42,6 +43,7 @@ export class PricingService {
     deliveryZone: "INSIDE_DHAKA" | "OUTSIDE_DHAKA",
     couponCode?: string
   ): Promise<PricingCalculationResult> {
+    await loadVariantRows(tenantId, (items ?? []).map((i) => i.variant_id)); // zero-hydration: the variants priced here
     if (!items || items.length === 0) {
       throw new BadRequestError("Cannot calculate pricing for an empty order item list.");
     }

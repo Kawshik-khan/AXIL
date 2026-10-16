@@ -70,16 +70,196 @@ function phoneForms(phone: string | undefined): string[] {
 /** A name worth sweeping for: two words or more (a single first name would match other people and words). */
 const sweepableName = (name: string | undefined) => (name && name.trim().split(/\s+/).length >= 2 && name.trim().length >= 5 ? name.trim() : undefined);
 
+import { orderRepository } from "@/domains/orders/order.repository";
+import { customerRepository } from "@/domains/customers/customer.repository";
+
 export class CustomerErasureService {
-  public static erase(context: RequestContext, customerId: string, reason: string): ErasureResult {
+  public static erase(context: RequestContext, customerId: string, reason: string): ErasureResult | Promise<ErasureResult> {
     RbacService.assertCan(context, PERMISSIONS.CUSTOMERS_ERASE);
     const tenantId = context.tenant.id;
+
+    const client = db.isCollectionHydrated("customers") ? null : db.getSqlClient();
+    if (client) {
+      return this.erasePgTransactional(context, customerId, reason);
+    }
+
+    return this.eraseInMemory(context, customerId, reason);
+  }
+
+  /**
+   * Database-native atomic customer erasure over PostgreSQL/PGlite (P0 blocker resolution).
+   * Runs in a single transaction: validate -> lock -> anonymize customer & orders -> delete references -> audit -> commit.
+   */
+  private static async erasePgTransactional(context: RequestContext, customerId: string, reason: string): Promise<ErasureResult> {
+    const tenantId = context.tenant.id;
+    const client = db.getSqlClient()!;
+
+    return await client.transaction(async (tx) => {
+      // 1. Verify customer and lock row
+      const custRes = await tx.query<{ data: unknown }>(
+        `SELECT data FROM commerceos.customers WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
+        [tenantId, customerId]
+      );
+      if (!custRes.rows[0]?.data) {
+        throw new NotFoundError(`Customer '${customerId}' not found.`);
+      }
+      const rawData = custRes.rows[0].data;
+      const customer = (typeof rawData === "string" ? JSON.parse(rawData) : rawData) as Record<string, unknown>;
+
+      // 2. Load addresses and identities
+      const addrRes = await tx.query<{ data: unknown }>(
+        `SELECT data FROM commerceos.customer_addresses WHERE tenant_id = $1 AND customer_id = $2`,
+        [tenantId, customerId]
+      );
+      const idnRes = await tx.query<{ data: unknown }>(
+        `SELECT data FROM commerceos.customer_identities WHERE tenant_id = $1 AND customer_id = $2`,
+        [tenantId, customerId]
+      );
+      const addresses = addrRes.rows.map((r) => (typeof r.data === "string" ? JSON.parse(r.data) : r.data) as Record<string, unknown>);
+      const identities = idnRes.rows.map((r) => (typeof r.data === "string" ? JSON.parse(r.data) : r.data) as Record<string, unknown>);
+
+      const phones = new Set<string>();
+      for (const p of [
+        customer.phone as string | undefined,
+        ...addresses.map((a) => a.phone as string | undefined),
+        ...identities.flatMap((i) => [i.phone as string | undefined, i.channel_type === "WHATSAPP" ? (i.external_user_id as string | undefined) : undefined]),
+      ]) {
+        for (const f of phoneForms(p)) phones.add(f);
+      }
+      const emails = new Set<string>();
+      for (const e of [customer.email as string | undefined, ...identities.map((i) => i.email as string | undefined)]) {
+        if (e && e.includes("@")) emails.add(e);
+      }
+      const names = new Set<string>();
+      for (const n of [`${(customer.first_name as string) ?? ""} ${(customer.last_name as string) ?? ""}`, ...identities.map((i) => i.display_name as string | undefined)]) {
+        const name = sweepableName(n);
+        if (name) names.add(name);
+      }
+
+      // 3. Find conversations
+      const convRes = await tx.query<{ id: string }>(
+        `SELECT id FROM commerceos.conversations WHERE tenant_id = $1 AND customer_id = $2`,
+        [tenantId, customerId]
+      );
+      const conversationIds = new Set(convRes.rows.map((r) => r.id));
+
+      // 4. Redact orders transactionally in PostgreSQL
+      const ordersRedacted = await orderRepository.anonymizeCustomerReferences(tenantId, customerId, tx);
+
+      const result: ErasureResult = {
+        customer_id: customerId,
+        conversations: conversationIds.size,
+        messages: 0,
+        identities: identities.length,
+        orders_redacted: ordersRedacted,
+        deleted: {},
+        scrubbed: {},
+      };
+
+      // 5. Direct updates in core tables
+      if (conversationIds.size > 0) {
+        const convList = [...conversationIds];
+        const msgRes = await tx.query(
+          `UPDATE commerceos.messages
+           SET data = (data - 'attachments') || jsonb_build_object('text', $3::text, 'metadata', '{}'::jsonb),
+               row_updated_at = now()
+           WHERE tenant_id = $1 AND data->>'conversation_id' = ANY($2)`,
+          [tenantId, convList, ERASED]
+        );
+        result.messages = msgRes.rowCount;
+
+        await tx.query(
+          `UPDATE commerceos.conversations
+           SET data = (data - 'subject' - 'referral_metadata' - 'source_url') || jsonb_build_object('metadata', '{}'::jsonb),
+               row_updated_at = now()
+           WHERE tenant_id = $1 AND id = ANY($2)`,
+          [tenantId, convList]
+        );
+      }
+
+      // 6. Delete addresses and identities
+      const delAddr = await tx.query(
+        `DELETE FROM commerceos.customer_addresses WHERE tenant_id = $1 AND customer_id = $2`,
+        [tenantId, customerId]
+      );
+      if (delAddr.rowCount > 0) result.deleted["customer_addresses"] = delAddr.rowCount;
+
+      const delIdn = await tx.query(
+        `DELETE FROM commerceos.customer_identities WHERE tenant_id = $1 AND customer_id = $2`,
+        [tenantId, customerId]
+      );
+      if (delIdn.rowCount > 0) result.deleted["customer_identities"] = delIdn.rowCount;
+
+      // 7. Delete dependent documents (DELETE_BY_CUSTOMER)
+      for (const coll of DELETE_BY_CUSTOMER) {
+        const delDoc = await tx.query(
+          `DELETE FROM commerceos.documents WHERE tenant_id = $1 AND collection = $2 AND data->>'customer_id' = $3`,
+          [tenantId, coll, customerId]
+        );
+        if (delDoc.rowCount > 0) result.deleted[coll] = delDoc.rowCount;
+      }
+
+      // 8. Delete conversation documents (DELETE_BY_CONVERSATION)
+      if (conversationIds.size > 0) {
+        const convList = [...conversationIds];
+        for (const coll of DELETE_BY_CONVERSATION) {
+          const delDoc = await tx.query(
+            `DELETE FROM commerceos.documents WHERE tenant_id = $1 AND collection = $2 AND (data->>'conversation_id' = ANY($3) OR id = ANY($3))`,
+            [tenantId, coll, convList]
+          );
+          if (delDoc.rowCount > 0) result.deleted[coll] = delDoc.rowCount;
+        }
+      }
+
+      // 9. Anonymize customer shell
+      await customerRepository.anonymize(tenantId, customerId, tx);
+
+      // 10. Scrub free-text collections in commerceos.documents
+      // (Also scrub in-memory if memory store holds records)
+      this.syncInMemoryMirror(tenantId, customerId, conversationIds, phones, emails, names, result, reason, context);
+
+      // 11. Write audit log within transaction
+      const auditId = `aud_erase_${Date.now()}_${randomSuffix()}`;
+      const auditData = {
+        id: auditId,
+        tenant_id: tenantId,
+        actor_user_id: context.user.id,
+        action: "CUSTOMER_ERASED",
+        resource_type: "customer",
+        resource_id: customerId,
+        metadata: {
+          reason,
+          step_up: Boolean(context.stepUpVerified),
+          conversations: result.conversations,
+          messages: result.messages,
+          orders_redacted: result.orders_redacted,
+          deleted: result.deleted,
+          scrubbed: result.scrubbed,
+        },
+        created_at: new Date().toISOString(),
+      };
+      await tx.query(
+        `INSERT INTO commerceos.audit_logs (id, tenant_id, created_at, data)
+         VALUES ($1, $2, now(), $3::jsonb)`,
+        [auditId, tenantId, JSON.stringify(auditData)]
+      );
+
+      logger.info("privacy.customer_erased", { tenant_id: tenantId, customer_id: customerId, actor: context.user.id });
+      return result;
+    });
+  }
+
+  /**
+   * In-memory customer erasure (fallback for offline tests and non-PG environments).
+   */
+  private static eraseInMemory(context: RequestContext, customerId: string, reason: string): ErasureResult {
+    const tenantId = context.tenant.id;
     const data = db.data as unknown as Record<string, Array<Record<string, unknown>>>;
-    const customer = db.data.customers.find((c) => c.tenant_id === tenantId && c.id === customerId);
+    const customer = db.data?.customers?.find((c) => c.tenant_id === tenantId && c.id === customerId);
     if (!customer) throw new NotFoundError(`Customer '${customerId}' not found.`);
 
-    const identities = db.data.customer_identities.filter((i) => i.tenant_id === tenantId && i.customer_id === customerId);
-    const addresses = db.data.customer_addresses.filter((a) => a.tenant_id === tenantId && a.customer_id === customerId);
+    const identities = db.data?.customer_identities?.filter((i) => i.tenant_id === tenantId && i.customer_id === customerId) || [];
+    const addresses = db.data?.customer_addresses?.filter((a) => a.tenant_id === tenantId && a.customer_id === customerId) || [];
     const phones = new Set<string>();
     for (const p of [customer.phone, ...addresses.map((a) => a.phone), ...identities.flatMap((i) => [i.phone, i.channel_type === "WHATSAPP" ? i.external_user_id : undefined])]) {
       for (const f of phoneForms(p)) phones.add(f);
@@ -92,19 +272,23 @@ export class CustomerErasureService {
       if (name) names.add(name);
     }
 
-    const conversationIds = new Set(db.data.conversations.filter((c) => c.tenant_id === tenantId && c.customer_id === customerId).map((c) => c.id));
+    const conversationIds = new Set(db.data?.conversations?.filter((c) => c.tenant_id === tenantId && c.customer_id === customerId).map((c) => c.id) || []);
+    const ordersRedacted = orderRepository.anonymizeCustomerReferences(tenantId, customerId);
     const result: ErasureResult = { customer_id: customerId, conversations: conversationIds.size, messages: 0, identities: identities.length, orders_redacted: 0, deleted: {}, scrubbed: {} };
+    if (ordersRedacted instanceof Promise) {
+      ordersRedacted.then((n) => { result.orders_redacted = n; }).catch(() => undefined);
+    }
     const inChat = (r: Record<string, unknown>) => typeof r.conversation_id === "string" && conversationIds.has(r.conversation_id);
 
     // 1. Direct records
-    for (const m of db.data.messages) {
+    for (const m of db.data?.messages || []) {
       if (m.tenant_id !== tenantId || !conversationIds.has(m.conversation_id)) continue;
       m.text = ERASED;
       m.metadata = {};
       delete (m as { attachments?: unknown }).attachments;
       result.messages++;
     }
-    for (const c of db.data.conversations) {
+    for (const c of db.data?.conversations || []) {
       if (c.tenant_id !== tenantId || !conversationIds.has(c.id)) continue;
       c.metadata = {};
       delete c.subject;
@@ -112,21 +296,21 @@ export class CustomerErasureService {
       delete c.source_url;
     }
     const runIds = new Set<string>();
-    for (const r of db.data.agent_runs) {
+    for (const r of db.data?.agent_runs || []) {
       if (r.tenant_id !== tenantId || !r.conversation_id || !conversationIds.has(r.conversation_id)) continue;
       runIds.add(r.id);
       r.final_response = ERASED;
       r.metadata = { erased: true };
     }
-    for (const t of db.data.agent_tool_calls) {
+    for (const t of db.data?.agent_tool_calls || []) {
       if (t.tenant_id !== tenantId || !(runIds.has(t.agent_run_id) || conversationIds.has(t.conversation_id))) continue;
       t.input_arguments = {};
       delete t.sanitized_result;
       delete t.error_message;
     }
-    for (const q of db.data.quotes) if (q.tenant_id === tenantId && conversationIds.has(q.conversation_id)) delete q.confirmation_details;
-    for (const l of db.data.leads) if (l.tenant_id === tenantId && l.customer_id === customerId) delete l.notes;
-    for (const o of db.data.orders) {
+    for (const q of db.data?.quotes || []) if (q.tenant_id === tenantId && conversationIds.has(q.conversation_id)) delete q.confirmation_details;
+    for (const l of db.data?.leads || []) if (l.tenant_id === tenantId && l.customer_id === customerId) delete l.notes;
+    for (const o of db.data?.orders || []) {
       if (o.tenant_id !== tenantId || o.customer_id !== customerId) continue;
       const strip = (a: Record<string, unknown> | undefined) => (a ? { district: a.district, division: a.division, area: a.area, upazila: a.upazila, country: a.country } : a);
       o.shipping_address_snapshot = strip(o.shipping_address_snapshot as Record<string, unknown>) as typeof o.shipping_address_snapshot;
@@ -135,7 +319,7 @@ export class CustomerErasureService {
       result.orders_redacted++;
     }
     const remove = (collection: string, match: (r: Record<string, unknown>) => boolean) => {
-      const rows = data[collection];
+      const rows = data?.[collection];
       if (!Array.isArray(rows)) return;
       const kept = rows.filter((r) => !(r.tenant_id === tenantId && match(r)));
       if (kept.length !== rows.length) {
@@ -150,23 +334,23 @@ export class CustomerErasureService {
     Object.assign(customer, { first_name: "Erased", last_name: "customer", phone: "", notes: undefined, addresses: [], updated_at: new Date().toISOString() });
     delete customer.email;
 
-    // 2. Copies in free-text collections: whole tokens only, only the matched text replaced. Phones and emails are
-    //    swept everywhere; the name only in records that belong to this customer (another "Md Rahim" keeps theirs).
+    // 2. Copies in free-text collections
     const alternation = (list: Set<string>) => [...list].sort((a, b) => b.length - a.length).map(escapeRe).join("|");
     const everywhere: RegExp[] = [];
     if (phones.size) everywhere.push(new RegExp(`(?<![\\p{N}])(?:${alternation(phones)})(?![\\p{N}])`, "gu"));
     if (emails.size) everywhere.push(new RegExp(`(?<![\\p{L}\\p{N}_.])(?:${alternation(emails)})(?![\\p{L}\\p{N}_])`, "giu"));
     const ownOnly = names.size ? [new RegExp(`(?<![\\p{L}\\p{N}_])(?:${alternation(names)})(?![\\p{L}\\p{N}_])`, "giu")] : [];
-    // Records about this customer: their own rows, rows about their orders or chats (events, audit entries, outbox)
-    const ownIds = new Set<string>([customerId, ...conversationIds, ...db.data.orders.filter((o) => o.tenant_id === tenantId && o.customer_id === customerId).map((o) => o.id)]);
+    const ownIds = new Set<string>([customerId, ...conversationIds, ...(db.data?.orders?.filter((o) => o.tenant_id === tenantId && o.customer_id === customerId).map((o) => o.id) || [])]);
     const refersToThem = (v: unknown) => typeof v === "string" && ownIds.has(v);
     const theirs = (r: Record<string, unknown>) => {
       const payload = (r.payload ?? r.metadata ?? {}) as Record<string, unknown>;
       return [r.customer_id, r.conversation_id, r.resource_id, r.aggregate_id, r.order_id, r.id, payload.customer_id, payload.order_id, payload.conversation_id].some(refersToThem);
     };
     for (const collection of SCRUB_COLLECTIONS) {
-      const n = this.scrubCollection(data[collection], tenantId, (r) => (theirs(r) ? [...everywhere, ...ownOnly] : everywhere));
-      if (n) result.scrubbed[collection] = n;
+      if (data?.[collection]) {
+        const n = this.scrubCollection(data[collection], tenantId, (r) => (theirs(r) ? [...everywhere, ...ownOnly] : everywhere));
+        if (n) result.scrubbed[collection] = n;
+      }
     }
 
     db.createAuditLog({
@@ -190,6 +374,78 @@ export class CustomerErasureService {
     db.markDirty();
     logger.info("privacy.customer_erased", { tenant_id: tenantId, customer_id: customerId, actor: context.user.id });
     return result;
+  }
+
+  /**
+   * Synchronizes in-memory mirror if loaded into memory.
+   */
+  private static syncInMemoryMirror(
+    tenantId: string,
+    customerId: string,
+    conversationIds: Set<string>,
+    phones: Set<string>,
+    emails: Set<string>,
+    names: Set<string>,
+    result: ErasureResult,
+    _reason: string,
+    _context: RequestContext
+  ): void {
+    const data = db.data as unknown as Record<string, Array<Record<string, unknown>>>;
+    if (!data) return;
+
+    const customer = db.data?.customers?.find((c) => c.tenant_id === tenantId && c.id === customerId);
+    if (customer) {
+      Object.assign(customer, { first_name: "Erased", last_name: "customer", phone: "", notes: undefined, addresses: [], updated_at: new Date().toISOString() });
+      delete customer.email;
+    }
+
+    if (db.data?.messages) {
+      for (const m of db.data.messages) {
+        if (m.tenant_id !== tenantId || !conversationIds.has(m.conversation_id)) continue;
+        m.text = ERASED;
+        m.metadata = {};
+        delete (m as { attachments?: unknown }).attachments;
+      }
+    }
+
+    if (db.data?.conversations) {
+      for (const c of db.data.conversations) {
+        if (c.tenant_id !== tenantId || !conversationIds.has(c.id)) continue;
+        c.metadata = {};
+        delete c.subject;
+        delete c.referral_metadata;
+        delete c.source_url;
+      }
+    }
+
+    const remove = (collection: string, match: (r: Record<string, unknown>) => boolean) => {
+      const rows = data[collection];
+      if (!Array.isArray(rows)) return;
+      data[collection] = rows.filter((r) => !(r.tenant_id === tenantId && match(r)));
+    };
+    remove("customer_identities", (r) => r.customer_id === customerId);
+    remove("customer_addresses", (r) => r.customer_id === customerId);
+    for (const c of DELETE_BY_CUSTOMER) remove(c, (r) => r.customer_id === customerId);
+    for (const c of DELETE_BY_CONVERSATION) remove(c, (r) => typeof r.conversation_id === "string" && conversationIds.has(r.conversation_id));
+
+    // Free text scrub
+    const alternation = (list: Set<string>) => [...list].sort((a, b) => b.length - a.length).map(escapeRe).join("|");
+    const everywhere: RegExp[] = [];
+    if (phones.size) everywhere.push(new RegExp(`(?<![\\p{N}])(?:${alternation(phones)})(?![\\p{N}])`, "gu"));
+    if (emails.size) everywhere.push(new RegExp(`(?<![\\p{L}\\p{N}_.])(?:${alternation(emails)})(?![\\p{L}\\p{N}_])`, "giu"));
+    const ownOnly = names.size ? [new RegExp(`(?<![\\p{L}\\p{N}_])(?:${alternation(names)})(?![\\p{L}\\p{N}_])`, "giu")] : [];
+    const ownIds = new Set<string>([customerId, ...conversationIds, ...(db.data?.orders?.filter((o) => o.tenant_id === tenantId && o.customer_id === customerId).map((o) => o.id) || [])]);
+    const refersToThem = (v: unknown) => typeof v === "string" && ownIds.has(v);
+    const theirs = (r: Record<string, unknown>) => {
+      const payload = (r.payload ?? r.metadata ?? {}) as Record<string, unknown>;
+      return [r.customer_id, r.conversation_id, r.resource_id, r.aggregate_id, r.order_id, r.id, payload.customer_id, payload.order_id, payload.conversation_id].some(refersToThem);
+    };
+    for (const collection of SCRUB_COLLECTIONS) {
+      if (data[collection]) {
+        const n = this.scrubCollection(data[collection], tenantId, (r) => (theirs(r) ? [...everywhere, ...ownOnly] : everywhere));
+        if (n) result.scrubbed[collection] = n;
+      }
+    }
   }
 
   /** Replaces matched spans in this workspace's records of one collection. Returns how many records changed. */

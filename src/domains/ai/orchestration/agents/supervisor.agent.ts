@@ -13,8 +13,40 @@ export interface PlanDecompositionRequest {
   templateCode?: string;
 }
 
+export type WorkflowTemplateCode = "ABANDONED_CART_RECOVERY" | "LOW_STOCK_RESTOCK" | "DELIVERY_EXCEPTION_RESOLVE" | "REFUND_REVIEW" | "WHOLESALE_QUOTE";
+export interface WorkflowTemplateSelection {
+  status: "SELECTED" | "UNKNOWN" | "AMBIGUOUS";
+  code?: WorkflowTemplateCode;
+  version?: number;
+  candidates: WorkflowTemplateCode[];
+}
+
+const TEMPLATE_VERSION = 1;
+const TEMPLATE_MATCHERS: Array<{ code: WorkflowTemplateCode; pattern: RegExp }> = [
+  { code: "ABANDONED_CART_RECOVERY", pattern: /\b(?:abandoned\s+(?:cart|checkout)|cart\s+recovery|recover\s+abandoned\s+carts?)\b|পরিত্যক্ত\s+কার্ট/i },
+  { code: "LOW_STOCK_RESTOCK", pattern: /\b(?:low[\s-]*stock|restock|inventory\s+audit|audit\s+(?:the\s+)?(?:warehouse\s+)?stock)\b|কম\s+স্টক|স্টক\s+অডিট/i },
+  { code: "DELIVERY_EXCEPTION_RESOLVE", pattern: /\b(?:delivery\s+(?:delay|exception|late|delayed)|delayed(?:\s+[a-z0-9]+){0,2}\s+delivery|courier\s+exception|parcel\s+delay)\b|ডেলিভারি\s+(?:দেরি|বিলম্ব)/i },
+  { code: "REFUND_REVIEW", pattern: /\b(?:refund|payment\s+failure|disputed\s+payment)\b|পেমেন্ট\s+(?:সমস্যা|ফেরত)|রিফান্ড/i },
+  { code: "WHOLESALE_QUOTE", pattern: /\b(?:wholesale|bulk\s+(?:order|quote))\b|পাইকারি|বাল্ক/i },
+];
+
 export class SupervisorAgent {
   public readonly agentType: AgentType = "SUPERVISOR";
+
+  public selectTemplate(req: PlanDecompositionRequest): WorkflowTemplateSelection {
+    if (req.templateCode) {
+      const code = req.templateCode as WorkflowTemplateCode;
+      const known = TEMPLATE_MATCHERS.some((template) => template.code === code);
+      return known
+        ? { status: "SELECTED", code, version: TEMPLATE_VERSION, candidates: [code] }
+        : { status: "UNKNOWN", candidates: [] };
+    }
+    const text = req.objective.normalize("NFKC").replace(/\s+/g, " ").trim();
+    const candidates = TEMPLATE_MATCHERS.filter((template) => template.pattern.test(text)).map((template) => template.code);
+    if (candidates.length === 0) return { status: "UNKNOWN", candidates };
+    if (candidates.length > 1) return { status: "AMBIGUOUS", candidates };
+    return { status: "SELECTED", code: candidates[0], version: TEMPLATE_VERSION, candidates };
+  }
 
   /**
    * Decomposes a business objective into a structured task graph (DAG).
@@ -22,10 +54,11 @@ export class SupervisorAgent {
    * and structured dynamic decomposition.
    */
   public decomposeObjective(req: PlanDecompositionRequest): WorkflowPlanStep[] {
-    const text = (req.objective + " " + (req.templateCode || "")).toLowerCase();
+    const selection = this.selectTemplate(req);
+    if (selection.status !== "SELECTED") return [];
 
     // Pattern 1: High-Value Abandoned Cart Recovery
-    if (text.includes("abandoned") || text.includes("cart") || req.templateCode === "ABANDONED_CART_RECOVERY") {
+    if (selection.code === "ABANDONED_CART_RECOVERY") {
       return [
         {
           task_type: "IDENTIFY_ABANDONED_CARTS",
@@ -71,7 +104,7 @@ export class SupervisorAgent {
     }
 
     // Pattern 2: Low Stock Audit & Restock Analysis
-    if (text.includes("stock") || text.includes("inventory") || req.templateCode === "LOW_STOCK_RESTOCK") {
+    if (selection.code === "LOW_STOCK_RESTOCK") {
       return [
         {
           task_type: "AUDIT_WAREHOUSE_STOCK",
@@ -101,7 +134,7 @@ export class SupervisorAgent {
     }
 
     // Pattern 3: Delivery Delay & Courier Exception Resolution
-    if (text.includes("delivery") || text.includes("delay") || text.includes("courier") || req.templateCode === "DELIVERY_EXCEPTION_RESOLVE") {
+    if (selection.code === "DELIVERY_EXCEPTION_RESOLVE") {
       return [
         {
           task_type: "TRACK_PARCEL_STATUS",
@@ -123,7 +156,7 @@ export class SupervisorAgent {
     }
 
     // Pattern 4: Disputed Payment & Refund Review
-    if (text.includes("refund") || text.includes("payment failure") || req.templateCode === "REFUND_REVIEW") {
+    if (selection.code === "REFUND_REVIEW") {
       return [
         {
           task_type: "VERIFY_PAYMENT_TRX",
@@ -153,7 +186,7 @@ export class SupervisorAgent {
     }
 
     // Pattern 5: Wholesale Bulk Order Quote & Feasibility
-    if (text.includes("wholesale") || text.includes("bulk") || text.includes("50") || req.templateCode === "WHOLESALE_QUOTE") {
+    if (selection.code === "WHOLESALE_QUOTE") {
       return [
         {
           task_type: "VALIDATE_PRODUCT_SPEC",
@@ -190,17 +223,10 @@ export class SupervisorAgent {
       ];
     }
 
-    // Generic Fallback Plan
-    return [
-      {
-        task_type: "ANALYZE_REQUEST",
-        objective: req.objective,
-        agent_type: "SALES",
-        dependencies: [],
-        risk_level: "LOW",
-        required_tools: ["search_products"],
-      },
-    ];
+    // Unknown objectives must be rejected for explicit planning. A generic
+    // product search is not a safe or truthful substitute for understanding
+    // the requested workflow.
+    return [];
   }
 
   /**

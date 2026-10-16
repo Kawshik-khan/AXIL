@@ -129,3 +129,31 @@ export function visibleOrders(pr: CustomerAgentPrincipal, limit = 5): Order[] {
     .sort((a, b) => b.created_at.localeCompare(a.created_at))
     .slice(0, limit);
 }
+
+/** This chat's orders, newest first (asynchronously via PostgreSQL or fallback). */
+export async function findVisibleOrders(pr: CustomerAgentPrincipal, limit = 5): Promise<Order[]> {
+  const client = db.isCollectionHydrated("orders") ? null : db.getSqlClient();
+  if (!client) {
+    return visibleOrders(pr, limit);
+  }
+  const canSeeCustomerOrders = pr.assurance !== "ANONYMOUS" && Boolean(pr.customerId);
+  let sql: string;
+  let params: any[];
+
+  if (canSeeCustomerOrders && pr.conversationId) {
+    sql = `SELECT data FROM commerceos.orders WHERE tenant_id = $1 AND (customer_id = $2 OR (data->>'source_conversation_id') = $3) ORDER BY created_at DESC LIMIT $4`;
+    params = [pr.tenantId, pr.customerId, pr.conversationId, limit];
+  } else if (canSeeCustomerOrders) {
+    sql = `SELECT data FROM commerceos.orders WHERE tenant_id = $1 AND customer_id = $2 ORDER BY created_at DESC LIMIT $3`;
+    params = [pr.tenantId, pr.customerId, limit];
+  } else if (pr.conversationId) {
+    sql = `SELECT data FROM commerceos.orders WHERE tenant_id = $1 AND (data->>'source_conversation_id') = $2 ORDER BY created_at DESC LIMIT $3`;
+    params = [pr.tenantId, pr.conversationId, limit];
+  } else {
+    return [];
+  }
+
+  const res = await client.query<{ data: Order | string }>(sql, params);
+  return res.rows.map((r) => (typeof r.data === "string" ? JSON.parse(r.data) : r.data));
+}
+

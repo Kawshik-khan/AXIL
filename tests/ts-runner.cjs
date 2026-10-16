@@ -1,7 +1,7 @@
 const dns = require("dns");
 try {
   dns.setDefaultResultOrder("ipv4first");
-} catch {}
+} catch { }
 
 if (!process.env.NODE_ENV && (!process.argv[2] || process.argv[2].includes("test"))) {
   process.env.NODE_ENV = "test";
@@ -37,7 +37,7 @@ for (const envFile of [".env.local", ".env"]) {
 // Set TEST_LLM_LIVE=1 to run them against the configured provider on purpose. Blanked, not deleted: an empty value
 // stays empty in child processes, which a deleted one wouldn't (the env loader above refills unset variables).
 if (process.env.NODE_ENV === "test" && process.env.TEST_LLM_LIVE !== "1") {
-  for (const key of ["LLM_BASE_URL", "LLM_FALLBACK_BASE_URL", "LLM_EMBEDDING_BASE_URL", "LLM_EMBEDDING_API_KEY", "TYPESAFE_API_KEY"]) {
+  for (const key of ["LLM_BASE_URL", "LLM_FALLBACK_BASE_URL", "LLM_EMBEDDING_BASE_URL", "LLM_EMBEDDING_API_KEY", "LLM_EMBEDDING_DIMENSIONS", "TYPESAFE_API_KEY"]) {
     process.env[key] = "";
   }
   process.env.AI_DEMO_MODE = "1";

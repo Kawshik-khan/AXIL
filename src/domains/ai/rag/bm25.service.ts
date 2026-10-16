@@ -39,8 +39,17 @@ export class BM25Service {
   public static tokenize(text: string): string[] {
     if (!text || typeof text !== "string") return [];
 
+    // Normalize Bengali and Arabic-Indic numerals so fee, measurement and day-count
+    // lookups match regardless of which numeral alphabet the customer typed.
+    const normalizedNumerals = text.replace(/[০-৯٠-٩]/g, (digit) => {
+      const code = digit.charCodeAt(0);
+      if (code >= 0x06f0 && code <= 0x06f9) return String(code - 0x06f0);
+      if (code >= 0x0660 && code <= 0x0669) return String(code - 0x0660);
+      return String(code - 0x09e6);
+    });
+
     // Replace markdown formatting symbols with whitespace
-    const cleanText = text
+    const cleanText = normalizedNumerals
       .replace(/[#*_`|~[\](){}<>\\/]/g, " ")
       .replace(/https?:\/\/\S+/g, " ")
       .toLowerCase();

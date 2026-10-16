@@ -21,6 +21,8 @@ import { consentService, frequencyCappingService } from "./consent.service";
 import { marketingChannelService } from "./marketing-channel.service";
 import { offerService } from "./offer.service";
 import { assertNotKilled } from "@/lib/safety-gate";
+import { orderRepository } from "@/domains/orders/order.repository";
+import { customerRepository } from "@/domains/customers/customer.repository";
 
 export class CampaignService {
   /**
@@ -210,8 +212,7 @@ export class CampaignService {
     const conversionRate = campaign.channel === "WHATSAPP" ? 0.085 : campaign.channel === "FACEBOOK_MESSENGER" ? 0.055 : 0.035;
     const channelCostPerMsg = campaign.channel === "WHATSAPP" ? 1.2 : 0.2;
     const expectedOrders = Math.round(audienceSize * conversionRate);
-    const recent = db.getAllOrders(tenantId).filter((o) => o.status !== "CANCELLED" && Date.parse(o.created_at) >= Date.now() - 90 * 86_400_000);
-    const aov = recent.length > 0 ? recent.reduce((sum, o) => sum + o.grand_total, 0) / recent.length : null;
+    const { aov } = orderRepository.getAov(tenantId, 90);
 
     const snapshot: CampaignSimulationSnapshot = {
       simulated_at: new Date().toISOString(),
@@ -421,8 +422,9 @@ export class CampaignService {
     };
     db.insertCampaignExecution(execRecord);
 
-    // Every customer of the tenant, indexed once: O(R + C) and no recipient silently dropped (FX-22/FX-23)
-    const customersById = new Map(db.getAllCustomers(tenantId).map((c) => [c.id, c]));
+    // Every recipient customer for this campaign loaded, indexed once: O(R) without loading all tenant customers (FX-22/FX-23)
+    const audienceCustomers = await customerRepository.findByIds(tenantId, customerIds);
+    const customersById = new Map(audienceCustomers.map((c) => [c.id, c]));
 
     for (const custId of customerIds) {
       if (this.isKillSwitchActive(tenantId)) {

@@ -37,13 +37,19 @@ export class MemoryService {
       .map((m) => `${m.sender_type}: ${m.text}`)
       .join("\n");
 
+    // Demo generations are scripted and may invent transcript facts; never persist them as memory.
+    if (modelRouter.getMode() === "DEMO" || modelRouter.getMode() === "NOT_CONFIGURED") {
+      return db.getConversationSummary(tenantId, conversationId);
+    }
+
     const prompt = `Summarize the following customer conversation for an e-commerce agent. Extract key customer facts and open issues. Keep under 3 sentences:\n\n${transcript}`;
 
     let summaryText = "";
     try {
       summaryText = await modelRouter.getActiveProvider("TIER_1_FAST").provider.generate(prompt);
     } catch {
-      summaryText = `Customer inquiry regarding ${currentIntent || "store items"}.`;
+      // Keep the prior summary (if any); do not persist an intent label as if it summarized the transcript.
+      return db.getConversationSummary(tenantId, conversationId);
     }
 
     const existing = db.getConversationSummary(tenantId, conversationId);

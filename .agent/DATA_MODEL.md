@@ -905,5 +905,79 @@ CREATE TABLE platform_security_events (
 CREATE INDEX idx_plat_sec_events ON platform_security_events(event_type, severity, created_at DESC);
 ```
 
+### 2.11 AI Gateway, HITL Escalation Queue & RTO Network (Migration 011)
 
+In Postgres persistence (schema `commerceos`), document-shaped collections live in `commerceos.documents` with partial indexes to keep triage, SLA tracking, and reputation lookups fast:
 
+```sql
+-- AI Gateway & HITL Escalation Queue
+CREATE INDEX documents_hitl_escalations_status_idx
+    ON commerceos.documents (tenant_id, (data->>'status'), (data->>'priority'))
+    WHERE collection = 'agent_hitl_escalations';
+
+CREATE INDEX documents_hitl_escalations_conversation_idx
+    ON commerceos.documents (tenant_id, (data->>'conversation_id'))
+    WHERE collection = 'agent_hitl_escalations';
+
+CREATE INDEX documents_hitl_escalations_sla_due_idx
+    ON commerceos.documents ((data->>'sla_due_at'))
+    WHERE collection = 'agent_hitl_escalations';
+
+CREATE INDEX documents_agent_traces_tenant_time_idx
+    ON commerceos.documents (tenant_id, (data->>'timestamp') DESC)
+    WHERE collection = 'agent_execution_traces';
+
+CREATE INDEX documents_agent_traces_injection_idx
+    ON commerceos.documents ((data->>'timestamp') DESC)
+    WHERE collection = 'agent_execution_traces' 
+      AND (data->'safety_flags'->>'prompt_injection_blocked') = 'true';
+
+CREATE INDEX documents_tenant_ai_guard_settings_idx
+    ON commerceos.documents (tenant_id)
+    WHERE collection = 'tenant_ai_guard_settings';
+
+-- Enterprise Zero-Trust IAM & Support Forensics
+CREATE INDEX impersonation_sessions_tenant_status_idx
+    ON commerceos.impersonation_sessions (tenant_id, status, created_at DESC);
+
+CREATE INDEX impersonation_sessions_operator_expires_idx
+    ON commerceos.impersonation_sessions ((data->>'operator_id'), (data->>'expires_at'));
+
+CREATE INDEX documents_platform_audit_actor_action_idx
+    ON commerceos.documents ((data->>'created_at') DESC, (data->>'action'), (data->>'target_tenant_id'))
+    WHERE collection = 'platform_audit_logs';
+
+-- Cross-Tenant RTO & Courier Fraud Prevention Network
+CREATE INDEX documents_rto_reputation_phone_hash_idx
+    ON commerceos.documents ((data->>'phone_hash'))
+    WHERE collection = 'network_delivery_reputations';
+
+CREATE INDEX documents_rto_evaluations_order_idx
+    ON commerceos.documents (tenant_id, (data->>'order_id'))
+    WHERE collection = 'order_rto_evaluations';
+
+CREATE INDEX documents_courier_disputes_idx
+    ON commerceos.documents (tenant_id, (data->>'courier_provider'), (data->>'status'))
+    WHERE collection = 'courier_disputes';
+```
+
+---
+
+## Super-admin console collections (ADR-116, 2026-10-12)
+
+Stored as JSONB documents in `commerceos.documents` (not in `CORE_TABLES`); shapes in `src/types/platform.ts`.
+
+| Collection | Scope | Record | Notes |
+|---|---|---|---|
+| `platform_approval_requests` | platform | `PlatformApprovalRequestRecord` | Two-person approvals. `payload_hash` = SHA-256 of the canonical action input; status `PENDING → APPROVED/REJECTED/CANCELLED → EXECUTED`; EXPIRED is derived from `expires_at` on read. Newest first. |
+| `platform_addons` | platform | `PlatformAddonRecord` | One enforced, add-on-eligible entitlement + increment; `monthly_price_bdt` null until billing exists. |
+| `tenant_addons` | tenant (`tenant_id`) | `TenantAddonRecord` | Grants; active while `starts_at <= now < ends_at` and not revoked (derived). `source` COMPLIMENTARY until billing exists. |
+
+Fields added (all optional, backward compatible):
+
+- `PlanRecord`: `visibility` (PUBLIC/HIDDEN/PRIVATE), `private_tenant_ids`, `display_order`, `highlight_label`.
+- `PlanVersionRecord`: `status` (DRAFT/PUBLISHED/RETIRED; legacy versions derive it from `is_published`), `monthly_price_bdt`, `annual_price_bdt`, `trial_days`, `setup_fee_bdt`, `change_note`, `created_by`, `published_by/at`, `retired_at`, `updated_at`. Legacy `price_bdt`/`billing_period` are kept in sync.
+- `SubscriptionRecord`: `billing_period` (which price the tenant pays).
+- `TenantEntitlementRecord`: `expires_at` (override ends on read), `granted_by`, `ticket_ref`.
+- `TenantRecord`: `purge_requested_at`, `purge_after` (14-day tombstone; no deletion job yet).
+- `PlatformSettingRecord.category`: widened to the registry categories (BILLING, TRIALS, AI, OPERATIONS, FINANCE).

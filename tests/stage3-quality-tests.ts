@@ -7,6 +7,8 @@ import assert from "assert";
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
+import http from "http";
+import { spawn } from "child_process";
 import { db } from "@/infrastructure/db";
 import { AuthService } from "@/domains/auth/service";
 import { ProductService } from "@/domains/catalog/product.service";
@@ -31,7 +33,7 @@ import { CustomerErasureService } from "@/domains/privacy/customer-erasure.servi
 import { RbacService } from "@/domains/rbac/service";
 import { AutomationRouterService } from "@/domains/automation/services/automation-router.service";
 import { dispatchOutboxOnce, MAX_DISPATCH_ATTEMPTS } from "@/domains/automation/outbox/dispatcher";
-import { JobsService, bucketOf, localHour } from "@/domains/jobs/jobs.service";
+import { JOBS, JobsService, bucketOf, localHour } from "@/domains/jobs/jobs.service";
 import { signSessionToken, signStepUpToken, WORKSPACE_STEP_UP_PREFIX } from "@/lib/security";
 import { PERMISSIONS } from "@/lib/permissions";
 import type { RequestContext } from "@/lib/context";
@@ -521,18 +523,56 @@ async function main() {
     }
   });
 
+  await runTest("the scheduled-jobs script (no n8n) lists every job and calls each with the job token and an Idempotency-Key", async () => {
+    // Run for free by GitHub Actions: on a schedule, read-only, the token only from a secret
+    const wf = fs.readFileSync(path.resolve(__dirname, "../.github/workflows/scheduled-jobs.yml"), "utf8");
+    assert.match(wf, /schedule:\n\s+- cron: "\*\/10 \* \* \* \*"/);
+    assert.match(wf, /permissions:\n\s+contents: read/);
+    assert.match(wf, /JOBS_TOKEN: \$\{\{ secrets\.JOBS_TOKEN \}\}/);
+    assert.match(wf, /run: node scripts\/run-scheduled-jobs\.mjs/);
+    assert.doesNotMatch(wf, /pull_request/, "never on pull requests (forks must not reach the secret)");
+    const script = path.resolve(__dirname, "../scripts/run-scheduled-jobs.mjs");
+    const listed = [...fs.readFileSync(script, "utf8").matchAll(/^\s+"([a-z-]+)",$/gm)].map((m) => m[1]);
+    assert.deepStrictEqual([...listed].sort(), Object.keys(JOBS).sort(), "scripts/run-scheduled-jobs.mjs must list every job");
+
+    const calls: Array<{ url: string; auth: string; key: string }> = [];
+    const server = http.createServer((req, res) => {
+      calls.push({ url: req.url ?? "", auth: String(req.headers.authorization ?? ""), key: String(req.headers["idempotency-key"] ?? "") });
+      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ data: { replayed: false } }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as { port: number }).port;
+    const token = crypto.randomBytes(32).toString("base64url");
+    const exitCode = await new Promise<number>((resolve) => {
+      const child = spawn(process.execPath, [script], { env: { ...process.env, APP_URL: `http://127.0.0.1:${port}`, JOBS_TOKEN: token }, stdio: "ignore" });
+      child.on("exit", (code) => resolve(code ?? 1));
+    });
+    server.close();
+    assert.strictEqual(exitCode, 0);
+    assert.deepStrictEqual(calls.map((c) => c.url).sort(), Object.keys(JOBS).map((j) => `/api/v1/jobs/${j}/run`).sort());
+    assert.ok(calls.every((c) => c.auth === `Bearer ${token}`));
+    assert.ok(calls.every((c) => c.key.startsWith(`${c.url.split("/")[4]}:`)), "each key starts with its job name");
+  });
+
   await runTest("each job runs once per bucket; shops are chosen by CommerceOS (opt-in, local time, kill switch)", async () => {
     // 15:00 UTC is 21:00 in Dhaka
     const at = Date.parse("2026-10-07T15:10:00Z");
     assert.strictEqual(localHour({ timezone: "Asia/Dhaka" }, at), 21);
-    const tenant = db.findTenantById(tenantId)!;
-    db.updateTenant(tenantId, { settings: { ...(tenant.settings as R), daily_report_telegram_chat_id: "-100123" } } as never);
+    // Opted in through Settings → Notifications: a connected Telegram chat with the daily summary on
+    const iso = new Date().toISOString();
+    db.saveNotificationSettings({
+      id: `ns_${tenantId}`, tenant_id: tenantId, created_at: iso, updated_at: iso,
+      alerts: { daily_summary: true, low_stock: true, failed_deliveries: true, cod_weekly: false },
+      telegram: { chat_id: "-100123", chat_label: "Shop team", linked_at: iso, linked_by_user_id: reg.user.id },
+    });
     const other = await AuthService.registerTenantWithOwner({ workspaceName: "Not Opted In", name: "Other Owner", email: `s3o-${stamp}@example.com`, password: "Stage3-Test-Pass-2026!", currency: "BDT" });
     let runs = 0;
     const first = (await JobsService.run("daily-report", "daily-report:a", at)) as R;
     const ids = (first.tenants as R[]).map((t) => t.tenant_id);
     assert.ok(ids.includes(tenantId) && !ids.includes(other.tenant.id), "only opted-in shops");
-    assert.strictEqual((first.tenants as R[])[0].telegram_chat_id, "-100123", "the recipient comes from CommerceOS settings");
+    const mine = (first.tenants as R[]).find((t) => t.tenant_id === tenantId)!;
+    assert.strictEqual(mine.delivery, "NOT_SENT", "no alerts bot in this suite: reported as not sent, never as sent");
+    assert.ok(!JSON.stringify(first).includes("-100123"), "the stored result has no chat id");
     const again = (await JobsService.run("daily-report", "daily-report:b", at + 60_000)) as R;
     assert.strictEqual(again.replayed, true);
     assert.deepStrictEqual(again.tenants, first.tenants);

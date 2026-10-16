@@ -4,6 +4,7 @@ import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response"
 import { journeyEngineService } from "@/domains/growth/services/journey-engine.service";
 import { db } from "@/infrastructure/db";
 import { withStore } from "@/lib/store-unit";
+import { COMMERCE_ANALYTICS_COLLECTIONS } from "@/infrastructure/db/tenant-rows";
 
 async function handleGET(request: Request) {
   try {
@@ -37,4 +38,4 @@ async function handlePOST(request: Request) {
 }
 
 export const GET = withStore("GET", handleGET);
-export const POST = withStore("POST", handlePOST);
+export const POST = withStore("POST", handlePOST, { tenantRows: { collections: COMMERCE_ANALYTICS_COLLECTIONS, permission: PERMISSIONS.MARKETING_WRITE } });

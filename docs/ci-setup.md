@@ -1,6 +1,6 @@
 # CI/CD setup (production readiness R5)
 
-Workflows in `.github/workflows/`: `ci.yml` (type-check, `npm test`, `npm run test:pg`, `npm run test:eval`, build, migration check on PRs),
+Workflows in `.github/workflows/`: `ci.yml` (type-check, `npm test`, `npm run test:pg`, `npm run test:eval`, offline RAG replay + report artifact, build, migration check on PRs),
 `security.yml` (dependency audit gate, gitleaks; also weekly), `deploy.yml` (after CI passes on `main`: deploy hook, smoke test, issue on failure).
 There is one app, so no path filters: every job builds the whole thing.
 
@@ -41,6 +41,7 @@ With a single maintainer, a required review blocks your own merges: set `require
 ## What each gate does
 
 - **Eval gate** (`evals/thresholds.json`, `npm run test:eval`): runs the golden dataset offline against the demo AI (no cost, deterministic) and fails when a score drops below the floors. It guards routing, handoff and policy behavior, not a live model's quality.
+- **RAG replay gate** (`evals/rag-mvp-thresholds.json`, `npm run rag:replay:offline`): runs the versioned seed queries against an isolated fixture tenant with provider and hosted Qdrant credentials masked. It checks retrieval, citation support, abstention, stale citations and cross-tenant leakage; CI keeps `tests/rag-replay-report.json` as a 14-day artifact. The current dataset is an unreviewed seed, and its passing floors are regression controls—not production semantic-quality targets. Live replay is separate (`npm run rag:replay:live -- --confirm-live-cost`), may incur provider cost and is not run by CI.
 - **Audit gate** (`scripts/audit-gate.mjs`): fails on high/critical advisories not in `security/audit-exceptions.json` (each with a reason and an expiry). The list is empty since the Next 16.3.7 upgrade.
 - **Migration check** (`scripts/check-migrations.mjs`): every new migration needs `-- rollback:`; destructive statements need `-- allow-destructive: <reason>`; existing migrations can't be edited.
 - **Smoke test** (`scripts/smoke-deploy.mjs`): waits for `/health` and the full `/health/ready`, then signs in to the smoke workspace and reads orders and products. It is read-only on purpose. A failure opens a GitHub issue; roll back from Render (Events → Rollback).

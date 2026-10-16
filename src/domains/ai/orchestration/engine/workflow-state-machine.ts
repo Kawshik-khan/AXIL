@@ -24,8 +24,8 @@ export class WorkflowStateMachine {
   };
 
   private static readonly ALLOWED_TASK_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
-    [TaskStatus.PENDING]: [TaskStatus.READY, TaskStatus.RUNNING, TaskStatus.CANCELLED],
-    [TaskStatus.READY]: [TaskStatus.RUNNING, TaskStatus.CANCELLED],
+    [TaskStatus.PENDING]: [TaskStatus.READY, TaskStatus.RUNNING, TaskStatus.WAITING_APPROVAL, TaskStatus.CANCELLED, TaskStatus.EXPIRED, TaskStatus.FAILED],
+    [TaskStatus.READY]: [TaskStatus.RUNNING, TaskStatus.WAITING_APPROVAL, TaskStatus.CANCELLED, TaskStatus.EXPIRED, TaskStatus.FAILED],
     [TaskStatus.RUNNING]: [
       TaskStatus.WAITING_DEPENDENCY,
       TaskStatus.WAITING_APPROVAL,
@@ -34,12 +34,16 @@ export class WorkflowStateMachine {
       TaskStatus.FAILED,
       TaskStatus.PAUSED,
       TaskStatus.CANCELLED,
+      TaskStatus.EXPIRED,
+      TaskStatus.RETRY_WAIT,
+      TaskStatus.OUTCOME_UNKNOWN,
     ],
     [TaskStatus.WAITING_DEPENDENCY]: [
       TaskStatus.READY,
       TaskStatus.RUNNING,
       TaskStatus.FAILED,
       TaskStatus.CANCELLED,
+      TaskStatus.EXPIRED,
     ],
     [TaskStatus.WAITING_APPROVAL]: [
       TaskStatus.RUNNING,
@@ -57,6 +61,8 @@ export class WorkflowStateMachine {
     [TaskStatus.PAUSED]: [TaskStatus.RUNNING, TaskStatus.CANCELLED],
     [TaskStatus.COMPLETED]: [],
     [TaskStatus.FAILED]: [TaskStatus.PENDING, TaskStatus.READY, TaskStatus.CANCELLED],
+    [TaskStatus.RETRY_WAIT]: [TaskStatus.RUNNING, TaskStatus.CANCELLED, TaskStatus.EXPIRED],
+    [TaskStatus.OUTCOME_UNKNOWN]: [TaskStatus.COMPLETED, TaskStatus.PENDING, TaskStatus.CANCELLED],
     [TaskStatus.CANCELLED]: [],
     [TaskStatus.EXPIRED]: [],
   };

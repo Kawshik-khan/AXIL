@@ -17,10 +17,10 @@ async function main(): Promise<void> {
   let client: SqlClient;
   if (pgliteIndex !== -1) {
     const dir = process.argv[pgliteIndex + 1];
-    if (!dir) throw new Error("--pglite needs a directory.");
+    const isMemory = !dir || dir === "memory" || dir === ":memory:";
     const { createPgliteClient } = await import("@/infrastructure/store/pglite-client");
-    client = createPgliteClient(dir);
-    out(`Target: PGlite at ${dir}`);
+    client = isMemory ? createPgliteClient() : createPgliteClient(dir);
+    out(`Target: ${isMemory ? "In-memory PGlite" : `PGlite at ${dir}`}`);
   } else {
     const url = process.env.DATABASE_URL;
     if (!url) throw new Error("DATABASE_URL is not set (put it in .env.local or export it).");

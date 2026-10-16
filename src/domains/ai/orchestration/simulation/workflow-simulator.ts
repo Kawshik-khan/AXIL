@@ -7,6 +7,7 @@ import { AgentType } from '@/types/ai';
 import { supervisorAgent } from '../agents/supervisor.agent';
 import { planValidator } from '../planning/plan-validator';
 import { autonomyPolicyService } from '../autonomy/autonomy-policy.service';
+import { isWorkflowTaskReady } from '../engine/task-executor';
 
 export class WorkflowSimulator {
   /**
@@ -15,11 +16,14 @@ export class WorkflowSimulator {
   public async simulate(
     tenantId: string,
     objective: string,
-    context?: Record<string, unknown>
+    context?: Record<string, unknown>,
+    templateCode?: string
   ): Promise<WorkflowSimulationResult> {
+    const selection = supervisorAgent.selectTemplate({ objective, context, templateCode });
     const rawSteps = supervisorAgent.decomposeObjective({
       objective,
       context,
+      templateCode,
     });
 
     const steps = rawSteps.map((s, idx) => ({
@@ -66,9 +70,14 @@ export class WorkflowSimulator {
     const estimatedTokens = rawSteps.length * 1250;
     const estimatedCostUsd = Number(((estimatedTokens / 1000) * 0.0015).toFixed(4));
     const estimatedDurationMs = rawSteps.length * 1500;
+    const unsupportedHandlers = rawSteps
+      .filter((step) => !isWorkflowTaskReady(step.task_type, step.agent_type, (step.input_schema as Record<string, unknown>) || {}, context || {}))
+      .map((step) => step.task_type);
+    const executionReady = selection.status === "SELECTED" && validation.isValid && unsupportedHandlers.length === 0;
 
     return {
       objective,
+      workflow_code: selection.code ? `${selection.code}@${selection.version}` : undefined,
       planned_steps: rawSteps,
       required_agents: Array.from(agentSet),
       required_tools: Array.from(toolSet),
@@ -76,8 +85,15 @@ export class WorkflowSimulator {
       estimated_cost_usd: estimatedCostUsd,
       estimated_duration_ms: estimatedDurationMs,
       approval_points: approvalPoints,
-      safe_to_execute: validation.isValid && approvalPoints.length <= rawSteps.length,
-      warnings: validation.warnings,
+      safe_to_execute: selection.status === "SELECTED" && validation.isValid && approvalPoints.length <= rawSteps.length,
+      execution_ready: executionReady,
+      warnings: [
+        ...validation.warnings,
+        ...(validation.isValid ? [] : validation.errors),
+        ...(selection.status === "AMBIGUOUS" ? ["Objective matches multiple templates; select a template or clarify the request: " + selection.candidates.join(", ")] : []),
+        ...(selection.status === "UNKNOWN" ? ["No supported workflow template matches this objective; manual review or clarification is required."] : []),
+        ...(unsupportedHandlers.length ? ["Typed execution handlers are not registered for: " + Array.from(new Set(unsupportedHandlers)).join(", ")] : []),
+      ],
     };
   }
 }

@@ -311,6 +311,35 @@ export class ConnectorService {
     // A messaging connector feeds a social channel (connector plan D3); the channel reads its credentials from here
     if (provider.id === "telegram") {
       ChannelService.ensureChannelForTelegramConnector(context.tenant.id, saved);
+    } else if (provider.id === "whatsapp_cloud") {
+      const waChannel = db.getConnectedChannels(context.tenant.id).find((c) => c.type === "WHATSAPP");
+      if (waChannel) {
+        db.updateConnectedChannel(context.tenant.id, waChannel.id, {
+          connector_id: saved.id,
+          credentials_encrypted: "",
+          status: "ACTIVE",
+          updated_at: now,
+        });
+      }
+    } else if (provider.id === "meta_graph") {
+      const fbChannel = db.getConnectedChannels(context.tenant.id).find((c) => c.type === "FACEBOOK_MESSENGER");
+      if (fbChannel) {
+        db.updateConnectedChannel(context.tenant.id, fbChannel.id, {
+          connector_id: saved.id,
+          credentials_encrypted: "",
+          status: "ACTIVE",
+          updated_at: now,
+        });
+      }
+      const igChannel = db.getConnectedChannels(context.tenant.id).find((c) => c.type === "INSTAGRAM");
+      if (igChannel) {
+        db.updateConnectedChannel(context.tenant.id, igChannel.id, {
+          connector_id: saved.id,
+          credentials_encrypted: "",
+          status: "ACTIVE",
+          updated_at: now,
+        });
+      }
     }
 
     // If enterprise provider, synchronize with integration_installations for backward-compatibility with Phase 9 views

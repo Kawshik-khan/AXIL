@@ -2,9 +2,10 @@
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { Sliders, Play, RotateCcw, TrendingUp, Sparkles, CheckCircle2, AlertCircle } from "lucide-react";
+import { Sliders, RotateCcw } from "lucide-react";
 import styles from "../intelligence.module.css";
-import { LoadingSkeleton, ErrorState } from "@/components/ui/States/States";
+import { Slider } from "@/components/ui/Slider/Slider";
+import { ErrorState } from "@/components/ui/States/States";
 
 export default function SimulationSandboxPage() {
   const [priceChange, setPriceChange] = useState<number>(0);
@@ -96,69 +97,74 @@ export default function SimulationSandboxPage() {
             <span className={styles.badgeNeutral}>Zero-Mutation</span>
           </div>
 
-          <div className={styles.simInputGroup}>
-            <div className={styles.simLabel}>
-              <span>Unit Price Adjustment:</span>
-              <strong style={{ color: "#C7F900" }}>{priceChange > 0 ? `+${priceChange}%` : `${priceChange}%`}</strong>
-            </div>
-            <input
-              type="range"
-              min={-30}
-              max={30}
-              step={1}
-              value={priceChange}
-              onChange={(e) => setPriceChange(parseInt(e.target.value, 10))}
-              className={styles.simSlider}
-            />
-          </div>
+          <Slider
+            label="Unit Price Adjustment"
+            value={priceChange}
+            onChange={setPriceChange}
+            min={-30}
+            max={30}
+            step={1}
+            unit="%"
+            presets={[
+              { label: "-15%", value: -15 },
+              { label: "-5%", value: -5 },
+              { label: "0%", value: 0 },
+              { label: "+5%", value: 5 },
+              { label: "+10%", value: 10 },
+              { label: "+20%", value: 20 },
+            ]}
+          />
 
-          <div className={styles.simInputGroup}>
-            <div className={styles.simLabel}>
-              <span>Promotional Discount Rate:</span>
-              <strong style={{ color: "#C7F900" }}>{discountChange > 0 ? `+${discountChange}%` : `${discountChange}%`}</strong>
-            </div>
-            <input
-              type="range"
-              min={-20}
-              max={30}
-              step={1}
-              value={discountChange}
-              onChange={(e) => setDiscountChange(parseInt(e.target.value, 10))}
-              className={styles.simSlider}
-            />
-          </div>
+          <Slider
+            label="Promotional Discount Rate"
+            value={discountChange}
+            onChange={setDiscountChange}
+            min={-20}
+            max={30}
+            step={1}
+            unit="%"
+            presets={[
+              { label: "-10%", value: -10 },
+              { label: "0%", value: 0 },
+              { label: "+5%", value: 5 },
+              { label: "+10%", value: 10 },
+              { label: "+20%", value: 20 },
+            ]}
+          />
 
-          <div className={styles.simInputGroup}>
-            <div className={styles.simLabel}>
-              <span>Extra Inventory Reorder:</span>
-              <strong style={{ color: "#C7F900" }}>+{inventoryAlloc} units</strong>
-            </div>
-            <input
-              type="range"
-              min={0}
-              max={200}
-              step={10}
-              value={inventoryAlloc}
-              onChange={(e) => setInventoryAlloc(parseInt(e.target.value, 10))}
-              className={styles.simSlider}
-            />
-          </div>
+          <Slider
+            label="Extra Inventory Reorder"
+            value={inventoryAlloc}
+            onChange={setInventoryAlloc}
+            min={0}
+            max={200}
+            step={10}
+            unit=" units"
+            formatValue={(v) => `+${v} units`}
+            presets={[
+              { label: "0", value: 0 },
+              { label: "+20", value: 20 },
+              { label: "+50", value: 50 },
+              { label: "+100", value: 100 },
+              { label: "+200", value: 200 },
+            ]}
+          />
 
-          <div className={styles.simInputGroup}>
-            <div className={styles.simLabel}>
-              <span>Delivery Fee Adjustment (BDT):</span>
-              <strong style={{ color: "#C7F900" }}>{shippingChange > 0 ? `+৳${shippingChange}` : `৳${shippingChange}`}</strong>
-            </div>
-            <input
-              type="range"
-              min={-60}
-              max={60}
-              step={10}
-              value={shippingChange}
-              onChange={(e) => setShippingChange(parseInt(e.target.value, 10))}
-              className={styles.simSlider}
-            />
-          </div>
+          <Slider
+            label="Delivery Fee Adjustment"
+            value={shippingChange}
+            onChange={setShippingChange}
+            min={-60}
+            max={60}
+            step={10}
+            formatValue={(v) => (v > 0 ? `+৳${v}` : v < 0 ? `-৳${Math.abs(v)}` : `৳0`)}
+            presets={[
+              { label: "-৳30", value: -30 },
+              { label: "৳0", value: 0 },
+              { label: "+৳20", value: 20 },
+              { label: "+৳40", value: 40 },
+            ]}
+          />
         </div>
 
         {/* Comparison Output Column */}
@@ -189,24 +195,26 @@ export default function SimulationSandboxPage() {
                   <tr>
                     <td>Order Volume</td>
                     <td>{baseline.orders_count || 0}</td>
-                    <td><strong style={{ color: "#fff" }}>{projected.orders_count || 0}</strong></td>
-                    <td style={{ color: (deltas.orders_delta || 0) >= 0 ? "#C7F900" : "#ff6b6b" }}>
+                    <td><strong>{projected.orders_count || 0}</strong></td>
+                    <td className={(deltas.orders_delta || 0) >= 0 ? styles.deltaPositive : styles.deltaNegative}>
                       {(deltas.orders_delta || 0) >= 0 ? `+${deltas.orders_delta}` : deltas.orders_delta} orders
                     </td>
                   </tr>
                   <tr>
                     <td>Gross Revenue</td>
                     <td>৳{(baseline.revenue_bdt || 0).toLocaleString()}</td>
-                    <td><strong style={{ color: "#fff" }}>৳{(projected.revenue_bdt || 0).toLocaleString()}</strong></td>
-                    <td style={{ color: isNetPositive ? "#C7F900" : "#ff6b6b" }}>
-                      {isNetPositive ? `+৳${(deltas.revenue_delta_bdt || 0).toLocaleString()}` : `-৳${Math.abs(deltas.revenue_delta_bdt || 0).toLocaleString()}`}
+                    <td><strong>৳{(projected.revenue_bdt || 0).toLocaleString()}</strong></td>
+                    <td className={isNetPositive ? styles.deltaPositive : styles.deltaNegative}>
+                      {isNetPositive
+                        ? `+৳${(deltas.revenue_delta_bdt || 0).toLocaleString()}`
+                        : `-৳${Math.abs(deltas.revenue_delta_bdt || 0).toLocaleString()}`}
                     </td>
                   </tr>
                   <tr>
                     <td>Average Order Value</td>
                     <td>৳{Math.round(baseline.aov_bdt || 0)}</td>
-                    <td><strong style={{ color: "#fff" }}>৳{Math.round(projected.aov_bdt || 0)}</strong></td>
-                    <td style={{ color: (projected.aov_bdt || 0) >= (baseline.aov_bdt || 0) ? "#C7F900" : "#ff6b6b" }}>
+                    <td><strong>৳{Math.round(projected.aov_bdt || 0)}</strong></td>
+                    <td className={(projected.aov_bdt || 0) >= (baseline.aov_bdt || 0) ? styles.deltaPositive : styles.deltaNegative}>
                       {Math.round((projected.aov_bdt || 0) - (baseline.aov_bdt || 0)) >= 0 ? "+" : ""}
                       ৳{Math.round((projected.aov_bdt || 0) - (baseline.aov_bdt || 0))}
                     </td>
@@ -214,9 +222,11 @@ export default function SimulationSandboxPage() {
                   <tr>
                     <td>Gross Margin (Est. 35%)</td>
                     <td>৳{Math.round(baseline.gross_margin_bdt || 0).toLocaleString()}</td>
-                    <td><strong style={{ color: "#fff" }}>৳{Math.round(projected.gross_margin_bdt || 0).toLocaleString()}</strong></td>
-                    <td style={{ color: (deltas.margin_delta_bdt || 0) >= 0 ? "#C7F900" : "#ff6b6b" }}>
-                      {(deltas.margin_delta_bdt || 0) >= 0 ? `+৳${Math.round(deltas.margin_delta_bdt || 0).toLocaleString()}` : `-৳${Math.round(Math.abs(deltas.margin_delta_bdt || 0)).toLocaleString()}`}
+                    <td><strong>৳{Math.round(projected.gross_margin_bdt || 0).toLocaleString()}</strong></td>
+                    <td className={(deltas.margin_delta_bdt || 0) >= 0 ? styles.deltaPositive : styles.deltaNegative}>
+                      {(deltas.margin_delta_bdt || 0) >= 0
+                        ? `+৳${Math.round(deltas.margin_delta_bdt || 0).toLocaleString()}`
+                        : `-৳${Math.round(Math.abs(deltas.margin_delta_bdt || 0)).toLocaleString()}`}
                     </td>
                   </tr>
                 </tbody>
@@ -224,10 +234,8 @@ export default function SimulationSandboxPage() {
             </div>
           )}
 
-          <div style={{ marginTop: 16, padding: 12, background: "rgba(255, 255, 255, 0.03)", borderRadius: 10 }}>
-            <div style={{ fontSize: 12, color: "#8c8f96" }}>
-              <strong style={{ color: "#ededed" }}>Elasticity Model:</strong> Standard retail price elasticity of demand (-1.2). For every +1% net price increase, projected demand volume decreases by 1.2%.
-            </div>
+          <div className={styles.simCardInfo}>
+            <strong>Elasticity Model:</strong> Standard retail price elasticity of demand (-1.2). For every +1% net price increase, projected demand volume decreases by 1.2%.
           </div>
         </div>
       </div>

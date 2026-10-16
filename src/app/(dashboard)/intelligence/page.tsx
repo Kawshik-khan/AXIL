@@ -265,8 +265,8 @@ export default function IntelligenceExecutivePage() {
 
           {opportunities.slice(0, 2).map((opp: any) => (
             <div key={opp.id} className={styles.recItem} style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: "#fff" }}>{opp.title}</div>
-              <p style={{ fontSize: 12, color: "#a0a4ab", margin: "4px 0" }}>{opp.description}</p>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "var(--color-text-primary, #202124)" }}>{opp.title}</div>
+              <p style={{ fontSize: 12, color: "var(--color-text-secondary, #70736F)", margin: "4px 0" }}>{opp.description}</p>
               <div className={styles.badgeRow}>
                 <span className={styles.badgeLime}>
                   {typeof opp.estimated_impact?.potential_revenue_bdt === "number"

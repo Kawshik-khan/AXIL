@@ -38,6 +38,14 @@
   --color-info:    #6C9EFF;
   --color-info-bg: rgba(108, 158, 255, 0.12);
 
+  /* Data visualisation: categorical order is fixed (validated for colour-blind separation); never cycle it */
+  --chart-cat-1: #2F6FD0;
+  --chart-cat-2: #E07B22;
+  --chart-cat-3: #1E9C8A;
+  --chart-cat-4: #9B4FC0;
+  --chart-grid:  rgba(30, 32, 30, 0.08);
+  --chart-seq-0: rgba(47, 111, 208, 0.06);
+
   /* Glassmorphism Specs */
   --glass-bg:             rgba(255, 255, 255, 0.78);
   --glass-bg-dark:        rgba(36, 37, 41, 0.85);
@@ -84,6 +92,9 @@
   --radius-dock:   28px;
   --radius-pill:   9999px;
 
+  /* Line illustrations (Hairline figures) on dark surfaces: the mid stroke between --color-text-dark-muted and --color-border-dark */
+  --motion-line-mid-dark: rgba(255, 255, 255, 0.32);
+
   /* Transitions */
   --transition-fast: 0.12s ease;
   --transition-normal: 0.2s ease;
@@ -100,4 +111,97 @@
   --radius-md:            12px;
   --radius-full:          9999px;
   --radius-xl:            20px;
+
+  /* Marketing landing (src/components/marketing): a monochrome palette with lime kept for actions */
+  --mk-page: #d3d3d3;
+  --mk-shell: #ffffff;
+  --mk-card: #eeeeee;
+  --mk-card-2: #f6f6f6;
+  --mk-black: #0a0a0a;
+  --mk-ink: #141414;
+  --mk-text-2: #6b6b6b;
+  --mk-muted: #9a9a9a;
+  --mk-line: rgba(0, 0, 0, 0.1);
+  --mk-line-d: rgba(255, 255, 255, 0.16);
+  --mk-r-shell: 30px;
+  --mk-r-card: 24px;
+  --mk-black-a070: rgba(0, 0, 0, 0.07);
+  --mk-black-a075: rgba(0, 0, 0, 0.075);
+  --mk-black-a130: rgba(0, 0, 0, 0.13);
+  --mk-black-a350: rgba(0, 0, 0, 0.35);
+  --mk-hex-000000: #000000;
+  --mk-hex-111111: #111111;
+  --mk-hex-181818: #181818;
+  --mk-hex-232323: #232323;
+  --mk-hex-5c5c5c: #5c5c5c;
+  --mk-hex-8e8e8e: #8e8e8e;
+  --mk-hex-c4c4c4: #c4c4c4;
+  --mk-hex-cdcdcd: #cdcdcd;
+  --mk-hex-d9d9d9: #d9d9d9;
+  --mk-hex-e0e0e0: #e0e0e0;
+  --mk-hex-e2e2e2: #e2e2e2;
+  --mk-hex-e4e4e4: #e4e4e4;
+  --mk-hex-ffffff: #ffffff;
+  --mk-ink-a000: rgba(10, 10, 10, 0);
+  --mk-ink-a400: rgba(10, 10, 10, 0.4);
+  --mk-ink-a820: rgba(10, 10, 10, 0.82);
+  --mk-ink-a900: rgba(10, 10, 10, 0.9);
+  --mk-lime-a160: rgba(199, 249, 0, 0.16);
+  --mk-lime-a060: rgba(199, 249, 0, 0.06);
+  --mk-lime-a300: rgba(199, 249, 0, 0.3);
+  --mk-lime-a550: rgba(199, 249, 0, 0.55);
+  --mk-white-a080: rgba(255, 255, 255, 0.08);
+  --mk-white-a090: rgba(255, 255, 255, 0.09);
+  --mk-white-a100: rgba(255, 255, 255, 0.1);
+  --mk-white-a120: rgba(255, 255, 255, 0.12);
+  --mk-white-a220: rgba(255, 255, 255, 0.22);
+  --mk-white-a320: rgba(255, 255, 255, 0.32);
+  --mk-white-a500: rgba(255, 255, 255, 0.5);
+  --mk-white-a550: rgba(255, 255, 255, 0.55);
+  --mk-white-a600: rgba(255, 255, 255, 0.6);
+  --mk-white-a620: rgba(255, 255, 255, 0.62);
+  --mk-white-a700: rgba(255, 255, 255, 0.7);
+  --mk-white-a720: rgba(255, 255, 255, 0.72);
+  --mk-white-a780: rgba(255, 255, 255, 0.78);
+  --mk-white-a800: rgba(255, 255, 255, 0.8);
+  --mk-white-a820: rgba(255, 255, 255, 0.82);
+  --mk-white-a850: rgba(255, 255, 255, 0.85);
+}
+
+/* Platform console dark theme. Set on <html> by the console only while it is open (data-console-theme="dark"), so
+   merchant pages and the landing page never see it. Everything that uses the semantic tokens above follows; the
+   shared dock, top bar and blur carry their own dark rules under the same attribute. */
+html[data-console-theme="dark"] {
+  color-scheme: dark;
+
+  --color-bg-base:      #0D0E10;
+  --color-surface-pure: #16171A;
+  --color-surface-soft: #1C1D21;
+  --color-surface-dark: #242529;
+  --color-dark-elevated:#2C2D31;
+  --color-dark-card:    #1F2024;
+
+  --color-text-primary:   #EEF0EA;
+  --color-text-secondary: #A2A59F;
+  --color-text-muted:     #73766F;
+
+  --color-border-subtle:  rgba(255, 255, 255, 0.08);
+  --color-border-medium:  rgba(255, 255, 255, 0.14);
+
+  --chart-grid:  rgba(255, 255, 255, 0.08);
+  --chart-seq-0: rgba(108, 158, 255, 0.10);
+
+  --glass-bg:             rgba(22, 23, 26, 0.78);
+  --glass-border:         1px solid rgba(255, 255, 255, 0.08);
+  --glass-shadow:         0 10px 30px rgba(0, 0, 0, 0.4);
+  --glass-shadow-floating:0 14px 40px rgba(0, 0, 0, 0.5);
+
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 10px 25px -3px rgba(0, 0, 0, 0.45);
+
+  /* aliases, restated so they follow the dark values */
+  --color-surface:       var(--color-surface-pure);
+  --color-surface-hover: var(--color-surface-soft);
+  --color-border:        var(--color-border-subtle);
 }

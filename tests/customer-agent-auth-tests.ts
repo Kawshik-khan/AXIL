@@ -13,13 +13,14 @@ import { ConversationService } from "@/domains/social/conversations/conversation
 import { CouponService } from "@/domains/promotions/coupon.service";
 import { InventoryService } from "@/domains/inventory/inventory.service";
 import { PERMISSIONS } from "@/lib/permissions";
-import { BD_64_DISTRICTS, BANGLA_DISTRICT_NAMES, findDistrict } from "@/lib/bd-geography";
+import { BD_64_DISTRICTS, BANGLA_DISTRICT_NAMES, findDistrict, mentionsDistrict } from "@/lib/bd-geography";
 import { searchTokens } from "@/domains/catalog/search-synonyms";
 import type { RequestContext } from "@/lib/context";
 import type { ChannelType, Message } from "@/types/social";
 import { principalFor, capabilityContext, canSeeOrder, type Capability, type CustomerAgentPrincipal } from "@/domains/ai/customer-agent/principal";
 import { customerMessages, isAffirmative } from "@/domains/ai/customer-agent/confirmation";
 import { CUSTOMER_TOOLS, CUSTOMER_TOOL_NAMES, runCustomerTool } from "@/domains/ai/customer-agent/tools";
+import { formatQuote, mixedScript, quoteToShow, synthesizeGroundedResponse } from "@/domains/ai/customer-agent/output";
 
 const GREEN = "\x1b[32m";
 const RED = "\x1b[31m";
@@ -281,6 +282,59 @@ async function main() {
     assert.strictEqual((await run(prA, "quote_order", { items: [{ variant_id: xxl.variant_id, quantity: 1 }], district: "Dhaka" })).error, "INSUFFICIENT_STOCK");
   });
 
+  await runTest("quote_order needs a district the customer gave: never a guessed Dhaka (live chat 2026-10-14)", async () => {
+    const pr = await conversation(messenger, "FACEBOOK_MESSENGER");
+    say(pr, "customer", "Apnader kache t-shirt ache");
+    say(pr, "customer", "Casual graphics t-shirt");
+    const tee = await variant(pr, "black t-shirt", "L");
+    const guessed = await run(pr, "quote_order", { items: [{ variant_id: tee.variant_id, quantity: 1 }], district: "Dhaka" });
+    assert.strictEqual(guessed.error, "DISTRICT_NOT_GIVEN", "no district in the chat: no total with delivery");
+    assert.strictEqual(guessed.quote_id, undefined);
+
+    say(pr, "customer", "Rahim, 01711000001, House 12, Road 5, Mirpur 10");
+    const viaArea = await run(pr, "quote_order", { items: [{ variant_id: tee.variant_id, quantity: 1 }], district: "Dhaka" });
+    assert.ok(viaArea.quote_id, `a Dhaka area counts as Dhaka: ${JSON.stringify(viaArea)}`);
+    assert.strictEqual((await run(pr, "quote_order", { items: [{ variant_id: tee.variant_id, quantity: 1 }], district: "Sylhet" })).error, "DISTRICT_NOT_GIVEN", "another district still has to be said");
+
+    assert.ok(mentionsDistrict("amar basa সিলেট জেলা", findDistrict("Sylhet")!));
+    assert.ok(mentionsDistrict("Cox's Bazar e pathan", findDistrict("Cox's Bazar")!));
+    assert.ok(mentionsDistrict("chittagong", findDistrict("Chattogram")!), "old spellings count");
+    assert.ok(!mentionsDistrict("dhakai jamdani ache?", findDistrict("Dhaka")!), "a product name isn't an address");
+  });
+
+  await runTest("a Banglish reply with Bangla-script words is caught; the taka sign and Bangla replies are fine", () => {
+    assert.strictEqual(mixedScript("Order confirm korte apnar name o address ekshাথে দিন।", "latin"), true);
+    assert.strictEqual(mixedScript("Ji, grand total ৳610 (Cash on delivery).", "latin"), false);
+    assert.strictEqual(mixedScript("অর্ডার কনফার্ম করতে আপনার নাম দিন।", "bangla"), false);
+  });
+
+  await runTest("the quote message: one fixed layout with the tool's amounts, asking only for what's missing", () => {
+    const q = {
+      quote_id: "q_1", district: "Dhaka", discount_bdt: 0, delivery_charge_bdt: 60, grand_total_bdt: 1910,
+      items: [{ name: "Premium Embroidered Cotton Panjabi", size: "Regular", quantity: 1, line_total_bdt: 1850 }],
+    };
+    assert.strictEqual(
+      formatQuote(q, "latin", { name: "Kawshik", phone: "01996990184", address: "House 9, Road 19, Nikunja 2" }),
+      [
+        "Ji Kawshik, apnar order er quote:",
+        "",
+        "- Premium Embroidered Cotton Panjabi (Regular) – 1 pcs – ৳1,850",
+        "- Delivery charge (Dhaka) – ৳60",
+        "Grand total – ৳1,910 (Cash on delivery)",
+        "",
+        'Sob thik thakle "Ji" likhun, order confirm kore dicchi.',
+      ].join("\n")
+    );
+    assert.ok(formatQuote(q, "latin", { phone: "01996990184" }).endsWith("Order confirm korte apnar name o full delivery address (house, road, area) ekshathe din."));
+    const withCoupon = formatQuote({ ...q, discount_bdt: 100, grand_total_bdt: 1810, items: [{ name: "Jamdani Saree", size: "Free", quantity: 2, line_total_bdt: 1850 }] }, "latin");
+    assert.ok(withCoupon.includes("- Jamdani Saree – 2 pcs – ৳1,850\n- Discount – -৳100\n"), "no size for a one-size item; the discount is its own line");
+    const bangla = formatQuote(q, "bangla", {});
+    assert.ok(bangla.includes("ডেলিভারি চার্জ (Dhaka) – ৳60") && bangla.includes("সর্বমোট – ৳1,910 (ক্যাশ অন ডেলিভারি)"), bangla);
+    assert.ok(!mixedScript(formatQuote(q, "latin", {}), "latin"), "the Banglish layout has no Bangla-script letters");
+    assert.strictEqual(quoteToShow([q, { status: "CONFIRMATION_REQUIRED", summary: "..." }]), null, "after a confirmation summary the quote isn't shown again");
+    assert.strictEqual(quoteToShow([{ results: [] }, q])?.quote_id, "q_1");
+  });
+
   await runTest("place_order is cash on delivery only for now", async () => {
     assert.strictEqual((await runCustomerTool(prA, "place_order", { ...details, quote_id: "q_x", payment_method: "BKASH" })).refused, "INVALID_ARGS");
   });
@@ -457,6 +511,67 @@ async function main() {
   await runTest("search words keep Bangla vowel signs (কালো stays কালো)", () => {
     assert.ok(searchTokens("কালো গেঞ্জি").includes("black"));
     assert.ok(searchTokens("কালো গেঞ্জি").includes("tshirt"));
+  });
+
+  // ------------------------------------------------------------------ Dynamic Recovery
+  console.log(`\n${BOLD}[Dynamic Recovery] Grounded synthesis on provider failure${RESET}`);
+
+  await runTest("synthesizes quote reply dynamically in Latin/Banglish with exact amounts", () => {
+    const quoteResult = {
+      quote_id: "q_test123",
+      district: "Kushtia",
+      items: [{ name: "Premium Panjabi", quantity: 1, unit_price_bdt: 1850, line_total_bdt: 1850 }],
+      subtotal_bdt: 1850,
+      delivery_charge_bdt: 120,
+      grand_total_bdt: 1970,
+    };
+    const reply = synthesizeGroundedResponse([quoteResult], "latin");
+    assert.ok(reply);
+    assert.ok(reply.includes("Delivery charge (Kushtia) – ৳120"), reply);
+    assert.ok(reply.includes("Grand total – ৳1,970"), reply);
+    assert.ok(reply.includes("Cash on delivery"));
+  });
+
+  await runTest("synthesizes quote reply dynamically in Bangla script with exact amounts", () => {
+    const quoteResult = {
+      quote_id: "q_test123",
+      district: "কুষ্টিয়া",
+      items: [{ name: "পাঞ্জাবি", quantity: 2, unit_price_bdt: 1000, line_total_bdt: 2000 }],
+      subtotal_bdt: 2000,
+      delivery_charge_bdt: 120,
+      grand_total_bdt: 2120,
+    };
+    const reply = synthesizeGroundedResponse([quoteResult], "bangla");
+    assert.ok(reply);
+    assert.ok(reply.includes(`ডেলিভারি চার্জ (${quoteResult.district}) – ৳120`), reply);
+    assert.ok(reply.includes("সর্বমোট – ৳2,120"), reply);
+    assert.ok(reply.includes("ক্যাশ অন ডেলিভারি"));
+  });
+
+  await runTest("synthesizes placed order reply with order number and total", () => {
+    const placedResult = {
+      status: "PLACED",
+      order_number: "ORD-2026-000099",
+      grand_total_bdt: 1970,
+    };
+    const reply = synthesizeGroundedResponse([placedResult], "latin");
+    assert.ok(reply);
+    assert.ok(reply.includes("ORD-2026-000099"));
+    assert.ok(reply.includes("৳1,970"));
+  });
+
+  await runTest("synthesizes delivery charge reply dynamically", () => {
+    const chargeResult = {
+      district: "Sylhet",
+      delivery_charge_bdt: 120,
+    };
+    const reply = synthesizeGroundedResponse([chargeResult], "latin");
+    assert.strictEqual(reply, "Sylhet-e delivery charge ৳120.");
+  });
+
+  await runTest("returns null when tool results are empty or unusable", () => {
+    assert.strictEqual(synthesizeGroundedResponse([], "latin"), null);
+    assert.strictEqual(synthesizeGroundedResponse([{ error: "SOME_ERROR" }], "latin"), null);
   });
 
   console.log(`\n  Tests Passed: ${passed} | Tests Failed: ${failed}\n`);

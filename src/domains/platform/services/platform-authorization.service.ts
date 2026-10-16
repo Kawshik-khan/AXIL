@@ -11,6 +11,8 @@ import {
   StepUpRequiredError,
 } from "@/lib/errors";
 
+import { findPrivilegedAction } from "../privileged-actions";
+
 export type OperationRiskLevel = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 
 export class PlatformAuthorizationService {
@@ -18,6 +20,11 @@ export class PlatformAuthorizationService {
    * Authoritatively classifies an administrative operation by its blast radius and risk tier.
    */
   public static classifyRisk(action: string): OperationRiskLevel {
+    // The privileged-action registry is authoritative for every action it declares
+    const declared = findPrivilegedAction(action);
+    if (declared) return declared.risk;
+
+    // Legacy permission-style keys still passed by older services
     const criticalActions = [
       "tenant.delete",
       "tenant.purge",
@@ -85,10 +92,8 @@ export class PlatformAuthorizationService {
   public static assertCan(context: PlatformContext, permission: PlatformPermission): void {
     this.assertPlatformScope(context);
     if (!this.can(context, permission)) {
-      throw new PlatformPermissionDeniedError(
-        `Platform operator lacks required permission: "${permission}".`,
-        permission
-      );
+      // (permission, role): the error's details carry the permission name the console shows (plan §5.1)
+      throw new PlatformPermissionDeniedError(permission, context.platformRole);
     }
   }
 

@@ -19,6 +19,7 @@ import { paymentOperationsService } from "@/domains/operations/services/payment-
 import { financeOperationsService } from "@/domains/operations/services/finance-operations.service";
 import { exceptionManagementService } from "@/domains/operations/services/exception-management.service";
 import { operationalBudgetService } from "@/domains/operations/services/operational-budget.service";
+import { loadOrderRows } from "@/infrastructure/db/tenant-rows";
 
 // ============================================================
 // 1. GET INVENTORY LEVELS TOOL
@@ -435,6 +436,7 @@ export class VerifyPaymentTransactionTool implements IAgentTool<z.infer<typeof V
   }
 
   public async execute(context: RequestContext, input: z.infer<typeof VerifyPaymentTransactionInputSchema>): Promise<any> {
+    await loadOrderRows(context.tenant.id, [input.order_id]); // zero-hydration: the order's rows this flow reads and changes
     const match = paymentOperationsService.reconcileTransaction(context.tenant.id, {
       orderId: input.order_id,
       transactionId: input.trx_id,

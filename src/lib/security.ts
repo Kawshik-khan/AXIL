@@ -21,6 +21,8 @@ export const TOKEN_AUDIENCE = {
   impersonation: "commerceos:impersonation",
   /** Password checked, TOTP still required (5 minutes). Never a session (FX-15). */
   mfaPending: "commerceos:mfa-pending",
+  /** The `state` of a "Connect with Facebook" round trip (10 minutes), bound to one workspace, user and browser. */
+  metaOAuth: "commerceos:meta-oauth",
 } as const;
 
 /** Stored for accounts that must not be able to log in until a real password is set. Never matches bcrypt. */
@@ -291,6 +293,35 @@ export async function verifyMfaPendingToken(token: string): Promise<{ userId: st
     const claims = await verifyToken(token, TOKEN_AUDIENCE.mfaPending);
     if (claims.scope !== "MFA_PENDING" || typeof claims.userId !== "string") return null;
     return { userId: claims.userId, sv: typeof claims.sv === "number" ? claims.sv : 1 };
+  } catch {
+    return null;
+  }
+}
+
+export interface MetaOAuthState {
+  tenantId: string;
+  userId: string;
+  /** Also kept in an httpOnly cookie: a state can only be completed in the browser that started it. */
+  nonce: string;
+}
+
+export async function signMetaOAuthState(state: MetaOAuthState): Promise<string> {
+  return new SignJWT({ ...state, scope: "META_OAUTH" })
+    .setProtectedHeader({ alg: "HS256" })
+    .setIssuer(TOKEN_ISSUER)
+    .setAudience(TOKEN_AUDIENCE.metaOAuth)
+    .setIssuedAt()
+    .setExpirationTime("10m")
+    .sign(jwtKey());
+}
+
+export async function verifyMetaOAuthState(token: string): Promise<MetaOAuthState | null> {
+  try {
+    const claims = await verifyToken(token, TOKEN_AUDIENCE.metaOAuth);
+    if (claims.scope !== "META_OAUTH") return null;
+    const { tenantId, userId, nonce } = claims;
+    if (typeof tenantId !== "string" || typeof userId !== "string" || typeof nonce !== "string") return null;
+    return { tenantId, userId, nonce };
   } catch {
     return null;
   }

@@ -25,7 +25,7 @@ Follow this procedure when creating or enhancing an autonomous agent in Commerce
 
 6. **Run Automated Evaluation Suite**:
    - Run `node tests/ts-runner.cjs ./tests/ai-tests.ts` (and `agentic-rag-tests.ts` if RAG is involved).
-   - Required: zero policy violations and zero fabricated prices/stock/order states; report pass/fail counts. The LLM is currently mocked, so state that the eval covers policy/tool behaviour only.
+   - Required: zero policy violations and zero fabricated prices/stock/order states; report pass/fail counts. `npm run test:eval` is the deterministic offline regression gate; `npm run test:eval:live` uses the configured provider for real routing and agent responses, may incur provider cost, and must report the provider/model and quality results separately. Never present offline scores as live-model quality.
 
 7. **Register in Agent Orchestrator & Dashboard**:
    - Register in `src/domains/ai/orchestration/agent-registry.ts` / `src/domains/ai/router/agent-router.ts`.

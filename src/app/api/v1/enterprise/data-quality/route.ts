@@ -5,6 +5,7 @@ import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response"
 import { dataQualityService } from "@/domains/enterprise/services/data-quality.service";
 import { db } from "@/infrastructure/db";
 import { withStore } from "@/lib/store-unit";
+import { OPERATIONS_COLLECTIONS } from "@/infrastructure/db/tenant-rows";
 
 async function handleGET(request: Request) {
   try {
@@ -28,4 +29,4 @@ async function handleGET(request: Request) {
   }
 }
 
-export const GET = withStore("GET", handleGET);
+export const GET = withStore("GET", handleGET, { tenantRows: { collections: OPERATIONS_COLLECTIONS, permission: PERMISSIONS.DATA_QUALITY_READ } });

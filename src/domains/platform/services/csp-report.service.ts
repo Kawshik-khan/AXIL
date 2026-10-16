@@ -4,6 +4,7 @@
  * Only the day, the violated directive and the blocked origin are kept (no page URLs, no script samples).
  */
 import { db } from "@/infrastructure/db";
+import { loadTenantRowsWhere, PLATFORM_SCOPE } from "@/infrastructure/db/tenant-rows";
 
 const DAY = 24 * 60 * 60_000;
 
@@ -40,6 +41,15 @@ export function parseCspReports(body: unknown): Array<{ directive: string; block
 export const DROPPED = "__dropped__";
 
 export class CspReportService {
+  /**
+   * Zero-hydration: the last `days` days' counters from Postgres into the current request's working set, which
+   * recordParsed, recordDropped and summary read and change.
+   */
+  public static async load(now = Date.now(), days = 8): Promise<void> {
+    const dayKeys = Array.from({ length: days }, (_, i) => new Date(now - i * DAY).toISOString().slice(0, 10));
+    await loadTenantRowsWhere(PLATFORM_SCOPE, "csp_reports", { field: "day", values: dayKeys });
+  }
+
   public static record(body: unknown, now = Date.now()): number {
     return this.recordParsed(parseCspReports(body), now);
   }

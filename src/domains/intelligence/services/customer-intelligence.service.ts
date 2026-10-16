@@ -4,7 +4,7 @@
  */
 
 import { db } from "@/infrastructure/db";
-import type { Order } from "@/types/commerce";
+import { orderRepository } from "@/domains/orders/order.repository";
 import { CustomerIntelligenceRecord, RFMSegment } from "@/types/intelligence";
 import { intelligenceSnapshots } from "./intelligence-snapshot.service";
 
@@ -21,28 +21,20 @@ export class CustomerIntelligenceService {
    */
   public computeCustomers(tenantId: string): CustomerIntelligenceRecord[] {
     const customers = db.getAllCustomers(tenantId);
-    const ordersByCustomer = new Map<string, Order[]>();
-    for (const o of db.getAllOrders(tenantId)) {
-      if (o.status === "CANCELLED") continue;
-      const list = ordersByCustomer.get(o.customer_id);
-      if (list) list.push(o);
-      else ordersByCustomer.set(o.customer_id, [o]);
-    }
+    const orderSummaries = orderRepository.getAllCustomerOrderSummariesSync(tenantId);
 
     const now = Date.now();
     const records: CustomerIntelligenceRecord[] = [];
 
     for (const cust of customers) {
-      const custOrders = (ordersByCustomer.get(cust.id) ?? []).sort(
-        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-      );
+      const summary = orderSummaries.get(cust.id);
 
-      const orderCount = custOrders.length;
-      const totalSpent = custOrders.reduce((sum, o) => sum + (o.grand_total || (o as any).total_amount || 0), 0);
+      const orderCount = summary ? summary.orderCount : 0;
+      const totalSpent = summary ? summary.totalSpend : 0;
       const aov = orderCount > 0 ? Number((totalSpent / orderCount).toFixed(2)) : 0;
 
-      const lastOrderAt = custOrders[0]?.created_at || cust.created_at;
-      const firstOrderAt = custOrders[custOrders.length - 1]?.created_at || cust.created_at;
+      const lastOrderAt = summary?.lastOrderAt || cust.created_at;
+      const firstOrderAt = summary?.firstOrderAt || cust.created_at;
 
       const recencyDays = Math.max(
         0,
@@ -123,7 +115,7 @@ export class CustomerIntelligenceService {
         churn_probability: churnProb,
         first_order_at: firstOrderAt,
         last_order_at: lastOrderAt,
-        preferred_channel: (custOrders[0]?.source as string) || "WEBSITE",
+        preferred_channel: summary?.lastOrderChannel || "WEBSITE",
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };

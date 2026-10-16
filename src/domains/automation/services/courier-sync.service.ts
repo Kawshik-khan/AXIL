@@ -13,6 +13,7 @@ import { CourierTrackingResult } from "@/types/automation";
 import { ProviderCircuitBreakerService } from "./provider-circuit-breaker.service";
 import { IdempotencyService } from "./idempotency.service";
 import { logger } from "@/lib/logger";
+import { loadOrderRows } from "@/infrastructure/db/tenant-rows";
 
 export class CourierSyncService {
   /**
@@ -159,6 +160,7 @@ export class CourierSyncService {
 
     // The order follows the courier through the one lifecycle writer (FX-35). A courier event can never revive a
     // closed order: the lifecycle refuses it and records an exception for review, and the shipment is left untouched.
+    await loadOrderRows(tenantId, [shipment.order_id]); // zero-hydration: the order's rows this flow reads and changes
     const linkedOrder = db.findOrderById(tenantId, shipment.order_id);
     const orderTarget =
       canonicalStatus === "DELIVERED" ? "DELIVERED" : ["PICKED_UP", "IN_TRANSIT", "OUT_FOR_DELIVERY"].includes(canonicalStatus) ? "SHIPPED" : null;

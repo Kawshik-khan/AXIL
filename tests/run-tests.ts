@@ -226,7 +226,7 @@ async function main() {
     });
 
     // Query audit logs scoped strictly to Tenant Alpha
-    const alphaLogs = AuditService.getLogsForTenant(tenantAlpha.tenant.id);
+    const alphaLogs = await AuditService.getLogsForTenant(tenantAlpha.tenant.id);
     const leakedLog = alphaLogs.logs.find(
       (l) => l.action === "BETA_SECRET_ACTION" || l.tenant_id === tenantBeta.tenant.id
     );
@@ -408,7 +408,7 @@ async function main() {
     assert.strictEqual(auditRecord.actor_user_id, tenantAlpha.user.id);
     assert.strictEqual(auditRecord.metadata.delivery_fee_inside, 70);
 
-    const logs = AuditService.getLogsForTenant(tenantAlpha.tenant.id);
+    const logs = await AuditService.getLogsForTenant(tenantAlpha.tenant.id);
     assert.ok(logs.total > 0);
     const found = logs.logs.find((l) => l.id === auditRecord.id);
     assert.ok(found);

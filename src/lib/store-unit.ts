@@ -1,4 +1,4 @@
-import { db } from "@/infrastructure/db";
+import { db, type DeclaredTenantRows } from "@/infrastructure/db";
 import { apiError } from "@/lib/api-response";
 import { AppError } from "@/lib/errors";
 import { envNumber } from "@/lib/env-number";
@@ -111,16 +111,24 @@ function logRequest(request: unknown, status: number, startedAt: number): void {
   });
 }
 
+/**
+ * `tenantRows`: collections zero-hydration leaves out of memory that the handler reads through the store's synchronous
+ * methods (analytics, lifecycle changes), and the permission the handler requires. They are loaded from Postgres for
+ * the session's tenant when the handler calls extractRequestContext, into this request's working set (tenant-rows.ts),
+ * and only for a caller holding that permission: a caller the handler will refuse never causes a whole-tenant read.
+ * Leave it out for handlers that read through repositories.
+ */
 export function withStore<A extends unknown[]>(
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
   handler: RouteHandler<A>,
-  options: { unit?: boolean } = {}
+  options: { unit?: boolean; tenantRows?: DeclaredTenantRows } = {}
 ): RouteHandler<A> {
   const inner = withStoreUnit(method, handler, options);
   return async (...args: A) => {
     const startedAt = Date.now();
     try {
-      const response = await inner(...args);
+      // A scope for tenant rows the handler loads from Postgres (zero-hydration, tenant-rows.ts): this request's only
+      const response = await db.withTenantReads(() => inner(...args), options.tenantRows);
       logRequest(args[0], response.status, startedAt);
       return response;
     } catch (err) {

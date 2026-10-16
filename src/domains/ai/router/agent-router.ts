@@ -157,11 +157,11 @@ export class AgentRouter {
         heuristic || {
           intent: "UNKNOWN",
           category: "GENERAL",
-          confidence: 0.5,
+          confidence: 0.75,
           target_agent: "CUSTOMER_SUPPORT",
           extracted_entities: {},
           detected_language: this.detectLanguage(cleanText),
-          requires_human: true,
+          requires_human: false,
           routing_strategy: "KEYWORD_HEURISTIC",
         }
       );
@@ -172,6 +172,24 @@ export class AgentRouter {
    * Deterministic Fast-Path Rules
    */
   private static evaluateDeterministicRules(lower: string, raw: string): ClassifiedIntent | null {
+    // Cross-workspace requests are security events, never ordinary order lookups.
+    if (
+      (lower.includes("tenant") || lower.includes("workspace")) &&
+      (lower.includes("order") || lower.includes("customer") || lower.includes("workspace")) &&
+      (lower.includes("show") || lower.includes("list") || lower.includes("access") || lower.includes("query") || lower.includes("all"))
+    ) {
+      return {
+        intent: "UNKNOWN",
+        category: "SYSTEM",
+        confidence: 1,
+        target_agent: "CUSTOMER_SUPPORT",
+        extracted_entities: {},
+        detected_language: this.detectLanguage(raw),
+        requires_human: true,
+        routing_strategy: "DETERMINISTIC_RULE",
+      };
+    }
+
     // Prompt injection & system override defense (Deterministic Safety Guard)
     if (
       lower.includes("system override") ||
@@ -228,26 +246,15 @@ export class AgentRouter {
       };
     }
 
-    // Pure greetings & friendly salutations
-    if (
-      lower === "hi" ||
-      lower === "hello" ||
-      lower === "hey" ||
-      lower === "hy" ||
-      lower === "slam" ||
-      lower === "salam" ||
-      lower.startsWith("assalamu") ||
-      lower.startsWith("salam") ||
-      lower.startsWith("hello") ||
-      lower.startsWith("hi ") ||
-      lower.startsWith("hey ") ||
-      lower.includes("assalamu alaikum") ||
-      lower.includes("assalamualikum") ||
-      lower === "সালাম" ||
-      lower === "হ্যালো" ||
-      lower === "হাই" ||
-      lower.startsWith("সালাম")
-    ) {
+    // Pure greetings & friendly salutations (strictly matches messages containing greeting tokens, address terms, polite health inquiry or presence checks)
+    const isPureGreeting = /^(?:assalamu\s*alaikum(?:[\s-]wa\s*rahmatullah)?|assalamualikum|salam|slam|সালাম|আসসালামু\s*আলাইকুম|hello|hi|hey|hy|hola|হ্যালো|হাই)(?:\s*(?:bhai|vai|apu|bro|sir|ভাই|আপু|স্যার))?(?:\s*(?:kemon\s*a[cs]hen|valo\s*a[cs]hen|bhalo\s*a[cs]hen|কেমন\s*আছেন|ভালো\s*আছেন))?[!.,?।\s]*$/i.test(lower.trim());
+    const isPresenceCheck =
+      /^(?:(?:bhai|vai|apu|bro|sir|ভাই|আপু|স্যার)\s*)?(?:keu|kew)\s*(?:ki\s*)?(?:a[cs]hen|a[cs]e|achhe|achhen|আছেন|আছে)[!.,?।\s]*$/i.test(lower.trim()) ||
+      /^(?:a[cs]hen|achhen|আছেন)\s*(?:keu|kew|vai|bhai)[!.,?।\s]*$/i.test(lower.trim()) ||
+      /^(?:is\s*)?anyone(?:\s*(?:there|here|online))?[!.,?।\s]*$/i.test(lower.trim()) ||
+      /^(?:bhai|vai|bhaiya|vaiya|bro|brother)[!?.,\s]*$/i.test(lower.trim());
+
+    if (isPureGreeting || isPresenceCheck) {
       return {
         intent: "GREETING",
         category: "GENERAL",
@@ -292,6 +299,25 @@ export class AgentRouter {
     analysis: ReturnType<typeof BanglishNormalizer.analyze>
   ): ClassifiedIntent | null {
     const language = this.detectLanguage(raw);
+
+    // Size charts and product measurements are knowledge questions, not availability checks.
+    if (
+      lower.includes("measurement") ||
+      lower.includes("chest") ||
+      lower.includes("size chart") ||
+      lower.includes("সাইজ চার্ট")
+    ) {
+      return {
+        intent: "PRODUCT_INFORMATION",
+        category: "PRODUCT",
+        confidence: 0.94,
+        target_agent: "PRODUCT_INFO",
+        extracted_entities: {},
+        detected_language: language,
+        requires_human: false,
+        routing_strategy: "KEYWORD_HEURISTIC",
+      };
+    }
 
     // 1. Order Status Tracking
     const hasOrderIdentifier =
@@ -437,8 +463,13 @@ export class AgentRouter {
       lower.includes("available") ||
       lower.includes("stock") ||
       lower.includes("ase") ||
+      lower.includes("ache") ||
+      lower.includes("achen") ||
+      lower.includes("asen") ||
       lower.includes("achhe") ||
+      lower.includes("achhen") ||
       lower.includes("আছে") ||
+      lower.includes("আছেন") ||
       lower.includes("সাইজ") ||
       lower.includes("size")
     ) {

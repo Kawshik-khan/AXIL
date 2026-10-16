@@ -55,7 +55,12 @@ export class RequestHumanHandoffTool implements IAgentTool<z.infer<typeof Reques
   public async execute(
     context: RequestContext,
     input: z.infer<typeof RequestHumanHandoffInputSchema>,
-    options?: { conversationId?: string; idempotencyKey?: string; card?: Partial<HandoffCard> }
+    options?: {
+      conversationId?: string;
+      idempotencyKey?: string;
+      signal?: AbortSignal;
+      card?: Partial<HandoffCard>;
+    }
   ) {
     if (options?.conversationId) {
       const conversationId = options.conversationId;
@@ -67,8 +72,7 @@ export class RequestHumanHandoffTool implements IAgentTool<z.infer<typeof Reques
         await MessageService.createInternalNote(
           context,
           convo.id,
-          `[AI Escalation] Handoff triggered.\nReason: ${input.reason}\nSummary: ${input.summary}${
-            input.suggested_action ? `\nSuggested Action: ${input.suggested_action}` : ""
+          `[AI Escalation] Handoff triggered.\nReason: ${input.reason}\nSummary: ${input.summary}${input.suggested_action ? `\nSuggested Action: ${input.suggested_action}` : ""
           }`
         );
         const now = Date.now();

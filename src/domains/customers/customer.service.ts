@@ -8,6 +8,10 @@ import { RbacService } from "@/domains/rbac/service";
 import { PERMISSIONS } from "@/lib/permissions";
 import { BadRequestError, ConflictError, NotFoundError } from "@/lib/errors";
 
+import { sliceForCursor } from "@/lib/cursor-pagination";
+import { customerRepository } from "./customer.repository";
+import { loadCustomerRows } from "@/infrastructure/db/tenant-rows";
+
 export class CustomerService {
   /**
    * Normalize Bangladeshi and international phone numbers to canonical E.164-style (+880...)
@@ -32,10 +36,29 @@ export class CustomerService {
 
   public static async listCustomers(
     context: RequestContext,
-    options?: { search?: string; limit?: number; offset?: number }
-  ): Promise<{ customers: Customer[]; total: number }> {
+    options?: { search?: string; limit?: number; offset?: number; cursor?: string }
+  ): Promise<{
+    customers: Customer[];
+    total: number;
+    next_cursor?: string | null;
+    has_more?: boolean;
+  }> {
     RbacService.assertCan(context, PERMISSIONS.CUSTOMERS_READ);
-    return db.getCustomers(context.tenant.id, { ...options, limit: options?.limit ?? 50 }); // one page; analytics use getAllCustomers
+    if (options?.cursor !== undefined) {
+      const res = await customerRepository.listWithCursor(context.tenant.id, {
+        search: options.search,
+        limit: options.limit ?? 20,
+        cursor: options.cursor,
+      });
+      return {
+        customers: res.items,
+        total: res.total ?? res.items.length,
+        next_cursor: res.pagination.next_cursor,
+        has_more: res.pagination.has_more,
+      };
+    }
+    // One page (SQL under zero-hydration); analytics use getAllCustomers
+    return customerRepository.listCustomers(context.tenant.id, { search: options?.search, limit: options?.limit ?? 50, offset: options?.offset });
   }
 
   public static async getCustomerById(
@@ -43,7 +66,7 @@ export class CustomerService {
     customerId: string
   ): Promise<Customer> {
     RbacService.assertCan(context, PERMISSIONS.CUSTOMERS_READ);
-    const customer = db.findCustomerById(context.tenant.id, customerId);
+    const customer = await customerRepository.findById(context.tenant.id, customerId);
     if (!customer) {
       throw new NotFoundError(`Customer '${customerId}' not found.`);
     }
@@ -55,7 +78,7 @@ export class CustomerService {
     rawPhone: string
   ): Promise<Customer | undefined> {
     const normalized = this.normalizePhoneNumber(rawPhone);
-    return db.findCustomerByPhone(context.tenant.id, normalized);
+    return (await customerRepository.findByPhone(context.tenant.id, normalized)) ?? undefined;
   }
 
   public static async createCustomer(
@@ -92,7 +115,9 @@ export class CustomerService {
     const normalizedPhone = hasPhone ? this.normalizePhoneNumber(payload.phone) : "";
 
     // Deduplication check: Return existing customer if phone matches (only for a real phone number)
-    const existing = normalizedPhone ? db.findCustomerByPhone(context.tenant.id, normalizedPhone) : undefined;
+    const existing = normalizedPhone
+      ? await customerRepository.findByPhone(context.tenant.id, normalizedPhone)
+      : undefined;
     if (existing) {
       return existing;
     }
@@ -167,12 +192,13 @@ export class CustomerService {
 
     if (updates.phone) {
       updates.phone = this.normalizePhoneNumber(updates.phone);
-      const holder = db.findCustomerByPhone(context.tenant.id, updates.phone);
+      const holder = await customerRepository.findByPhone(context.tenant.id, updates.phone);
       if (holder && holder.id !== customerId) {
         throw new ConflictError("Another customer already uses this phone number.");
       }
     }
 
+    await loadCustomerRows(context.tenant.id, [customerId]); // zero-hydration: the row this request changes
     const updated = db.updateCustomer(context.tenant.id, customerId, updates);
     if (!updated) {
       throw new NotFoundError(`Customer '${customerId}' not found.`);

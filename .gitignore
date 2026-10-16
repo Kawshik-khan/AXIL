@@ -15,6 +15,7 @@ tsc_errors.log
 
 # Generated test output and scratch files
 tests/test-results.json
+tests/rag-replay-report.json
 scratch/
 
 # Large generated seed datasets (~50 MB of synthetic customers/orders with realistic phone numbers).

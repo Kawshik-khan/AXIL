@@ -4,6 +4,7 @@ import { z } from "zod";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { marketingService } from "@/domains/marketing/marketing.service";
 import { withStore } from "@/lib/store-unit";
+import { COMMERCE_ANALYTICS_COLLECTIONS } from "@/infrastructure/db/tenant-rows";
 
 const CreateBroadcastSchema = z.object({
   name: z.string().min(1, "Campaign name is required"),
@@ -74,4 +75,4 @@ async function handlePOST(request: Request) {
 }
 
 export const GET = withStore("GET", handleGET);
-export const POST = withStore("POST", handlePOST);
+export const POST = withStore("POST", handlePOST, { tenantRows: { collections: COMMERCE_ANALYTICS_COLLECTIONS, permission: PERMISSIONS.MARKETING_WRITE } });

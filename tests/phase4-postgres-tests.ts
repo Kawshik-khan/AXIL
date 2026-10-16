@@ -201,7 +201,7 @@ async function main() {
     store.markDirty();
     await store.flush();
     assert.ok(store.getPersistenceHealth().ok, JSON.stringify(store.getPersistenceHealth()));
-    const reloaded = await new PgStorePersistence(client).load();
+    const reloaded = await new PgStorePersistence(client).load({ all: true });
     assert.deepStrictEqual(diffStores(store.data as unknown as Record<string, unknown>, reloaded), []);
     assert.strictEqual((reloaded.order_sequences as Record<string, number>)[t], 1001);
     const audit = reloaded.platform_audit_logs as Array<{ id: string }>;
@@ -944,7 +944,7 @@ async function main() {
   });
 
   await runTest("export (rollback path) returns exactly what was backfilled", async () => {
-    const exported = await new PgStorePersistence(target).load();
+    const exported = await new PgStorePersistence(target).load({ all: true });
     assert.deepStrictEqual(diffStores(source, exported), []);
     assert.deepStrictEqual(exported.order_sequences, { ten_bf: 2 });
   });

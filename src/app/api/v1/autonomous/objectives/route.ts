@@ -8,6 +8,7 @@ import { ObjectiveStatus } from "@/types/autonomous";
 import { NotFoundError, ValidationError } from "@/lib/errors";
 import { resolveOrganizationId } from "@/domains/enterprise/organization-access";
 import { withStore } from "@/lib/store-unit";
+import { OPERATIONS_COLLECTIONS } from "@/infrastructure/db/tenant-rows";
 
 async function handleGET(request: Request) {
   try {
@@ -132,4 +133,4 @@ async function handlePOST(request: Request) {
 }
 
 export const GET = withStore("GET", handleGET);
-export const POST = withStore("POST", handlePOST);
+export const POST = withStore("POST", handlePOST, { tenantRows: { collections: OPERATIONS_COLLECTIONS, permission: PERMISSIONS.OBJECTIVES_MANAGE } });

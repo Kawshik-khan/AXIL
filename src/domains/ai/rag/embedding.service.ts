@@ -8,9 +8,23 @@
 
 import { modelRouter } from "@/domains/ai/providers/model-router";
 import { logger } from "@/lib/logger";
+import { isAppError } from "@/lib/errors";
+import { envNumber } from "@/lib/env-number";
 
 const RETRIES = 2;
 const BASE_BACKOFF_MS = 200;
+
+/**
+ * How long to wait before retrying an HTTP 429 (rate limited): the provider's Retry-After, else 1 s, 2 s, capped. A
+ * 200 ms retry of a per-minute limit just failed again. The cap stays short by default so a customer's reply is never
+ * held up for long (dense search falls back to keywords); the nightly retrieval eval raises it.
+ */
+function rateLimitWaitMs(err: unknown, attempt: number): number | null {
+  if (!isAppError(err) || Number(err.details?.status) !== 429) return null;
+  const hinted = Number(err.details?.retryAfterMs);
+  const wait = Number.isFinite(hinted) && hinted > 0 ? hinted : 1000 * 2 ** attempt;
+  return Math.min(wait, envNumber("EMBEDDING_RATE_LIMIT_MAX_WAIT_MS", 2000, 0));
+}
 const counters = { calls: 0, failures: 0, retries: 0, since: new Date().toISOString() };
 
 /** This server's embedding calls and failures since start (FX-82 metric). */
@@ -23,19 +37,36 @@ export function resetEmbeddingMetrics(): void {
   Object.assign(counters, { calls: 0, failures: 0, retries: 0, since: new Date().toISOString() });
 }
 
+/** Only retry throttling, timeouts, server errors and network failures. Invalid configuration/data fails immediately. */
+export function isTransientEmbeddingError(error: unknown): boolean {
+  if (!isAppError(error)) return false;
+  const providerStatus = Number(error.details?.status);
+  const failureKind = error.details?.failure_kind;
+  return providerStatus === 408 || providerStatus === 429 || providerStatus >= 500 || failureKind === "timeout" || failureKind === "network";
+}
+
 export class EmbeddingService {
+  private static readonly PREPROCESSING_VERSION = "section-content-v1";
+
   /** The model and vector size new chunks are stamped with; chunks with another stamp are re-embedded (FX-82). */
   public static currentStamp(): { embedding_model: string; dimensions?: number } {
     return modelRouter.embeddingStamp();
+  }
+
+  public static getProfile(dimensions: number): { provider: string; model: string; dimensions: number; preprocessing_version: string; index_version: string } {
+    const profile = modelRouter.getEmbeddingProfile();
+    if (!Number.isInteger(dimensions) || dimensions < 1 || (profile.configured_dimensions && profile.configured_dimensions !== dimensions)) {
+      throw new Error("Embedding vector dimensions do not match the configured embedding profile.");
+    }
+    const generation = `${this.PREPROCESSING_VERSION}:${profile.provider}:${profile.model}:${dimensions}`;
+    return { ...profile, dimensions, preprocessing_version: this.PREPROCESSING_VERSION, index_version: generation };
   }
 
   /**
    * Generates an embedding vector for a single string. Retries twice with backoff; a final failure is counted and thrown.
    */
   public static async embedText(text: string): Promise<number[]> {
-    if (!text || text.trim().length === 0) {
-      return new Array(1536).fill(0);
-    }
+    if (!text || text.trim().length === 0) throw new Error("Cannot embed empty text.");
     counters.calls++;
     let lastError: unknown;
     for (let attempt = 0; attempt <= RETRIES; attempt++) {
@@ -46,9 +77,12 @@ export class EmbeddingService {
         const code = (err as { code?: string }).code;
         // Configuration problems and kill switches won't fix themselves on retry
         if (code === "AI_PROVIDER_NOT_CONFIGURED" || code === "KILL_SWITCH_ACTIVE") break;
+        if (isAppError(err) && !isTransientEmbeddingError(err) && code !== "LLM_PROVIDER_ERROR" && code !== "OUTBOUND_UNREACHABLE") {
+          break;
+        }
         if (attempt < RETRIES) {
           counters.retries++;
-          await new Promise((r) => setTimeout(r, BASE_BACKOFF_MS * 2 ** attempt));
+          await new Promise((r) => setTimeout(r, rateLimitWaitMs(err, attempt) ?? BASE_BACKOFF_MS * 2 ** attempt));
         }
       }
     }
@@ -61,11 +95,18 @@ export class EmbeddingService {
    * Batch generates embeddings for multiple text chunks.
    */
   public static async embedBatch(texts: string[]): Promise<number[][]> {
+    if (texts.length === 0) return [];
     const results: number[][] = [];
-    for (const text of texts) {
-      const vec = await this.embedText(text);
-      results.push(vec);
+    const batchSize = 8;
+    for (let offset = 0; offset < texts.length; offset += batchSize) {
+      const batch = await Promise.all(texts.slice(offset, offset + batchSize).map((text) => this.embedText(text)));
+      results.push(...batch);
     }
+    const dimensions = results[0]?.length;
+    if (!dimensions || results.length !== texts.length || results.some((vector) =>
+      vector.length !== dimensions || vector.some((value) => !Number.isFinite(value)) || !vector.some((value) => value !== 0)
+    )) throw new Error("Embedding batch has missing, invalid, zero, or inconsistent vectors.");
+    this.getProfile(dimensions);
     return results;
   }
 }

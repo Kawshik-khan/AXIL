@@ -203,3 +203,27 @@
     display: none !important;
   }
 }
+
+/* ---------- platform console dark theme (console-theme.tsx; only while the console sets the attribute) ---------- */
+:global(html[data-console-theme="dark"]) .inactiveCircle {
+  background: var(--color-surface-pure) !important;
+  color: var(--color-text-primary) !important;
+  border-color: var(--color-border-subtle);
+  box-shadow: var(--shadow-sm);
+}
+:global(html[data-console-theme="dark"]) .inactiveCircle:hover {
+  background: var(--color-surface-soft) !important;
+  color: var(--color-text-primary) !important;
+  border-color: var(--color-border-medium);
+}
+:global(html[data-console-theme="dark"]) .logoutCircle:hover { background: var(--color-danger-bg) !important; color: var(--color-danger) !important; }
+:global(html[data-console-theme="dark"]) .activeCircle {
+  background: var(--color-lime-primary) !important;
+  color: var(--color-bg-base) !important;
+  border-color: var(--color-lime-primary);
+}
+:global(html[data-console-theme="dark"]) .dockDivider { background: var(--color-border-subtle); }
+:global(html[data-console-theme="dark"]) .dockTooltip { background: var(--color-text-primary); color: var(--color-bg-base); border-color: transparent; }
+@media (max-width: 768px) {
+  :global(html[data-console-theme="dark"]) .dockPill { background: var(--glass-bg) !important; border: var(--glass-border) !important; }
+}

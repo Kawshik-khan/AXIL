@@ -58,7 +58,7 @@ export class CreateLeadTool implements IAgentTool<z.infer<typeof CreateLeadInput
   public async execute(
     context: RequestContext,
     input: z.infer<typeof CreateLeadInputSchema>,
-    options?: { conversationId?: string; idempotencyKey?: string }
+    options?: { conversationId?: string; idempotencyKey?: string; signal?: AbortSignal }
   ) {
     const lead = await LeadService.createLead(context, {
       customer_id: context.user?.id || "cust_inquiry",

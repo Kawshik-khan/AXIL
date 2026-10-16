@@ -103,8 +103,8 @@ export default function ForecastsPage() {
         <div className={styles.bentoCard}>
           <div style={{ textAlign: "center", padding: 40 }}>
             <AlertCircle size={36} color="#ffc107" style={{ marginBottom: 12 }} />
-            <h3 style={{ color: "#fff" }}>Insufficient Historical Data</h3>
-            <p style={{ color: "#8c8f96", maxWidth: 450, margin: "8px auto" }}>
+            <h3 style={{ color: "var(--color-text-primary, #202124)" }}>Insufficient Historical Data</h3>
+            <p style={{ color: "var(--color-text-secondary, #70736F)", maxWidth: 450, margin: "8px auto" }}>
               {forecast.error_message || "A minimum of 5 operational days is required to compute valid statistical trend projections with confidence bounds."}
             </p>
           </div>

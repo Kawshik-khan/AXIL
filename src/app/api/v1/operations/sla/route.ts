@@ -13,7 +13,7 @@ async function handleGET(request: Request) {
 
     const policies = db.getSLAPolicies(tenantId);
     const breaches = db.getSLABreaches(tenantId);
-    const evaluated = operationalSLAService.auditSLAs(tenantId);
+    const evaluated = await operationalSLAService.auditSLAsAsync(tenantId);
 
     return apiSuccess({
       policies_count: policies.length,

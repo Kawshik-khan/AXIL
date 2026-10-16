@@ -6,6 +6,7 @@ import { RbacService } from "@/domains/rbac/service";
 import { PERMISSIONS } from "@/lib/permissions";
 import { SocialEventService } from "../events/social-event.service";
 import { BadRequestError, NotFoundError } from "@/lib/errors";
+import { loadCustomerRows } from "@/infrastructure/db/tenant-rows";
 
 export class LeadService {
   public static async listLeads(
@@ -42,6 +43,7 @@ export class LeadService {
   ): Promise<Lead> {
     RbacService.assertCan(context, PERMISSIONS.SOCIAL_LEAD_CREATE);
 
+    await loadCustomerRows(context.tenant.id, [payload.customer_id]); // zero-hydration: the customer and identities read here
     const customer = db.findCustomerById(context.tenant.id, payload.customer_id);
     if (!customer) {
       throw new BadRequestError(`Customer '${payload.customer_id}' not found.`);

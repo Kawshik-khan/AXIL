@@ -12,14 +12,17 @@ import { PricingService } from "@/domains/pricing/pricing.service";
 import { KnowledgeService } from "@/domains/ai/rag/knowledge.service";
 import { RequestHumanHandoffTool } from "@/domains/ai/tools/implementations/human-tools";
 import { searchTokens } from "@/domains/catalog/search-synonyms";
-import { findDistrict } from "@/lib/bd-geography";
+import { productRepository } from "@/domains/catalog/product.repository";
+import { orderRepository } from "@/domains/orders/order.repository";
+import { findDistrict, mentionsDistrict } from "@/lib/bd-geography";
 import { assertNotKilled } from "@/lib/safety-gate";
 import { logger } from "@/lib/logger";
 import type { LLMToolDefinition } from "@/domains/ai/providers/llm-provider.interface";
 import type { CustomerQuote } from "@/types/ai";
 import type { Order, Product } from "@/types/commerce";
-import { canSeeOrder, capabilityContext, visibleOrders, type CustomerAgentPrincipal } from "./principal";
+import { canSeeOrder, capabilityContext, visibleOrders, findVisibleOrders, type CustomerAgentPrincipal } from "./principal";
 import { confirmedAfter, customerMessages } from "./confirmation";
+import { loadOrderRows, loadTenantRows } from "@/infrastructure/db/tenant-rows";
 
 export type ToolResult = Record<string, unknown>;
 
@@ -46,10 +49,11 @@ function variantStock(tenantId: string, variantId: string): number {
 const stockStatus = (q: number) => (q <= 0 ? "out_of_stock" : q <= 3 ? "low_stock" : "in_stock");
 
 function productView(tenantId: string, p: Product) {
+  const variants = p.variants && p.variants.length > 0 ? p.variants : db.getProductVariants(tenantId, p.id);
   return {
     product_id: p.id,
     name: p.name,
-    variants: db.getProductVariants(tenantId, p.id).map((v) => {
+    variants: variants.map((v) => {
       const q = variantStock(tenantId, v.id);
       return {
         variant_id: v.id,
@@ -143,10 +147,28 @@ const HandoffArgs = z.object({ reason: z.enum(HANDOFF_REASONS), summary: z.strin
 // Tools
 // ---------------------------------------------------------------------------------------------------------------------
 async function searchProducts(pr: CustomerAgentPrincipal, a: z.infer<typeof SearchArgs>): Promise<ToolResult> {
+  const isGeneralCatalogQuery =
+    !a.query ||
+    /^(?:all|catalog|product|products|collection|shop|ki ki|সব|প্রোডাক্ট|কালেকশন)/i.test(a.query.trim());
+
   const query = searchTokens(a.query);
-  const scored = db
-    .getAllProducts(pr.tenantId)
-    .filter((p) => p.status === "ACTIVE")
+  let allActive = db.getAllProducts(pr.tenantId).filter((p) => p.status === "ACTIVE");
+
+  // When products table is unhydrated from memory, fetch active products via repository
+  if (allActive.length === 0 && !db.isCollectionHydrated("products") && db.getSqlClient()) {
+    const cursorRes = await productRepository.listWithCursor(pr.tenantId, {
+      status: "ACTIVE",
+      limit: 50,
+    });
+    allActive = cursorRes.items;
+  }
+
+  if (isGeneralCatalogQuery && allActive.length > 0) {
+    const results = allActive.slice(0, 5).map((p) => productView(pr.tenantId, p));
+    return { results, note: "Showing featured products available in the shop." };
+  }
+
+  const scored = allActive
     .map((p) => {
       const words = new Set(searchTokens(`${p.name} ${p.sku} ${p.short_description ?? ""}`));
       return { p, hits: query.filter((t) => words.has(t)).length };
@@ -156,11 +178,11 @@ async function searchProducts(pr: CustomerAgentPrincipal, a: z.infer<typeof Sear
   const results = scored.filter((x) => x.hits === best).slice(0, 5).map((x) => productView(pr.tenantId, x.p));
   return results.length
     ? { results }
-    : { results: [], note: "No product in this shop matches. Say so; don't suggest products that weren't returned." };
+    : { results: [], note: "No product in this shop matches the search. Tell the customer politely that this specific item is not currently in stock; do NOT hand off to human. You may ask what other item they are looking for." };
 }
 
 async function getProduct(pr: CustomerAgentPrincipal, a: z.infer<typeof ProductArgs>): Promise<ToolResult> {
-  const p = db.findProductById(pr.tenantId, a.product_id);
+  const p = await productRepository.findById(pr.tenantId, a.product_id);
   if (!p || p.status !== "ACTIVE") return { error: "NOT_FOUND", message: "No product with that id in this shop." };
   // The merchant's text: data for the model, never instructions (F22)
   return { ...productView(pr.tenantId, p), description_untrusted: (p.description ?? "").slice(0, 500) };
@@ -191,6 +213,14 @@ async function quoteOrder(pr: CustomerAgentPrincipal, a: z.infer<typeof QuoteArg
     if (q < it.quantity) {
       return { error: "INSUFFICIENT_STOCK", variant_id: it.variant_id, available_qty: Math.max(0, q), message: "Not enough stock; tell the customer and offer what is available." };
     }
+  }
+  // The delivery charge depends on the district, so it must come from the customer, never from a guess (the model used
+  // to quote "Dhaka" for a customer who hadn't said where they live, and called the total "delivery included")
+  if (!customerMessages(pr.tenantId, pr.conversationId).some((m) => mentionsDistrict(m ?? "", place))) {
+    return {
+      error: "DISTRICT_NOT_GIVEN",
+      message: `The customer hasn't said they are in ${place.district}. Don't quote yet: confirm the item and its price, and ask for name, mobile number and full delivery address (with district) together in one message.`,
+    };
   }
   let pricing;
   try {
@@ -238,7 +268,12 @@ async function quoteOrder(pr: CustomerAgentPrincipal, a: z.infer<typeof QuoteArg
   return {
     quote_id: quote.id,
     district: place.district,
-    items: quote.lines.map((l) => ({ name: l.name, sku: l.sku, unit_price_bdt: l.unit_price, quantity: l.quantity, line_total_bdt: l.line_total })),
+    items: quote.lines.map((l, i) => {
+      // The size the customer sees in the quote message (pricing keeps the order of the requested items)
+      const v = pricing.items[i] ? db.findVariantById(pr.tenantId, pricing.items[i].variant_id) : undefined;
+      const size = v ? v.attributes?.size ?? v.title : undefined;
+      return { name: l.name, sku: l.sku, ...(size ? { size } : {}), unit_price_bdt: l.unit_price, quantity: l.quantity, line_total_bdt: l.line_total };
+    }),
     subtotal_bdt: quote.subtotal,
     discount_bdt: quote.discount_total,
     delivery_charge_bdt: quote.delivery_charge,
@@ -354,19 +389,21 @@ async function placeOrder(pr: CustomerAgentPrincipal, a: z.infer<typeof PlaceArg
 }
 
 async function getMyOrders(pr: CustomerAgentPrincipal): Promise<ToolResult> {
-  const orders = visibleOrders(pr, 5);
+  const orders = await findVisibleOrders(pr, 5);
   if (!orders.length) {
     return { orders: [], message: "No orders are linked to this chat. If they need an existing order, hand off to the team." };
   }
+  await loadOrderRows(pr.tenantId, orders.map((o) => o.id)); // zero-hydration: their items
   return { orders: orders.map((o) => orderView(pr.tenantId, o)) };
 }
 
 async function getOrderStatus(pr: CustomerAgentPrincipal, a: z.infer<typeof OrderNumberArgs>): Promise<ToolResult> {
   const notFound = { found: false, order_number: a.order_number };
-  const ref = a.order_number.trim().toLowerCase();
-  const order = db.getAllOrders(pr.tenantId).find((o) => o.order_number.toLowerCase() === ref);
+  const ref = a.order_number.trim();
+  const order = await orderRepository.findByOrderNumber(pr.tenantId, ref);
   // Someone else's order gets exactly the answer a missing one does: no existence oracle (F02)
   if (!order || !canSeeOrder(pr, order)) return notFound;
+  await loadOrderRows(pr.tenantId, [order.id]); // zero-hydration: its items
   return { found: true, ...orderView(pr.tenantId, order) };
 }
 
@@ -385,7 +422,7 @@ async function handoffToHuman(pr: CustomerAgentPrincipal, a: z.infer<typeof Hand
   const result = await new RequestHumanHandoffTool().execute(
     capabilityContext(pr, "handoff"),
     { reason: a.reason, summary: a.summary, priority: urgent ? "HIGH" : "NORMAL" },
-    { conversationId: pr.conversationId, card: customerAgentCardContext(pr, a.reason) }
+    { conversationId: pr.conversationId, card: customerAgentCardContext(pr, a.reason, await findVisibleOrders(pr, 5)) }
   );
   return result as ToolResult;
 }
@@ -415,7 +452,7 @@ export const CUSTOMER_TOOLS: Record<string, CustomerTool> = {
   get_delivery_charge: {
     def: def(
       "get_delivery_charge",
-      "Delivery charge in BDT for one of Bangladesh's 64 districts (zone is decided by the server). Use when the customer asks what delivery costs. Example: {\"district\": \"Sylhet\"}. For an order total, use quote_order instead.",
+      "Delivery charge in BDT for one of Bangladesh's 64 districts (zone is decided by the server). Use when the customer asks what delivery costs alone. Example: {\"district\": \"Sylhet\"}. For an order total, use quote_order directly instead (do not call this first).",
       { type: "object", properties: { district: { type: "string", description: "District name in English or Bangla, e.g. \"Dhaka\", \"Chattogram\", \"সিলেট\". An area like Mirpur or Uttara is in Dhaka district." } }, required: ["district"] }
     ),
     schema: DistrictArgs,
@@ -424,7 +461,7 @@ export const CUSTOMER_TOOLS: Record<string, CustomerTool> = {
   quote_order: {
     def: def(
       "quote_order",
-      "Price a possible order on the server: item prices, coupon discount, delivery charge and grand total in BDT. It doesn't create an order. Returns a quote_id that place_order needs. Use whenever the customer wants a total or wants to buy. Quantities are 1-10 per item. Example: {\"items\": [{\"variant_id\": \"var_1\", \"quantity\": 2}], \"district\": \"Dhaka\"}",
+      "Price a possible order on the server: item prices, coupon discount, delivery charge and grand total in BDT. It automatically computes the delivery charge for the district on the server (do not call get_delivery_charge first). Returns a quote_id that place_order needs. Use whenever the customer wants a total or wants to buy, once the customer has told you their district (never guess one). Quantities are 1-10 per item. Example: {\"items\": [{\"variant_id\": \"var_1\", \"quantity\": 2}], \"district\": \"Dhaka\"}",
       {
         type: "object",
         properties: {
@@ -496,6 +533,7 @@ export const CUSTOMER_TOOLS: Record<string, CustomerTool> = {
 };
 
 export const CUSTOMER_TOOL_NAMES = Object.keys(CUSTOMER_TOOLS);
+const CATALOG_TOOLS = new Set(["search_products", "get_product", "quote_order"]);
 
 /**
  * Runs one tool call for the customer agent: only the tools above, only with arguments their strict schema accepts.
@@ -515,7 +553,12 @@ export async function runCustomerTool(
     return { ok: false, refused: "INVALID_ARGS", result: { error: "INVALID_ARGUMENTS", issues: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`) } };
   }
   try {
-    const result = await tool.run(pr, parsed.data as never);
+    // A scope for zero-hydration rows (the worker runs outside a request); nested in a request's, it shares it
+    const result = await db.withTenantReads(async () => {
+      // The shop's catalog and stock, for the tools that search, show, price or check stock (read-only)
+      if (CATALOG_TOOLS.has(name)) await loadTenantRows(pr.tenantId, ["products", "product_variants", "inventory_items", "warehouses"]);
+      return tool.run(pr, parsed.data as never);
+    });
     return { ok: !result.error, result };
   } catch (err) {
     // Internal error text stays in the log: the model could repeat it to the customer

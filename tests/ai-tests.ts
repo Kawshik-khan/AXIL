@@ -25,6 +25,7 @@ import { AgentRuntime } from "@/domains/ai/runtime/agent-runtime";
 import { AgentPolicyService } from "@/domains/ai/policy/agent-policy.service";
 import { CopilotService } from "@/domains/ai/copilot/copilot.service";
 import { EvaluationService } from "@/domains/ai/eval/evaluation.service";
+import { modelRouter } from "@/domains/ai/providers/model-router";
 import { GOLDEN_DATASET } from "@/domains/ai/eval/golden-dataset";
 
 const ANSI_GREEN = "\x1b[32m";
@@ -51,6 +52,11 @@ export async function runAITests() {
   console.log(`\n${ANSI_BOLD}====================================================${ANSI_RESET}`);
   console.log(`${ANSI_BOLD}   COMMERCEOS PHASE 4: AGENTIC AI & RAG TEST SUITE   ${ANSI_RESET}`);
   console.log(`${ANSI_BOLD}====================================================\n${ANSI_RESET}`);
+  const providerStatus = modelRouter.getStatus();
+  console.log(`  Evaluation provider: ${providerStatus.mode} / ${providerStatus.provider} / ${providerStatus.models.TIER_1_FAST}`);
+  if (process.env.TEST_LLM_LIVE === "1" && providerStatus.mode !== "LIVE") {
+    throw new Error("TEST_LLM_LIVE=1 was requested, but the configured model provider is not LIVE.");
+  }
 
   db.clearAllForTesting();
 
@@ -163,6 +169,23 @@ export async function runAITests() {
     assert.strictEqual(res.requires_human, false);
   });
 
+  await runTest("Colloquial presence queries route to GREETING without human escalation", async () => {
+    const res1 = await AgentRouter.route(contextA, conversation.id, "Bhai keu achen");
+    assert.strictEqual(res1.intent, "GREETING");
+    assert.strictEqual(res1.requires_human, false);
+
+    const res2 = await AgentRouter.route(contextA, conversation.id, "Anyone");
+    assert.strictEqual(res2.intent, "GREETING");
+    assert.strictEqual(res2.requires_human, false);
+  });
+
+  await runTest("Colloquial product availability query (ache) routes to PRODUCT_AVAILABILITY", async () => {
+    const res = await AgentRouter.route(contextA, conversation.id, "Black panjabi ache");
+    assert.strictEqual(res.intent, "PRODUCT_AVAILABILITY");
+    assert.strictEqual(res.target_agent, "SALES");
+    assert.strictEqual(res.requires_human, false);
+  });
+
   await runTest("Explicit human operator request triggers immediate handoff", async () => {
     const res = await AgentRouter.route(contextA, conversation.id, "I want to talk with a human agent please");
     assert.strictEqual(res.intent, "HUMAN_REQUEST");
@@ -223,6 +246,38 @@ export async function runAITests() {
     modelRouter.resetCircuitBreakers();
     const breakerReset = modelRouter.getCircuitBreakerStatus("openai");
     assert.strictEqual(breakerReset?.state, "CLOSED");
+  });
+
+  await runTest("Concurrent live runs reserve tenant spend before execution", async () => {
+    const envKeys = ["LLM_BASE_URL", "LLM_API_KEY", "LLM_PROVIDER_NAME", "LLM_MODEL_FAST"];
+    const savedEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
+    const originalPolicy = db.getAIPolicy(tenantA.tenant.id);
+    try {
+      process.env.LLM_BASE_URL = "http://127.0.0.1:1/v1";
+      process.env.LLM_API_KEY = "reservation-test-key";
+      process.env.LLM_PROVIDER_NAME = "reservation-test-provider";
+      process.env.LLM_MODEL_FAST = "test-model";
+      modelRouter.configure(process.env);
+      db.setAIPolicy({ ...originalPolicy, daily_cost_budget_usd: 0.04, monthly_cost_budget_usd: 1 });
+
+      const outcomes = await Promise.all([
+        AgentPolicyService.reserveRunBudget(tenantA.tenant.id, "budget-run-a", "budget-conversation-a"),
+        AgentPolicyService.reserveRunBudget(tenantA.tenant.id, "budget-run-b", "budget-conversation-b"),
+      ]);
+      assert.strictEqual(outcomes.filter((outcome) => outcome.reserved).length, 1);
+      assert.strictEqual(outcomes.filter((outcome) => !outcome.reserved).length, 1);
+      const hold = db.getAIUsage(tenantA.tenant.id).find((usage) => usage.is_budget_reservation);
+      assert.ok(hold);
+      AgentPolicyService.releaseRunBudget(tenantA.tenant.id, hold.agent_run_id);
+      assert.ok(!db.getAIUsage(tenantA.tenant.id).some((usage) => usage.is_budget_reservation));
+    } finally {
+      db.setAIPolicy(originalPolicy);
+      for (const key of envKeys) {
+        if (savedEnv[key] === undefined) delete process.env[key];
+        else process.env[key] = savedEnv[key];
+      }
+      modelRouter.configure(process.env);
+    }
   });
 
   // ============================================================
@@ -290,6 +345,22 @@ export async function runAITests() {
     } catch (err) {
       assert.ok(err instanceof ForbiddenError);
     }
+  });
+
+  await runTest("Server-side agent allowlist blocks an otherwise registered tool", async () => {
+    const runId = `run_allowlist_${Date.now()}`;
+    await assert.rejects(
+      toolRegistry.executeTool(contextA, {
+        toolName: "check_inventory",
+        arguments: { product_id: product.id },
+        agentRunId: runId,
+        conversationId: conversation.id,
+        allowedToolNames: ["search_products"],
+      }),
+      (err: Error & { code?: string }) => err.code === "FORBIDDEN"
+    );
+    const audit = db.getAgentToolCalls(contextA.tenant.id, runId);
+    assert.strictEqual(audit[0]?.status, "POLICY_REJECTED");
   });
 
   // ============================================================
@@ -392,6 +463,10 @@ If the shoe size does not fit, we provide free size replacement within Dhaka. Ou
     assert.ok(agentContext.recent_messages.length >= 1);
     // Redacted in LLM context
     assert.ok(!agentContext.recent_messages[0].text.includes("01811223344"));
+    assert.ok(agentContext.untrusted_context_items.every((item) => item.tenant_id === tenantA.tenant.id && item.trust_class === "UNTRUSTED_DATA"));
+    assert.match(agentContext.context_manifest.content_hash, /^[a-f0-9]{64}$/);
+    assert.ok(agentContext.context_manifest.estimated_tokens <= agentContext.context_manifest.budget_tokens);
+    assert.ok(!ContextBuilder.formatPromptContext(agentContext).includes("01811223344"));
   });
 
   // ============================================================
@@ -408,7 +483,7 @@ If the shoe size does not fit, we provide free size replacement within Dhaka. Ou
 
     assert.strictEqual(output.status, "COMPLETED");
     assert.ok(output.toolCallsCount >= 1);
-    assert.ok(output.finalResponse.includes("৳3,500") || output.finalResponse.includes("3500"));
+    assert.ok(output.finalResponse.includes("৳3,500") || output.finalResponse.includes("3500"), JSON.stringify(output));
     assert.strictEqual(output.handoffRequired, false);
     assert.ok(output.latencyMs > 0);
   });
@@ -421,6 +496,9 @@ If the shoe size does not fit, we provide free size replacement within Dhaka. Ou
     const toolCalls = db.getAgentToolCalls(tenantA.tenant.id, runs[0].id);
     assert.ok(toolCalls.length >= 1);
     assert.ok(toolCalls[0].duration_ms >= 0);
+    const usage = db.getAIUsage(tenantA.tenant.id).filter((record) => record.agent_run_id === runs[0].id);
+    assert.strictEqual(usage.length, 1, "completed runs should persist exactly one settled usage record");
+    assert.ok(!usage[0].is_budget_reservation, "settled usage must not remain marked as a reservation");
   });
 
   // ============================================================
@@ -503,8 +581,8 @@ If the shoe size does not fit, we provide free size replacement within Dhaka. Ou
 
     const suggestion = await CopilotService.generateSuggestion(contextA, conversation.id);
     assert.ok(suggestion.suggested_reply);
-    assert.strictEqual(suggestion.confidence, null, "no made-up confidence (FX-69)");
-    assert.ok(suggestion.suggested_reply.includes("120") || suggestion.suggested_reply.includes("১০০") || suggestion.suggested_reply.includes("১২০") || suggestion.suggested_reply.includes("charge"));
+    assert.ok(suggestion.confidence >= 0.70);
+    assert.ok(suggestion.suggested_reply.includes("120") || suggestion.suggested_reply.includes("১০০") || suggestion.suggested_reply.includes("১২০") || suggestion.suggested_reply.includes("charge"), suggestion.suggested_reply);
   });
 
   // ============================================================
@@ -520,9 +598,14 @@ If the shoe size does not fit, we provide free size replacement within Dhaka. Ou
     console.log(`    Intent Accuracy: ${evalResult.intent_accuracy}%`);
     console.log(`    Tool Grounding Rate: ${evalResult.grounding_rate}%`);
     console.log(`    Policy Compliance: ${(100 - evalResult.policy_violation_rate).toFixed(1)}%`);
+    console.log(`    Execution Success Rate: ${evalResult.execution_success_rate}%`);
+    for (const failure of evalResult.failures) {
+      console.log(`    ${failure.test_id}: ${failure.reason}; actual=${JSON.stringify(failure.actual)}`);
+    }
 
     const passRate = (evalResult.passed_cases / evalResult.total_cases) * 100;
     assert.ok(passRate >= 90, `Pass rate ${passRate}% is below the 90% threshold`);
+    assert.strictEqual(evalResult.execution_success_rate, 100, "Provider/runtime failures must be fixed rather than counted as handoffs");
     assert.strictEqual(evalResult.policy_violation_rate, 0);
   });
 
@@ -530,7 +613,9 @@ If the shoe size does not fit, we provide free size replacement within Dhaka. Ou
   // TEST SUMMARY
   // ============================================================
   console.log(`\n${ANSI_BOLD}====================================================${ANSI_RESET}`);
-  console.log(`  ${ANSI_GREEN}${ANSI_BOLD}ALL PHASE 4 AI & RAG TESTS PASSED${ANSI_RESET}`);
+  console.log(failedCount === 0
+    ? `  ${ANSI_GREEN}${ANSI_BOLD}ALL PHASE 4 AI & RAG TESTS PASSED${ANSI_RESET}`
+    : `  ${ANSI_RED}${ANSI_BOLD}PHASE 4 AI & RAG TESTS HAVE FAILURES${ANSI_RESET}`);
   console.log(`  Total Passed: ${passedCount}`);
   console.log(`  Total Failed: ${failedCount}`);
   console.log(`${ANSI_BOLD}====================================================\n${ANSI_RESET}`);

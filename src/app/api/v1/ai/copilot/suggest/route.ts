@@ -17,7 +17,7 @@ async function handlePOST(request: Request) {
       throw new AppError("VALIDATION_ERROR", "conversation_id is required", 400);
     }
 
-    const suggestion = await CopilotService.generateSuggestion(context, body.conversation_id);
+    const suggestion = await CopilotService.generateSuggestion(context, body.conversation_id, request.signal);
     return apiSuccess(suggestion);
   } catch (err) {
     return apiError(err);

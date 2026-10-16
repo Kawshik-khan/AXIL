@@ -4,6 +4,7 @@ import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response"
 import { customerLifecycleService } from "@/domains/growth/services/customer-lifecycle.service";
 import { db } from "@/infrastructure/db";
 import { withStore } from "@/lib/store-unit";
+import { COMMERCE_ANALYTICS_COLLECTIONS } from "@/infrastructure/db/tenant-rows";
 
 async function handleGET(request: Request) {
   try {
@@ -23,4 +24,4 @@ async function handleGET(request: Request) {
   }
 }
 
-export const GET = withStore("GET", handleGET);
+export const GET = withStore("GET", handleGET, { tenantRows: { collections: COMMERCE_ANALYTICS_COLLECTIONS, permission: PERMISSIONS.MARKETING_READ } });

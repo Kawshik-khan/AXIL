@@ -4,6 +4,7 @@ import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { enterpriseAnalyticsService } from "@/domains/enterprise/services/enterprise-analytics.service";
 import { withStore } from "@/lib/store-unit";
+import { OPERATIONS_COLLECTIONS } from "@/infrastructure/db/tenant-rows";
 
 async function handleGET(request: Request) {
   try {
@@ -21,4 +22,4 @@ async function handleGET(request: Request) {
   }
 }
 
-export const GET = withStore("GET", handleGET);
+export const GET = withStore("GET", handleGET, { tenantRows: { collections: OPERATIONS_COLLECTIONS, permission: PERMISSIONS.ENTERPRISE_READ } });

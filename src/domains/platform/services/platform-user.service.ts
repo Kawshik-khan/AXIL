@@ -3,6 +3,8 @@ import { PlatformMembershipRecord } from "@/types/platform";
 import { PlatformContext, PlatformRole } from "@/lib/context";
 import { PlatformAuthorizationService } from "./platform-authorization.service";
 import { PlatformAuditService } from "./platform-audit.service";
+import { PrivilegedActionGate } from "./privileged-action-gate";
+import { PLATFORM_ROLE_PERMISSIONS } from "@/lib/permissions";
 import { AppError, NotFoundError } from "@/lib/errors";
 import crypto from "crypto";
 
@@ -36,11 +38,30 @@ export class PlatformUserService {
    * Grants platform operator membership to an authenticated user.
    */
   public static assignPlatformRole(
-    input: { userId: string; role: PlatformRole; reason: string },
+    input: { userId: string; role: PlatformRole; reason: string; ticketRef?: string; approvalId?: string },
     context: PlatformContext
   ): PlatformMembershipRecord {
-    PlatformAuthorizationService.assertCan(context, "security.manage");
-    PlatformAuthorizationService.assertStepUp(context, "security.manage");
+    // CRITICAL: step-up, a ticket and a second operator; nobody changes their own role
+    PrivilegedActionGate.assert(context, "operator.assign_role", {
+      reason: input.reason,
+      ticketRef: input.ticketRef,
+      approvalId: input.approvalId,
+      payload: { user_id: input.userId, role: input.role },
+    });
+    if (input.userId === context.platformUser.id) {
+      throw new AppError("SELF_ROLE_CHANGE", "Operators cannot change their own platform role.", 403);
+    }
+    // No escalation: you can only grant a role whose permissions you hold yourself (security review M4)
+    const granted = PLATFORM_ROLE_PERMISSIONS[input.role];
+    if (!granted || !granted.every((p) => context.permissions.includes(p))) {
+      throw new AppError("ROLE_ESCALATION", "You can only grant a role whose permissions you hold.", 403);
+    }
+    // ...and only change operators whose current permissions you hold (no demoting a more senior operator)
+    const currentMembership = db.findPlatformMembershipByUserId(input.userId);
+    const current = currentMembership ? PLATFORM_ROLE_PERMISSIONS[currentMembership.role] : [];
+    if (!current.every((p) => context.permissions.includes(p))) {
+      throw new AppError("ROLE_ESCALATION", "You can't change the role of an operator whose permissions you don't hold.", 403);
+    }
 
     const user = db.findUserById(input.userId);
     if (!user) throw new NotFoundError(`User "${input.userId}" not found.`);
@@ -69,7 +90,7 @@ export class PlatformUserService {
         action: "platform_user.assign_role",
         resource_type: "platform_membership",
         resource_id: membership.id,
-        reason: input.reason || `Assigned platform role ${input.role}`,
+        reason: input.reason.trim(),
         before_state: existing ? { role: existing.role } : null,
         after_state: { role: input.role, user_email: user.email },
         result: "SUCCESS",

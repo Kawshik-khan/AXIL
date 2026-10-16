@@ -167,19 +167,36 @@ export class KnowledgeService {
       version: doc.version,
       language: doc.language,
     });
-    const childEmbeddings = await EmbeddingService.embedBatch(childChunks.map((c) => `${c.section_heading}\n${c.content}`));
-    const stamp = EmbeddingService.currentStamp();
+    const childTexts = childChunks.map((c) => `${c.section_heading}\n${c.content}`);
+    const childEmbeddings = await EmbeddingService.embedBatch(childTexts);
+    if (childEmbeddings.length !== childChunks.length) throw new Error("Embedding batch did not return one vector per chunk.");
+    const embeddingProfile = EmbeddingService.getProfile(childEmbeddings[0]?.length || 0);
+    // What the re-index job compares against (FX-82): the router's stamp, not the bare model name
+    const stampedModel = EmbeddingService.currentStamp().embedding_model;
     const versionAt = new Date().toISOString();
     childChunks.forEach((c, idx) => {
       c.embedding = childEmbeddings[idx];
+      Object.assign(c.metadata, {
+        embedding_model: stampedModel,
+        embedding_provider: embeddingProfile.provider,
+        embedding_dimensions: embeddingProfile.dimensions,
+        preprocessing_version: embeddingProfile.preprocessing_version,
+        index_version: embeddingProfile.index_version,
+      });
     });
+    parentChunks.forEach((c) => Object.assign(c.metadata, {
+      embedding_model: stampedModel,
+      embedding_provider: embeddingProfile.provider,
+      embedding_dimensions: embeddingProfile.dimensions,
+      preprocessing_version: embeddingProfile.preprocessing_version,
+      index_version: embeddingProfile.index_version,
+    }));
     const allChunks = [...parentChunks, ...childChunks].map((c) => ({
       ...c,
       metadata: {
         ...c.metadata,
         updated_at: versionAt,
         source: `${doc.document_type}:${doc.title}`,
-        ...(c.chunk_type === "PARENT" ? {} : { embedding_model: stamp.embedding_model, dimensions: stamp.dimensions ?? c.embedding.length }),
       },
     }));
     db.saveKnowledgeChunks(tenantId, doc.id, allChunks);
@@ -206,6 +223,11 @@ export class KnowledgeService {
                 language: doc.language || "mixed",
                 content: c.content,
                 parent_chunk_id: c.parent_chunk_id || "",
+                embedding_model: c.metadata.embedding_model,
+                embedding_provider: c.metadata.embedding_provider,
+                embedding_dimensions: c.metadata.embedding_dimensions,
+                preprocessing_version: c.metadata.preprocessing_version,
+                index_version: c.metadata.index_version,
               },
             }))
         );
@@ -214,7 +236,12 @@ export class KnowledgeService {
       logger.warn("rag.qdrant_upsert_failed", { tenant_id: tenantId, document_id: doc.id, error: err instanceof Error ? err.message : "error" });
     }
 
-    return db.updateKnowledgeDocument(tenantId, doc.id, { status: "ACTIVE", chunk_count: allChunks.length, processing_error: undefined })!;
+    return db.updateKnowledgeDocument(tenantId, doc.id, {
+      status: "ACTIVE",
+      chunk_count: allChunks.length,
+      processing_error: undefined,
+      embedding_profile: embeddingProfile,
+    })!;
   }
 
   /**
@@ -230,7 +257,7 @@ export class KnowledgeService {
       const stale = db
         .getAllTenantKnowledgeChunks(tenantId)
         .filter((c) => c.chunk_type !== "PARENT")
-        .filter((c) => c.metadata.embedding_model !== stamp.embedding_model || (stamp.dimensions !== undefined && c.metadata.dimensions !== stamp.dimensions));
+        .filter((c) => c.metadata.embedding_model !== stamp.embedding_model || (stamp.dimensions !== undefined && (c.metadata.embedding_dimensions ?? c.metadata.dimensions) !== stamp.dimensions));
       stats.checked += stale.length;
       for (let i = 0; i < stale.length; i += batchSize) {
         for (const c of stale.slice(i, i + batchSize)) {
@@ -262,6 +289,10 @@ export class KnowledgeService {
       topK: 10,
       rerankTopK: 10,
       minRerankScore: 0,
+      // No confidence cutoff either: the tool returns the closest documents and the agent decides relevance. The
+      // reranker scores shared words, so a Bangla question about an English policy scored ~0.35 against the default
+      // 0.65 and the tool returned nothing (retrieval eval 2026-10-14: bn Recall@2 57%) though dense search ranked it first
+      confidenceThresholdLow: 0,
       resolveParentContext: true,
       enableQueryExpansion: true,
     });
@@ -277,6 +308,40 @@ export class KnowledgeService {
       if (out.length >= maxDocuments) break;
     }
     return out;
+  }
+
+  private static async upsertVectorGeneration(
+    tenantId: string,
+    documentId: string,
+    documentTitle: string,
+    documentType: KnowledgeDocumentType,
+    language: string,
+    chunks: KnowledgeChunk[],
+  ): Promise<boolean> {
+    const { isQdrantConfigured, upsertChunks } = await import("@/infrastructure/qdrant/client");
+    if (!isQdrantConfigured(tenantId)) return false;
+    await upsertChunks(tenantId, chunks.map((chunk) => ({
+      id: chunk.id,
+      values: chunk.embedding,
+      metadata: {
+        tenant_id: tenantId,
+        document_id: documentId,
+        document_title: documentTitle,
+        document_type: documentType,
+        section_heading: chunk.section_heading || "General",
+        chunk_index: chunk.chunk_index,
+        version: chunk.metadata.version,
+        language,
+        content: chunk.content,
+        parent_chunk_id: chunk.parent_chunk_id || "",
+        embedding_model: chunk.metadata.embedding_model,
+        embedding_provider: chunk.metadata.embedding_provider,
+        embedding_dimensions: chunk.metadata.embedding_dimensions,
+        preprocessing_version: chunk.metadata.preprocessing_version,
+        index_version: chunk.metadata.index_version,
+      },
+    })));
+    return true;
   }
 
   /**
@@ -340,13 +405,11 @@ export class KnowledgeService {
   ): Promise<boolean> {
     RbacService.assertCan(context, PERMISSIONS.AI_KNOWLEDGE_MANAGE);
 
-    try {
-      const { isQdrantConfigured, deleteDocumentVectors } = await import("@/infrastructure/qdrant/client");
-      if (isQdrantConfigured(context.tenant.id)) {
-        await deleteDocumentVectors(context.tenant.id, documentId);
-      }
-    } catch (pcErr) {
-      console.warn("[Qdrant] Delete vectors warning:", pcErr);
+    const { isQdrantConfigured, deleteDocumentVectors } = await import("@/infrastructure/qdrant/client");
+    if (isQdrantConfigured(context.tenant.id)) {
+      // Do not acknowledge deletion while remote vectors remain behind. Local search also
+      // verifies its document manifest, but the remote cleanup is part of this operation.
+      await deleteDocumentVectors(context.tenant.id, documentId);
     }
 
     return db.deleteKnowledgeDocument(context.tenant.id, documentId);

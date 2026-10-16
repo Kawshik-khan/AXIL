@@ -253,7 +253,65 @@ export async function runMarketingTests() {
     });
   });
 
-  await runTest("Mark cart as recovered and credit attribution", async () => {
+  // Recovery must credit a real order: of this tenant, of the cart's customer, not cancelled, not credited twice
+  const recoveryOrder = (id: string, overrides: Record<string, unknown> = {}) => {
+    const order = {
+      id,
+      tenant_id: tenantId,
+      order_number: id.toUpperCase(),
+      customer_id: cust1.id,
+      status: "CONFIRMED",
+      payment_status: "PAID",
+      grand_total: 1910,
+      total_amount: 1910,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      ...overrides,
+    };
+    db.createOrder(order as any, [
+      {
+        id: `item_${id}`,
+        tenant_id: order.tenant_id,
+        order_id: id,
+        product_id: prd1.id,
+        quantity: 1,
+        unit_price: 1850,
+        total_price: 1850,
+      },
+    ] as any);
+    return order;
+  };
+  const expectRecoverError = (orderId: string, status: number, cartId = recordedCartId) => {
+    assert.throws(
+      () => marketingService.markCartRecovered({ tenantId, cartId, orderId }),
+      (err: any) => err?.statusCode === status,
+      `expected ${status} for ${orderId}`
+    );
+    const cart = db.getAbandonedCartById(tenantId, cartId);
+    assert.notStrictEqual(cart?.recovery_stage, "RECOVERED", "a rejected recovery leaves the cart unrecovered");
+    assert.strictEqual(cart?.recovered_order_id, undefined);
+  };
+
+  await runTest("Recovery rejects an order id that does not exist (invented id)", async () => {
+    expectRecoverError(`ord_rec_${Date.now()}`, 404);
+  });
+
+  await runTest("Recovery rejects another tenant's order", async () => {
+    recoveryOrder("ord_rec_other_tenant", { tenant_id: "tenant_mkt_test_other" });
+    expectRecoverError("ord_rec_other_tenant", 404);
+  });
+
+  await runTest("Recovery rejects an order of a different customer", async () => {
+    expectRecoverError("ord_vip_01", 400);
+  });
+
+  await runTest("Recovery rejects a cancelled order", async () => {
+    recoveryOrder("ord_rec_cancelled", { status: "CANCELLED" });
+    expectRecoverError("ord_rec_cancelled", 409);
+  });
+
+  await runTest("Mark cart as recovered: revenue and attribution come from the real order", async () => {
+    recoveryOrder("ord_recovered_101");
     const recovered = marketingService.markCartRecovered({
       tenantId,
       cartId: recordedCartId,
@@ -262,6 +320,31 @@ export async function runMarketingTests() {
 
     assert.strictEqual(recovered.recovery_stage, "RECOVERED");
     assert.strictEqual(recovered.recovered_order_id, "ord_recovered_101");
+    assert.strictEqual(recovered.recovered_revenue_bdt, 1910, "order grand_total, not the cart total (1850)");
+
+    const attributions = db.getCampaignAttributions(tenantId).filter((a) => a.order_id === "ord_recovered_101");
+    assert.strictEqual(attributions.length, 1);
+    assert.strictEqual(attributions[0].order_total_bdt, 1910);
+
+    // Repeating the same credit is a no-op, not a second attribution
+    marketingService.markCartRecovered({ tenantId, cartId: recordedCartId, orderId: "ord_recovered_101" });
+    assert.strictEqual(db.getCampaignAttributions(tenantId).filter((a) => a.order_id === "ord_recovered_101").length, 1);
+  });
+
+  await runTest("Recovery rejects an order already credited to another cart, and re-crediting a recovered cart", async () => {
+    const otherCart = marketingService.recordAbandonedCart({
+      tenantId,
+      customerId: cust1.id,
+      cartItems: [{ product_id: prd1.id, title: prd1.name, price: 1850, quantity: 1 }],
+    });
+    expectRecoverError("ord_recovered_101", 409, otherCart.id);
+
+    recoveryOrder("ord_recovered_102");
+    assert.throws(
+      () => marketingService.markCartRecovered({ tenantId, cartId: recordedCartId, orderId: "ord_recovered_102" }),
+      (err: any) => err?.statusCode === 409
+    );
+    assert.strictEqual(db.getAbandonedCartById(tenantId, recordedCartId)?.recovered_order_id, "ord_recovered_101");
   });
 
   // ----------------------------------------------------------------------

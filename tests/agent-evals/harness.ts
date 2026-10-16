@@ -25,6 +25,11 @@ export class RecordingProvider implements LLMProvider {
   constructor(private readonly inner: LLMProvider) {
     this.providerName = inner.providerName;
   }
+  /** The wrapped provider's model names, so the router sends the real model (it sent "not-configured": HTTP 404). */
+  modelFor(tier: "TIER_1_FAST" | "TIER_2_REASONING" | "TIER_3_EMBEDDING"): string {
+    const named = this.inner as LLMProvider & { modelFor?: (t: typeof tier) => string };
+    return typeof named.modelFor === "function" ? named.modelFor(tier) : "not-configured";
+  }
   async chat(messages: LLMMessage[], tools?: LLMToolDefinition[], options?: LLMProviderOptions): Promise<LLMResponse> {
     const rec: CallRecord = { prompt_tokens: 0, completion_tokens: 0, cached_tokens: 0, latency_ms: 0, messages: JSON.parse(JSON.stringify(messages)), tools: tools?.length || 0 };
     const t0 = Date.now();

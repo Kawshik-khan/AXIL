@@ -19,4 +19,4 @@ async function handleGET(
   }
 }
 
-export const GET = withStore("GET", handleGET);
+export const GET = withStore("GET", handleGET, { tenantRows: { collections: ["customers", "customer_addresses", "orders", "order_items"], permission: PERMISSIONS.MARKETING_READ } });

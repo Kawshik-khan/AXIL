@@ -5,6 +5,7 @@ import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response"
 import { paymentOperationsService } from "@/domains/operations/services/payment-operations.service";
 import { db } from "@/infrastructure/db";
 import { withStore } from "@/lib/store-unit";
+import { loadOrderRows } from "@/infrastructure/db/tenant-rows";
 
 async function handleGET(request: Request) {
   try {
@@ -32,6 +33,7 @@ async function handlePOST(request: Request) {
     const tenantId = context.tenant.id;
     const body = await request.json();
 
+    await loadOrderRows(tenantId, [String(body.order_id ?? "")]); // zero-hydration: the order's rows this flow reads and changes
     const reconciled = paymentOperationsService.reconcileTransaction(tenantId, {
       orderId: body.order_id,
       transactionId: body.transaction_id,

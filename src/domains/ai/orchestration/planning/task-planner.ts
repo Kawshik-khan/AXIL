@@ -18,16 +18,22 @@ export class TaskPlanner {
   public async planObjective(
     tenantId: string,
     objective: string,
-    context?: Record<string, unknown>
+    context?: Record<string, unknown>,
+    templateCode?: string
   ): Promise<{
     steps: PlanStepDefinition[];
     rawPlanSteps: WorkflowPlanStep[];
     validation: PlanValidationResult;
+    templateCode?: string;
+    templateVersion?: number;
+    clarification?: string;
   }> {
+    const selection = supervisorAgent.selectTemplate({ objective, context, templateCode });
     // 1. Ask supervisor agent to decompose
     const rawSteps = supervisorAgent.decomposeObjective({
       objective,
       context,
+      templateCode,
     });
 
     // 2. Normalize WorkflowPlanStep to PlanStepDefinition
@@ -51,6 +57,13 @@ export class TaskPlanner {
       steps,
       rawPlanSteps: rawSteps,
       validation,
+      templateCode: selection.code,
+      templateVersion: selection.version,
+      clarification: selection.status === "AMBIGUOUS"
+        ? "This objective matches multiple workflow templates (" + selection.candidates.join(", ") + "). Choose one template or clarify the objective."
+        : selection.status === "UNKNOWN"
+          ? "No supported workflow template matches this objective. Clarify the desired outcome or request manual review."
+          : undefined,
     };
   }
 

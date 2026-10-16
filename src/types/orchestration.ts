@@ -38,11 +38,13 @@ export const TaskStatus = {
   WAITING_DEPENDENCY: "WAITING_DEPENDENCY",
   WAITING_APPROVAL: "WAITING_APPROVAL",
   WAITING_HUMAN: "WAITING_HUMAN",
+  RETRY_WAIT: "RETRY_WAIT",
   PAUSED: "PAUSED",
   COMPLETED: "COMPLETED",
   FAILED: "FAILED",
   CANCELLED: "CANCELLED",
   EXPIRED: "EXPIRED",
+  OUTCOME_UNKNOWN: "OUTCOME_UNKNOWN",
 } as const;
 export type TaskStatus = (typeof TaskStatus)[keyof typeof TaskStatus];
 export type TaskState = TaskStatus;
@@ -161,6 +163,9 @@ export interface AgentTask {
   approval_id?: string;
   verification_id?: string;
   deadline?: string;
+  next_attempt_at?: string;
+  failure_class?: "RETRYABLE" | "PERMANENT" | "POLICY_DENIED" | "RATE_LIMITED" | "OUTCOME_UNKNOWN";
+  budget?: TaskBudget;
   error?: string;
   started_at?: string;
   completed_at?: string;
@@ -180,6 +185,29 @@ export interface WorkflowBudget {
   used_tokens: number;
   used_cost_usd: number;
   used_tool_calls: number;
+  /** Active task holds, stored with the workflow so reservation and usage updates are durable. */
+  reservations?: Record<string, WorkflowTaskBudgetReservation>;
+}
+
+export interface TaskBudget {
+  max_tokens: number;
+  max_cost_usd: number;
+  max_tool_calls: number;
+  used_tokens: number;
+  used_cost_usd: number;
+  used_tool_calls: number;
+}
+
+export interface WorkflowTaskBudgetReservation {
+  reservation_id: string;
+  task_id: string;
+  tokens: number;
+  cost_usd: number;
+  tool_calls: number;
+  used_tokens: number;
+  used_cost_usd: number;
+  used_tool_calls: number;
+  expires_at: string;
 }
 
 export interface WorkflowPlanStep {
@@ -211,9 +239,30 @@ export interface AgentWorkflow {
   created_by: string; // User ID, Agent Type, or SYSTEM
   created_by_type: "USER" | "AGENT" | "SYSTEM" | "EVENT";
   started_at?: string;
+  deadline_at?: string;
   completed_at?: string;
   error?: string;
   metadata?: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Durable command for asynchronous workflow execution. Delivery is at-least-once. */
+export interface WorkflowJob {
+  id: string;
+  tenant_id: string;
+  workflow_id: string;
+  action: "START" | "RESUME" | "RETRY";
+  idempotency_key: string;
+  status: "PENDING" | "IN_FLIGHT" | "RETRY_SCHEDULED" | "COMPLETED" | "DEAD_LETTERED";
+  attempt_count: number;
+  max_attempts: number;
+  next_attempt_at?: string;
+  claimed_until?: string;
+  claim_token?: string;
+  /** Monotonic claim generation used to fence workers holding an older lease. */
+  fence_version: number;
+  last_error?: string;
   created_at: string;
   updated_at: string;
 }
@@ -343,6 +392,11 @@ export interface ApprovalRequest {
   target_entity_id: string;
   entity_state_snapshot: Record<string, unknown>; // Entity snapshot at planning time to detect stale state
   payload: Record<string, unknown>;
+  /** Immutable binding to the exact task body, policy revision and authoritative target state. */
+  requester_id?: string;
+  payload_digest?: string;
+  entity_state_digest?: string;
+  policy_version?: number;
   reason: string;
   status: ApprovalStatus;
   approved_by?: string;
@@ -468,5 +522,6 @@ export interface WorkflowSimulationResult {
     reason: string;
   }>;
   safe_to_execute: boolean;
+  execution_ready: boolean;
   warnings: string[];
 }

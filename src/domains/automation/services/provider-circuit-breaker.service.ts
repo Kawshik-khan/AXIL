@@ -172,4 +172,65 @@ export class ProviderCircuitBreakerService {
 
     return result;
   }
+
+  /**
+   * Resets all circuit breakers for a provider across platform or globally
+   */
+  public static resetPlatform(providerKey: string): void {
+    const upper = providerKey.toUpperCase();
+    for (const [key, stats] of this.states.entries()) {
+      if (stats.providerKey.toUpperCase() === upper) {
+        this.states.delete(key);
+      }
+    }
+  }
+
+  /**
+   * Manually trips all circuit breakers for a provider across platform
+   */
+  public static tripPlatform(providerKey: string): void {
+    const upper = providerKey.toUpperCase();
+    const now = Date.now();
+    const key = `platform:${upper}`;
+    this.states.set(key, {
+      providerKey: upper,
+      state: "OPEN",
+      consecutiveFailures: 5,
+      consecutiveSuccesses: 0,
+      totalRequests: 5,
+      totalFailures: 5,
+      trippedAt: now,
+      lastFailureAt: now,
+    });
+  }
+
+  /**
+   * Retrieves summary for all tracked providers across the entire platform
+   */
+  public static getPlatformProviderStates(): Record<string, { state: CircuitBreakerState; failures: number; policy: string }> {
+    const result: Record<string, { state: CircuitBreakerState; failures: number; policy: string }> = {
+      STEADFAST: { state: "NORMAL", failures: 0, policy: "Auto-trips after 3 consecutive network timeouts" },
+      PATHAO: { state: "NORMAL", failures: 0, policy: "Auto-trips after 3 consecutive network timeouts" },
+      BKASH: { state: "NORMAL", failures: 0, policy: "Fail-closed on cryptographic signature mismatch" },
+      NAGAD: { state: "NORMAL", failures: 0, policy: "Fail-closed on callback verification timeout" },
+    };
+
+    for (const stats of this.states.values()) {
+      const pKey = stats.providerKey.toUpperCase();
+      if (!result[pKey]) {
+        result[pKey] = {
+          state: stats.state,
+          failures: stats.consecutiveFailures,
+          policy: "Auto-trips after 3 consecutive network timeouts",
+        };
+      } else {
+        if (stats.state === "OPEN" || (stats.state === "DEGRADED" && result[pKey].state === "NORMAL")) {
+          result[pKey].state = stats.state;
+        }
+        result[pKey].failures = Math.max(result[pKey].failures, stats.consecutiveFailures);
+      }
+    }
+
+    return result;
+  }
 }

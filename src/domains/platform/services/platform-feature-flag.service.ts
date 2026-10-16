@@ -3,7 +3,9 @@ import { PlatformFeatureFlagRecord } from "@/types/platform";
 import { PlatformContext } from "@/lib/context";
 import { PlatformAuthorizationService } from "./platform-authorization.service";
 import { PlatformAuditService } from "./platform-audit.service";
-import { NotFoundError } from "@/lib/errors";
+import { PrivilegedActionGate } from "./privileged-action-gate";
+import { findKnownFlag } from "../feature-flag-registry";
+import { AppError, NotFoundError } from "@/lib/errors";
 
 export class PlatformFeatureFlagService {
   /**
@@ -38,11 +40,18 @@ export class PlatformFeatureFlagService {
     reason: string,
     context: PlatformContext
   ): PlatformFeatureFlagRecord {
-    PlatformAuthorizationService.assertCan(context, "feature_flag.manage");
+    PrivilegedActionGate.assert(context, "feature_flag.save", { reason, payload: { key: input.key } });
+    if (!findKnownFlag(input.key)) {
+      throw new AppError("UNKNOWN_FLAG", `No code reads the flag "${input.key}", so it can't be set.`, 400);
+    }
+    const unknownTenants = (input.tenant_allowlist ?? []).filter((t) => !db.findTenantById(t));
+    if (unknownTenants.length) throw new AppError("UNKNOWN_TENANTS", `Unknown tenants in the allow-list: ${unknownTenants.join(", ")}`, 400);
 
     const existing = db.findPlatformFeatureFlag(input.key);
     const now = new Date().toISOString();
-    const beforeState = existing ? { is_enabled: existing.is_enabled_globally, rollout: existing.percentage_rollout } : null;
+    const beforeState = existing
+      ? { is_enabled_globally: existing.is_enabled_globally, percentage_rollout: existing.percentage_rollout, tenant_allowlist: existing.tenant_allowlist, description: existing.description }
+      : null;
 
     const flag: PlatformFeatureFlagRecord = {
       id: existing?.id || `flag_${input.key.replace(/[^a-zA-Z0-9_]/g, "_").toLowerCase()}`,
@@ -64,9 +73,9 @@ export class PlatformFeatureFlagService {
         action: "feature_flag.save",
         resource_type: "feature_flag",
         resource_id: flag.id,
-        reason: reason || `Updated feature flag ${flag.key}`,
+        reason: reason.trim(),
         before_state: beforeState,
-        after_state: { key: flag.key, is_enabled: flag.is_enabled_globally, percentage_rollout: flag.percentage_rollout },
+        after_state: { key: flag.key, is_enabled_globally: flag.is_enabled_globally, percentage_rollout: flag.percentage_rollout, tenant_allowlist: flag.tenant_allowlist, description: flag.description },
         result: "SUCCESS",
       },
       context

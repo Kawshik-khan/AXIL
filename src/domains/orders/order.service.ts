@@ -11,6 +11,9 @@ import { CustomerService } from "@/domains/customers/customer.service";
 import { InventoryService } from "@/domains/inventory/inventory.service";
 import { OrderStateMachine } from "@/domains/orders/order-state-machine";
 import { BadRequestError, NotFoundError } from "@/lib/errors";
+import { orderRepository } from "./order.repository";
+import { RtoScoringService } from "@/domains/rto/rto-scoring.service";
+import { loadCustomerRows, loadOrderRows, loadTenantRows, loadTenantRowsWhere } from "@/infrastructure/db/tenant-rows";
 
 export class OrderService {
   public static async listOrders(
@@ -22,10 +25,33 @@ export class OrderService {
       search?: string;
       limit?: number;
       offset?: number;
+      cursor?: string;
     }
-  ): Promise<{ orders: (Order & { customer_name: string; customer_phone: string })[]; total: number }> {
+  ): Promise<{
+    orders: (Order & { customer_name?: string; customer_phone?: string })[];
+    total: number;
+    next_cursor?: string | null;
+    has_more?: boolean;
+  }> {
     RbacService.assertCan(context, PERMISSIONS.ORDERS_READ);
-    return db.getOrders(context.tenant.id, { ...options, limit: options?.limit ?? 50 }); // one page; analytics use getAllOrders
+    if (options?.cursor !== undefined) {
+      const res = await orderRepository.listWithCursor(context.tenant.id, {
+        status: options.status,
+        payment_status: options.payment_status,
+        customer_id: options.customer_id,
+        search: options.search,
+        limit: options.limit ?? 20,
+        cursor: options.cursor,
+      });
+      return {
+        orders: res.items as any,
+        total: res.total ?? res.items.length,
+        next_cursor: res.pagination.next_cursor,
+        has_more: res.pagination.has_more,
+      };
+    }
+    // One page (SQL under zero-hydration); analytics use getAllOrders
+    return (await orderRepository.listOrders(context.tenant.id, { ...options, limit: options?.limit ?? 50 })) as any;
   }
 
   /**
@@ -37,11 +63,12 @@ export class OrderService {
     reference: string
   ): Promise<(Order & { customer_name: string; customer_phone: string }) | undefined> {
     RbacService.assertCan(context, PERMISSIONS.ORDERS_READ);
-    const ref = reference.trim().toLowerCase();
-    const match = db
-      .getAllOrders(context.tenant.id)
-      .find((o) => o.order_number.toLowerCase() === ref || o.id.toLowerCase() === ref);
-    return match ? db.findOrderById(context.tenant.id, match.id) : undefined;
+    const ref = reference.trim();
+    const byId = await orderRepository.findById(context.tenant.id, ref);
+    if (byId) return byId as any;
+    const byNumber = await orderRepository.findByOrderNumber(context.tenant.id, ref);
+    if (byNumber) return byNumber as any;
+    return undefined;
   }
 
   public static async getOrderById(
@@ -49,11 +76,11 @@ export class OrderService {
     orderId: string
   ): Promise<Order & { customer_name: string; customer_phone: string }> {
     RbacService.assertCan(context, PERMISSIONS.ORDERS_READ);
-    const order = db.findOrderById(context.tenant.id, orderId);
+    const order = await orderRepository.findById(context.tenant.id, orderId);
     if (!order) {
       throw new NotFoundError(`Order '${orderId}' not found.`);
     }
-    return order;
+    return order as any;
   }
 
   public static async createOrder(
@@ -132,6 +159,7 @@ export class OrderService {
 
     // 3. Resolve warehouse for inventory allocation
     // This workspace's warehouse only; there used to be a hard-coded "wh_dhaka_main" fallback (FX-36 M11)
+    await loadTenantRows(context.tenant.id, ["warehouses"]); // zero-hydration: this workspace's warehouses
     const tenantWarehouses = db.getWarehouses(context.tenant.id);
     if (payload.warehouse_id && !tenantWarehouses.some((w) => w.id === payload.warehouse_id)) {
       throw new BadRequestError("That warehouse isn't one of this workspace's.");
@@ -142,7 +170,7 @@ export class OrderService {
     }
 
     const orderId = `ord_${Date.now()}_${randomSuffix()}`;
-    const orderNumber = db.generateOrderNumber(context.tenant.id);
+    const orderNumber = db.generateOrderNumber(context.tenant.id, await orderRepository.highestOrderNumber(context.tenant.id));
     const now = new Date().toISOString();
 
     // 4. Atomically reserve inventory for all items
@@ -216,10 +244,12 @@ export class OrderService {
       updated_at: now,
     };
 
+    await loadCustomerRows(context.tenant.id, [customer.id]); // zero-hydration: the customer's order totals change
     const createdOrder = db.createOrder(newOrder, orderItems);
 
     // 7. Increment coupon usage if used
     if (pricing.applied_coupon) {
+      await loadTenantRowsWhere(context.tenant.id, "coupons", { field: "code", values: [pricing.applied_coupon] });
       db.incrementCouponUsage(context.tenant.id, pricing.applied_coupon);
     }
 
@@ -258,6 +288,13 @@ export class OrderService {
       created_at: now,
     });
 
+    // 10. Pre-shipment RTO & courier fraud risk evaluation
+    try {
+      await RtoScoringService.evaluateOrderRisk(context, createdOrder, customer.phone);
+    } catch {
+      // Evaluation non-blocking for order placement
+    }
+
     return createdOrder;
   }
 
@@ -270,6 +307,7 @@ export class OrderService {
     RbacService.assertCan(context, PERMISSIONS.ORDERS_UPDATE);
 
     const order = await this.getOrderById(context, orderId);
+    await loadOrderRows(context.tenant.id, [orderId]); // zero-hydration: the rows the status change reads and changes
 
     // One writer for status: state machine, reservations and events live there (FX-35)
     const updated = OrderLifecycleService.advance(

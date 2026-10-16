@@ -18,7 +18,10 @@ import {
   PanelRightOpen,
   ChevronDown,
   Users,
+  Bot,
 } from "lucide-react";
+
+
 import { Message, Conversation, QuickReply } from "@/types/social";
 import { Button } from "@/components/ui/Button/Button";
 import styles from "./SocialInbox.module.css";
@@ -111,6 +114,28 @@ export const ConversationThread: React.FC<ConversationThreadProps> = ({
       console.error("Copilot suggestion failed", err);
     } finally {
       setIsLoadingCopilot(false);
+    }
+  };
+
+  const [isResumingAutomation, setIsResumingAutomation] = useState(false);
+  const handleResumeAutomation = async () => {
+    if (!conversation?.id) return;
+    try {
+      setIsResumingAutomation(true);
+      const res = await fetch(`/api/v1/social/conversations/${conversation.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ automation_paused: false, status: "OPEN" }),
+      });
+      if (res.ok) {
+        conversation.automation_paused = false;
+        conversation.status = "OPEN";
+        if (onStatusChange) onStatusChange("OPEN");
+      }
+    } catch (err) {
+      console.error("Failed to resume automation", err);
+    } finally {
+      setIsResumingAutomation(false);
     }
   };
 
@@ -328,6 +353,47 @@ export const ConversationThread: React.FC<ConversationThreadProps> = ({
 
       {/* Message Stream */}
       <div ref={streamContainerRef} className={styles.messageStream}>
+        {conversation.automation_paused && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              background: "rgba(245, 158, 11, 0.12)",
+              border: "1px solid rgba(245, 158, 11, 0.35)",
+              borderRadius: "var(--radius-md)",
+              padding: "10px 14px",
+              marginBottom: "12px",
+              fontSize: "0.8125rem",
+              color: "#F59E0B",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <Bot size={16} />
+              <span>
+                <strong>AI Automation Paused:</strong> Customer messages are held for human agents and will not receive automated AI replies until resumed.
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={handleResumeAutomation}
+              disabled={isResumingAutomation}
+              style={{
+                background: "var(--color-primary)",
+                color: "#000",
+                border: "none",
+                fontWeight: 600,
+                fontSize: "0.75rem",
+                padding: "4px 12px",
+                borderRadius: "var(--radius-sm)",
+                cursor: "pointer",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {isResumingAutomation ? "Resuming…" : "Resume AI Assistant"}
+            </button>
+          </div>
+        )}
         {conversation.automation_paused && isHandoffCard(conversation.metadata?.handoff_card) && (
           <HandoffContextCard card={conversation.metadata.handoff_card} />
         )}

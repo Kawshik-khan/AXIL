@@ -17,6 +17,14 @@ export interface HandoffCardData {
   suggested_action?: string;
   slots?: string[];
   open_quote?: { id: string; grand_total: number; district: string };
+  order_draft?: {
+    items: Array<{ variant_id: string; product_name: string; quantity: number; unit_price: number; line_total: number }>;
+    delivery_district: string;
+    subtotal: number;
+    delivery_fee: number;
+    grand_total: number;
+    payment_method: "COD" | "BKASH" | "NAGAD";
+  };
   order_refs?: string[];
   script?: string;
   created_at: string;
@@ -28,7 +36,7 @@ export function isHandoffCard(value: unknown): value is HandoffCardData {
   return Boolean(v && typeof v.reason === "string" && typeof v.summary === "string" && typeof v.sla_due_at === "string");
 }
 
-export function HandoffContextCard({ card }: { card: HandoffCardData }) {
+export function HandoffContextCard({ card, onApproveDraft }: { card: HandoffCardData; onApproveDraft?: () => void }) {
   const due = new Date(card.sla_due_at);
   const overdue = due.getTime() < Date.now();
   const time = (d: Date) => d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -48,6 +56,38 @@ export function HandoffContextCard({ card }: { card: HandoffCardData }) {
         {card.open_quote && (
           <div>
             Open quote: ৳{card.open_quote.grand_total.toLocaleString("en-BD")} to {card.open_quote.district} (waiting for the customer&apos;s yes)
+          </div>
+        )}
+        {card.order_draft && (
+          <div style={{ marginTop: "8px", padding: "8px", background: "rgba(0,0,0,0.04)", borderRadius: "4px" }}>
+            <div style={{ fontWeight: 600, marginBottom: "4px" }}>📦 Order Draft for Review:</div>
+            {card.order_draft.items.map((it, i) => (
+              <div key={i} style={{ fontSize: "0.75rem" }}>
+                • {it.product_name} x {it.quantity} — ৳{it.line_total.toLocaleString("en-BD")}
+              </div>
+            ))}
+            <div style={{ marginTop: "4px", fontSize: "0.75rem", fontWeight: 600 }}>
+              Grand Total: ৳{card.order_draft.grand_total.toLocaleString("en-BD")} ({card.order_draft.payment_method})
+            </div>
+            {onApproveDraft && (
+              <button
+                type="button"
+                onClick={onApproveDraft}
+                style={{
+                  marginTop: "6px",
+                  background: "var(--color-primary, #10B981)",
+                  color: "#000",
+                  border: "none",
+                  borderRadius: "4px",
+                  padding: "4px 8px",
+                  fontSize: "0.6875rem",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                Approve & Confirm Draft
+              </button>
+            )}
           </div>
         )}
         {card.order_refs && card.order_refs.length > 0 && <div>Orders in this chat: {card.order_refs.join(", ")}</div>}

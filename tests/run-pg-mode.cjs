@@ -6,7 +6,10 @@ const { spawnSync } = require("child_process");
 const path = require("path");
 
 const ROOT = path.resolve(__dirname, "..");
-const suites = require(path.join(ROOT, "package.json")).scripts.test.match(/\.\/tests\/[\w-]+\.ts/g);
+const cliArgs = process.argv.slice(2);
+const suites = cliArgs.length > 0
+  ? cliArgs
+  : require(path.join(ROOT, "package.json")).scripts.test.match(/\.\/tests\/[\w-]+\.ts/g);
 let failed = 0;
 for (const suite of suites) {
   const res = spawnSync(process.execPath, ["tests/ts-runner.cjs", suite], {

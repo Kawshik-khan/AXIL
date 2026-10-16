@@ -205,3 +205,36 @@ Platform routes are segregated from merchant tenant routes. All platform endpoin
 - `POST /api/v1/platform/feature-flags`: Create or update feature flag rules.
 
 
+
+### 3.3 As implemented: super-admin console routes (ADR-116, 2026-10-12)
+
+The catalog above is the target design. The routes below exist. All use `extractPlatformContext`, strict Zod bodies and `withStore`. Privileged ones go through `PrivilegedActionGate` (`src/domains/platform/privileged-actions.ts` lists each action's permission, risk, step-up, reason/ticket and approval policy). Step-up travels in `x-step-up-token`. A gated call without a required approval returns 403 `APPROVAL_REQUIRED` with `details.payload`, the exact input to request approval for.
+
+| Route | Purpose |
+|---|---|
+| `GET /platform/attention` | Control Tower inbox, computed on read |
+| `GET /platform/impact?action=&scope=&target=` | Read-only impact preview for privileged actions |
+| `GET/POST /platform/approvals`, `POST /platform/approvals/:id/decision`, `POST /platform/approvals/:id/cancel` | Two-person approval requests |
+| `GET/POST /platform/tenants` | List (Zod query) / provision (`start_trial` optional) |
+| `GET/DELETE /platform/tenants/:id` | Detail / archive (reason + ticket) |
+| `POST /platform/tenants/:id/suspend`, `/activate` | Lifecycle (suspend: ticket; approval when the tenant is older than 30 days) |
+| `POST/DELETE /platform/tenants/:id/purge` | Schedule (two-person, `CONFIRM_PURGE_<SLUG>`) / cancel a purge; 14-day tombstone, nothing deleted. Replaces `/platform/compliance/purge` |
+| `GET/POST /platform/tenants/:id/entitlements` | Effective entitlements report / `SET_OVERRIDE` (optional expiry) / `CLEAR_OVERRIDE` |
+| `POST /platform/tenants/:id/subscription` | `CHANGE_PLAN` / `START_TRIAL` / `EXTEND_TRIAL` |
+| `GET/POST /platform/tenants/:id/addons` | Grants / `GRANT` (complimentary) / `REVOKE` |
+| `GET /platform/entitlements` | Entitlement catalog with defaults (no `tenantId`, no POST any more) |
+| `GET/POST /platform/plans`, `GET/PATCH /platform/plans/:id` | Plans with versions / create (empty draft) / edit details |
+| `POST /platform/plans/:id/versions` | Save the draft version |
+| `POST /platform/plans/versions/:versionId` | `PUBLISH` / `RETIRE` |
+| `GET /platform/plans/impact`, `POST /platform/plans/migrate` | Migration preview / move tenants between versions |
+| `GET/POST /platform/addons` | Add-on definitions (`CREATE` / `RETIRE`) |
+| `GET /platform/subscriptions` | Subscriptions with MRR contribution (POST removed: use tenants/:id/subscription) |
+| `GET/POST /platform/safety/kill-switch` | `ACTIVATE` / `DEACTIVATE` (GLOBAL is two-person with a typed phrase) |
+| `GET/POST /platform/feature-flags` | Only keys in `feature-flag-registry.ts` |
+| `GET/POST /platform/settings` | Registry settings with the value in force / update (registered, read-by-code keys only) |
+| `GET/POST /platform/maintenance`, `GET/POST /platform/announcements` | Informational windows / announcement drafts, publish, unpublish |
+| `GET /platform/analytics/funnel` | Activation funnel and weekly cohorts |
+| `GET/POST /platform/users` | Operators / assign role (CRITICAL, two-person, never your own) |
+| `PATCH /platform/ai/budget` | Now requires `reason` |
+| `POST /platform/ai/hitl/takeover` | Now requires `ai.hitl.manage` (was `support.read`) |
+| `GET /api/v1/announcements` (tenant scope) | Published announcements and nearby maintenance for the caller's workspace |

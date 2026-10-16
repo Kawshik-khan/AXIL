@@ -32,6 +32,7 @@ FRONTEND        = Human control plane                  (src/app/(dashboard), src
 8. Nothing reports success for an effect that did not happen. Simulated integrations say so. (See `rules/truthfulness.md`.)
 9. No fabricated metrics in UI or API; empty data renders an empty state.
 10. Never claim something works without running verification (type-check + relevant tests + wiring trace).
+11. No new production code may read large collections through `db.data` or `this._data`. All new large-dataset reads must use a repository/query interface (`*Repository.listWithCursor`). Zero business-dataset hydration at startup is the architectural goal.
 
 ## 3. Operational boundaries
 

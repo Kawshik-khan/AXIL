@@ -13,6 +13,7 @@ import { BadRequestError, AuthenticationError } from "@/lib/errors";
 import crypto from "crypto";
 import { forwardRawToN8n, isSocialChannel, socialN8nEnabled } from "../n8n/bridge";
 import { enqueueCustomerTurn } from "@/domains/ai/customer-agent/jobs";
+import { CommentTriggerService } from "../comment-triggers/comment-trigger.service";
 
 /** A stable id for a provider event, so n8n and CommerceOS can recognize a redelivery. */
 export function rawEventId(channelId: string, payload: Record<string, unknown>): string {
@@ -24,6 +25,8 @@ export interface WebhookIngressResult {
   messagesProcessed: number;
   receiptsProcessed: number;
   forwardedToN8n?: number;
+  /** Post comments that matched a comment-to-inbox trigger and were queued for a reply. */
+  commentTriggersQueued?: number;
   channelId?: string;
   tenantId?: string;
 }
@@ -124,7 +127,14 @@ export class WebhookIngressService {
     let messagesProcessed = 0;
     let receiptsProcessed = 0;
     let forwardedToN8n = 0;
+    let commentTriggersQueued = 0;
     for (const { channel, payload } of verified) {
+      // Post comments aren't messages (n8n and the adapters ignore them): keyword triggers are checked here either way.
+      try {
+        commentTriggersQueued += CommentTriggerService.recordFromWebhook(channel, payload);
+      } catch (err) {
+        logger.warn("comment_trigger.record_failed", { channel_id: channel.id, error: err instanceof Error ? err.message : "error" });
+      }
       // n8n is the preferred normalizer (connector plan C3). If it can't take the event, CommerceOS normalizes it itself:
       // a provider's retry is not something to count on, so an n8n outage must not lose a customer's message.
       if (socialN8nEnabled() && isSocialChannel(channel.type)) {
@@ -147,6 +157,7 @@ export class WebhookIngressService {
       messagesProcessed,
       receiptsProcessed,
       forwardedToN8n,
+      commentTriggersQueued,
       channelId: single?.id,
       tenantId: single?.tenant_id,
     };

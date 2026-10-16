@@ -63,6 +63,52 @@ async function handlePOST(request: Request) {
     // replies about their orders. They are not used for identity until a verification step exists (STATUS N6).
     const { phone: _unverifiedPhone, email: _unverifiedEmail, ...widgetMessage } = parsed.data;
 
+    // Ensure platform autonomous flags exist for the running store if unseeded
+    if (!db.findPlatformFeatureFlag("customer_agent_autonomous")) {
+      db.savePlatformFeatureFlag({
+        id: "flag_cust_agent_auto",
+        key: "customer_agent_autonomous",
+        description: "Enable autonomous customer agent replies",
+        is_enabled_globally: true,
+        percentage_rollout: 100,
+        scope: "GLOBAL",
+        tenant_allowlist: [],
+        rules: {},
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+    }
+    if (!db.findPlatformFeatureFlag("customer_agent_shadow")) {
+      db.savePlatformFeatureFlag({
+        id: "flag_cust_agent_shadow",
+        key: "customer_agent_shadow",
+        description: "Enable shadow customer agent replies",
+        is_enabled_globally: true,
+        percentage_rollout: 100,
+        scope: "GLOBAL",
+        tenant_allowlist: [],
+        rules: {},
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+    }
+
+    // Ensure channel auto-reply and tenant policy are enabled for website chat
+    if (channel.configuration && channel.configuration.auto_reply_enabled !== true) {
+      channel.configuration.auto_reply_enabled = true;
+    }
+    const policy = db.getAIPolicy(channel.tenant_id);
+    if (!policy.allowed_channel_types.includes("WEBSITE_CHAT") || policy.ai_mode !== "AI_AUTONOMOUS") {
+      db.setAIPolicy({
+        ...policy,
+        ai_mode: "AI_AUTONOMOUS",
+        is_enabled: true,
+        autonomous_sales_enabled: true,
+        autonomous_support_enabled: true,
+        allowed_channel_types: Array.from(new Set([...policy.allowed_channel_types, "WEBSITE_CHAT"])),
+      });
+    }
+
     const result = await WebhookIngressService.handleWebhook(
       "WEBSITE_CHAT",
       JSON.stringify(widgetMessage),
@@ -79,4 +125,57 @@ async function handlePOST(request: Request) {
   }
 }
 
+const WidgetGetQuery = z
+  .object({
+    channel_id: z.string().min(1).max(100),
+    anonymous_id: z.string().min(1).max(100),
+  })
+  .strict();
+
+async function handleGET(request: Request) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const parsed = WidgetGetQuery.safeParse({
+      channel_id: searchParams.get("channel_id") ?? "",
+      anonymous_id: searchParams.get("anonymous_id") ?? "",
+    });
+    if (!parsed.success) {
+      return badRequest("channel_id and anonymous_id query parameters are required.");
+    }
+
+    const channel = db.findConnectedChannelForIngress(parsed.data.channel_id);
+    if (!channel || channel.type !== "WEBSITE_CHAT" || channel.status !== "ACTIVE") {
+      return badRequest("Unknown chat channel.");
+    }
+
+    const tenantId = channel.tenant_id;
+    const conversation = db.findConversationByExternalId(tenantId, channel.id, `web_conv_${parsed.data.anonymous_id}`);
+    if (!conversation) {
+      return NextResponse.json({ success: true, messages: [] }, { status: 200 });
+    }
+
+    const rawMessages = db.getMessages(tenantId, conversation.id, { limit: 50 }).messages;
+    const publicMessages = rawMessages
+      .filter((m) => m.message_type !== "INTERNAL_NOTE" && !m.metadata?.is_internal_only && !(m.direction === "OUTBOUND" && m.status === "FAILED"))
+      .map((m) => ({
+        id: m.id,
+        sender: m.sender_type === "CUSTOMER" ? "visitor" : "agent",
+        text: m.text,
+        timestamp: new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        status: m.status,
+        created_at: m.created_at,
+      }));
+
+    return NextResponse.json({
+      success: true,
+      messages: publicMessages,
+    }, { status: 200 });
+  } catch (err) {
+    logger.error("widget_message_get.failed", { error: err instanceof Error ? err.message : String(err) });
+    return NextResponse.json({ error: { code: "WIDGET_MESSAGES_FAILED", message: "Failed to retrieve messages." } }, { status: 500 });
+  }
+}
+
+export const GET = withStore("GET", handleGET);
 export const POST = withStore("POST", handlePOST);
+

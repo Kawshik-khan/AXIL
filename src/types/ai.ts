@@ -358,6 +358,30 @@ export interface CustomerMemory {
   updated_at: string;
 }
 
+export type UntrustedContextKind = "CONVERSATION_MESSAGE" | "CONVERSATION_SUMMARY" | "CUSTOMER_MEMORY" | "ORDER_SNAPSHOT" | "RETRIEVED_DOCUMENT";
+
+/** A source-tracked data item. It is always serialized into a user/data message, never a policy/system message. */
+export interface UntrustedContextItem {
+  id: string;
+  tenant_id: string;
+  kind: UntrustedContextKind;
+  source_id: string;
+  source_version?: number;
+  channel?: string;
+  captured_at: string;
+  trust_class: "UNTRUSTED_DATA";
+  priority: number;
+  content: unknown;
+}
+
+export interface ContextAssemblyManifest {
+  budget_tokens: number;
+  estimated_tokens: number;
+  selected_items: Array<{ id: string; kind: UntrustedContextKind; source_id: string; source_version?: number }>;
+  omitted_items: Array<{ id: string; kind: UntrustedContextKind; reason: "CONTEXT_BUDGET" }>;
+  content_hash: string;
+}
+
 export interface AgentContext {
   tenant_id: string;
   conversation_id: string;
@@ -380,6 +404,8 @@ export interface AgentContext {
   }>;
   active_cart_or_draft?: Record<string, unknown>;
   policy: TenantAIPolicy;
+  untrusted_context_items: UntrustedContextItem[];
+  context_manifest: ContextAssemblyManifest;
 }
 
 // ============================================================
@@ -418,11 +444,16 @@ export interface KnowledgeDocument {
   chunk_count: number;
   language: "bn" | "en" | "mixed";
   tags: string[];
-  processing_error?: string;
-  /** sha256 of title + content (FX-82): an identical upload is skipped, a changed one replaces the chunks. */
   content_hash?: string;
-  /** false: staff-only (internal SOPs, supplier terms); the customer agent's policy search never returns it. */
   customer_visible?: boolean;
+  processing_error?: string;
+  embedding_profile?: {
+    provider: string;
+    model: string;
+    dimensions: number;
+    preprocessing_version: string;
+    index_version: string;
+  };
   created_at: string;
   updated_at: string;
 }
@@ -439,7 +470,7 @@ export interface KnowledgeChunk {
   child_chunk_ids?: string[];
   section_heading?: string;
   content: string;
-  embedding: number[]; // 1536-dimensional vector
+  embedding: number[]; // Dimension is recorded in embedding metadata, not assumed here.
   bm25_tokens?: string[];
   token_count: number;
   metadata: {
@@ -448,11 +479,14 @@ export interface KnowledgeChunk {
     version: number;
     language: string;
     parent_heading?: string;
-    /** FX-82: when the document version this chunk belongs to was written, where it came from, and what embedded it. */
-    updated_at?: string;
-    source?: string;
     embedding_model?: string;
+    embedding_provider?: string;
+    embedding_dimensions?: number;
     dimensions?: number;
+    preprocessing_version?: string;
+    index_version?: string;
+    source?: string;
+    updated_at?: string;
   };
   created_at: string;
 }
@@ -507,6 +541,19 @@ export interface AgenticRagStepTrace {
   latency_ms: number;
 }
 
+export type RetrievalChannelStatus = "SUCCESS" | "EMPTY" | "UNAVAILABLE" | "INCOMPATIBLE_INDEX";
+export interface RetrievalChannelTrace {
+  status: RetrievalChannelStatus;
+  candidate_count: number;
+  latency_ms: number;
+  error_code?: string;
+}
+export interface HybridSearchDiagnostics {
+  dense: RetrievalChannelTrace;
+  sparse: RetrievalChannelTrace;
+  index_profile?: { model: string; provider: string; dimensions: number; index_version: string };
+}
+
 export interface AgenticRagResult {
   query: string;
   expanded_queries: string[];
@@ -514,11 +561,13 @@ export interface AgenticRagResult {
   requires_retrieval: boolean;
   citations: RetrievalCitation[];
   grounded_context: string;
+  /** Heuristic relevance score from the local reranker; this is not a calibrated probability. */
   confidence_score: number;
   confidence_level: "HIGH" | "MODERATE" | "LOW";
   is_fallback: boolean;
   suggested_escalation: boolean;
   traces: AgenticRagStepTrace[];
+  retrieval_outcome?: "ANSWERABLE_WITH_EVIDENCE" | "UNKNOWN_NO_MATCH" | "CONFLICTING_EVIDENCE" | "STALE_EVIDENCE" | "RETRIEVAL_UNAVAILABLE";
   total_latency_ms: number;
 }
 
@@ -589,6 +638,9 @@ export interface AIUsageRecord {
   estimated_cost_bdt: number;
   currency: string;
   timestamp: string;
+  /** Temporary spend hold used to make tenant budget checks safe under concurrent agent runs. */
+  is_budget_reservation?: boolean;
+  reservation_expires_at?: string;
 }
 
 export interface AIFeedbackRecord {
@@ -611,6 +663,8 @@ export interface AIFeedbackRecord {
 
 export type AIErrorCode =
   | "AI_MODEL_UNAVAILABLE"
+  | "AI_MODEL_RATE_LIMITED"
+  | "AI_MODEL_PROVIDER_ERROR"
   | "AI_MODEL_TIMEOUT"
   | "AI_TOKEN_LIMIT"
   | "AI_POLICY_BLOCKED"
@@ -624,7 +678,8 @@ export type AIErrorCode =
   | "AI_HUMAN_REQUIRED"
   | "AI_BUDGET_EXCEEDED"
   | "AI_MAX_ITERATIONS"
-  | "AI_RESPONSE_VALIDATION_FAILED";
+  | "AI_RESPONSE_VALIDATION_FAILED"
+  | "AI_CANCELLED";
 
 // ============================================================
 // 11. BENCHMARK & EVALUATION
@@ -649,6 +704,9 @@ export interface EvaluationResult {
   total_cases: number;
   passed_cases: number;
   intent_accuracy: number;
+  agent_accuracy: number;
+  execution_success_rate: number;
+  tool_selection_accuracy: number;
   grounding_rate: number;
   handoff_accuracy: number;
   policy_violation_rate: number;
@@ -709,8 +767,7 @@ export interface JevEvaluateResponse {
   tokens_evaluated: number;
 }
 
-
-// ==================== CUSTOMER AGENT (ADR-111, FX-73) ====================
+// ==================== CUSTOMER AGENT (ADR-111, FX-73, FX-76) ====================
 /**
  * A price the customer agent showed in a conversation. An order is placed only from a QUOTED quote, after a later
  * customer message says yes; one quote places at most one order.
@@ -765,3 +822,116 @@ export interface AgentJob {
   created_at: string;
   updated_at: string;
 }
+
+// ==================== AGENTIC OPERATIONS & HITL (LLM OBSERVABILITY) ====================
+
+export type GuardrailTriggerType =
+  | "PROMPT_INJECTION_DETECTED"
+  | "UNGROUNDED_PRICE_DETECTED"
+  | "NONEXISTENT_VARIANT_DETECTED"
+  | "UNVERIFIED_ORDER_CLAIM"
+  | "MALFORMED_PHONE_NUMBER"
+  | "BUDGET_CAP_EXCEEDED"
+  | "HIGH_VALUE_BASKET_REVIEW"
+  | "REPEATED_INTENT_FAILURE";
+
+export interface AgentExecutionTraceRecord {
+  id: string;                                 // "trc_xxxx"
+  tenant_id: string;                          // Strictly tenant-scoped
+  conversation_id: string;                    // Foreign key to conversation
+  agent_run_id?: string;                      // Foreign key to agent run
+  turn_index: number;                         // Turn sequence in chat
+  channel: "FACEBOOK" | "WHATSAPP" | "WEBSITE_CHAT" | "INSTAGRAM";
+  customer_message_preview: string;           // Masked/sanitized text (max 100 chars, no PII)
+  agent_reply_preview: string;                // Sanitized outbound reply preview
+  model_id: string;                           // e.g. "gpt-4o-mini", "gemini-1.5-flash"
+  prompt_version: string;                     // e.g. "customer-agent.v2.1-cod"
+
+  // Performance & Cost Metering
+  latency_ms: number;                         // Complete turnaround latency in ms
+  prompt_tokens: number;                      // Input prompt tokens
+  completion_tokens: number;                  // Completion tokens
+  cached_tokens: number;                      // Cached prompt tokens
+  estimated_cost_usd: number;                 // Calculated USD cost
+
+  // Confidence & Semantic Signals
+  confidence_score: number;                   // 0 to 100 confidence metric
+  sentiment_score: "POSITIVE" | "NEUTRAL" | "FRUSTRATED" | "HOSTILE";
+  detected_intent: string;                    // e.g. "PRODUCT_INQUIRY", "ORDER_CONFIRMATION"
+
+  // Guardrail Outcomes
+  guardrails_evaluated: string[];
+  guardrails_triggered: GuardrailTriggerType[];
+  escalation_triggered: boolean;
+  escalation_reason?: string;
+
+  timestamp: string;
+}
+
+export type EscalationPriority = "LOW" | "NORMAL" | "HIGH" | "URGENT";
+export type EscalationStatus = "PENDING_REVIEW" | "CLAIMED" | "RESOLVED" | "AUTO_EXPIRED";
+
+export interface AgentHitlEscalationRecord {
+  id: string;                                 // "hitl_xxxx"
+  tenant_id: string;                          // Tenant boundary
+  conversation_id: string;                    // Bound chat
+  trace_id: string;                           // Causative execution trace
+  customer_id?: string;
+  customer_phone_masked: string;              // Masked: "+88017****5678"
+
+  priority: EscalationPriority;               // URGENT (5m), HIGH (15m), NORMAL (60m)
+  status: EscalationStatus;
+  trigger_reason: string;                     // Why escalation fired
+
+  // Structured Order Draft (if customer was placing an order)
+  order_draft?: {
+    items: Array<{
+      variant_id: string;
+      product_name: string;
+      quantity: number;
+      unit_price: number;
+      line_total: number;
+    }>;
+    delivery_district: string;
+    subtotal: number;
+    delivery_fee: number;
+    grand_total: number;
+    payment_method: "COD" | "BKASH" | "NAGAD";
+  };
+
+  assigned_to_user_id?: string;               // Merchant staff who claimed ticket
+  assigned_at?: string;
+  resolved_at?: string;
+  resolution_type?: "HUMAN_REPLIED" | "DRAFT_APPROVED" | "DRAFT_REJECTED" | "BOT_RESUMED";
+  resolution_notes?: string;
+
+  sla_due_at: string;                         // ISO timestamp based on priority
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TenantAiGuardSettingsRecord {
+  tenant_id: string;                          // Primary key
+  is_guard_enabled: boolean;                  // Master switch
+
+  // Budget Caps
+  monthly_budget_usd: number;                 // e.g. $15.00 / month
+  soft_cap_percent: number;                   // e.g. 80% (trigger warnings)
+  hard_cap_percent: number;                   // e.g. 100% (halt model execution)
+  current_month_spend_usd: number;
+  current_month_tokens_used: number;
+
+  // HITL Escalation Thresholds
+  confidence_escalation_threshold: number;    // Default: 75 (escalate if score < 75)
+  max_unresolved_turns: number;               // Escalate if 3 turns pass with same question
+  high_value_cod_threshold_bdt: number;       // Default: ৳5,000 (require human sign-off)
+  escalate_on_negative_sentiment: boolean;    // Default: true
+  auto_pause_bot_on_human_message: boolean;   // Default: true (when staff types, bot halts)
+
+  // Prompt Injection Policy
+  block_adversarial_jailbreaks: boolean;      // Default: true
+  quarantine_suspicious_conversations: boolean;
+
+  updated_at: string;
+}
+

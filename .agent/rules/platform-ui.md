@@ -30,10 +30,9 @@ The control plane is the **dark variant** of the one design system. Values come 
    - Core operational signals (fleet status, MRR, queue health) placed in hero cards at the top.
    - Modular widgets designed with clean borders, micro-charts, and status indicators.
 
-2. **Floating Navigation & Command Dock**:
-   - Desktop: Vertical dock floating on the left/right viewport edge with quick access to the 18 primary operational areas.
-   - Mobile / Tablet: Floating bottom glass bar with responsive drawer expansion.
-   - Global Command Palette (`Cmd + K` / `Ctrl + K`) to search across tenants, plans, settings, and audit logs.
+2. **Floating Navigation & Command Dock** (ADR-116):
+   - The console uses the merchant dock component (`src/components/navigation/Dock.tsx`) with the console modules in `src/app/super-admin/_lib/console-modules.tsx`; access per module comes from `_lib/platform-module-access.ts`. Same left column on desktop and bottom bar on mobile as the merchant app.
+   - Global Command Palette (`Cmd + K` / `Ctrl + K`) jumps to modules and searches tenants through the tenants API.
 
 3. **6 Canonical UX States Mandatory**:
    Every platform view and card must gracefully handle all six states:
@@ -46,7 +45,13 @@ The control plane is the **dark variant** of the one design system. Values come 
 
 ---
 
+### 2.4 Motion and illustrations
+- Hairline figures (`src/components/motion/HairlineFigure.tsx`) are illustrations for empty, all-clear, disconnected and sign-in states only. They never carry data; their plate colour must match the surface (token-mapped in `HairlineFigure.module.css`).
+- Loading uses skeletons, not figures. No count-up animation on numbers.
+
 ## 3. High-Risk Action Confirmation Modals
+All privileged actions use `src/app/super-admin/_components/PrivilegedActionDialog.tsx`, which asks for exactly what the action declares in `src/domains/platform/privileged-actions.ts`.
+
 Administrative mutations (e.g. suspending a tenant, triggering a kill switch, purging data) carry severe consequences. The UI must enforce disciplined confirmation patterns:
 
 1. **Impact Summary**: The modal must explicitly detail:

@@ -81,7 +81,7 @@ export class ContentService {
         }
 
         // Stock verification
-        const variants = db.getProductVariants(tenantId, productId);
+        const variants = product.variants && product.variants.length > 0 ? product.variants : db.getProductVariants(tenantId, productId);
         const totalStock = variants.reduce((sum, v) => sum + ((v as any).stock_quantity ?? (v as any).stock ?? 10), 0);
         if (totalStock <= 0) {
           violations.push(`Product '${product.name}' has 0 available inventory in warehouse.`);

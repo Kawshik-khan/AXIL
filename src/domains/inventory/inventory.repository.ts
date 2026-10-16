@@ -8,6 +8,7 @@ import { randomSuffix } from "@/lib/ids";
 import { BaseRepository } from '@/infrastructure/db/base-repository';
 import { query, queryOne, execute, withTransaction } from '@/infrastructure/neon/client';
 import { db } from '@/infrastructure/db';
+import { loadTenantRows } from '@/infrastructure/db/tenant-rows';
 import {
   InventoryItem,
   StockMovement,
@@ -15,6 +16,7 @@ import {
   InventoryReservation,
   Warehouse,
 } from '@/types/commerce';
+import type { SqlClient } from '@/infrastructure/store/sql-client';
 
 export class InventoryRepository extends BaseRepository<InventoryItem & Record<string, unknown>> {
   constructor() {
@@ -23,6 +25,29 @@ export class InventoryRepository extends BaseRepository<InventoryItem & Record<s
 
   private isNeonConfigured(): boolean {
     return Boolean(process.env.DATABASE_URL);
+  }
+
+  /**
+   * Stock levels with product name, SKU and variant title, from the store: memory, or this tenant's rows read from
+   * Postgres under zero-hydration (loaded for the current request). What InventoryService and the analytics read.
+   */
+  async getStockLevels(
+    tenantId: string,
+    options?: { warehouse_id?: string; low_stock_only?: boolean }
+  ): Promise<(InventoryItem & { product_name: string; sku: string; variant_title: string })[]> {
+    await loadTenantRows(tenantId, ["inventory_items", "product_variants", "products"]);
+    return db.getInventory(tenantId, options);
+  }
+
+  /** The tenant's latest stock movements, newest first (db.getStockMovements; SQL under zero-hydration). */
+  async recentStockMovements(tenantId: string, limit = 50): Promise<StockMovement[]> {
+    const client = db.isCollectionHydrated("stock_movements") ? null : db.getSqlClient();
+    if (!client) return db.getStockMovements(tenantId, limit);
+    const res = await client.query<{ data: StockMovement | string }>(
+      `SELECT data FROM commerceos.stock_movements WHERE tenant_id = $1 ORDER BY created_at DESC NULLS LAST, seq DESC LIMIT $2`,
+      [tenantId, limit]
+    );
+    return res.rows.map((r) => (typeof r.data === "string" ? JSON.parse(r.data) : r.data) as StockMovement);
   }
 
   async getInventoryLevels(
@@ -158,14 +183,54 @@ export class InventoryRepository extends BaseRepository<InventoryItem & Record<s
     });
   }
 
+  /** SQL only when inventory_items is left out of memory (zero-hydration); otherwise the in-memory store is the source of truth. */
+  private getClient(): SqlClient | null {
+    return db.isCollectionHydrated("inventory_items") ? null : db.getSqlClient();
+  }
+
   async getWarehouses(tenantId: string): Promise<Warehouse[]> {
-    if (!this.isNeonConfigured()) {
-      return db.data.warehouses.filter((w) => w.tenant_id === tenantId);
+    const client = this.getClient();
+    if (client) {
+      const res = await client.query<{ data: Warehouse | string }>(
+        `SELECT data FROM commerceos.warehouses WHERE tenant_id = $1 ORDER BY (data->>'name') ASC`,
+        [tenantId]
+      );
+      return res.rows.map((r) => (typeof r.data === "string" ? JSON.parse(r.data) : r.data) as Warehouse);
     }
-    return query<Warehouse>(
-      `SELECT * FROM warehouses WHERE tenant_id = $1 AND is_active = true ORDER BY is_default DESC, name ASC`,
-      [tenantId]
-    );
+    if (this.isNeonConfigured()) {
+      return query<Warehouse>(
+        `SELECT * FROM warehouses WHERE tenant_id = $1 AND is_active = true ORDER BY is_default DESC, name ASC`,
+        [tenantId]
+      );
+    }
+    if (!db.isCollectionHydrated("warehouses")) {
+      return [];
+    }
+    return db.data.warehouses.filter((w) => w.tenant_id === tenantId);
+  }
+
+  async findWarehouseById(tenantId: string, id: string): Promise<Warehouse | null> {
+    const client = this.getClient();
+    if (client) {
+      const res = await client.query<{ data: Warehouse | string }>(
+        `SELECT data FROM commerceos.warehouses WHERE tenant_id = $1 AND id = $2 LIMIT 1`,
+        [tenantId, id]
+      );
+      if (res.rowCount === 0 || !res.rows[0]) return null;
+      const d = res.rows[0].data;
+      return (typeof d === "string" ? JSON.parse(d) : d) as Warehouse;
+    }
+    if (this.isNeonConfigured()) {
+      const rows = await query<Warehouse>(
+        `SELECT * FROM warehouses WHERE tenant_id = $1 AND id = $2 LIMIT 1`,
+        [tenantId, id]
+      );
+      return rows[0] || null;
+    }
+    if (!db.isCollectionHydrated("warehouses")) {
+      return null;
+    }
+    return db.data.warehouses.find((w) => w.tenant_id === tenantId && w.id === id) || null;
   }
 }
 

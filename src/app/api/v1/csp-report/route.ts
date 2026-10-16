@@ -28,9 +28,11 @@ async function handlePOST(request: Request) {
       if (client) await enforceRateLimit(`csp:${client}`, 30, MINUTE);
       await enforceRateLimit("csp:all", 600, MINUTE);
     } catch (err) {
+      await CspReportService.load(Date.now(), 1); // zero-hydration: today's counters
       CspReportService.recordDropped(violations.length); // a flood must not make the week look clean
       throw err;
     }
+    await CspReportService.load(Date.now(), 1);
     CspReportService.recordParsed(violations);
     return new Response(null, { status: 204 });
   } catch (err) {

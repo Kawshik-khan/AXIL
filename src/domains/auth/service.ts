@@ -34,9 +34,9 @@ export interface AuthResult {
 
 export class AuthService {
   public static async registerTenantWithOwner(input: RegisterInput): Promise<AuthResult> {
-    const normalizedEmail = input.email.trim().toLowerCase();
+    const normalizedEmail = (input.email ?? "").trim().toLowerCase();
 
-    if (!input.email || !normalizedEmail.includes("@")) {
+    if (!normalizedEmail.includes("@")) {
       throw new ValidationError("Valid email address is required.");
     }
     if (!input.password || input.password.length < 8) {

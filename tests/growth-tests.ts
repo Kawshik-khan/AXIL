@@ -2,7 +2,10 @@
 import assert from "assert";
 declare const process: { exit(code?: number): void };
 
+import { randomUUID } from "crypto";
+import { NextRequest } from "next/server";
 import { db } from "@/infrastructure/db";
+import { AuthService } from "@/domains/auth/service";
 import { audienceService, segmentEngineService } from "@/domains/growth/services/audience.service";
 import { customerLifecycleService } from "@/domains/growth/services/customer-lifecycle.service";
 import { journeyEngineService } from "@/domains/growth/services/journey-engine.service";
@@ -748,6 +751,29 @@ export async function runGrowthTests() {
     assert.ok(toolNames.includes("resume_campaign"));
     assert.ok(toolNames.includes("get_campaign_result"));
     assert.ok(toolNames.includes("get_attribution"));
+  });
+
+  await runTest("A missing audience, campaign or journey id is a 404, not a 500 (GET and PUT)", async () => {
+    const shop = await AuthService.registerTenantWithOwner({
+      email: `growth_404_${randomUUID().slice(0, 8)}@growth.test`, password: "Growth-404-Pass-8812!", name: "Growth Owner", workspaceName: "Growth 404 Shop",
+    });
+    const headers = { authorization: `Bearer ${shop.token}`, "content-type": "application/json" };
+    type Handler = (r: Request, ctx: { params: Promise<{ id: string }> }) => Promise<Response>;
+    for (const resource of ["audiences", "campaigns", "journeys"]) {
+      const mod = (await import(`@/app/api/v1/growth/${resource}/[id]/route`)) as Record<string, Handler | undefined>;
+      for (const method of ["GET", "PUT"] as const) {
+        const handler = mod[method];
+        if (!handler) continue;
+        const url = `http://localhost:3000/api/v1/growth/${resource}/missing_id`;
+        const res = await handler(
+          new NextRequest(url, { method, headers, ...(method === "PUT" ? { body: JSON.stringify({ name: "Renamed" }) } : {}) }),
+          { params: Promise.resolve({ id: "missing_id" }) }
+        );
+        const body = await res.json();
+        assert.strictEqual(res.status, 404, `${method} ${resource}: ${JSON.stringify(body)}`);
+        assert.strictEqual(body.error.code, "NOT_FOUND");
+      }
+    }
   });
 
   // Final Summary

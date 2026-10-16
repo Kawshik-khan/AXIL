@@ -1,3 +1,4 @@
+import { createHash } from "crypto";
 import { AgentTriggerRule, WorkflowTriggerType } from '@/types/orchestration';
 import { db } from '@/infrastructure/db';
 import { workflowEngine } from '../engine/workflow-engine';
@@ -8,6 +9,7 @@ export class EventTriggerService {
    */
   public async handleDomainEvent(event: {
     tenant_id: string;
+    event_id?: string;
     type: string;
     payload: Record<string, any>;
   }): Promise<{ triggered: boolean; ruleId?: string; workflowId?: string; reason?: string }> {
@@ -53,6 +55,7 @@ export class EventTriggerService {
         tenantId: event.tenant_id,
         name: workflowName,
         objective,
+        templateCode: rule.target_workflow_template_id,
         triggerType: WorkflowTriggerType.EVENT,
         triggerSource: event.type,
         triggerPayload: event.payload,
@@ -67,9 +70,8 @@ export class EventTriggerService {
       });
 
       // Start workflow execution asynchronously
-      workflowEngine.startWorkflow(workflow.tenant_id, workflow.id).catch((err) => {
-        console.error(`Error starting triggered workflow ${workflow.id}:`, err);
-      });
+      const eventKey = event.event_id || createHash("sha256").update(JSON.stringify({ type: event.type, payload: event.payload })).digest("hex");
+      await workflowEngine.enqueueAction(workflow.tenant_id, workflow.id, "START", `event:${rule.id}:${eventKey}`);
 
       return {
         triggered: true,

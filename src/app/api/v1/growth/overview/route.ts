@@ -8,6 +8,7 @@ import { attributionService } from "@/domains/growth/services/attribution.servic
 import { growthIntelligenceService } from "@/domains/growth/services/growth-intelligence.service";
 import { intelligenceSnapshots } from "@/domains/intelligence/services/intelligence-snapshot.service";
 import { withStore } from "@/lib/store-unit";
+import { COMMERCE_ANALYTICS_COLLECTIONS } from "@/infrastructure/db/tenant-rows";
 
 async function handleGET(request: Request) {
   try {
@@ -48,4 +49,4 @@ async function handleGET(request: Request) {
   }
 }
 
-export const GET = withStore("GET", handleGET);
+export const GET = withStore("GET", handleGET, { tenantRows: { collections: COMMERCE_ANALYTICS_COLLECTIONS, permission: PERMISSIONS.MARKETING_READ } });

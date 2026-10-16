@@ -1,10 +1,17 @@
+import { z } from "zod";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
 import { RbacService } from "@/domains/rbac/service";
 import { PERMISSIONS } from "@/lib/permissions";
 import { db } from "@/infrastructure/db";
 import { workflowEngine } from "@/domains/ai/orchestration/engine/workflow-engine";
-import { NotFoundError, BadRequestError } from "@/lib/errors";
+import { NotFoundError } from "@/lib/errors";
+import { parseOrThrow, readJson } from "@/lib/validation";
 import { withStore } from "@/lib/store-unit";
+
+const Body = z.object({
+  action: z.enum(["START", "PAUSE", "RESUME", "CANCEL", "RETRY"]),
+  reason: z.string().trim().max(1000).optional(),
+}).strict();
 
 async function handlePOST(
   request: Request,
@@ -20,29 +27,26 @@ async function handlePOST(
       throw new NotFoundError(`Workflow '${params.id}' not found`);
     }
 
-    const body = await request.json();
-    const action = body.action?.toUpperCase();
+    const body = parseOrThrow(Body, await readJson(request));
+    const action = body.action;
     const reason = body.reason || `Operator action: ${action}`;
 
     let updatedWorkflow;
     switch (action) {
-      case "START":
-        updatedWorkflow = await workflowEngine.startWorkflow(workflow.tenant_id, workflow.id);
-        break;
       case "PAUSE":
         updatedWorkflow = await workflowEngine.pauseWorkflow(workflow.tenant_id, workflow.id, reason);
-        break;
-      case "RESUME":
-        updatedWorkflow = await workflowEngine.resumeWorkflow(workflow.tenant_id, workflow.id);
         break;
       case "CANCEL":
         updatedWorkflow = await workflowEngine.cancelWorkflow(workflow.tenant_id, workflow.id, reason);
         break;
-      case "RETRY":
-        updatedWorkflow = await workflowEngine.retryWorkflow(workflow.tenant_id, workflow.id);
-        break;
       default:
-        throw new BadRequestError(`Invalid workflow action: ${action}. Expected START, PAUSE, RESUME, CANCEL, or RETRY.`);
+        break;
+    }
+
+    if (action === "START" || action === "RESUME" || action === "RETRY") {
+      const key = request.headers.get("idempotency-key") || `${context.requestId}:${action}`;
+      const job = await workflowEngine.enqueueAction(workflow.tenant_id, workflow.id, action, key);
+      return apiSuccess({ workflow, action, execution_job: job }, undefined, 202);
     }
 
     return apiSuccess({ workflow: updatedWorkflow, action });

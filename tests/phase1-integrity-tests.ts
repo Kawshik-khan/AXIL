@@ -858,7 +858,20 @@ async function main() {
       platformUser: { id: "usr_admin_t", email: "a@t", name: "A", status: "ACTIVE" },
       permissions: PLATFORM_ROLE_PERMISSIONS.SUPER_ADMIN, mfaVerified: true, stepUpVerified: true, timestamp: nowIso(),
     };
-    PlatformUserService.assignPlatformRole({ userId: op.id, role: "PLATFORM_ANALYST", reason: "test" }, ctx as never);
+    // Role changes are CRITICAL: a second operator approves the exact change first (super-admin console plan §5.5)
+    const { PlatformApprovalService } = await import("@/domains/platform/services/platform-approval.service");
+    const approver = { ...ctx, requestId: "req_t2", platformUser: { id: "usr_admin_t2", email: "b@t", name: "B", status: "ACTIVE" } };
+    const change = { userId: op.id, role: "PLATFORM_ANALYST" as const, reason: "Moving to analytics duties", ticketRef: "SEC-77" };
+    db.createUser({ id: "usr_admin_t2", email: "b@t", name: "B", password_hash: "!disabled", status: "ACTIVE", created_at: nowIso(), updated_at: nowIso() });
+    db.savePlatformMembership({ id: "pm_admin_t2", user_id: "usr_admin_t2", role: "SUPER_ADMIN", mfa_enabled: true, is_active: true, created_at: nowIso(), updated_at: nowIso() });
+    const request = PlatformApprovalService.request(ctx as never, {
+      actionKey: "operator.assign_role",
+      payload: { user_id: op.id, role: "PLATFORM_ANALYST" },
+      reason: change.reason,
+      ticketRef: change.ticketRef,
+    });
+    PlatformApprovalService.decide(approver as never, request.id, "APPROVE", "Verified with the security lead");
+    PlatformUserService.assignPlatformRole({ ...change, approvalId: request.id }, ctx as never);
     const after = db.findPlatformMembershipByUserId(op.id)!;
     assert.strictEqual(after.role, "PLATFORM_ANALYST");
     assert.ok(after.mfa_enabled && after.mfa_secret_encrypted && after.mfa_last_step === 5, "MFA state kept");

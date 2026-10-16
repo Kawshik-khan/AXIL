@@ -8,6 +8,7 @@ async function handleGET(request: Request) {
     const { searchParams } = new URL(request.url);
 
     const search = searchParams.get("search") || undefined;
+    const cursor = searchParams.get("cursor") || undefined;
     const limit = searchParams.get("limit") ? parseInt(searchParams.get("limit")!, 10) : undefined;
     const offset = searchParams.get("offset") ? parseInt(searchParams.get("offset")!, 10) : undefined;
 
@@ -15,9 +16,14 @@ async function handleGET(request: Request) {
       search,
       limit,
       offset,
+      cursor,
     });
 
-    return apiSuccess(result.customers, { total: result.total });
+    return apiSuccess(result.customers, {
+      total: result.total,
+      next_cursor: result.next_cursor ?? null,
+      has_more: result.has_more ?? false,
+    });
   } catch (err) {
     return apiError(err);
   }

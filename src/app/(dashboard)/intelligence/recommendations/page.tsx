@@ -113,8 +113,8 @@ export default function RecommendationsPage() {
               <p className={styles.recDesc}>{rec.description}</p>
 
               {/* Rationale & Root Cause */}
-              <div style={{ fontSize: 12, color: "#8c8f96", marginBottom: 12 }}>
-                <strong style={{ color: "#ededed" }}>Rationale:</strong> {rec.rationale}
+              <div style={{ fontSize: 12, color: "var(--color-text-secondary, #70736F)", marginBottom: 12 }}>
+                <strong style={{ color: "var(--color-text-primary, #202124)" }}>Rationale:</strong> {rec.rationale}
               </div>
 
               {/* 7-Factor Explainability Matrix */}

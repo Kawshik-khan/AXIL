@@ -23,6 +23,14 @@ export function replyScript(text: string): Script {
   return letters.length && bn / letters.length >= 0.3 ? "bangla" : "latin";
 }
 
+/**
+ * Bangla-script letters in a reply to a customer who writes in English letters ("ekhানে দিন"): the model sometimes
+ * slips into Bangla script mid-sentence. The taka sign ৳ is in the same Unicode block but is fine in both scripts.
+ */
+export function mixedScript(text: string, script: Script): boolean {
+  return script === "latin" && /[ঀ-৲৴-৿]/u.test(text);
+}
+
 /** A reply that is not something to send to a person. */
 export function notAMessage(text: string): boolean {
   const t = text.trim();
@@ -155,3 +163,172 @@ export function capLength(text: string, max = 1000): string {
   const end = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf("। "), cut.lastIndexOf("? "), cut.lastIndexOf("! "), cut.lastIndexOf("\n"));
   return (end > max * 0.5 ? cut.slice(0, end + 1) : cut).trim();
 }
+
+/** A quote_order result, as the tool returns it. */
+interface QuoteResult {
+  quote_id: string;
+  district?: string;
+  items?: Array<{ name?: string; size?: string; quantity?: number; line_total_bdt?: number }>;
+  discount_bdt?: number;
+  delivery_charge_bdt?: number;
+  grand_total_bdt: number;
+}
+
+/** What the customer has already given for the order (from the chat), so the quote asks only for what's missing. */
+export interface QuoteCustomerDetails {
+  name?: string;
+  phone?: string;
+  address?: string;
+}
+
+const taka = (n: number) => `৳${n.toLocaleString("en-US")}`;
+
+/**
+ * The quote message, built by the server so every quote looks the same and every amount comes from the tool: one line
+ * per item with size and quantity, any discount, the delivery charge with its district, the grand total (cash on
+ * delivery), then either "say Ji to confirm" or a request for exactly the details still missing.
+ */
+export function formatQuote(r: QuoteResult, script: Script, details: QuoteCustomerDetails = {}): string {
+  const bn = script === "bangla";
+  const lines: string[] = [];
+  for (const it of r.items ?? []) {
+    const name = it.name || (bn ? "পণ্য" : "Item");
+    // No size for one-size items, or when the product name already says it ("Black T-Shirt (L)")
+    const showSize = it.size && !/^(?:default|default title|free|one size)$/i.test(it.size) && !name.toLowerCase().includes(`(${it.size.toLowerCase()})`);
+    const size = showSize ? ` (${it.size})` : "";
+    const qty = it.quantity ?? 1;
+    const amount = typeof it.line_total_bdt === "number" ? ` – ${taka(it.line_total_bdt)}` : "";
+    lines.push(`- ${name}${size} – ${qty} ${bn ? "পিস" : "pcs"}${amount}`);
+  }
+  if (typeof r.discount_bdt === "number" && r.discount_bdt > 0) lines.push(`- ${bn ? "ডিসকাউন্ট" : "Discount"} – -${taka(r.discount_bdt)}`);
+  if (typeof r.delivery_charge_bdt === "number") {
+    const where = r.district ? ` (${r.district})` : "";
+    lines.push(`- ${bn ? "ডেলিভারি চার্জ" : "Delivery charge"}${where} – ${taka(r.delivery_charge_bdt)}`);
+  }
+  const total = `${bn ? "সর্বমোট" : "Grand total"} – ${taka(r.grand_total_bdt)} (${bn ? "ক্যাশ অন ডেলিভারি" : "Cash on delivery"})`;
+
+  const missing: string[] = [];
+  if (!details.name) missing.push(bn ? "নাম" : "name");
+  if (!details.phone) missing.push(bn ? "মোবাইল নম্বর (০১XXXXXXXXX)" : "mobile number (01XXXXXXXXX)");
+  if (!details.address) missing.push(bn ? "সম্পূর্ণ ডেলিভারি ঠিকানা" : "full delivery address (house, road, area)");
+  const list = (words: string[], and: string) => (words.length > 1 ? `${words.slice(0, -1).join(", ")} ${and} ${words[words.length - 1]}` : words[0]);
+  const next = missing.length
+    ? bn
+      ? `অর্ডার কনফার্ম করতে আপনার ${list(missing, "ও")}${missing.length > 1 ? " একসাথে" : ""} দিন।`
+      : `Order confirm korte apnar ${list(missing, "o")}${missing.length > 1 ? " ekshathe" : ""} din.`
+    : bn
+      ? `সব ঠিক থাকলে "জি" লিখুন, অর্ডার কনফার্ম করে দিচ্ছি।`
+      : `Sob thik thakle "Ji" likhun, order confirm kore dicchi.`;
+
+  const greeting = bn ? `জি${details.name ? ` ${details.name}` : ""}, আপনার অর্ডারের কোট:` : `Ji${details.name ? ` ${details.name}` : ""}, apnar order er quote:`;
+  return [greeting, "", ...lines, total, "", next].join("\n");
+}
+
+/** The quote this turn ends on: the last quote_order result, unless the order moved on (confirmation or placed) after it. */
+export function quoteToShow(toolResults: unknown[]): QuoteResult | null {
+  for (let i = toolResults.length - 1; i >= 0; i--) {
+    const r = toolResults[i] as Record<string, unknown> | null;
+    if (!r || typeof r !== "object") continue;
+    if (r.status === "PLACED" || r.status === "CONFIRMATION_REQUIRED") return null;
+    if (typeof r.quote_id === "string" && typeof r.grand_total_bdt === "number") return r as unknown as QuoteResult;
+  }
+  return null;
+}
+
+/**
+ * Dynamic grounded reply constructed directly from the turn's tool results when the model
+ * was unable to format its final response (e.g. timeout, provider glitch, or turn deadline).
+ * Works dynamically across any district, product, quantities, and scripts (Bangla vs Latin/Banglish).
+ */
+export function synthesizeGroundedResponse(toolResults: unknown[], script: Script): string | null {
+  // 1. First priority: Orders and quotes
+  for (let i = toolResults.length - 1; i >= 0; i--) {
+    const r = toolResults[i] as Record<string, any>;
+    if (!r || typeof r !== "object") continue;
+
+    // Order successfully placed
+    if (r.status === "PLACED" && r.order_number) {
+      const grandTotal = r.grand_total_bdt ?? r.grand_total;
+      const totalPart = typeof grandTotal === "number" ? ` ৳${grandTotal.toLocaleString("en-US")}` : "";
+      if (script === "bangla") {
+        return `ধন্যবাদ! আপনার অর্ডারটি গ্রহণ করা হয়েছে। অর্ডার নম্বর: ${r.order_number}${totalPart ? `। সর্বমোট${totalPart} (ক্যাশ অন ডেলিভারি)` : ""}। আমাদের টিম শীঘ্রই এটি প্রসেস করবে।`;
+      }
+      return `Dhonnobad! Apnar order ti place kora hoyeche. Order number: ${r.order_number}${totalPart ? `. Grand total${totalPart} (Cash on delivery)` : ""}. Amader team shiggiri order ti process korbe.`;
+    }
+
+    // Order confirmation required
+    if (r.status === "CONFIRMATION_REQUIRED" && r.summary) {
+      if (script === "bangla") {
+        return `${r.summary}। অর্ডার কনফার্ম করতে চাইলে অনুগ্রহ করে 'হ্যাঁ' বলুন।`;
+      }
+      return `${r.summary}. Order confirm korte chaile 'Ji' bolun.`;
+    }
+
+    // Quote successfully created
+    if (r.quote_id && typeof r.grand_total_bdt === "number") return formatQuote(r as unknown as QuoteResult, script);
+
+    // Order status looked up
+    if (r.order_number && (r.status || r.courier_status)) {
+      const statusText = r.courier_status ?? r.status;
+      if (script === "bangla") {
+        return `আপনার অর্ডার ${r.order_number}-এর স্ট্যাটাস: ${statusText}।`;
+      }
+      return `Apnar order ${r.order_number} er status: ${statusText}.`;
+    }
+  }
+
+  // 2. Second priority: Product search results (takes priority over standalone delivery fee check)
+  for (let i = toolResults.length - 1; i >= 0; i--) {
+    const r = toolResults[i] as Record<string, any>;
+    if (!r || typeof r !== "object") continue;
+
+    const list = Array.isArray(r.results) ? r.results : Array.isArray(r.products) ? r.products : null;
+    if (list) {
+      if (list.length > 0) {
+        if (list.length === 1) {
+          const p = list[0];
+          const name = p.name || p.title || "Product";
+          const price = p.variants?.[0]?.price_bdt ?? p.base_price ?? p.min_price_bdt;
+          const priceText = typeof price === "number" ? ` ৳${price.toLocaleString("en-US")}` : "";
+          if (script === "bangla") {
+            return `জি, ${name} স্টকে আছে${priceText ? `, দাম${priceText}` : ""}। আপনি কি এটি নিতে চান?`;
+          }
+          return `Ji, ${name} stock e ache${priceText ? `, dam${priceText}` : ""}. Apni ki eta nite chan?`;
+        }
+
+        const lines = list.slice(0, 5).map((p: any) => {
+          const name = p.name || p.title || "Product";
+          const price = p.variants?.[0]?.price_bdt ?? p.base_price ?? p.min_price_bdt;
+          return typeof price === "number" ? `${name} (৳${price.toLocaleString("en-US")})` : name;
+        }).join("\n- ");
+
+        if (script === "bangla") {
+          return `জি, আমাদের কাছে এই প্রোডাক্টগুলো স্টকে আছে:\n- ${lines}\n\nআপনার কোনটি পছন্দ?`;
+        }
+        return `Ji, amader kache ei product gulo stock e ache:\n- ${lines}\n\nApnar kon ti pochondo?`;
+      }
+
+      // Explicitly returned empty results
+      if (script === "bangla") {
+        return "দুঃখিত, এই মুহূর্তে এই প্রোডাক্টটি আমাদের স্টকে নেই। অন্য কোনো প্রোডাক্ট দেখতে চাইলে জানাতে পারেন।";
+      }
+      return "Dukkhito, ei muhurte ei product ti amader stock e nei. Onno kono product dekhte chaile janate paren.";
+    }
+  }
+
+  // 3. Third priority: Standalone delivery charge check
+  for (let i = toolResults.length - 1; i >= 0; i--) {
+    const r = toolResults[i] as Record<string, any>;
+    if (!r || typeof r !== "object") continue;
+
+    if (typeof r.district === "string" && typeof r.delivery_charge_bdt === "number") {
+      if (script === "bangla") {
+        return `${r.district}-এ ডেলিভারি চার্জ ৳${r.delivery_charge_bdt}।`;
+      }
+      return `${r.district}-e delivery charge ৳${r.delivery_charge_bdt}.`;
+    }
+  }
+
+  return null;
+}
+

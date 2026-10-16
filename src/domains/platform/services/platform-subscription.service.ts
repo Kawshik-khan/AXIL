@@ -1,192 +1,199 @@
 import { db } from "@/infrastructure/db";
-import { PlanRecord, PlanVersionRecord, SubscriptionRecord } from "@/types/platform";
+import type { PlanVersionRecord, SubscriptionRecord } from "@/types/platform";
 import { PlatformContext } from "@/lib/context";
-import { PlatformAuthorizationService } from "./platform-authorization.service";
 import { PlatformAuditService } from "./platform-audit.service";
+import { PlatformSettingsService } from "./platform-settings.service";
+import { PlatformPlanService } from "./platform-plan.service";
+import { PrivilegedActionGate } from "./privileged-action-gate";
 import { AppError, NotFoundError } from "@/lib/errors";
+import { annualPrice, latestPublished, monthlyPrice } from "../plan-pricing";
 import crypto from "crypto";
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** The end of one billing period starting at `start` (calendar month or year). */
+export function periodEnd(start: Date, period: "MONTHLY" | "ANNUAL"): Date {
+  const end = new Date(start);
+  if (period === "ANNUAL") end.setFullYear(end.getFullYear() + 1);
+  else end.setMonth(end.getMonth() + 1);
+  return end;
+}
+
+function sellablePeriod(version: PlanVersionRecord, requested?: "MONTHLY" | "ANNUAL"): "MONTHLY" | "ANNUAL" {
+  if (requested === "ANNUAL" && annualPrice(version) === null) {
+    throw new AppError("PERIOD_NOT_OFFERED", "This plan version has no annual price.", 400);
+  }
+  if (requested === "MONTHLY" && monthlyPrice(version) === null) {
+    throw new AppError("PERIOD_NOT_OFFERED", "This plan version has no monthly price.", 400);
+  }
+  return requested ?? (monthlyPrice(version) !== null ? "MONTHLY" : "ANNUAL");
+}
+
 export class PlatformSubscriptionService {
-  /**
-   * Lists all SaaS plans with active version metadata.
-   */
+  /** Plans with their latest published version (kept for older callers; the console uses PlatformPlanService). */
   public static listPlans(context: PlatformContext) {
-    PlatformAuthorizationService.assertCan(context, "plan.read");
-    const plans = db.getPlans();
-    return plans.map((plan) => {
-      const versions = db.getPlanVersions(plan.id);
-      const activeVersion = versions.find((v) => v.is_published) || versions[0];
-      return {
-        ...plan,
-        current_version: activeVersion,
-        versions_count: versions.length,
-      };
-    });
+    return PlatformPlanService.listPlans(context).map((p) => ({
+      ...p,
+      current_version: p.current_version,
+      versions_count: p.versions.length,
+    }));
   }
 
-  /**
-   * Creates a new SaaS plan and publishes its version 1.
-   */
-  public static createPlan(
-    input: {
-      id: string;
-      name: string;
-      description: string;
-      price_bdt: number;
-      billing_period?: "MONTHLY" | "ANNUAL";
-      features?: Record<string, unknown>;
-    },
-    context: PlatformContext
-  ) {
-    PlatformAuthorizationService.assertCan(context, "plan.create");
-
-    const existing = db.findPlanById(input.id);
-    if (existing) {
-      throw new AppError("PLAN_ALREADY_EXISTS", `Plan with id "${input.id}" already exists.`, 409);
-    }
-
-    const now = new Date().toISOString();
-    const plan: PlanRecord = {
-      id: input.id.toUpperCase(),
-      name: input.name,
-      description: input.description,
-      is_active: true,
-      created_at: now,
-      updated_at: now,
-    };
-    db.savePlan(plan);
-
-    const version: PlanVersionRecord = {
-      id: `pv_${input.id.toLowerCase()}_v1`,
-      plan_id: plan.id,
-      version: 1,
-      billing_period: input.billing_period || "MONTHLY",
-      price_bdt: input.price_bdt,
-      features: input.features || {},
-      is_published: true,
-      created_at: now,
-    };
-    db.savePlanVersion(version);
-
-    PlatformAuditService.record(
-      {
-        action: "plan.create",
-        resource_type: "plan",
-        resource_id: plan.id,
-        reason: `Created SaaS plan ${plan.name}`,
-        after_state: { plan, version },
-        result: "SUCCESS",
-      },
-      context
-    );
-
-    return { plan, version };
-  }
-
-  /**
-   * Versioned plan publishing. Never silently modifies active plan behavior.
-   */
-  public static createPlanVersion(
-    planId: string,
-    input: {
-      price_bdt: number;
-      billing_period?: "MONTHLY" | "ANNUAL";
-      features?: Record<string, unknown>;
-    },
-    context: PlatformContext
-  ) {
-    PlatformAuthorizationService.assertCan(context, "plan.update");
-
+  /** The latest PUBLISHED version of a plan; a plan without one can't be subscribed to. */
+  public static subscribableVersion(planId: string): PlanVersionRecord {
     const plan = db.findPlanById(planId);
     if (!plan) throw new NotFoundError(`Plan "${planId}" not found.`);
-
-    const existingVersions = db.getPlanVersions(planId);
-    const nextVersionNum = existingVersions.length + 1;
-    const now = new Date().toISOString();
-
-    const newVersion: PlanVersionRecord = {
-      id: `pv_${planId.toLowerCase()}_v${nextVersionNum}`,
-      plan_id: planId,
-      version: nextVersionNum,
-      billing_period: input.billing_period || "MONTHLY",
-      price_bdt: input.price_bdt,
-      features: input.features || {},
-      is_published: true,
-      created_at: now,
-    };
-    db.savePlanVersion(newVersion);
-
-    PlatformAuditService.record(
-      {
-        action: "plan_version.create",
-        resource_type: "plan_version",
-        resource_id: newVersion.id,
-        reason: `Published version ${nextVersionNum} for plan ${plan.name}`,
-        after_state: { newVersion },
-        result: "SUCCESS",
-      },
-      context
-    );
-
-    return newVersion;
+    const version = latestPublished(db.getPlanVersions(planId));
+    if (!version) throw new AppError("PLAN_NOT_PUBLISHED", `Plan "${plan.name}" has no published version.`, 409);
+    return version;
   }
 
   /**
-   * Upgrades or changes a tenant's subscription to a new plan.
+   * Moves a tenant to the latest published version of a plan (SA-10: previously the oldest). The period restarts
+   * now for the chosen billing period; a TRIAL stays a trial unless `endTrial` is set.
    */
   public static changeTenantPlan(
     tenantId: string,
     newPlanId: string,
     reason: string,
-    context: PlatformContext
-  ) {
-    PlatformAuthorizationService.assertCan(context, "subscription.manage");
+    context: PlatformContext,
+    options: { billingPeriod?: "MONTHLY" | "ANNUAL"; endTrial?: boolean } = {}
+  ): SubscriptionRecord {
+    const payload = { tenant_id: tenantId, plan_id: newPlanId, billing_period: options.billingPeriod ?? null, end_trial: Boolean(options.endTrial) };
+    PrivilegedActionGate.assert(context, "subscription.change_plan", { reason, payload });
 
     const tenant = db.findTenantById(tenantId);
     if (!tenant) throw new NotFoundError(`Tenant "${tenantId}" not found.`);
+    const version = this.subscribableVersion(newPlanId);
+    const period = sellablePeriod(version, options.billingPeriod);
 
-    const newPlan = db.findPlanById(newPlanId);
-    if (!newPlan) throw new NotFoundError(`Plan "${newPlanId}" not found.`);
-
-    const versions = db.getPlanVersions(newPlanId);
-    const publishedVersion = versions.find((v) => v.is_published) || versions[0];
-    if (!publishedVersion) throw new NotFoundError(`No published version found for plan "${newPlanId}".`);
-
-    const existingSub = db.findSubscriptionByTenantId(tenantId);
-    const now = new Date().toISOString();
-    const nextPeriodEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-
-    const updatedSub: SubscriptionRecord = {
-      id: existingSub?.id || `sub_${crypto.randomUUID().substring(0, 12)}`,
+    const existing = db.findSubscriptionByTenantId(tenantId);
+    const now = new Date();
+    const stayTrial = existing?.status === "TRIAL" && !options.endTrial;
+    const updated: SubscriptionRecord = {
+      id: existing?.id || `sub_${crypto.randomUUID().substring(0, 12)}`,
       tenant_id: tenantId,
-      plan_id: newPlan.id,
-      plan_version_id: publishedVersion.id,
-      status: "ACTIVE",
-      current_period_start: now,
-      current_period_end: nextPeriodEnd,
+      plan_id: version.plan_id,
+      plan_version_id: version.id,
+      status: stayTrial ? "TRIAL" : "ACTIVE",
+      billing_period: period,
+      ...(stayTrial && existing?.trial_ends_at ? { trial_ends_at: existing.trial_ends_at } : {}),
+      current_period_start: now.toISOString(),
+      current_period_end: periodEnd(now, period).toISOString(),
       cancel_at_period_end: false,
-      created_at: existingSub?.created_at || now,
-      updated_at: now,
+      created_at: existing?.created_at || now.toISOString(),
+      updated_at: now.toISOString(),
     };
-    db.saveSubscription(updatedSub);
-
-    // Also update tenant's plan_id field
-    db.updateTenant(tenantId, { plan_id: newPlan.id, updated_at: now });
+    db.saveSubscription(updated);
+    db.updateTenant(tenantId, { plan_id: version.plan_id, updated_at: now.toISOString() });
 
     PlatformAuditService.record(
       {
         action: "subscription.change_plan",
         resource_type: "subscription",
-        resource_id: updatedSub.id,
+        resource_id: updated.id,
         target_tenant_id: tenantId,
-        reason: reason || `Changed subscription to ${newPlan.name}`,
-        before_state: existingSub ? { plan_id: existingSub.plan_id } : null,
-        after_state: { plan_id: newPlan.id, version: publishedVersion.version },
+        reason: reason.trim(),
+        before_state: existing
+          ? { plan_id: existing.plan_id, plan_version_id: existing.plan_version_id, status: existing.status, billing_period: existing.billing_period ?? null }
+          : null,
+        after_state: { plan_id: updated.plan_id, plan_version_id: updated.plan_version_id, version: version.version, status: updated.status, billing_period: period },
         result: "SUCCESS",
       },
       context
     );
+    return updated;
+  }
 
-    return updatedSub;
+  /**
+   * Starts a TRIAL on the latest published version of a plan. Trial length: the version's trial_days, else the
+   * `billing.trial_default_days` setting. Refused while the tenant has an ACTIVE or TRIAL subscription.
+   */
+  public static startTrial(context: PlatformContext, tenantId: string, planId: string, reason: string): SubscriptionRecord {
+    PrivilegedActionGate.assert(context, "subscription.change_plan", { reason, payload: { tenant: tenantId, plan_id: planId, trial: true } });
+    const tenant = db.findTenantById(tenantId);
+    if (!tenant) throw new NotFoundError(`Tenant "${tenantId}" not found.`);
+    const existing = db.findSubscriptionByTenantId(tenantId);
+    if (existing && (existing.status === "ACTIVE" || existing.status === "TRIAL")) {
+      throw new AppError("SUBSCRIPTION_EXISTS", `The tenant already has a ${existing.status.toLowerCase()} subscription.`, 409);
+    }
+    const version = this.subscribableVersion(planId);
+    const days = version.trial_days ?? PlatformSettingsService.getEffectiveSetting<number>("billing.trial_default_days");
+    if (days <= 0) throw new AppError("TRIAL_NOT_OFFERED", "This plan version has no trial.", 400);
+
+    const now = new Date();
+    const trialEnd = new Date(now.getTime() + days * DAY_MS);
+    const sub: SubscriptionRecord = {
+      id: existing?.id || `sub_${crypto.randomUUID().substring(0, 12)}`,
+      tenant_id: tenantId,
+      plan_id: version.plan_id,
+      plan_version_id: version.id,
+      status: "TRIAL",
+      billing_period: sellablePeriod(version),
+      trial_ends_at: trialEnd.toISOString(),
+      current_period_start: now.toISOString(),
+      current_period_end: trialEnd.toISOString(),
+      cancel_at_period_end: false,
+      created_at: existing?.created_at || now.toISOString(),
+      updated_at: now.toISOString(),
+    };
+    db.saveSubscription(sub);
+    db.updateTenant(tenantId, { plan_id: version.plan_id, updated_at: now.toISOString() });
+
+    PlatformAuditService.record(
+      {
+        action: "subscription.trial_started",
+        resource_type: "subscription",
+        resource_id: sub.id,
+        target_tenant_id: tenantId,
+        reason: reason.trim(),
+        before_state: existing ? { status: existing.status, plan_id: existing.plan_id } : null,
+        after_state: { plan_id: sub.plan_id, plan_version_id: sub.plan_version_id, trial_ends_at: sub.trial_ends_at, trial_days: days },
+        result: "SUCCESS",
+      },
+      context
+    );
+    return sub;
+  }
+
+  /** Moves a trial's end date later, by at most `billing.trial_max_extension_days` in one step. */
+  public static extendTrial(context: PlatformContext, tenantId: string, newEndIso: string, reason: string): SubscriptionRecord {
+    PrivilegedActionGate.assert(context, "subscription.extend_trial", { reason, payload: { tenant: tenantId, trial_ends_at: newEndIso } });
+    const sub = db.findSubscriptionByTenantId(tenantId);
+    if (!sub || sub.status !== "TRIAL") throw new AppError("NOT_IN_TRIAL", "The tenant is not on a trial.", 409);
+
+    const newEnd = Date.parse(newEndIso);
+    const now = Date.now();
+    const currentEnd = sub.trial_ends_at ? Date.parse(sub.trial_ends_at) : now;
+    const from = Math.max(currentEnd, now);
+    if (Number.isNaN(newEnd) || newEnd <= from) {
+      throw new AppError("INVALID_TRIAL_END", "The new trial end must be later than the current one.", 400);
+    }
+    const maxDays = PlatformSettingsService.getEffectiveSetting<number>("billing.trial_max_extension_days");
+    if (newEnd - from > maxDays * DAY_MS) {
+      throw new AppError("TRIAL_EXTENSION_TOO_LONG", `One extension can add at most ${maxDays} days.`, 400, { max_days: maxDays });
+    }
+
+    const updated: SubscriptionRecord = {
+      ...sub,
+      trial_ends_at: new Date(newEnd).toISOString(),
+      current_period_end: new Date(newEnd).toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    db.saveSubscription(updated);
+    PlatformAuditService.record(
+      {
+        action: "subscription.trial_extended",
+        resource_type: "subscription",
+        resource_id: sub.id,
+        target_tenant_id: tenantId,
+        reason: reason.trim(),
+        before_state: { trial_ends_at: sub.trial_ends_at ?? null },
+        after_state: { trial_ends_at: updated.trial_ends_at },
+        result: "SUCCESS",
+      },
+      context
+    );
+    return updated;
   }
 }

@@ -29,7 +29,7 @@ export class OrderOperationsService {
    * Evaluates operational status and readiness for all active orders
    */
   public evaluateOrders(tenantId: string): OrderOperationalHealth[] {
-    const orders = db.getAllOrders(tenantId, { hydrate: true });
+    const orders = db.getAllOrders(tenantId);
     const reservations = db.getReservations(tenantId);
     const payments = db.getPayments(tenantId);
     const now = Date.now();

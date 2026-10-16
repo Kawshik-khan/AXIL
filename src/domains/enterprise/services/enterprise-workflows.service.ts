@@ -9,6 +9,7 @@ import { enterpriseInventoryService } from "./enterprise-inventory.service";
 import { enterpriseBenchmarkingService } from "./enterprise-benchmarking.service";
 import { dataQualityService } from "./data-quality.service";
 import { EnterpriseUserRecord } from "@/types/enterprise";
+import { AuditService } from "@/domains/audit/service";
 
 export class EnterpriseWorkflowsService {
   /**
@@ -115,7 +116,7 @@ export class EnterpriseWorkflowsService {
     anomalousEventsCount: number;
     securityHealthScore: number;
   }> {
-    const auditLogs = db.getAuditLogsByTenant(tenantId).logs;
+    const auditLogs = (await AuditService.getLogsForTenant(tenantId)).logs; // SQL under zero-hydration
     const suspiciousActions = auditLogs.filter((a) => a.action.includes("FAILED") || a.action.includes("REVOKED"));
 
     return {

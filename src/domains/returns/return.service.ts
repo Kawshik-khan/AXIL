@@ -6,6 +6,7 @@ import { RequestContext } from "@/lib/context";
 import { RbacService } from "@/domains/rbac/service";
 import { PERMISSIONS } from "@/lib/permissions";
 import { BadRequestError, NotFoundError } from "@/lib/errors";
+import { loadOrderRows } from "@/infrastructure/db/tenant-rows";
 
 export class ReturnService {
   public static async listReturns(context: RequestContext): Promise<Return[]> {
@@ -23,6 +24,7 @@ export class ReturnService {
   ): Promise<Return> {
     RbacService.assertCan(context, PERMISSIONS.ORDERS_UPDATE);
 
+    await loadOrderRows(context.tenant.id, [payload.order_id]); // zero-hydration: the order's rows this flow reads and changes
     const order = db.findOrderById(context.tenant.id, payload.order_id);
     if (!order) {
       throw new NotFoundError(`Order '${payload.order_id}' not found.`);
@@ -83,6 +85,7 @@ export class ReturnService {
       throw new NotFoundError(`Return '${returnId}' could not be updated.`);
     }
 
+    await loadOrderRows(context.tenant.id, [ret.order_id]); // zero-hydration: the order's rows this flow reads and changes
     OrderLifecycleService.advance(context.tenant.id, ret.order_id, "RETURNED", { type: "USER", id: context.user.id }, `Return ${returnId} received`);
     return updated;
   }
@@ -98,6 +101,7 @@ export class ReturnService {
   ): Promise<Refund> {
     RbacService.assertCan(context, PERMISSIONS.PAYMENTS_REFUND);
 
+    await loadOrderRows(context.tenant.id, [payload.order_id]); // zero-hydration: the order's rows this flow reads and changes
     const order = db.findOrderById(context.tenant.id, payload.order_id);
     if (!order) {
       throw new NotFoundError(`Order '${payload.order_id}' not found.`);

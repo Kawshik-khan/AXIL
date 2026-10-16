@@ -6,6 +6,7 @@ import { db } from "@/infrastructure/db";
 import { recommendationService } from "@/domains/intelligence/services/recommendation.service";
 import { RecommendationStatus } from "@/types/intelligence";
 import { withStore } from "@/lib/store-unit";
+import { COMMERCE_ANALYTICS_COLLECTIONS } from "@/infrastructure/db/tenant-rows";
 
 /**
  * Read-only (FX-21). Without `status`: the current recommendations (stored snapshot while fresh, otherwise computed,
@@ -31,4 +32,4 @@ async function handleGET(request: Request) {
   }
 }
 
-export const GET = withStore("GET", handleGET);
+export const GET = withStore("GET", handleGET, { tenantRows: { collections: COMMERCE_ANALYTICS_COLLECTIONS, permission: PERMISSIONS.ANALYTICS_READ } });

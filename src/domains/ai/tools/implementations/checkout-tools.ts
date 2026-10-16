@@ -147,7 +147,7 @@ export class CreateOrderDraftTool implements IAgentTool<z.infer<typeof CreateOrd
   public async execute(
     context: RequestContext,
     input: z.infer<typeof CreateOrderDraftInputSchema>,
-    options?: { conversationId?: string; idempotencyKey?: string }
+    options?: { conversationId?: string; idempotencyKey?: string; signal?: AbortSignal }
   ) {
     const parts = input.customer_name.trim().split(" ");
     const firstName = parts[0] || "Valued";

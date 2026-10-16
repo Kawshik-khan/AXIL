@@ -260,3 +260,31 @@
     display: none;
   }
 }
+
+/* ---------- platform console dark theme (console-theme.tsx; only while the console sets the attribute) ---------- */
+:global(html[data-console-theme="dark"]) .tenantBadge,
+:global(html[data-console-theme="dark"]) .searchTrigger,
+:global(html[data-console-theme="dark"]) .iconButton,
+:global(html[data-console-theme="dark"]) .profileButton,
+:global(html[data-console-theme="dark"]) .dropdown {
+  background: var(--color-surface-pure);
+  border-color: var(--color-border-subtle);
+  color: var(--color-text-primary);
+  box-shadow: var(--shadow-md);
+}
+:global(html[data-console-theme="dark"]) .tenantBadge:hover,
+:global(html[data-console-theme="dark"]) .searchTrigger:hover,
+:global(html[data-console-theme="dark"]) .iconButton:hover,
+:global(html[data-console-theme="dark"]) .profileButton:hover {
+  background: var(--color-surface-soft);
+  border-color: var(--color-border-medium);
+  color: var(--color-text-primary);
+}
+:global(html[data-console-theme="dark"]) .searchTrigger { color: var(--color-text-secondary); }
+:global(html[data-console-theme="dark"]) .kbdShortcut { background: var(--color-surface-soft); border-color: var(--color-border-subtle); color: var(--color-text-secondary); }
+:global(html[data-console-theme="dark"]) .tenantIcon,
+:global(html[data-console-theme="dark"]) .avatar { background: var(--color-lime-primary); color: var(--color-bg-base); }
+:global(html[data-console-theme="dark"]) .userName { color: var(--color-text-primary); }
+:global(html[data-console-theme="dark"]) .dropdownDivider { background: var(--color-border-subtle); }
+:global(html[data-console-theme="dark"]) .dropdownItem { color: var(--color-text-secondary); }
+:global(html[data-console-theme="dark"]) .dropdownItem:hover { background: var(--color-surface-soft); color: var(--color-text-primary); }

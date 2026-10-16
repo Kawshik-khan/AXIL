@@ -31,10 +31,27 @@ jobs:
         run: npm test
       - name: Tests (every suite on in-memory Postgres)
         run: npm run test:pg
+      - name: Zero-hydration suites (own in-memory Postgres)
+        run: npm run test:zero-hydration
       - name: Eval gate
         run: npm run test:eval
+      - name: RAG offline replay
+        run: npm run rag:replay:offline
+      - name: Upload RAG replay report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rag-replay-report
+          path: tests/rag-replay-report.json
+          if-no-files-found: warn
+          retention-days: 14
+      # `next build` loads the store, which needs both secrets outside NODE_ENV=test (src/lib/security.ts). Random
+      # throwaway values per run: nothing built here is deployed, and no real secret goes into CI or the repo.
       - name: Build
-        run: npm run build
+        run: |
+          export JWT_SECRET="$(openssl rand -hex 32)"
+          export CREDENTIALS_ENCRYPTION_KEY="$(openssl rand -hex 32)"
+          npm run build
 
   migrations:
     name: Migration check

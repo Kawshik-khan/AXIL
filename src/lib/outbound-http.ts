@@ -37,9 +37,15 @@ export class OutboundTimeoutError extends AppError {
   }
 }
 
+export class OutboundCancelledError extends AppError {
+  constructor(host: string, readonly mayHaveReachedPeer: boolean) {
+    super("OUTBOUND_CANCELLED", `${host} request was cancelled.`, 499, { may_have_reached_peer: mayHaveReachedPeer });
+  }
+}
+
 export class OutboundNetworkError extends AppError {
-  constructor(host: string, code: string) {
-    super("OUTBOUND_UNREACHABLE", `${host} could not be reached (${code}).`, 502);
+  constructor(host: string, readonly networkCode: string) {
+    super("OUTBOUND_UNREACHABLE", `${host} could not be reached (${networkCode}).`, 502);
   }
 }
 
@@ -49,6 +55,8 @@ export interface OutboundRequestOptions {
   body?: string | Buffer;
   /** Whole-request deadline (connect + send + response). */
   timeoutMs?: number;
+  /** Cancels DNS/connect/send/response work when the owning request or workflow is cancelled. */
+  signal?: AbortSignal;
   maxResponseBytes?: number;
   /** The URL comes from the platform's environment, not from tenant data (see the header). */
   platformConfigured?: boolean;
@@ -149,12 +157,14 @@ export function isBlockedAddress(address: string): boolean {
 }
 
 function allowListedHosts(): Set<string> {
-  return new Set(
-    (process.env.OUTBOUND_ALLOWED_PRIVATE_HOSTS ?? "")
-      .split(",")
-      .map((h) => h.trim().toLowerCase())
-      .filter(Boolean)
-  );
+  const hosts = (process.env.OUTBOUND_ALLOWED_PRIVATE_HOSTS ?? "")
+    .split(",")
+    .map((h) => h.trim().toLowerCase())
+    .filter(Boolean);
+  if (process.env.NODE_ENV !== "production" || process.env.DEV_AUTH_BYPASS === "1") {
+    hosts.push("localhost:11434", "127.0.0.1:11434", "localhost:8000", "127.0.0.1:8000");
+  }
+  return new Set(hosts);
 }
 
 /** The host without IPv6 brackets or a trailing dot ("localhost." is "localhost"). */
@@ -244,9 +254,20 @@ export async function assertSafeUrl(raw: string, policy: UrlPolicy = {}): Promis
  */
 export async function outboundRequest(raw: string, options: OutboundRequestOptions = {}): Promise<OutboundResponse> {
   const url = parseSafeUrl(raw, { platformConfigured: options.platformConfigured, tenantSupplied: options.tenantSupplied });
+  if (options.signal?.aborted) throw new OutboundCancelledError(url.hostname, false);
   const method = options.method ?? "GET";
   const timeoutMs = options.timeoutMs ?? 5_000;
-  if (transportForTesting) return transportForTesting(url, { ...options, method, timeoutMs });
+  if (transportForTesting) {
+    if (!options.signal) return transportForTesting(url, { ...options, method, timeoutMs });
+    return new Promise<OutboundResponse>((resolve, reject) => {
+      const onAbort = () => reject(new OutboundCancelledError(url.hostname, false));
+      options.signal!.addEventListener("abort", onAbort, { once: true });
+      if (options.signal!.aborted) onAbort();
+      transportForTesting!(url, { ...options, method, timeoutMs }).then(resolve, reject).finally(() => {
+        options.signal!.removeEventListener("abort", onAbort);
+      });
+    });
+  }
   const allowListed = relaxed(url, options);
   const maxBytes = options.maxResponseBytes ?? 1_048_576;
   const started = Date.now();
@@ -274,10 +295,18 @@ export async function outboundRequest(raw: string, options: OutboundRequestOptio
 
   return new Promise<OutboundResponse>((resolve, reject) => {
     let settled = false;
+    let requestMayHaveReachedPeer = false;
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    const signal = options.signal;
+    const onAbort = () => finish(() => {
+      request.destroy();
+      reject(new OutboundCancelledError(host, requestMayHaveReachedPeer));
+    });
     const finish = (fn: () => void) => {
       if (settled) return;
       settled = true;
-      clearTimeout(deadline);
+      if (deadline) clearTimeout(deadline);
+      signal?.removeEventListener("abort", onAbort);
       fn();
     };
     const request = (url.protocol === "https:" ? https : http).request(
@@ -319,7 +348,7 @@ export async function outboundRequest(raw: string, options: OutboundRequestOptio
         response.on("error", (err: NodeJS.ErrnoException) => finish(() => reject(new OutboundNetworkError(host, err.code ?? "RESPONSE_ERROR"))));
       }
     );
-    const deadline = setTimeout(() => {
+    deadline = setTimeout(() => {
       finish(() => reject(new OutboundTimeoutError(host, timeoutMs)));
       request.destroy();
     }, timeoutMs);
@@ -327,8 +356,14 @@ export async function outboundRequest(raw: string, options: OutboundRequestOptio
       if (err instanceof OutboundBlockedError) finish(() => reject(err));
       else finish(() => reject(new OutboundNetworkError(host, err.code ?? "NETWORK_ERROR")));
     });
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
     if (body) request.write(body);
     request.end();
+    requestMayHaveReachedPeer = true;
   });
 }
 

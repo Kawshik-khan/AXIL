@@ -4,6 +4,7 @@ import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response"
 import { intelligenceSnapshots } from "@/domains/intelligence/services/intelligence-snapshot.service";
 import { dataQualityService } from "@/domains/intelligence/services/data-quality.service";
 import { withStore } from "@/lib/store-unit";
+import { COMMERCE_ANALYTICS_COLLECTIONS } from "@/infrastructure/db/tenant-rows";
 
 /** Read-only (FX-21): today's stored report while fresh, otherwise computed for this request. Never writes. */
 async function handleGET(request: Request) {
@@ -20,4 +21,4 @@ async function handleGET(request: Request) {
   }
 }
 
-export const GET = withStore("GET", handleGET);
+export const GET = withStore("GET", handleGET, { tenantRows: { collections: [...COMMERCE_ANALYTICS_COLLECTIONS, "analytics_events"], permission: PERMISSIONS.ANALYTICS_READ } });

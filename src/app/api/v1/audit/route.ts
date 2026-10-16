@@ -13,7 +13,7 @@ async function handleGET(request: Request) {
     const limit = parseInt(searchParams.get("limit") || "50", 10);
     const offset = parseInt(searchParams.get("offset") || "0", 10);
 
-    const { logs, total } = AuditService.getLogsForTenant(context.tenant.id, limit, offset);
+    const { logs, total } = await AuditService.getLogsForTenant(context.tenant.id, limit, offset);
 
     return apiSuccess(
       { logs },

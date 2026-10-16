@@ -258,6 +258,9 @@ export const SocialDashboard: React.FC = () => {
             <p style={{ fontSize: "0.8125rem", color: "var(--color-text-muted)", margin: 0 }}>
               Credentials are encrypted using AES-256-GCM and never exposed over client APIs.
             </p>
+            <p style={{ fontSize: "0.8125rem", margin: 0 }}>
+              Facebook or Instagram? <a href="/connector/facebook" style={{ color: "var(--color-primary)", fontWeight: 600 }}>Connect with Facebook</a> instead of pasting a token.
+            </p>
 
             <form onSubmit={handleConnectSubmit} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
               <div>

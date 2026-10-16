@@ -5,6 +5,7 @@ import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response"
 import { enterpriseReportingService } from "@/domains/enterprise/services/enterprise-reporting.service";
 import { db } from "@/infrastructure/db";
 import { withStore } from "@/lib/store-unit";
+import { OPERATIONS_COLLECTIONS } from "@/infrastructure/db/tenant-rows";
 
 async function handleGET(request: Request) {
   try {
@@ -55,4 +56,4 @@ async function handlePOST(request: Request) {
 }
 
 export const GET = withStore("GET", handleGET);
-export const POST = withStore("POST", handlePOST);
+export const POST = withStore("POST", handlePOST, { tenantRows: { collections: OPERATIONS_COLLECTIONS, permission: PERMISSIONS.EXPORTS_CREATE } });

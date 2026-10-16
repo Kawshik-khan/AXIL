@@ -16,4 +16,4 @@ async function handleGET(request: Request) {
   }
 }
 
-export const GET = withStore("GET", handleGET);
+export const GET = withStore("GET", handleGET, { tenantRows: { collections: ["orders", "customers", "products", "inventory_items", "warehouses"], permission: PERMISSIONS.DASHBOARD_READ } });

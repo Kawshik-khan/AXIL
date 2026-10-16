@@ -82,7 +82,9 @@ async function main() {
   const fx = await buildFixture();
   const rows: Array<{ q: string; lang: string; expect: string | null; got: string[] }> = [];
   for (const item of QUERIES) {
-    if (REAL) await new Promise((r) => setTimeout(r, 1500)); // stay under the embedding provider's per-minute limit
+    // Stay under the embedding provider's per-minute limit: a query is ~4-5 embedding calls (it and its Banglish/Bangla
+    // expansions), so 1.5 s apart was ~140 calls a minute and Gemini's free tier answered 429
+    if (REAL) await new Promise((r) => setTimeout(r, 4000));
     const docs = await KnowledgeService.searchPolicyDocuments(fx.tenantId, item.q, 2);
     rows.push({ q: item.q, lang: item.lang, expect: item.expect, got: docs.map((d) => d.title) });
   }

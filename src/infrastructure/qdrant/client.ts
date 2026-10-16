@@ -23,6 +23,11 @@ export interface KnowledgeChunkMetadata {
   language: string;
   content: string; // Full chunk text stored for retrieval without DB roundtrip
   parent_chunk_id: string;
+  embedding_model?: string;
+  embedding_provider?: string;
+  embedding_dimensions?: number;
+  preprocessing_version?: string;
+  index_version?: string;
 }
 
 export interface QdrantCredentials {
@@ -93,15 +98,17 @@ function tenantFilter(tenantId: string, documentId?: string) {
 }
 
 const _indexed = new Set<string>();
+interface CollectionInfo { result?: { config?: { params?: { vectors?: { size?: number } | Record<string, { size?: number }> } } } }
 
 /** Qdrant Cloud refuses filters on unindexed payload fields, so make sure the fields we filter on are indexed. */
 async function ensureIndexes(creds: QdrantCredentials): Promise<void> {
   const key = `${creds.url}|${creds.collection}`;
   if (_indexed.has(key)) return;
   const name = encodeURIComponent(creds.collection);
-  for (const field of ["tenant_id", "document_id"]) {
+  for (const field of ["tenant_id", "document_id", "embedding_model", "embedding_provider", "index_version"]) {
     await request(creds, "PUT", `/collections/${name}/index?wait=true`, { field_name: field, field_schema: "keyword" }, [404]);
   }
+  await request(creds, "PUT", `/collections/${name}/index?wait=true`, { field_name: "embedding_dimensions", field_schema: "integer" }, [404]);
   _indexed.add(key);
 }
 
@@ -110,9 +117,15 @@ async function ensureCollection(creds: QdrantCredentials, vectorSize: number): P
   const key = `${creds.url}|${creds.collection}`;
   if (!_ensured.has(key)) {
     const name = encodeURIComponent(creds.collection);
-    const existing = await request(creds, "GET", `/collections/${name}`, undefined, [404]);
+    const existing = await request<CollectionInfo>(creds, "GET", `/collections/${name}`, undefined, [404]);
     if (existing === null) {
       await request(creds, "PUT", `/collections/${name}`, { vectors: { size: vectorSize, distance: "Cosine" } });
+    } else {
+      const vectors = existing?.result?.config?.params?.vectors;
+      const existingSize = vectors && "size" in vectors ? vectors.size : undefined;
+      if (existingSize && existingSize !== vectorSize) {
+        throw new Error(`Qdrant vector dimension mismatch: collection uses ${existingSize}, requested ${vectorSize}.`);
+      }
     }
     _ensured.add(key);
   }
@@ -133,13 +146,17 @@ export interface UpsertChunkParams {
  */
 export async function upsertChunks(tenantId: string, chunks: UpsertChunkParams[]): Promise<void> {
   if (chunks.length === 0) return;
+  const dimensions = chunks[0].values.length;
+  if (!dimensions || chunks.some((chunk) => chunk.values.length !== dimensions || chunk.values.some((value) => !Number.isFinite(value)) || !chunk.values.some((value) => value !== 0))) {
+    throw new Error("Qdrant upsert refused empty, invalid, zero, or mixed-dimension vectors.");
+  }
   const creds = requireCredentials();
-  await ensureCollection(creds, chunks[0].values.length);
+  await ensureCollection(creds, dimensions);
   const name = encodeURIComponent(creds.collection);
 
   for (let i = 0; i < chunks.length; i += UPSERT_BATCH_SIZE) {
     const points = chunks.slice(i, i + UPSERT_BATCH_SIZE).map((c) => ({
-      id: pointId(tenantId, c.id),
+      id: pointId(tenantId, `${c.id}:v${c.metadata.version}:${c.metadata.index_version || "legacy"}`),
       vector: c.values,
       payload: { ...c.metadata, tenant_id: tenantId, chunk_id: c.id },
     }));
@@ -159,7 +176,16 @@ interface QdrantSearchHit {
 }
 
 /** Query a tenant's vectors. Returns top-K results by cosine similarity, at or above `minScore`. */
-export async function searchVectors(tenantId: string, queryVector: number[], topK: number = 5, minScore: number = 0.65): Promise<VectorSearchResult[]> {
+export async function searchVectors(
+  tenantId: string,
+  queryVector: number[],
+  topK: number = 5,
+  minScore: number = 0.65,
+  profile?: { model: string; provider: string; dimensions: number; index_version: string },
+): Promise<VectorSearchResult[]> {
+  if (!queryVector.length || queryVector.some((value) => !Number.isFinite(value)) || !queryVector.some((value) => value !== 0)) {
+    throw new Error("Qdrant search refused an empty, invalid, or zero query vector.");
+  }
   const creds = requireCredentials();
   const name = encodeURIComponent(creds.collection);
   await ensureIndexes(creds);
@@ -169,7 +195,15 @@ export async function searchVectors(tenantId: string, queryVector: number[], top
     limit: topK,
     score_threshold: minScore,
     with_payload: true,
-    filter: tenantFilter(tenantId),
+    filter: profile
+      ? { must: [
+          ...tenantFilter(tenantId).must,
+          { key: "index_version", match: { value: profile.index_version } },
+          { key: "embedding_model", match: { value: profile.model } },
+          { key: "embedding_provider", match: { value: profile.provider } },
+          { key: "embedding_dimensions", match: { value: profile.dimensions } },
+        ] }
+      : tenantFilter(tenantId),
   }, [404]);
 
   const results: VectorSearchResult[] = [];

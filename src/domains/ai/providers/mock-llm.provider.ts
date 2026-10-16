@@ -38,6 +38,7 @@ export class MockLLMProvider implements LLMProvider {
     const startTime = Date.now();
     const lastUserMessage = [...messages].reverse().find((m) => m.role === "user")?.content || "";
     const lower = lastUserMessage.toLowerCase();
+    const normalizedMessage = lower.replace(/[০-৯]/g, (digit) => String("০১২৩৪৫৬৭৮৯".indexOf(digit)));
 
     // Check if tools were executed and returned in message history
     const toolMessages = messages.filter((m) => m.role === "tool");
@@ -45,11 +46,23 @@ export class MockLLMProvider implements LLMProvider {
 
     let responseContent = "";
     let toolCalls: LLMToolCall[] | undefined = undefined;
+    const asksForContactCapture = lower.includes("wholesale") || lower.includes("পাইকারি") || lower.includes("bulk") || lower.includes("পিস");
+    const hasContactReference = /(?:\+?\d[\d\s()-]{7,}\d)|\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i.test(lastUserMessage);
+    const asksForSizingGuidance = lower.includes("measurement") || lower.includes("chest") || lower.includes("size chart") || lower.includes("সাইজ চার্ট");
+    const asksForReturnPolicy = lower.includes("return") || lower.includes("exchange") || lower.includes("রিটার্ন") || lower.includes("ফেরত") || lower.includes("na mille");
 
     if (!hasToolResults && tools && tools.length > 0) {
       // Analyze user prompt to determine if tools should be invoked
-      // 1. Delivery & Shipping Estimate Check (takes precedence over generic 'koto' / 'charge')
-      if (
+
+      // 1. Return and sizing questions require the tenant's published policy or size guide.
+      if (asksForReturnPolicy || asksForSizingGuidance) {
+        toolCalls = [{
+          id: `tc_${Date.now()}_6`,
+          name: "search_knowledge",
+          arguments: { query: lastUserMessage, top_k: 3 },
+        }];
+      // 2. Delivery & Shipping Estimate Check (takes precedence over generic 'koto' / 'charge')
+      } else if (
         lower.includes("delivery") ||
         lower.includes("charge") ||
         lower.includes("shipping") ||
@@ -95,14 +108,16 @@ export class MockLLMProvider implements LLMProvider {
               },
             },
           ];
-        } else if (lower.includes("xl") || lower.includes("42") || lower.includes("stock") || lower.includes("available") || lower.includes("ase")) {
+        } else if (lower.includes("xl") || normalizedMessage.includes("42") || lower.includes("stock") || lower.includes("available") || lower.includes("ase") || lower.includes("আছে") || lower.includes("সাইজ")) {
+          const requestedSize = lastUserMessage.match(/[০-৯]{1,2}|\b(?:[2-5][0-9]|XS|S|M|L|XL|XXL)\b/i)?.[0]
+            ?.replace(/[০-৯]/g, (digit) => String("০১২৩৪৫৬৭৮৯".indexOf(digit))) || "XL";
           toolCalls = [
             {
               id: `tc_${Date.now()}_1`,
               name: "check_inventory",
               arguments: {
                 product_query: lower.includes("oxford") ? "Oxford" : lower.includes("shoes") ? "Shoes" : lower.includes("জুতা") ? "জুতা" : "T-Shirt",
-                variant_attributes: lower.includes("42") ? { size: "42" } : { size: "XL" },
+                variant_attributes: { size: requestedSize },
               },
             },
           ];
@@ -128,17 +143,18 @@ export class MockLLMProvider implements LLMProvider {
       ) {
         // Extract order number if present
         const orderMatch = lastUserMessage.match(/COM-2026-\d+/i) || lastUserMessage.match(/ORD-\d+/i);
-        const orderNum = orderMatch ? orderMatch[0] : "COM-2026-000123";
-        toolCalls = [
-          {
-            id: `tc_${Date.now()}_3`,
-            name: "get_order_status",
-            arguments: {
-              order_number: orderNum,
+        if (orderMatch) {
+          toolCalls = [
+            {
+              id: `tc_${Date.now()}_3`,
+              name: "get_order_status",
+              arguments: { order_number: orderMatch[0] },
             },
-          },
-        ];
-      } else if (lower.includes("wholesale") || lower.includes("পাইকারি") || lower.includes("100 পিস") || lower.includes("100 piece")) {
+          ];
+        } else {
+          responseContent = "অর্ডারের অবস্থা খুঁজে দিতে অর্ডার নম্বরটি পাঠাবেন?";
+        }
+      } else if (asksForContactCapture && hasContactReference && (lower.includes("wholesale") || lower.includes("পাইকারি") || lower.includes("100 পিস") || lower.includes("100 piece"))) {
         toolCalls = [
           {
             id: `tc_${Date.now()}_4`,
@@ -173,6 +189,8 @@ export class MockLLMProvider implements LLMProvider {
         } else if (parsedResult.delivery_charge !== undefined) {
           const zoneText = parsedResult.delivery_zone === "OUTSIDE_DHAKA" ? "ঢাকার বাইরে" : "ঢাকার ভেতরে";
           responseContent = `${zoneText} ডেলিভারি চার্জ ৳${parsedResult.delivery_charge} (ডেলিভারি সময়: ${parsedResult.estimated_days})।`;
+        } else if (parsedResult.found === false && parsedResult.order_number) {
+          responseContent = `অর্ডার ${parsedResult.order_number} আমাদের রেকর্ডে পাওয়া যায়নি। নম্বরটি যাচাই করে পাঠাবেন?`;
         } else if (parsedResult.order_number) {
           responseContent = `আপনার অর্ডার ${parsedResult.order_number} এর বর্তমান স্ট্যাটাস: ${parsedResult.status}। কুরিয়ার ট্র্যাকিং: ${parsedResult.courier_tracking_code || "প্রসেসিং হচ্ছে"}।`;
         } else if (parsedResult.lead_id) {
@@ -183,6 +201,8 @@ export class MockLLMProvider implements LLMProvider {
         } else {
           responseContent = "আপনার তথ্যানুযায়ী বিস্তারিত যাচাই করা হয়েছে। আপনাকে আর কীভাবে সহায়তা করতে পারি?";
         }
+      } else if (asksForContactCapture && !hasContactReference) {
+        responseContent = "পাইকারি অনুরোধটি নথিভুক্ত করতে আপনার নাম ও ফোন নম্বর বা ইমেইলটি জানাবেন? যোগাযোগের তথ্য ছাড়া আমি কোনো লিড তৈরি করিনি।";
       } else if (lower.includes("hi") || lower.includes("hello") || lower.includes("সালাম") || lower.includes("assalamu")) {
         responseContent = "আসসালামু আলাইকুম! CommerceOS এ আপনাকে স্বাগতম। আমি আপনাকে কীভাবে সাহায্য করতে পারি?";
       } else if (lower.includes("human") || lower.includes("agent") || lower.includes("manush") || lower.includes("কথা বলতে চাই")) {

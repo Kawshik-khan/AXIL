@@ -36,6 +36,8 @@ Next.js 14 App Router · React 18 · TypeScript (strict) · Zod · jose/bcryptjs
 src/app/api/v1/<resource>/route.ts   REST routes (tenant); src/app/api/v1/platform/** (platform)
 src/app/(dashboard)/**               Merchant UI          src/app/super-admin/**  Platform UI
 src/domains/<domain>/                *.service.ts (logic), *.repository.ts (Neon, not yet wired)
+src/proxy.ts                         `/` shows the public landing (/welcome) to visitors without a session cookie; dashboard otherwise
+src/components/marketing/            Landing page components, figures, plans.ts (prices must match the seeded plans)
 src/lib/api-response.ts              extractRequestContext, extractPlatformContext, apiSuccess, apiError
 src/lib/security.ts                  JWTs (issuer + per-purpose audience), bcrypt, credential encryption (ADR-103)
 src/lib/validation.ts                parseOrThrow / readJson for strict Zod bodies (ADR-104)
@@ -53,6 +55,9 @@ src/domains/platform/services/       PlatformAuthorizationService, entitlements,
 src/domains/ai/                      agents, policy, tools/tool-registry.ts, prompts, rag, eval
 src/infrastructure/db/index.ts       The store (~9.8k lines — grep it, never read whole); getAll* for analytics, paged getters need a limit.
                                      DATA_BACKEND=pg: Postgres is the system of record (await db.ready() in scripts)
+src/infrastructure/db/tenant-rows.ts Zero-hydration reads: readTenantRows (awaited), loadTenantRows / loadOrderRows / ... (one tenant's
+                                     rows into the request's working set for the store's sync methods; changes commit version-checked).
+                                     Routes declare what their handler scans with withStore(..., { tenantRows: [...] })
 src/infrastructure/store/            Postgres persistence: pg-store.ts (load, diff, version-checked writes, change-log sync), store-schema.ts
                                      (collection → table), migrations.ts (runner), backfill.ts (backfill + verify)
 src/infrastructure/db/migrations/    006_align_domain_model.sql (schema `commerceos`), 007_multi_writer.sql, 008_apply_changes.sql; legacy/ = old 001-005, never run
@@ -129,3 +134,13 @@ Full index of `.agent/`: [`.agent/README.md`](.agent/README.md).
 Follow the Definition of Done in `.agent/GOVERNANCE.md` §6. In your final message, state plainly what you verified
 (commands + results), what you could not verify, and anything that is simulated. Update `.agent/STATUS.md` when a
 capability's status changes.
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->

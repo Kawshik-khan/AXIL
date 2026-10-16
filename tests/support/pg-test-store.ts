@@ -6,7 +6,7 @@
  */
 import { createPgliteClient } from "@/infrastructure/store/pglite-client";
 import { runMigrations } from "@/infrastructure/store/migrations";
-import { PgStorePersistence } from "@/infrastructure/store/pg-store";
+import { PgStorePersistence, ZERO_HYDRATION_CORE_TABLES, UNHYDRATED_DOCUMENT_COLLECTIONS } from "@/infrastructure/store/pg-store";
 import { countRecords, diffStores } from "@/infrastructure/store/canonical";
 import type { CommerceDatabase } from "@/infrastructure/db";
 
@@ -30,9 +30,19 @@ export async function installPostgresTestStore(): Promise<void> {
       await db.flush();
       const health = db.getPersistenceHealth();
       const reader = new PgStorePersistence(client);
-      const loaded = await reader.load();
+      const loaded = await reader.load({ all: true });
       const expected = db.data as unknown as Record<string, unknown>;
-      const diffs = diffStores(expected, loaded);
+
+      const unhydrated = new Set<string>([
+        ...((db as any).pg?.getUnhydratedCollections?.() ?? []),
+        ...ZERO_HYDRATION_CORE_TABLES,
+        ...UNHYDRATED_DOCUMENT_COLLECTIONS,
+      ]);
+
+      const rawDiffs = diffStores(expected, loaded);
+      // Collections in zero-hydration are intentionally kept out of memory (db.data).
+      // They are persisted directly to PostgreSQL, so RAM vs DB diffs on those collections are expected.
+      const diffs = rawDiffs.filter((d) => !unhydrated.has(d.collection));
       const unsaved = db.getUnsavedRows();
       const { rows, collections } = countRecords(expected);
       if (diffs.length === 0 && unsaved.length === 0 && health.ok) {

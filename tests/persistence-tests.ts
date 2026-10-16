@@ -4,6 +4,7 @@
  * touched. Run: node tests/ts-runner.cjs ./tests/persistence-tests.ts
  */
 import assert from "assert";
+import crypto from "crypto";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -30,10 +31,15 @@ async function runTest(testName: string, testFn: () => Promise<void> | void) {
 
 const ROOT = path.resolve(__dirname, "..");
 const tempDir = () => fs.mkdtempSync(path.join(os.tmpdir(), "commerceos-persist-"));
+// Workers run as NODE_ENV=development, so security.ts's test-only key fallback doesn't apply; seeding encrypts channel
+// credentials. Throwaway keys, random per run and shared by every worker, keep this suite from depending on .env.local.
+const WORKER_SECRETS = { JWT_SECRET: crypto.randomBytes(32).toString("hex"), CREDENTIALS_ENCRYPTION_KEY: crypto.randomBytes(32).toString("hex") };
 
 /** `readOnly`: the fixture records the store's refusal to start instead of exiting, so the scenario can report. */
 function workerEnv(dataDir: string, opts: { readOnly?: boolean } = {}): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env, NODE_ENV: "development", COMMERCEOS_DATA_DIR: dataDir, PERSIST_DEBOUNCE_MS: "250" };
+  // These child-process scenarios specifically exercise the JSON file store;
+  // keep them isolated even when the parent suite is running in PGlite mode.
+  const env: NodeJS.ProcessEnv = { ...process.env, ...WORKER_SECRETS, NODE_ENV: "development", DATA_BACKEND: "json", COMMERCEOS_DATA_DIR: dataDir, PERSIST_DEBOUNCE_MS: "250" };
   if (opts.readOnly) env.PERSIST_TEST_CAPTURE_EXIT = "1";
   else delete env.PERSIST_TEST_CAPTURE_EXIT;
   // Blank, not delete: the test runner refills unset variables from .env.local, which can select the real Postgres.

@@ -39,8 +39,18 @@ export function diffStores(expected: Record<string, unknown>, actual: Record<str
   const out: CollectionDiff[] = [];
   const keys = new Set([...Object.keys(expected), ...Object.keys(actual)]);
   for (const collection of [...keys].sort()) {
-    const e = expected[collection];
-    const a = actual[collection];
+    let e: unknown;
+    try {
+      e = expected[collection];
+    } catch {
+      continue;
+    }
+    let a: unknown;
+    try {
+      a = actual[collection];
+    } catch {
+      continue;
+    }
     if (!Array.isArray(e) && !Array.isArray(a)) continue;
     const index = (list: unknown) => {
       const map = new Map<string, string>();

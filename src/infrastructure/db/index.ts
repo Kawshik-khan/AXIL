@@ -11,11 +11,18 @@ import { mergeComputedRow } from "@/lib/computed-rows";
 import { channelOfOrder, SALES_CHANNEL_NAMES } from "@/lib/sales-channel";
 import type { SalesChannel as OrderSalesChannel } from "@/types/analytics";
 import bcrypt from "bcryptjs";
-import { RoleName } from "@/lib/permissions";
-import { DISABLED_PASSWORD_HASH } from "@/lib/security";
-import { PgStorePersistence, StoreConflictError, logUnwritable, type RejectedRow } from "@/infrastructure/store/pg-store";
+import { RoleName, type Permission } from "@/lib/permissions";
+import { DISABLED_PASSWORD_HASH, encryptCredential } from "@/lib/security";
+import { PgStorePersistence, StoreConflictError, logUnwritable, type QueuedRow, type RejectedRow } from "@/infrastructure/store/pg-store";
 import { createNeonSqlClient, isDataRejected, pgErrorFields, storeConnectionString, type SqlClient } from "@/infrastructure/store/sql-client";
 import { ConnectorConfigRecord } from "@/types/connector";
+import type { NotificationSettingsRecord } from "@/types/notifications";
+import {
+  NetworkDeliveryReputationRecord,
+  OrderRtoEvaluationRecord,
+  TenantRtoSettingsRecord,
+  CourierDisputeRecord,
+} from "@/types/rto";
 import {
   Product,
   ProductVariant,
@@ -64,6 +71,9 @@ import {
   PlatformKillSwitchRecord,
   PlatformSecurityEventRecord,
   PlatformAnnouncementRecord,
+  PlatformApprovalRequestRecord,
+  PlatformAddonRecord,
+  TenantAddonRecord,
   PlatformApiKeyRecord,
   CspReportRecord,
 } from "@/types/platform";
@@ -84,6 +94,9 @@ export interface TenantRecord {
   suspended_at?: string;
   suspension_reason?: string;
   archived_at?: string;
+  /** Purge requested (two-person approved): data is kept until purge_after; no deletion job exists yet. */
+  purge_requested_at?: string;
+  purge_after?: string;
   created_at: string;
   updated_at: string;
 }
@@ -213,6 +226,8 @@ import {
   ChatSession,
   OutboundWebhookDelivery,
   ChannelType,
+  CommentTriggerRule,
+  CommentTriggerEvent,
 } from "@/types/social";
 import {
   AgentType,
@@ -231,6 +246,9 @@ import {
   AITrace,
   AIUsageRecord,
   AIFeedbackRecord,
+  AgentExecutionTraceRecord,
+  AgentHitlEscalationRecord,
+  TenantAiGuardSettingsRecord,
 } from "@/types/ai";
 import {
   AgentWorkflow,
@@ -247,6 +265,7 @@ import {
   AgentTriggerRule,
   ActionReceipt,
   AgentSchedule,
+  WorkflowJob,
 } from "@/types/orchestration";
 import {
   MetricDefinition,
@@ -448,6 +467,7 @@ export interface DatabaseSchema {
   agent_jobs: AgentJob[];
   domain_events: DomainEventOutboxRecord[];
   job_runs: JobRunRecord[];
+  notification_settings: NotificationSettingsRecord[];
   csp_reports: CspReportRecord[];
   agent_tool_calls: AgentToolCallRecord[];
   agent_prompts: AgentPrompt[];
@@ -461,6 +481,7 @@ export interface DatabaseSchema {
   ai_feedback: AIFeedbackRecord[];
   // Phase 5: Multi-Agent Orchestration & Controlled Autonomy Collections
   workflows: AgentWorkflow[];
+  workflow_jobs: WorkflowJob[];
   tasks: AgentTask[];
   agent_messages: AgentMessage[];
   workflow_contexts: WorkflowContext[];
@@ -638,8 +659,23 @@ export interface DatabaseSchema {
   platform_announcements: PlatformAnnouncementRecord[];
   platform_api_keys: PlatformApiKeyRecord[];
   impersonation_sessions: ImpersonationSessionRecord[];
+  platform_approval_requests: PlatformApprovalRequestRecord[];
+  platform_addons: PlatformAddonRecord[];
+  tenant_addons: TenantAddonRecord[];
   campaign_kill_switches: CampaignKillSwitchRecord[];
   automation_kill_switches: AutomationKillSwitchRecord[];
+  // Phase R: Cross-Tenant RTO & Courier Fraud Prevention Network Collections
+  network_delivery_reputations: NetworkDeliveryReputationRecord[];
+  order_rto_evaluations: OrderRtoEvaluationRecord[];
+  tenant_rto_settings: TenantRtoSettingsRecord[];
+  courier_disputes: CourierDisputeRecord[];
+  // Agentic Operations: LLM Observability & HITL Handover Collections
+  agent_execution_traces: AgentExecutionTraceRecord[];
+  agent_hitl_escalations: AgentHitlEscalationRecord[];
+  tenant_ai_guard_settings: TenantAiGuardSettingsRecord[];
+  // Comment-to-inbox triggers (Engagement page)
+  comment_trigger_rules: CommentTriggerRule[];
+  comment_trigger_events: CommentTriggerEvent[];
 }
 
 /**
@@ -677,12 +713,25 @@ export interface StoreOptions {
   serverMode?: boolean;
   /** Default true. False: the data exactly as stored, without the default seed (the backfill's read-only source). */
   seed?: boolean;
+  /** Zero-hydration: true in production or tests to skip loading large business tables. */
+  zeroHydration?: boolean;
 }
 
 /** Thrown by `db.data` before a Postgres-backed store has loaded; routes answer 503. */
 export class StoreNotReadyError extends AppError {
   constructor() {
     super("STORE_NOT_READY", "The data store is still loading. Try again shortly.", 503);
+  }
+}
+
+/** Thrown when code attempts direct in-memory access to a collection that is not hydrated (ADR-109, Phase D). */
+export class CollectionNotHydratedError extends AppError {
+  constructor(readonly collection: string) {
+    super(
+      "COLLECTION_NOT_HYDRATED",
+      `Collection '${collection}' is intentionally not materialized in memory under zero-hydration architecture. Access records through its domain repository instead.`,
+      500
+    );
   }
 }
 
@@ -730,6 +779,31 @@ class StoreLock {
 /** Which unit of work the running code belongs to: work a request left running after it responded is not part of a later one. */
 const unitContext = new AsyncLocalStorage<object>();
 
+/**
+ * One request's (or job's) working set of tenants' rows from collections zero-hydration leaves out of memory, loaded
+ * from Postgres by tenant-rows.ts: collection → tenant id → rows. `complete`: every row of the tenant (scans may use
+ * it); otherwise only the rows a flow loaded (by id or by a field), which lookups and writes may use. A store method
+ * that changes one of these rows reports it (rowSaved) and it is saved with the request's commit, checked against
+ * `versions` (the version each row was loaded with).
+ */
+export interface TenantRowSet {
+  complete: boolean;
+  rows: Record<string, unknown>[];
+  versions: Map<string, number>;
+}
+type TenantReads = Map<string, Map<string, TenantRowSet>>;
+const tenantReadContext = new AsyncLocalStorage<TenantReads>();
+/** What a route's handler reads synchronously for the session's tenant, and the permission it requires (withStore). */
+export interface DeclaredTenantRows {
+  collections: readonly string[];
+  permission: Permission;
+}
+const scopePreload = new WeakMap<TenantReads, DeclaredTenantRows>();
+/** The working-set key of platform-scope rows (stored with no tenant id), e.g. CSP reports. */
+export const PLATFORM_SCOPE = "";
+/** Rows saved in collections left out of memory: collection → row id → state and expected version. */
+type QueuedRows = Map<string, Map<string, QueuedRow>>;
+
 /** Reads see other servers' changes at most this late (0: sync before every read request). */
 const SYNC_INTERVAL_MS = envNumber("STORE_SYNC_INTERVAL_MS", 1_000, 0);
 /** Changes made outside any unit of work (no store method reported them) are found and committed at least this often. */
@@ -773,6 +847,135 @@ export class CommerceDatabase {
   private readonly serverMode: boolean;
   private pg: PgStorePersistence | null = null;
   private readyPromise: Promise<void> | null = null;
+  private unhydratedCollections = new Set<string>();
+
+  public isCollectionHydrated(collection: string): boolean {
+    if (!this._data) return false;
+    return !this.unhydratedCollections.has(collection);
+  }
+
+  public getUnhydratedCollections(): ReadonlySet<string> {
+    return this.unhydratedCollections;
+  }
+
+  /**
+   * Runs `fn` with a scope for tenant rows loaded from Postgres (zero-hydration). Every API handler runs in one
+   * (withStore); a background job that reads tenant data wraps its work in one. Nested calls share the outer scope.
+   */
+  public withTenantReads<T>(fn: () => Promise<T>, preload?: DeclaredTenantRows): Promise<T> {
+    if (tenantReadContext.getStore()) return fn();
+    const scope: TenantReads = new Map();
+    if (preload) scopePreload.set(scope, preload);
+    return tenantReadContext.run(scope, fn);
+  }
+
+  /**
+   * Runs `fn` in a new, empty scope even when called from inside another: background work (a worker pass, a job, the
+   * reservation sweep) must never reuse, or keep alive, the scope of the request that happened to start it.
+   */
+  public withFreshTenantReads<T>(fn: () => Promise<T>): Promise<T> {
+    return tenantReadContext.run(new Map(), fn);
+  }
+
+  /** Runs `fn` outside any scope (timers and workers started from a request must not inherit its working set). */
+  public outsideTenantReads<T>(fn: () => T): T {
+    return tenantReadContext.exit(fn);
+  }
+
+  /**
+   * After a commit: rows it wrote get their new version in the current scope, so a later unit in the same scope saves
+   * them again without a false conflict; rows it dropped (a refused write, a failed request) leave the scope, so nothing
+   * reads or re-saves the undone change (the set is no longer complete: a scan reloads it).
+   */
+  private settleQueued(queued: QueuedRows, written: boolean): void {
+    const scope = tenantReadContext.getStore();
+    if (!scope) return;
+    for (const [collection, rows] of queued) {
+      for (const [id, { row, expected }] of rows) {
+        const set = scope.get(collection)?.get(typeof row.tenant_id === "string" ? row.tenant_id : PLATFORM_SCOPE);
+        if (!set) continue;
+        if (written) {
+          if ((set.versions.get(id) ?? null) === expected) set.versions.set(id, (expected ?? 0) + 1);
+        } else if (set.rows.some((r) => String(r.id) === id)) {
+          set.rows = set.rows.filter((r) => String(r.id) !== id);
+          set.versions.delete(id);
+          set.complete = false;
+        }
+      }
+    }
+  }
+
+  /** The collections the current request declared it reads for its tenant (loaded by extractRequestContext). */
+  public declaredTenantRows(): DeclaredTenantRows | undefined {
+    const scope = tenantReadContext.getStore();
+    return scope ? scopePreload.get(scope) : undefined;
+  }
+
+  /** This tenant's working set of an unhydrated collection in the current scope, or undefined. */
+  public tenantRowSet(collection: string, tenantId: string): TenantRowSet | undefined {
+    return tenantReadContext.getStore()?.get(collection)?.get(tenantId);
+  }
+
+  /** Every row of the tenant in the current scope (a complete working set), or undefined. */
+  public tenantReadRows(collection: string, tenantId: string): Record<string, unknown>[] | undefined {
+    const set = this.tenantRowSet(collection, tenantId);
+    return set?.complete ? set.rows : undefined;
+  }
+
+  /**
+   * Adds rows read from Postgres, with their versions, to the current scope's working set (`complete`: they are all of
+   * the tenant's rows). A row the set already holds keeps its in-scope state: this request may have changed it.
+   * False outside a scope.
+   */
+  public putTenantReadRows(
+    collection: string,
+    tenantId: string,
+    rows: Array<{ row: Record<string, unknown>; version: number }>,
+    complete: boolean
+  ): boolean {
+    const set = this.ensureRowSet(collection, tenantId);
+    if (!set) return false;
+    const held = new Set(set.rows.map((r) => String(r.id)));
+    for (const { row, version } of rows) {
+      const id = String(row.id);
+      if (!set.versions.has(id)) set.versions.set(id, version);
+      if (!held.has(id)) {
+        set.rows.push(row);
+        held.add(id);
+      }
+    }
+    if (complete) set.complete = true;
+    return true;
+  }
+
+  private ensureRowSet(collection: string, tenantId: string): TenantRowSet | undefined {
+    const scope = tenantReadContext.getStore();
+    if (!scope) return undefined;
+    const byTenant = scope.get(collection) ?? new Map<string, TenantRowSet>();
+    scope.set(collection, byTenant);
+    let set = byTenant.get(tenantId);
+    if (!set) {
+      set = { complete: false, rows: [], versions: new Map() };
+      byTenant.set(tenantId, set);
+    }
+    return set;
+  }
+
+  /**
+   * The rows a synchronous store method may use for `tenantId`: the whole in-memory collection when it is hydrated
+   * (callers still filter by tenant), else the tenant's working set from tenant-rows.ts. `need: "all"` (scans, counts,
+   * analytics) takes only a complete set; "loaded" (a lookup by id or another field, a change to a row) also takes the
+   * rows a flow loaded for itself. Otherwise throws CollectionNotHydratedError rather than answering from a partial or
+   * empty list.
+   */
+  private rowsOf<K extends keyof DatabaseSchema>(collection: K, tenantId: string, need: "all" | "loaded" = "all"): DatabaseSchema[K] {
+    if (!this.unhydratedCollections.has(collection)) return this.data[collection];
+    const set = this.tenantRowSet(collection, tenantId);
+    if (set && (set.complete || need === "loaded")) return set.rows as unknown as DatabaseSchema[K];
+    throw new CollectionNotHydratedError(collection);
+  }
+
+
   private readonly lock = new StoreLock();
   /** True while a unit of work runs: persist() records the collections for that unit's commit. */
   private unitActive = false;
@@ -783,6 +986,13 @@ export class CommerceDatabase {
   private unitToken: object | null = null;
   /** What code outside the running unit (background work) changed while it ran. */
   private foreignDuringUnit: Set<string> | "all" | null = null;
+  /**
+   * Rows saved in collections left out of memory (zero-hydration), written with the next commit: the running unit's
+   * (saved with its request, dropped if it fails) and background work's (saved by the background loop). collection →
+   * row id → the row's latest state and the version it was read with.
+   */
+  private unitAppends: QueuedRows = new Map();
+  private backgroundAppends: QueuedRows = new Map();
   private loopTimer: ReturnType<typeof setInterval> | null = null;
   private lastSyncAt = 0;
   private lastSweepAt = 0;
@@ -916,9 +1126,51 @@ export class CommerceDatabase {
       }
     };
     // Postgres: under the store lock, so a sweep never lands inside (and is never undone with) a request's unit of work.
-    const sweep = () => (this.backend === "pg" ? void this.lock.run(async () => sweepNow()) : sweepNow());
+    // Zero-hydration: the lapsed holds are read from Postgres first, into the sweep's own scope.
+    const sweep = () =>
+      this.backend === "pg"
+        ? void this.lock.run(() =>
+            this.withFreshTenantReads(async () => {
+              await this.loadLapsedHolds(Date.now()).catch((err) => logger.error("reservations.sweep_load_failed", { error: (err as Error).message }));
+              sweepNow();
+            })
+          )
+        : sweepNow();
     setTimeout(sweep, 5_000).unref();
     setInterval(sweep, 5 * 60 * 1000).unref();
+  }
+
+  /**
+   * Zero-hydration: active holds past their expiry (at most 500 a sweep, oldest first), the orders they belong to and
+   * the stock rows they hold, from Postgres into the current scope with their versions. Nothing when they're in memory.
+   */
+  private async loadLapsedHolds(now: number): Promise<void> {
+    const client = this.pg?.client;
+    if (!client || this.isCollectionHydrated("inventory_reservations")) return;
+    type Read = { tenant_id: string; data: unknown; version: string };
+    const parse = (r: Read) => ({ row: (typeof r.data === "string" ? JSON.parse(r.data) : r.data) as Record<string, unknown>, version: Number(r.version) });
+    const holds = await client.query<Read>(
+      `SELECT tenant_id, data, version::text AS version FROM commerceos.inventory_reservations
+        WHERE status = 'ACTIVE' AND data->>'expires_at' < $1 ORDER BY seq LIMIT 500`,
+      [new Date(now).toISOString()]
+    );
+    const byTenant = new Map<string, Read[]>();
+    for (const r of holds.rows) byTenant.set(r.tenant_id, [...(byTenant.get(r.tenant_id) ?? []), r]);
+    for (const [tenantId, rows] of byTenant) {
+      const parsed = rows.map(parse);
+      this.putTenantReadRows("inventory_reservations", tenantId, parsed, false);
+      const ids = (field: string) => [...new Set(parsed.map((p) => String(p.row[field])))];
+      const orders = await client.query<Read>(
+        `SELECT tenant_id, data, version::text AS version FROM commerceos.orders WHERE tenant_id = $1 AND id = ANY($2::text[])`,
+        [tenantId, ids("order_id")]
+      );
+      this.putTenantReadRows("orders", tenantId, orders.rows.map(parse), false);
+      const stock = await client.query<Read>(
+        `SELECT tenant_id, data, version::text AS version FROM commerceos.inventory_items WHERE tenant_id = $1 AND product_variant_id = ANY($2::text[])`,
+        [tenantId, ids("product_variant_id")]
+      );
+      this.putTenantReadRows("inventory_items", tenantId, stock.rows.map(parse), false);
+    }
   }
 
   private block(code: PersistenceBlockedCode, detail: string): void {
@@ -1106,8 +1358,8 @@ export class CommerceDatabase {
   }
 
   /** A complete store from parsed data (the JSON file or Postgres): every collection present, legacy values normalized. */
-  public static fromParsed(parsed: Partial<DatabaseSchema>): DatabaseSchema {
-    return {
+  public static fromParsed(parsed: Partial<DatabaseSchema>, unhydrated?: ReadonlySet<string>): DatabaseSchema {
+    const schema: Record<string, unknown> = {
       tenants: parsed.tenants || [],
       users: parsed.users || [],
       memberships: parsed.memberships || [],
@@ -1152,6 +1404,7 @@ export class CommerceDatabase {
       agent_jobs: parsed.agent_jobs || [],
       domain_events: parsed.domain_events || [],
       job_runs: parsed.job_runs || [],
+      notification_settings: parsed.notification_settings || [],
       csp_reports: parsed.csp_reports || [],
       agent_tool_calls: parsed.agent_tool_calls || [],
       agent_prompts: parsed.agent_prompts || [],
@@ -1165,6 +1418,7 @@ export class CommerceDatabase {
       ai_feedback: parsed.ai_feedback || [],
       // Phase 5 Collections
       workflows: parsed.workflows || [],
+      workflow_jobs: parsed.workflow_jobs || [],
       tasks: parsed.tasks || [],
       agent_messages: parsed.agent_messages || [],
       workflow_contexts: parsed.workflow_contexts || [],
@@ -1347,9 +1601,36 @@ export class CommerceDatabase {
       platform_announcements: parsed.platform_announcements || [],
       platform_api_keys: parsed.platform_api_keys || [],
       impersonation_sessions: parsed.impersonation_sessions || [],
+      platform_approval_requests: parsed.platform_approval_requests || [],
+      platform_addons: parsed.platform_addons || [],
+      tenant_addons: parsed.tenant_addons || [],
       campaign_kill_switches: parsed.campaign_kill_switches || [],
       automation_kill_switches: parsed.automation_kill_switches || [],
     };
+
+    if (unhydrated && unhydrated.size > 0) {
+      for (const col of unhydrated) {
+        if (parsed[col as keyof DatabaseSchema] === undefined) {
+          Object.defineProperty(schema, col, {
+            get() {
+              throw new CollectionNotHydratedError(col);
+            },
+            set(val) {
+              Object.defineProperty(schema, col, {
+                value: val,
+                writable: true,
+                enumerable: true,
+                configurable: true,
+              });
+            },
+            enumerable: true,
+            configurable: true,
+          });
+        }
+      }
+    }
+
+    return schema as unknown as DatabaseSchema;
   }
 
   public static emptySchema(): DatabaseSchema {
@@ -1426,6 +1707,7 @@ export class CommerceDatabase {
       agent_jobs: [],
       domain_events: [],
       job_runs: [],
+      notification_settings: [],
       csp_reports: [],
       agent_tool_calls: [],
       agent_prompts: [],
@@ -1439,6 +1721,7 @@ export class CommerceDatabase {
       ai_feedback: [],
       // Phase 5 Collections
       workflows: [],
+      workflow_jobs: [],
       tasks: [],
       agent_messages: [],
       workflow_contexts: [],
@@ -1615,8 +1898,20 @@ export class CommerceDatabase {
       platform_announcements: [],
       platform_api_keys: [],
       impersonation_sessions: [],
+      platform_approval_requests: [],
+      platform_addons: [],
+      tenant_addons: [],
       campaign_kill_switches: [],
       automation_kill_switches: [],
+      network_delivery_reputations: [],
+      order_rto_evaluations: [],
+      tenant_rto_settings: [],
+      courier_disputes: [],
+      agent_execution_traces: [],
+      agent_hitl_escalations: [],
+      tenant_ai_guard_settings: [],
+      comment_trigger_rules: [],
+      comment_trigger_events: [],
     };
   }
 
@@ -1750,12 +2045,15 @@ export class CommerceDatabase {
   }
 
   private async openPostgres(pg: PgStorePersistence): Promise<void> {
+    const startedAt = Date.now();
     if (!(await pg.schemaPresent())) {
       this.block("SCHEMA_MISSING", "The commerceos schema is missing or older than migration 007: run `npm run db:migrate`.");
       throw new StartupRefusal();
     }
-    const loaded = await pg.load();
-    this._data = CommerceDatabase.fromParsed(loaded as Partial<DatabaseSchema>);
+    const loaded = await pg.load({ zeroHydration: this.options.zeroHydration });
+    const unhydrated = pg.getUnhydratedCollections();
+    this.unhydratedCollections = new Set(unhydrated);
+    this._data = CommerceDatabase.fromParsed(loaded as Partial<DatabaseSchema>, this.unhydratedCollections);
     this.persistenceBlocked = null;
     this.blockedCode = null;
     this.lastSyncAt = Date.now();
@@ -1765,8 +2063,9 @@ export class CommerceDatabase {
     this.startBackgroundLoop(pg);
     logger.info("db.pg_ready", {
       tenants: this._data.tenants.length,
-      orders: this._data.orders.length,
-      customers: this._data.customers.length,
+      orders: this.isCollectionHydrated("orders") ? this._data.orders.length : "unhydrated",
+      customers: this.isCollectionHydrated("customers") ? this._data.customers.length : "unhydrated",
+      load_ms: Date.now() - startedAt,
     });
   }
 
@@ -1785,6 +2084,8 @@ export class CommerceDatabase {
    * gives 409 STORE_CONFLICT and nothing is saved. Without Postgres persistence it just runs `work`.
    */
   public async unit<T>(work: () => Promise<T>, commitWhen: (result: T) => boolean): Promise<T> {
+    // Reuse the enclosing request transaction for domain services that guarantee their own atomic unit.
+    if (this.unitActive && unitContext.getStore() === this.unitToken) return work();
     const pg = this.pg;
     if (this.backend !== "pg" || !pg || !this.persistenceEnabled || this.isTestInstance || !this._data) return work();
     return this.lock.run(async () => {
@@ -1795,6 +2096,7 @@ export class CommerceDatabase {
       this.unitActive = true;
       this.unitTouched = new Set();
       this.unitKeep = new Map();
+      this.unitAppends = new Map();
       this.foreignDuringUnit = null;
       const token = {};
       this.unitToken = token;
@@ -1837,14 +2139,63 @@ export class CommerceDatabase {
   }
 
   /**
+   * A new row for a collection left out of memory (zero-hydration): inserted in Postgres with the running request's
+   * commit (dropped if the request fails, unless kept), or by the background loop outside a request.
+   */
+  private appendUnhydrated(collection: string, record: Record<string, unknown>, expected: number | null = null): void {
+    if (this.backend !== "pg" || this.isTestInstance || !this.persistenceEnabled) return;
+    const target = this.isInUnit() ? this.unitAppends : this.backgroundAppends;
+    const rows = target.get(collection) ?? new Map<string, QueuedRow>();
+    const id = String(record.id);
+    // Saved again in the same unit: its latest state, still checked against the version it was first read with
+    rows.set(id, { row: record, expected: rows.get(id)?.expected ?? expected });
+    target.set(collection, rows);
+  }
+
+  /**
+   * A new row: pushed to the in-memory collection, or (zero-hydration) to the tenant's working set when a request scope
+   * is open, so the rest of the request reads it back; either way saved with the commit.
+   */
+  private addRow<K extends keyof DatabaseSchema>(collection: K, tenantId: string, row: object): void {
+    if (this.unhydratedCollections.has(collection)) this.ensureRowSet(collection, tenantId)?.rows.push(row as Record<string, unknown>);
+    else (this.data[collection] as unknown as object[]).push(row);
+    this.rowSaved(collection, tenantId, row);
+  }
+
+  /**
+   * After a store method changed or added `row` in a collection left out of memory: it is saved with the request's
+   * commit, as an update checked against the version it was loaded with (tenant-rows.ts), or as a new row. Changing a
+   * row that exists in Postgres without loading it first is refused at commit (a conflict), never a blind overwrite.
+   * Nothing to do for a hydrated collection (the in-memory diff saves it).
+   */
+  private rowSaved(collection: string, tenantId: string, row: object): void {
+    if (!this.unhydratedCollections.has(collection)) return;
+    const record = row as Record<string, unknown>;
+    const expected = tenantReadContext.getStore()?.get(collection)?.get(tenantId)?.versions.get(String(record.id)) ?? null;
+    this.appendUnhydrated(collection, record, expected);
+  }
+
+  /**
    * A failed unit: rows marked to keep are committed (a failure there is logged, never masks the request's own error),
    * then everything else it changed is put back to the last committed version. A unit that reported any change is
    * compared in full, so a change a service forgot to report is undone too instead of being saved by the next sweep.
    */
   private async failLocked(pg: PgStorePersistence): Promise<void> {
     const data = this._data as unknown as Record<string, unknown>;
+    const appends = this.unitAppends;
+    this.unitAppends = new Map(); // the failed request's queued rows are dropped, except the rows marked to keep
+    this.settleQueued(appends, false);
     if (this.unitKeep.size) {
-      const keep = PgStorePersistence.onlyRows(pg.computeChanges(data, new Set(this.unitKeep.keys())), this.unitKeep);
+      const keptAppends = new Map<string, QueuedRow[]>();
+      for (const [collection, rows] of appends) {
+        const ids = this.unitKeep.get(collection);
+        const kept = ids ? [...rows].filter(([id]) => ids.has(id)).map(([, queued]) => queued) : [];
+        if (kept.length) keptAppends.set(collection, kept);
+      }
+      const keep = PgStorePersistence.withQueuedRows(
+        PgStorePersistence.onlyRows(pg.computeChanges(data, new Set(this.unitKeep.keys())), this.unitKeep),
+        keptAppends
+      );
       if (keep.rowCount) {
         try {
           await pg.write(keep);
@@ -1872,18 +2223,25 @@ export class CommerceDatabase {
    */
   private async commitLocked(pg: PgStorePersistence, only: ReadonlySet<string> | undefined, kind: "unit" | "background"): Promise<void> {
     const data = this._data as unknown as Record<string, unknown>;
-    const changes = pg.computeChanges(data, only);
+    const appends = kind === "unit" ? this.unitAppends : this.backgroundAppends;
+    const changes = PgStorePersistence.withQueuedRows(pg.computeChanges(data, only), new Map([...appends].map(([c, rows]) => [c, rows.values()])));
     if (!only) logUnwritable(changes.unwritable, changes.sanitizedRows, this.reported);
     if (changes.rowCount === 0) {
       if (!only) this.dirty = false;
       return;
     }
+    // Taken now: a refused write drops them like the request's other changes; only an unreachable database keeps
+    // background ones for the next attempt (below)
+    const pending = new Map(appends);
+    appends.clear();
     try {
       await pg.write(changes);
+      this.settleQueued(pending, true);
       if (!only) this.dirty = false;
       this.lastPersistError = null;
       this.lastPersistAt = new Date().toISOString();
     } catch (err) {
+      if (err instanceof StoreConflictError || isDataRejected(err) || kind === "unit") this.settleQueued(pending, false);
       if (err instanceof StoreConflictError) {
         pg.restore(data, changes);
         logger.warn(kind === "unit" ? "db.write_conflict" : "db.background_write_conflict", {
@@ -1904,6 +2262,8 @@ export class CommerceDatabase {
         pg.restore(data, changes);
         throw new AppError("STORE_UNAVAILABLE", "The database can't be reached, so nothing was saved. Try again shortly.", 503);
       }
+      // Kept for the retry; a row queued again meanwhile keeps its newer state
+      for (const [collection, rows] of pending) appends.set(collection, new Map([...rows, ...(appends.get(collection) ?? [])]));
       this.dirty = true; // background: kept for the next attempt
       throw err;
     }
@@ -1925,8 +2285,9 @@ export class CommerceDatabase {
     try {
       const result = await pg.sync();
       if (result.reload) {
-        const loaded = await pg.load();
-        this._data = CommerceDatabase.fromParsed(loaded as Partial<DatabaseSchema>);
+        const loaded = await pg.load({ zeroHydration: this.options.zeroHydration });
+        this.unhydratedCollections = new Set(pg.getUnhydratedCollections());
+        this._data = CommerceDatabase.fromParsed(loaded as Partial<DatabaseSchema>, this.unhydratedCollections);
         logger.warn("db.store_reloaded", { reason: "epoch changed or change log pruned", position: pg.position.seq });
       } else if (result.rows.length) {
         pg.applySync(this._data as unknown as Record<string, unknown>, result.rows);
@@ -2022,6 +2383,11 @@ export class CommerceDatabase {
     return this.pg ? this.pg.unsavedRows() : [];
   }
 
+  /** Direct query access to the underlying SQL client (Neon in production, PGlite in tests). */
+  public getSqlClient(): SqlClient | null {
+    return this.pg?.client ?? null;
+  }
+
   /** Postgres reachable within the timeout (always true for the JSON file). */
   public async pingDatabase(timeoutMs = 2_000): Promise<boolean> {
     const pg = this.pg;
@@ -2063,7 +2429,7 @@ export class CommerceDatabase {
     return this.seedPasswordHashCache;
   }
 
-  private ensureDefaultSeed(): void {
+  public ensureDefaultSeed(_targetTenantId?: string): void {
     const tenantId = "ten_default_dhaka";
     const userId = "usr_owner_default";
 
@@ -2121,7 +2487,7 @@ export class CommerceDatabase {
       this.data.tenants.push(defaultTenant);
       this.data.users.push(defaultUser);
       this.data.memberships.push(defaultMembership);
-      this.data.audit_logs.push(defaultAudit);
+      if (this.isCollectionHydrated("audit_logs")) this.data.audit_logs.push(defaultAudit);
     }
 
     // Automatically migrate any legacy tenant-level SUPER_ADMIN memberships to OWNER
@@ -2227,7 +2593,7 @@ export class CommerceDatabase {
     }
 
     // Ensure default warehouse exists for the default tenant
-    if (this.data.warehouses.length === 0) {
+    if (this.isCollectionHydrated("warehouses") && this.data.warehouses.length === 0) {
       this.data.warehouses.push({
         id: "wh_dhaka_main",
         tenant_id: tenantId,
@@ -2269,7 +2635,7 @@ export class CommerceDatabase {
       });
     }
 
-    if (this.data.coupons.length === 0) {
+    if (this.isCollectionHydrated("coupons") && this.data.coupons.length === 0) {
       this.data.coupons.push({
         id: "cpn_welcome10",
         tenant_id: tenantId,
@@ -2285,7 +2651,7 @@ export class CommerceDatabase {
       });
     }
 
-    if (this.data.products.filter((p) => p.tenant_id === tenantId).length === 0) {
+    if (this.isCollectionHydrated("products") && this.data.products.filter((p) => p.tenant_id === tenantId).length === 0) {
       this.data.products.push(
         {
           id: "prd_panjabi_01",
@@ -2332,7 +2698,7 @@ export class CommerceDatabase {
       );
     }
 
-    if (this.data.product_variants.filter((v) => v.tenant_id === tenantId).length === 0) {
+    if (this.isCollectionHydrated("product_variants") && this.data.product_variants.filter((v) => v.tenant_id === tenantId).length === 0) {
       this.data.product_variants.push(
         {
           id: "var_panjabi_01",
@@ -2376,7 +2742,7 @@ export class CommerceDatabase {
       );
     }
 
-    if (this.data.inventory_items.filter((i) => i.tenant_id === tenantId).length === 0) {
+    if (this.isCollectionHydrated("inventory_items") && this.data.inventory_items.filter((i) => i.tenant_id === tenantId).length === 0) {
       this.data.inventory_items.push(
         {
           id: "inv_panjabi_01",
@@ -2419,10 +2785,10 @@ export class CommerceDatabase {
       this.data.agent_policies.push({
         id: `pol_${tenantId}`,
         tenant_id: tenantId,
-        ai_mode: "AI_COPILOT", // Default to Copilot mode for safety
+        ai_mode: "AI_AUTONOMOUS",
         is_enabled: true,
-        autonomous_sales_enabled: false,
-        autonomous_support_enabled: false,
+        autonomous_sales_enabled: true,
+        autonomous_support_enabled: true,
         autonomous_order_enabled: false,
         debounce_window_ms: 3000, // 3 seconds window as requested
         confidence_threshold_high: 0.85,
@@ -2433,7 +2799,7 @@ export class CommerceDatabase {
         daily_cost_budget_usd: 10.0,
         monthly_cost_budget_usd: 150.0,
         pii_redaction_enabled: true,
-        allowed_channel_types: ["FACEBOOK_MESSENGER", "INSTAGRAM", "WHATSAPP", "WEBSITE_CHAT"],
+        allowed_channel_types: ["FACEBOOK_MESSENGER", "INSTAGRAM", "WHATSAPP", "WEBSITE_CHAT", "TELEGRAM"],
         disallowed_tool_names: [],
         human_handoff_reasons: [
           "CUSTOMER_REQUESTED",
@@ -2446,8 +2812,11 @@ export class CommerceDatabase {
       });
     }
 
-    // Seed 5 initial specialized agents
+    // Seed 5 initial specialized agents (models dynamically resolved from environment)
     if (this.data.agents.length === 0) {
+      const fastModel = process.env.LLM_MODEL_FAST?.trim() || "default-fast";
+      const reasoningModel = process.env.LLM_MODEL_REASONING?.trim() || fastModel || "default-reasoning";
+
       const initialAgents: AgentDefinition[] = [
         {
           id: "agt_supervisor",
@@ -2457,7 +2826,7 @@ export class CommerceDatabase {
           description: "Decomposes customer queries, classifies intent, detects language, and routes to domain agents.",
           status: "ACTIVE",
           model_tier: "TIER_1_FAST",
-          model_name: "gemini-1.5-flash",
+          model_name: fastModel,
           prompt_version: "1.0.0",
           allowed_channels: ["FACEBOOK_MESSENGER", "INSTAGRAM", "WHATSAPP", "WEBSITE_CHAT"],
           allowed_tools: ["request_human_handoff"],
@@ -2476,7 +2845,7 @@ export class CommerceDatabase {
           description: "Answers FAQs, store policies, return guidance, delivery charges (৳60/৳120), and handles empathetic inquiries.",
           status: "ACTIVE",
           model_tier: "TIER_1_FAST",
-          model_name: "gemini-1.5-flash",
+          model_name: fastModel,
           prompt_version: "1.0.0",
           allowed_channels: ["FACEBOOK_MESSENGER", "INSTAGRAM", "WHATSAPP", "WEBSITE_CHAT"],
           allowed_tools: ["search_knowledge", "get_order_status", "get_shipment_status", "get_return_status", "request_human_handoff"],
@@ -2495,7 +2864,7 @@ export class CommerceDatabase {
           description: "Product recommendation, variant matching, stock verification, wholesale lead capture, and controlled checkout drafts.",
           status: "ACTIVE",
           model_tier: "TIER_2_REASONING",
-          model_name: "gemini-1.5-pro",
+          model_name: reasoningModel,
           prompt_version: "1.0.0",
           allowed_channels: ["FACEBOOK_MESSENGER", "INSTAGRAM", "WHATSAPP", "WEBSITE_CHAT"],
           allowed_tools: ["search_products", "get_product", "check_inventory", "create_lead", "create_order_draft", "calculate_checkout", "request_human_handoff"],
@@ -2514,7 +2883,7 @@ export class CommerceDatabase {
           description: "Order lookup by tracking code, status verification, delivery updates, and controlled cancellation intake.",
           status: "ACTIVE",
           model_tier: "TIER_2_REASONING",
-          model_name: "gemini-1.5-pro",
+          model_name: reasoningModel,
           prompt_version: "1.0.0",
           allowed_channels: ["FACEBOOK_MESSENGER", "INSTAGRAM", "WHATSAPP", "WEBSITE_CHAT"],
           allowed_tools: ["get_order", "get_order_status", "get_shipment_status", "get_payment_status", "request_human_handoff"],
@@ -2533,7 +2902,7 @@ export class CommerceDatabase {
           description: "Detailed catalog attribute extraction, sizing chart explanation, care instructions, and inventory availability.",
           status: "ACTIVE",
           model_tier: "TIER_1_FAST",
-          model_name: "gemini-1.5-flash",
+          model_name: fastModel,
           prompt_version: "1.0.0",
           allowed_channels: ["FACEBOOK_MESSENGER", "INSTAGRAM", "WHATSAPP", "WEBSITE_CHAT"],
           allowed_tools: ["search_products", "get_product", "get_product_variant", "check_inventory", "search_knowledge"],
@@ -2847,7 +3216,7 @@ export class CommerceDatabase {
 
     // ==================== PHASE 8 SEED: AUTONOMOUS OPERATIONS ====================
     const now = new Date().toISOString();
-    if (this.data.suppliers.length === 0) {
+    if (this.isCollectionHydrated("suppliers") && this.data.suppliers.length === 0) {
       this.data.suppliers.push(
         {
           id: "sup_dhaka_knit_01",
@@ -2890,9 +3259,9 @@ export class CommerceDatabase {
       );
     }
 
-    if (this.data.supplier_products.length === 0) {
-      const var1 = this.data.product_variants[0]?.id || "var_default_01";
-      const var2 = this.data.product_variants[1]?.id || "var_default_02";
+    if (this.isCollectionHydrated("supplier_products") && this.data.supplier_products.length === 0) {
+      const var1 = (this.isCollectionHydrated("product_variants") ? this.data.product_variants[0]?.id : undefined) || "var_default_01";
+      const var2 = (this.isCollectionHydrated("product_variants") ? this.data.product_variants[1]?.id : undefined) || "var_default_02";
       this.data.supplier_products.push(
         {
           id: "sp_knit_black_m",
@@ -2927,8 +3296,8 @@ export class CommerceDatabase {
       );
     }
 
-    if (this.data.purchase_orders.length === 0) {
-      const var1 = this.data.product_variants[0]?.id || "var_default_01";
+    if (this.isCollectionHydrated("purchase_orders") && this.data.purchase_orders.length === 0) {
+      const var1 = (this.isCollectionHydrated("product_variants") ? this.data.product_variants[0]?.id : undefined) || "var_default_01";
       this.data.purchase_orders.push({
         id: "po_2026_0001",
         tenant_id: tenantId,
@@ -3308,9 +3677,9 @@ export class CommerceDatabase {
           tenant_id: tenantId,
           type: "WHATSAPP",
           name: "WhatsApp Business (+8801711223344)",
-          status: "ACTIVE",
+          status: "PENDING_SETUP",
           provider_account_id: "wa_phone_dhaka_01",
-          credentials_encrypted: "encrypted_wa_token_seed",
+          credentials_encrypted: encryptCredential({}),
           configuration: {
             welcome_message: "Assalamu Alaikum! Welcome to Dhaka Apparel. How can we assist you today?",
             auto_reply_enabled: true,
@@ -3323,9 +3692,9 @@ export class CommerceDatabase {
           tenant_id: tenantId,
           type: "FACEBOOK_MESSENGER",
           name: "Dhaka Apparel Official FB Page",
-          status: "ACTIVE",
+          status: "PENDING_SETUP",
           provider_account_id: "page_fb_dhaka_01",
-          credentials_encrypted: "encrypted_fb_token_seed",
+          credentials_encrypted: encryptCredential({}),
           configuration: {
             welcome_message: "Assalamu Alaikum! Thank you for reaching out to Dhaka Apparel on Messenger.",
             auto_reply_enabled: true,
@@ -3338,9 +3707,9 @@ export class CommerceDatabase {
           tenant_id: tenantId,
           type: "INSTAGRAM",
           name: "@dhakaapparel.bd (Instagram)",
-          status: "ACTIVE",
+          status: "PENDING_SETUP",
           provider_account_id: "ig_dhaka_01",
-          credentials_encrypted: "encrypted_ig_token_seed",
+          credentials_encrypted: encryptCredential({}),
           configuration: {
             welcome_message: "Hi! Welcome to Dhaka Apparel on Instagram Direct.",
             auto_reply_enabled: true,
@@ -3355,11 +3724,12 @@ export class CommerceDatabase {
           name: "Storefront Live Chat",
           status: "ACTIVE",
           provider_account_id: "web_chat_dhaka_01",
-          credentials_encrypted: "encrypted_web_token_seed",
+          credentials_encrypted: encryptCredential({ webhookSecret: randomSuffix(32) }),
           configuration: {
             welcome_message: "Welcome! Need help finding your size or delivery details?",
             widget_color: "#C7F900",
             widget_position: "bottom-right",
+            auto_reply_enabled: true,
           },
           created_at: new Date(Date.now() - 30 * 86400000).toISOString(),
           updated_at: new Date().toISOString(),
@@ -3368,7 +3738,7 @@ export class CommerceDatabase {
       this.data.connected_channels.push(...defaultChannels);
     }
 
-    if (!this.data.customers.some((c) => c.tenant_id === tenantId)) {
+    if (this.isCollectionHydrated("customers") && !this.data.customers.some((c) => c.tenant_id === tenantId)) {
       const defaultCustomers: Customer[] = [
         {
           id: "cust_nusrat",
@@ -3465,7 +3835,7 @@ export class CommerceDatabase {
     }
 
     // Automatically load comprehensive seeded customers if present
-    if (this.data.customers.filter((c) => c.tenant_id === tenantId).length <= 6) {
+    if (this.isCollectionHydrated("customers") && this.data.customers.filter((c) => c.tenant_id === tenantId).length <= 6) {
       try {
         const seed10k = path.resolve(process.cwd(), "src/infrastructure/db/seeds/customers-10000.json");
         const seed1k = path.resolve(process.cwd(), "src/infrastructure/db/seeds/customers-1000.json");
@@ -3481,7 +3851,7 @@ export class CommerceDatabase {
               }
             }
           }
-          if (Array.isArray(parsed.addresses)) {
+          if (this.isCollectionHydrated("customer_addresses") && Array.isArray(parsed.addresses)) {
             const existingAddrIds = new Set(this.data.customer_addresses.map((a) => a.id));
             for (const addr of parsed.addresses) {
               if (!existingAddrIds.has(addr.id)) {
@@ -3497,7 +3867,7 @@ export class CommerceDatabase {
     }
 
     // Automatically load rich products catalog seed if present
-    if (this.data.products.filter((p) => p.tenant_id === tenantId).length <= 3) {
+    if (this.isCollectionHydrated("products") && this.data.products.filter((p) => p.tenant_id === tenantId).length <= 3) {
       try {
         const seedPath = path.resolve(process.cwd(), "src/infrastructure/db/seeds/products-catalog.json");
         if (fs.existsSync(seedPath)) {
@@ -3538,7 +3908,7 @@ export class CommerceDatabase {
               }
             }
           }
-          if (Array.isArray(parsed.productVariants)) {
+          if (this.isCollectionHydrated("product_variants") && Array.isArray(parsed.productVariants)) {
             const existingVarIds = new Set(this.data.product_variants.map((v) => v.id));
             for (const v of parsed.productVariants) {
               if (!existingVarIds.has(v.id)) {
@@ -3547,7 +3917,7 @@ export class CommerceDatabase {
               }
             }
           }
-          if (Array.isArray(parsed.inventoryItems)) {
+          if (this.isCollectionHydrated("inventory_items") && Array.isArray(parsed.inventoryItems)) {
             const existingInvIds = new Set(this.data.inventory_items.map((i) => i.id));
             for (const inv of parsed.inventoryItems) {
               if (!existingInvIds.has(inv.id)) {
@@ -3562,7 +3932,7 @@ export class CommerceDatabase {
       }
     }
 
-    if (!this.data.orders.some((o) => o.tenant_id === tenantId)) {
+    if (this.isCollectionHydrated("orders") && !this.data.orders.some((o) => o.tenant_id === tenantId)) {
       const sampleOrders: Order[] = [
         {
           id: "ord_demo_01",
@@ -3655,7 +4025,7 @@ export class CommerceDatabase {
     }
 
     // Automatically load comprehensive 5,000 orders seed if present
-    if (this.data.orders.filter((o) => o.tenant_id === tenantId).length <= 3) {
+    if (this.isCollectionHydrated("orders") && this.data.orders.filter((o) => o.tenant_id === tenantId).length <= 3) {
       try {
         const seedPath = path.resolve(process.cwd(), "src/infrastructure/db/seeds/orders-5000.json");
         if (fs.existsSync(seedPath)) {
@@ -3669,7 +4039,7 @@ export class CommerceDatabase {
               }
             }
           }
-          if (Array.isArray(parsed.orderItems)) {
+          if (this.isCollectionHydrated("order_items") && Array.isArray(parsed.orderItems)) {
             const existingItemIds = new Set(this.data.order_items.map((i) => i.id));
             for (const item of parsed.orderItems) {
               if (!existingItemIds.has(item.id)) {
@@ -4708,6 +5078,30 @@ export class CommerceDatabase {
           created_at: now,
           updated_at: now,
         },
+        {
+          id: "flag_cust_agent_auto",
+          key: "customer_agent_autonomous",
+          description: "Enable autonomous customer agent replies",
+          is_enabled_globally: true,
+          percentage_rollout: 100,
+          scope: "GLOBAL",
+          tenant_allowlist: [],
+          rules: {},
+          created_at: now,
+          updated_at: now,
+        },
+        {
+          id: "flag_cust_agent_shadow",
+          key: "customer_agent_shadow",
+          description: "Enable shadow customer agent replies",
+          is_enabled_globally: true,
+          percentage_rollout: 100,
+          scope: "GLOBAL",
+          tenant_allowlist: [],
+          rules: {},
+          created_at: now,
+          updated_at: now,
+        },
       ];
     }
 
@@ -4750,6 +5144,39 @@ export class CommerceDatabase {
       ];
     }
 
+    // Repair channels left over from legacy dummy seeds. Nothing here turns replies on or changes a workspace's
+    // AI mode or platform flags: automation stays opt-in, and a repaired channel gets its own random secret.
+    for (const ch of this.data.connected_channels) {
+      if (!ch.credentials_encrypted || ch.credentials_encrypted.startsWith("encrypted_")) {
+        if (ch.type === "WEBSITE_CHAT") {
+          ch.credentials_encrypted = encryptCredential({ webhookSecret: randomSuffix(32) });
+          ch.status = "ACTIVE";
+        } else {
+          ch.credentials_encrypted = encryptCredential({});
+          if (!ch.connector_id) {
+            ch.status = "PENDING_SETUP";
+          }
+        }
+      }
+    }
+
+    // Dynamically synchronize agents to configured environment model names
+    const configuredFast = process.env.LLM_MODEL_FAST?.trim();
+    const configuredReasoning = process.env.LLM_MODEL_REASONING?.trim() || configuredFast;
+    for (const agt of this.data.agents) {
+      if (
+        agt.model_name === "gemini-1.5-flash" ||
+        agt.model_name === "gemini-1.5-pro" ||
+        (configuredFast && (agt.model_tier === "TIER_1_FAST" || agt.model_tier === "TIER_2_REASONING"))
+      ) {
+        if (agt.model_tier === "TIER_1_FAST" && configuredFast) {
+          agt.model_name = configuredFast;
+        } else if (agt.model_tier === "TIER_2_REASONING" && configuredReasoning) {
+          agt.model_name = configuredReasoning;
+        }
+      }
+    }
+
     this.persist(["abandoned_carts", "agent_policies", "agents", "ai_providers", "audience_members", "audiences", "audit_logs", "automation_webhooks", "autonomy_budgets", "brands", "business_objectives", "campaign_attributions", "campaigns", "categories", "connected_channels", "content_templates", "conversations", "coupons", "customer_addresses", "customer_lifecycle_transitions", "customer_lifecycles", "customers", "entitlements", "executive_digests", "experiments", "growth_insights", "growth_recommendations", "inventory_items", "journey_enrollments", "journeys", "memberships", "messages", "metric_definitions", "model_registry", "offers", "operational_exceptions", "order_items", "orders", "payments", "plan_versions", "plans", "platform_feature_flags", "platform_memberships", "platform_settings", "pricing_rules", "product_variants", "products", "purchase_orders", "quick_replies", "shipments", "sla_policies", "subscriptions", "supplier_products", "suppliers", "tenants", "users", "warehouses"]);
   }
 
@@ -4768,8 +5195,13 @@ export class CommerceDatabase {
 
   public createTenant(tenant: TenantRecord): TenantRecord {
     this.data.tenants.push(tenant);
+    // Zero-hydration: a new workspace has no rows anywhere yet, so this request's working sets for it are complete
+    for (const collection of this.unhydratedCollections) {
+      const set = this.ensureRowSet(collection, tenant.id);
+      if (set) set.complete = true;
+    }
     // Automatically seed a default warehouse for new tenants
-    this.data.warehouses.push({
+    this.addRow("warehouses", tenant.id, {
       // Random, like ensureDefaultWarehouse: the first 8 characters of the tenant id collided between tenants (review M3)
       id: `wh_${randomSuffix()}`,
       tenant_id: tenant.id,
@@ -4941,13 +5373,14 @@ export class CommerceDatabase {
 
   // ==================== AUDIT LOGS ====================
   public createAuditLog(log: AuditLogRecord): AuditLogRecord {
-    this.data.audit_logs.push(log);
+    if (this.isCollectionHydrated("audit_logs")) this.data.audit_logs.push(log);
+    else this.appendUnhydrated("audit_logs", log as unknown as Record<string, unknown>);
     this.persist(["audit_logs"]);
     return log;
   }
 
   public getAuditLogsByTenant(tenantId: string, limit = 50, offset = 0): { logs: AuditLogRecord[]; total: number } {
-    const filtered = this.data.audit_logs
+    const filtered = this.rowsOf("audit_logs", tenantId)
       .filter((l) => l.tenant_id === tenantId)
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
     return {
@@ -4975,7 +5408,7 @@ export class CommerceDatabase {
       offset?: number;
     }
   ): { products: Product[]; total: number } {
-    let list = this.data.products.filter((p) => p.tenant_id === tenantId);
+    let list = this.rowsOf("products", tenantId).filter((p) => p.tenant_id === tenantId);
 
     if (options.category_id) {
       list = list.filter((p) => p.category_id === options.category_id);
@@ -4985,12 +5418,11 @@ export class CommerceDatabase {
     }
     if (options.search) {
       const q = options.search.toLowerCase().trim();
-      list = list.filter(
-        (p) =>
-          p.name.toLowerCase().includes(q) ||
-          p.sku.toLowerCase().includes(q) ||
-          p.slug.toLowerCase().includes(q)
-      );
+      const words = q.split(/\s+/).filter(Boolean);
+      list = list.filter((p) => {
+        const haystack = `${p.name} ${p.sku} ${p.slug}`.toLowerCase();
+        return haystack.includes(q) || (words.length > 1 && words.every((w) => haystack.includes(w)));
+      });
     }
 
     list.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
@@ -5007,14 +5439,14 @@ export class CommerceDatabase {
 
   /** Every product of a tenant with its variants, in O(products + variants) (FX-22). For analytics, not UI pages. */
   public getAllProducts(tenantId: string): Product[] {
-    const products = this.data.products.filter((p) => p.tenant_id === tenantId);
+    const products = this.rowsOf("products", tenantId).filter((p) => p.tenant_id === tenantId);
     const variantsByProduct = this.variantsByProduct(tenantId);
     return products.map((p) => ({ ...p, variants: variantsByProduct.get(p.id) ?? [] }));
   }
 
   private variantsByProduct(tenantId: string, only?: Set<string>): Map<string, ProductVariant[]> {
     const map = new Map<string, ProductVariant[]>();
-    for (const v of this.data.product_variants) {
+    for (const v of this.rowsOf("product_variants", tenantId)) {
       if (v.tenant_id !== tenantId || (only && !only.has(v.product_id))) continue;
       const list = map.get(v.product_id);
       if (list) list.push(v);
@@ -5024,32 +5456,33 @@ export class CommerceDatabase {
   }
 
   public findProductById(tenantId: string, id: string): Product | undefined {
-    const p = this.data.products.find((prod) => prod.tenant_id === tenantId && prod.id === id);
+    const p = this.rowsOf("products", tenantId, "loaded").find((prod) => prod.tenant_id === tenantId && prod.id === id);
     if (!p) return undefined;
     return {
       ...p,
-      variants: this.data.product_variants.filter((v) => v.product_id === p.id && v.tenant_id === tenantId),
+      variants: this.rowsOf("product_variants", tenantId, "loaded").filter((v) => v.product_id === p.id && v.tenant_id === tenantId),
     };
   }
 
   public findProductBySlug(tenantId: string, slug: string): Product | undefined {
-    const p = this.data.products.find((prod) => prod.tenant_id === tenantId && prod.slug === slug);
+    const p = this.rowsOf("products", tenantId).find((prod) => prod.tenant_id === tenantId && prod.slug === slug);
     if (!p) return undefined;
     return {
       ...p,
-      variants: this.data.product_variants.filter((v) => v.product_id === p.id && v.tenant_id === tenantId),
+      variants: this.rowsOf("product_variants", tenantId).filter((v) => v.product_id === p.id && v.tenant_id === tenantId),
     };
   }
 
   public findProductBySku(tenantId: string, sku: string): Product | undefined {
     const normalizedSku = sku.trim().toUpperCase();
-    return this.data.products.find(
+    return this.rowsOf("products", tenantId).find(
       (prod) => prod.tenant_id === tenantId && prod.sku.toUpperCase() === normalizedSku
     );
   }
 
   public createProduct(product: Product, initialStock = 0): Product {
-    this.data.products.push(product);
+    const tenantId = product.tenant_id;
+    this.addRow("products", tenantId, product);
 
     // If product has no variants, auto-generate standard primary variant
     if (!product.variants || product.variants.length === 0) {
@@ -5067,12 +5500,12 @@ export class CommerceDatabase {
         created_at: product.created_at,
         updated_at: product.updated_at,
       };
-      this.data.product_variants.push(defaultVariant);
+      this.addRow("product_variants", tenantId, defaultVariant);
 
       // Initialize inventory in this workspace's warehouse (never another tenant's, FX-36 M11)
       const defaultWarehouse = this.ensureDefaultWarehouse(product.tenant_id);
       if (defaultWarehouse) {
-        this.data.inventory_items.push({
+        this.addRow("inventory_items", tenantId, {
           id: `inv_${defaultVariant.id}`,
           tenant_id: product.tenant_id,
           warehouse_id: defaultWarehouse.id,
@@ -5084,7 +5517,7 @@ export class CommerceDatabase {
           updated_at: new Date().toISOString(),
         });
         if (initialStock > 0) {
-          this.data.stock_movements.push({
+          this.addRow("stock_movements", tenantId, {
             id: `sm_${Date.now()}_init_${randomSuffix()}`,
             tenant_id: product.tenant_id,
             warehouse_id: defaultWarehouse.id,
@@ -5104,7 +5537,7 @@ export class CommerceDatabase {
           product_id: v.product_id || product.id,
           tenant_id: v.tenant_id || product.tenant_id,
         };
-        this.data.product_variants.push(variantWithIds);
+        this.addRow("product_variants", tenantId, variantWithIds);
         const defaultWarehouse = this.ensureDefaultWarehouse(product.tenant_id); // this workspace's (FX-36 M11)
         if (defaultWarehouse) {
           const vStock = typeof (v as any).initial_stock === "number"
@@ -5112,7 +5545,7 @@ export class CommerceDatabase {
             : typeof (v as any).stock === "number"
             ? (v as any).stock
             : initialStock;
-          this.data.inventory_items.push({
+          this.addRow("inventory_items", tenantId, {
             id: `inv_${variantWithIds.id}`,
             tenant_id: product.tenant_id,
             warehouse_id: defaultWarehouse.id,
@@ -5132,52 +5565,58 @@ export class CommerceDatabase {
   }
 
   public updateProduct(tenantId: string, id: string, updates: Partial<Product>): Product | undefined {
-    const idx = this.data.products.findIndex((p) => p.tenant_id === tenantId && p.id === id);
+    const products = this.rowsOf("products", tenantId, "loaded");
+    const idx = products.findIndex((p) => p.tenant_id === tenantId && p.id === id);
     if (idx === -1) return undefined;
-    this.data.products[idx] = {
-      ...this.data.products[idx],
+    products[idx] = {
+      ...products[idx],
       ...safePatch(updates),
       updated_at: new Date().toISOString(),
     };
+    this.rowSaved("products", tenantId, products[idx]);
     this.persist(["product_variants", "products"]);
     return this.findProductById(tenantId, id);
   }
 
   public archiveProduct(tenantId: string, id: string): boolean {
-    const idx = this.data.products.findIndex((p) => p.tenant_id === tenantId && p.id === id);
+    const products = this.rowsOf("products", tenantId, "loaded");
+    const idx = products.findIndex((p) => p.tenant_id === tenantId && p.id === id);
     if (idx === -1) return false;
-    this.data.products[idx].status = "ARCHIVED";
-    this.data.products[idx].updated_at = new Date().toISOString();
+    products[idx].status = "ARCHIVED";
+    products[idx].updated_at = new Date().toISOString();
+    this.rowSaved("products", tenantId, products[idx]);
     this.persist(["products"]);
     return true;
   }
 
   public findVariantById(tenantId: string, id: string): ProductVariant | undefined {
-    return this.data.product_variants.find((v) => v.tenant_id === tenantId && v.id === id);
+    return this.rowsOf("product_variants", tenantId, "loaded").find((v) => v.tenant_id === tenantId && v.id === id);
   }
 
   public findVariantBySku(tenantId: string, sku: string): ProductVariant | undefined {
     const norm = sku.trim().toUpperCase();
-    return this.data.product_variants.find((v) => v.tenant_id === tenantId && v.sku.toUpperCase() === norm);
+    return this.rowsOf("product_variants", tenantId).find((v) => v.tenant_id === tenantId && v.sku.toUpperCase() === norm);
   }
 
   public getProductVariants(tenantId: string, productId: string): ProductVariant[] {
-    return this.data.product_variants.filter((v) => v.tenant_id === tenantId && v.product_id === productId);
+    return this.rowsOf("product_variants", tenantId, "loaded").filter((v) => v.tenant_id === tenantId && v.product_id === productId);
   }
 
   public getAllProductVariants(tenantId: string): ProductVariant[] {
-    return this.data.product_variants.filter((v) => v.tenant_id === tenantId);
+    return this.rowsOf("product_variants", tenantId).filter((v) => v.tenant_id === tenantId);
   }
 
   public updateProductVariant(tenantId: string, id: string, updates: Partial<ProductVariant>): ProductVariant | undefined {
-    const idx = this.data.product_variants.findIndex((v) => v.tenant_id === tenantId && v.id === id);
+    const variants = this.rowsOf("product_variants", tenantId, "loaded");
+    const idx = variants.findIndex((v) => v.tenant_id === tenantId && v.id === id);
     if (idx === -1) return undefined;
-    this.data.product_variants[idx] = {
-      ...this.data.product_variants[idx],
+    variants[idx] = {
+      ...variants[idx],
       ...safePatch(updates),
     };
+    this.rowSaved("product_variants", tenantId, variants[idx]);
     this.persist(["product_variants"]);
-    return this.data.product_variants[idx];
+    return variants[idx];
   }
 
   public createProductVariant(tenantId: string, variant: Omit<ProductVariant, "tenant_id" | "id" | "created_at" | "updated_at"> & { id?: string }): ProductVariant {
@@ -5197,7 +5636,7 @@ export class CommerceDatabase {
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
-    this.data.product_variants.push(newVariant);
+    this.addRow("product_variants", tenantId, newVariant);
     this.persist(["product_variants"]);
     return newVariant;
   }
@@ -5225,11 +5664,11 @@ export class CommerceDatabase {
 
   // ==================== WAREHOUSES & INVENTORY ====================
   public getWarehouses(tenantId: string): Warehouse[] {
-    return this.data.warehouses.filter((w) => w.tenant_id === tenantId);
+    return this.rowsOf("warehouses", tenantId).filter((w) => w.tenant_id === tenantId);
   }
 
   public createWarehouse(warehouse: Warehouse): Warehouse {
-    this.data.warehouses.push(warehouse);
+    this.addRow("warehouses", warehouse.tenant_id, warehouse);
     this.persist(["warehouses"]);
     return warehouse;
   }
@@ -5240,7 +5679,7 @@ export class CommerceDatabase {
    * address is left blank for the merchant to fill in; it isn't guessed.
    */
   public ensureDefaultWarehouse(tenantId: string): Warehouse {
-    const existing = this.data.warehouses.find((w) => w.tenant_id === tenantId);
+    const existing = this.rowsOf("warehouses", tenantId).find((w) => w.tenant_id === tenantId);
     if (existing) return existing;
     const now = new Date().toISOString();
     return this.createWarehouse({
@@ -5261,7 +5700,7 @@ export class CommerceDatabase {
     tenantId: string,
     options?: { warehouse_id?: string; low_stock_only?: boolean }
   ): (InventoryItem & { product_name: string; sku: string; variant_title: string })[] {
-    let items = this.data.inventory_items.filter((i) => i.tenant_id === tenantId);
+    let items = this.rowsOf("inventory_items", tenantId).filter((i) => i.tenant_id === tenantId);
 
     if (options?.warehouse_id) {
       items = items.filter((i) => i.warehouse_id === options.warehouse_id);
@@ -5272,9 +5711,9 @@ export class CommerceDatabase {
 
     // Per-tenant indexes: O(I + V + P) instead of a scan of every tenant's catalog per row (FX-23)
     const variantsById = new Map<string, ProductVariant>();
-    for (const v of this.data.product_variants) if (v.tenant_id === tenantId) variantsById.set(v.id, v);
+    for (const v of this.rowsOf("product_variants", tenantId)) if (v.tenant_id === tenantId) variantsById.set(v.id, v);
     const productsById = new Map<string, Product>();
-    for (const p of this.data.products) if (p.tenant_id === tenantId) productsById.set(p.id, p);
+    for (const p of this.rowsOf("products", tenantId)) if (p.tenant_id === tenantId) productsById.set(p.id, p);
 
     return items.map((item) => {
       const variant = variantsById.get(item.product_variant_id);
@@ -5289,7 +5728,7 @@ export class CommerceDatabase {
   }
 
   public findInventoryItem(tenantId: string, warehouseId: string, variantId: string): InventoryItem | undefined {
-    return this.data.inventory_items.find(
+    return this.rowsOf("inventory_items", tenantId, "loaded").find(
       (i) => i.tenant_id === tenantId && i.warehouse_id === warehouseId && i.product_variant_id === variantId
     );
   }
@@ -5318,8 +5757,8 @@ export class CommerceDatabase {
       // A new stock row needs this workspace's own variant and warehouse. Any id used to be accepted, so another
       // workspace's ids created a phantom row (with the same id as that workspace's row), and Postgres refuses such a
       // row by its foreign keys (ADR-108).
-      const variantOwned = this.data.product_variants.some((v) => v.id === params.product_variant_id && v.tenant_id === tenantId);
-      const warehouseOwned = this.data.warehouses.some((w) => w.id === params.warehouse_id && w.tenant_id === tenantId);
+      const variantOwned = this.rowsOf("product_variants", tenantId, "loaded").some((v) => v.id === params.product_variant_id && v.tenant_id === tenantId);
+      const warehouseOwned = this.rowsOf("warehouses", tenantId, "loaded").some((w) => w.id === params.warehouse_id && w.tenant_id === tenantId);
       if (!variantOwned || !warehouseOwned) {
         throw new AppError("NOT_FOUND", !variantOwned ? "Product variant not found." : "Warehouse not found.", 404);
       }
@@ -5348,12 +5787,13 @@ export class CommerceDatabase {
       );
     }
     // Only now: a refused adjustment used to leave an empty stock row behind.
-    if (isNewItem) this.data.inventory_items.push(item);
+    if (isNewItem) this.addRow("inventory_items", tenantId, item);
 
     const availableBefore = isNewItem ? 0 : item.quantity_available;
     item.quantity_on_hand = newOnHand;
     item.quantity_available = newAvailable;
     item.updated_at = new Date().toISOString();
+    this.rowSaved("inventory_items", tenantId, item);
     this.noteLowStock(tenantId, item, availableBefore);
 
     // Append-only stock movement record
@@ -5370,7 +5810,7 @@ export class CommerceDatabase {
       reference_id: params.reference_id,
       created_at: new Date().toISOString(),
     };
-    this.data.stock_movements.push(movement);
+    this.addRow("stock_movements", tenantId, movement);
 
     this.persist(["inventory_items", "product_variants", "stock_movements", "warehouses"]);
     return item;
@@ -5405,6 +5845,7 @@ export class CommerceDatabase {
     item.quantity_reserved += params.quantity;
     item.quantity_available = item.quantity_on_hand - item.quantity_reserved;
     item.updated_at = new Date().toISOString();
+    this.rowSaved("inventory_items", tenantId, item);
     this.noteLowStock(tenantId, item, availableBefore);
 
     // Unconfirmed orders hold stock for the tenant's setting (default 24 h, was a fixed 60 min); confirming extends it
@@ -5423,14 +5864,14 @@ export class CommerceDatabase {
       expires_at: expiresAt,
       created_at: new Date().toISOString(),
     };
-    this.data.inventory_reservations.push(reservation);
+    this.addRow("inventory_reservations", tenantId, reservation);
 
     this.persist(["inventory_items", "inventory_reservations", "tenants"]);
     return reservation;
   }
 
   public releaseReservation(tenantId: string, reservationId: string): boolean {
-    const res = this.data.inventory_reservations.find(
+    const res = this.rowsOf("inventory_reservations", tenantId, "loaded").find(
       (r) => r.tenant_id === tenantId && r.id === reservationId && r.status === "ACTIVE"
     );
     if (!res) return false;
@@ -5440,15 +5881,17 @@ export class CommerceDatabase {
       item.quantity_reserved = Math.max(0, item.quantity_reserved - res.quantity);
       item.quantity_available = item.quantity_on_hand - item.quantity_reserved;
       item.updated_at = new Date().toISOString();
+      this.rowSaved("inventory_items", tenantId, item);
     }
 
     res.status = "RELEASED";
+    this.rowSaved("inventory_reservations", tenantId, res);
     this.persist(["inventory_items", "inventory_reservations"]);
     return true;
   }
 
   public commitReservation(tenantId: string, reservationId: string, actorUserId: string): boolean {
-    const res = this.data.inventory_reservations.find(
+    const res = this.rowsOf("inventory_reservations", tenantId, "loaded").find(
       (r) => r.tenant_id === tenantId && r.id === reservationId && r.status === "ACTIVE"
     );
     if (!res) return false;
@@ -5459,8 +5902,9 @@ export class CommerceDatabase {
       item.quantity_reserved = Math.max(0, item.quantity_reserved - res.quantity);
       item.quantity_available = item.quantity_on_hand - item.quantity_reserved;
       item.updated_at = new Date().toISOString();
+      this.rowSaved("inventory_items", tenantId, item);
 
-      this.data.stock_movements.push({
+      this.addRow("stock_movements", tenantId, {
         id: `sm_${Date.now()}_sale_${randomSuffix()}`,
         tenant_id: tenantId,
         warehouse_id: res.warehouse_id,
@@ -5476,12 +5920,13 @@ export class CommerceDatabase {
     }
 
     res.status = "COMMITTED";
+    this.rowSaved("inventory_reservations", tenantId, res);
     this.persist(["inventory_items", "inventory_reservations", "stock_movements"]);
     return true;
   }
 
   public getStockMovements(tenantId: string, limit = 50): StockMovement[] {
-    return this.data.stock_movements
+    return this.rowsOf("stock_movements", tenantId)
       .filter((m) => m.tenant_id === tenantId)
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
       .slice(0, limit);
@@ -5496,7 +5941,7 @@ export class CommerceDatabase {
     tenantId: string,
     options: { search?: string; limit: number; offset?: number }
   ): { customers: Customer[]; total: number } {
-    let list = this.data.customers.filter((c) => c.tenant_id === tenantId);
+    let list = this.rowsOf("customers", tenantId).filter((c) => c.tenant_id === tenantId);
 
     if (options?.search) {
       const q = options.search.toLowerCase().trim();
@@ -5521,14 +5966,14 @@ export class CommerceDatabase {
 
   /** Every customer of a tenant with addresses, in O(customers + addresses) (FX-22). For analytics, not UI pages. */
   public getAllCustomers(tenantId: string): Customer[] {
-    const customers = this.data.customers.filter((c) => c.tenant_id === tenantId);
+    const customers = this.rowsOf("customers", tenantId).filter((c) => c.tenant_id === tenantId);
     const addressesByCustomer = this.addressesByCustomer(tenantId);
     return customers.map((c) => ({ ...c, addresses: addressesByCustomer.get(c.id) ?? [] }));
   }
 
   private addressesByCustomer(tenantId: string, only?: Set<string>): Map<string, CustomerAddress[]> {
     const map = new Map<string, CustomerAddress[]>();
-    for (const a of this.data.customer_addresses) {
+    for (const a of this.rowsOf("customer_addresses", tenantId)) {
       if (a.tenant_id !== tenantId || (only && !only.has(a.customer_id))) continue;
       const list = map.get(a.customer_id);
       if (list) list.push(a);
@@ -5538,61 +5983,64 @@ export class CommerceDatabase {
   }
 
   public findCustomerById(tenantId: string, id: string): Customer | undefined {
-    const c = this.data.customers.find((cust) => cust.tenant_id === tenantId && cust.id === id);
+    const c = this.rowsOf("customers", tenantId, "loaded").find((cust) => cust.tenant_id === tenantId && cust.id === id);
     if (!c) return undefined;
     return {
       ...c,
-      addresses: this.data.customer_addresses.filter((a) => a.customer_id === c.id && a.tenant_id === tenantId),
+      addresses: this.rowsOf("customer_addresses", tenantId, "loaded").filter((a) => a.customer_id === c.id && a.tenant_id === tenantId),
     };
   }
 
   public findCustomerByPhone(tenantId: string, normalizedPhone: string): Customer | undefined {
     // An empty phone means "no phone" (social contacts): it must never match another customer (FX-30, N6)
     if (!normalizedPhone || !normalizedPhone.trim()) return undefined;
-    return this.data.customers.find((c) => c.tenant_id === tenantId && c.phone === normalizedPhone);
+    return this.rowsOf("customers", tenantId).find((c) => c.tenant_id === tenantId && c.phone === normalizedPhone);
   }
 
   public createCustomer(customer: Customer, initialAddress?: CustomerAddress): Customer {
-    this.data.customers.push(customer);
+    this.addRow("customers", customer.tenant_id, customer);
     if (initialAddress) {
-      this.data.customer_addresses.push(initialAddress);
+      this.addRow("customer_addresses", customer.tenant_id, initialAddress);
     }
     this.persist(["customer_addresses", "customers"]);
-    return this.findCustomerById(customer.tenant_id, customer.id)!;
+    return { ...customer, addresses: initialAddress ? [initialAddress] : [] };
   }
 
   public updateCustomer(tenantId: string, id: string, updates: Partial<Customer>): Customer | undefined {
-    const idx = this.data.customers.findIndex((c) => c.tenant_id === tenantId && c.id === id);
+    const customers = this.rowsOf("customers", tenantId, "loaded");
+    const idx = customers.findIndex((c) => c.tenant_id === tenantId && c.id === id);
     if (idx === -1) return undefined;
-    this.data.customers[idx] = {
-      ...this.data.customers[idx],
+    customers[idx] = {
+      ...customers[idx],
       ...safePatch(updates),
       updated_at: new Date().toISOString(),
     };
+    this.rowSaved("customers", tenantId, customers[idx]);
     this.persist(["customer_addresses", "customers"]);
     return this.findCustomerById(tenantId, id);
   }
 
   public getCustomerAddresses(tenantId: string, customerId?: string): CustomerAddress[] {
-    return this.data.customer_addresses.filter(
+    return this.rowsOf("customer_addresses", tenantId, "loaded").filter(
       (a) => a.tenant_id === tenantId && (!customerId || a.customer_id === customerId)
     );
   }
 
   public getReservations(tenantId: string): InventoryReservation[] {
-    return this.data.inventory_reservations.filter((r) => r.tenant_id === tenantId);
+    return this.rowsOf("inventory_reservations", tenantId).filter((r) => r.tenant_id === tenantId);
   }
 
   public getReservationsForOrder(tenantId: string, orderId: string): InventoryReservation[] {
-    return this.data.inventory_reservations.filter((r) => r.tenant_id === tenantId && r.order_id === orderId);
+    return this.rowsOf("inventory_reservations", tenantId, "loaded").filter((r) => r.tenant_id === tenantId && r.order_id === orderId);
   }
 
   /** Keeps a confirmed order's stock held (FX-35). */
   public extendReservations(tenantId: string, orderId: string, expiresAt: string): void {
     let changed = false;
-    for (const r of this.data.inventory_reservations) {
+    for (const r of this.rowsOf("inventory_reservations", tenantId, "loaded")) {
       if (r.tenant_id === tenantId && r.order_id === orderId && r.status === "ACTIVE" && r.expires_at < expiresAt) {
         r.expires_at = expiresAt;
+        this.rowSaved("inventory_reservations", tenantId, r);
         changed = true;
       }
     }
@@ -5604,18 +6052,24 @@ export class CommerceDatabase {
    * taken again if the order is confirmed later (FX-35 step 3). Holds of confirmed orders are left alone.
    */
   public releaseExpiredReservations(now = Date.now()): number {
+    // Zero-hydration: only the lapsed holds loadLapsedHolds put in the current scope, with their orders and stock rows
+    const holds = this.isCollectionHydrated("inventory_reservations")
+      ? this.data.inventory_reservations
+      : [...(tenantReadContext.getStore()?.get("inventory_reservations")?.values() ?? [])].flatMap((set) => set.rows as unknown as InventoryReservation[]);
     let released = 0;
-    for (const r of this.data.inventory_reservations) {
+    for (const r of holds) {
       if (r.status !== "ACTIVE" || Date.parse(r.expires_at) >= now) continue;
-      const order = this.data.orders.find((o) => o.tenant_id === r.tenant_id && o.id === r.order_id);
+      const order = this.rowsOf("orders", r.tenant_id, "loaded").find((o) => o.tenant_id === r.tenant_id && o.id === r.order_id);
       if (order && order.status !== "PENDING") continue;
       const item = this.findInventoryItem(r.tenant_id, r.warehouse_id, r.product_variant_id);
       if (item) {
         item.quantity_reserved = Math.max(0, item.quantity_reserved - r.quantity);
         item.quantity_available = item.quantity_on_hand - item.quantity_reserved;
         item.updated_at = new Date(now).toISOString();
+        this.rowSaved("inventory_items", r.tenant_id, item);
       }
       r.status = "EXPIRED";
+      this.rowSaved("inventory_reservations", r.tenant_id, r);
       released++;
     }
     if (released) this.persist(["inventory_items", "inventory_reservations", "orders"]);
@@ -5628,15 +6082,18 @@ export class CommerceDatabase {
    * computed before the awaits in order creation, so two concurrent orders (or a deleted one) produced duplicates.
    * Synchronous, so atomic within the one writer process; the counter starts past any number already issued.
    */
-  public generateOrderNumber(tenantId: string): string {
+  public generateOrderNumber(tenantId: string, highestIssued?: number): string {
     if (!this.data.order_sequences) this.data.order_sequences = {};
     let last = this.data.order_sequences[tenantId];
     if (last === undefined) {
-      last = 0;
-      for (const o of this.data.orders) {
-        if (o.tenant_id !== tenantId) continue;
-        const n = Number(/-(\d+)$/.exec(o.order_number ?? "")?.[1]);
-        if (Number.isFinite(n) && n > last) last = n;
+      // Zero-hydration: the caller read the highest number issued from Postgres (orderRepository.highestOrderNumber)
+      last = highestIssued ?? 0;
+      if (this.isCollectionHydrated("orders")) {
+        for (const o of this.data.orders) {
+          if (o.tenant_id !== tenantId) continue;
+          const n = Number(/-(\d+)$/.exec(o.order_number ?? "")?.[1]);
+          if (Number.isFinite(n) && n > last) last = n;
+        }
       }
     }
     const next = last + 1;
@@ -5657,7 +6114,7 @@ export class CommerceDatabase {
     }
   ): { orders: (Order & { customer_name: string; customer_phone: string })[]; total: number } {
     // `limit` is required (FX-22): analytics that need every order must use getAllOrders.
-    let list = this.data.orders.filter((o) => o.tenant_id === tenantId);
+    let list = this.rowsOf("orders", tenantId).filter((o) => o.tenant_id === tenantId);
     const customersById = this.customersById(tenantId);
 
     if (options.status && options.status !== "ALL") {
@@ -5696,10 +6153,10 @@ export class CommerceDatabase {
    * Every order of a tenant (FX-22). Plain rows by default; `hydrate` adds items, customer_name and customer_phone
    * (the getOrders shape) using maps, so it stays O(orders + items + customers).
    */
-  public getAllOrders(tenantId: string): Order[];
   public getAllOrders(tenantId: string, opts: { hydrate: true }): (Order & { customer_name: string; customer_phone: string })[];
+  public getAllOrders(tenantId: string, opts?: { hydrate?: boolean }): Order[];
   public getAllOrders(tenantId: string, opts: { hydrate?: boolean } = {}): Order[] {
-    const orders = this.data.orders.filter((o) => o.tenant_id === tenantId);
+    const orders = this.rowsOf("orders", tenantId).filter((o) => o.tenant_id === tenantId);
     if (!opts.hydrate) return orders;
     const itemsByOrder = this.itemsByOrder(tenantId);
     const customersById = this.customersById(tenantId);
@@ -5708,13 +6165,13 @@ export class CommerceDatabase {
 
   private customersById(tenantId: string): Map<string, Customer> {
     const map = new Map<string, Customer>();
-    for (const c of this.data.customers) if (c.tenant_id === tenantId) map.set(c.id, c);
+    for (const c of this.rowsOf("customers", tenantId)) if (c.tenant_id === tenantId) map.set(c.id, c);
     return map;
   }
 
   private itemsByOrder(tenantId: string, only?: Set<string>): Map<string, OrderItem[]> {
     const map = new Map<string, OrderItem[]>();
-    for (const it of this.data.order_items) {
+    for (const it of this.rowsOf("order_items", tenantId)) {
       if (it.tenant_id !== tenantId || (only && !only.has(it.order_id))) continue;
       const list = map.get(it.order_id);
       if (list) list.push(it);
@@ -5723,53 +6180,97 @@ export class CommerceDatabase {
     return map;
   }
 
+  /** The order as pages and the API show it (items, delivery_address, customer_name/phone), from rows read anywhere. */
+  public presentOrder(
+    o: Order,
+    items: OrderItem[],
+    customer: Customer | undefined
+  ): Order & { customer_name: string; customer_phone: string; delivery_address?: any } {
+    return this.hydrateOrder(o, new Map([[o.id, items]]), new Map(customer ? [[o.customer_id, customer]] : []));
+  }
+
   private hydrateOrder(
     o: Order,
     itemsByOrder: Map<string, OrderItem[]>,
     customersById: Map<string, Customer>
-  ): Order & { customer_name: string; customer_phone: string } {
+  ): Order & { customer_name: string; customer_phone: string; delivery_address?: any } {
     const cust = customersById.get(o.customer_id);
+    const addr = o.shipping_address_snapshot || (o as any).delivery_address || {};
+    const rawItems = itemsByOrder.get(o.id) ?? [];
+    const items = rawItems.map((item) => ({
+      ...item,
+      title_snapshot: item.product_name_snapshot || (item as any).title_snapshot || "Item",
+      variant_title_snapshot: item.sku_snapshot || (item as any).variant_title_snapshot || "",
+      total_price: item.line_total ?? (item as any).total_price ?? (item.unit_price * item.quantity),
+    }));
     return {
       ...o,
-      items: itemsByOrder.get(o.id) ?? [],
-      customer_name: cust ? `${cust.first_name} ${cust.last_name}` : "Walk-in Customer",
-      customer_phone: cust?.phone || "",
+      items,
+      delivery_address: {
+        address_line_1: addr.address_line_1 || "",
+        district: addr.district || "",
+        division: addr.division || "",
+        upazila: addr.upazila || "",
+        area: addr.area || "",
+        postal_code: addr.postal_code || "",
+      },
+      customer_name: cust ? `${cust.first_name} ${cust.last_name}`.trim() : "Walk-in Customer",
+      customer_phone: cust?.phone || addr.phone || "",
     };
   }
 
-  public findOrderById(tenantId: string, id: string): (Order & { customer_name: string; customer_phone: string }) | undefined {
-    const o = this.data.orders.find((ord) => ord.tenant_id === tenantId && ord.id === id);
+  public findOrderById(tenantId: string, id: string): (Order & { customer_name: string; customer_phone: string; delivery_address?: any }) | undefined {
+    const o = this.rowsOf("orders", tenantId, "loaded").find((ord) => ord.tenant_id === tenantId && ord.id === id);
     if (!o) return undefined;
-    const cust = this.data.customers.find((c) => c.tenant_id === tenantId && c.id === o.customer_id);
+    const cust = this.rowsOf("customers", tenantId, "loaded").find((c) => c.tenant_id === tenantId && c.id === o.customer_id);
+    const addr = o.shipping_address_snapshot || (o as any).delivery_address || {};
+    const items = this.rowsOf("order_items", tenantId, "loaded")
+      .filter((item) => item.order_id === o.id && item.tenant_id === tenantId)
+      .map((item) => ({
+        ...item,
+        title_snapshot: item.product_name_snapshot || (item as any).title_snapshot || "Item",
+        variant_title_snapshot: item.sku_snapshot || (item as any).variant_title_snapshot || "",
+        total_price: item.line_total ?? (item as any).total_price ?? (item.unit_price * item.quantity),
+      }));
     return {
       ...o,
-      items: this.data.order_items.filter((item) => item.order_id === o.id && item.tenant_id === tenantId),
-      customer_name: cust ? `${cust.first_name} ${cust.last_name}` : "Walk-in Customer",
-      customer_phone: cust?.phone || "",
+      items,
+      delivery_address: {
+        address_line_1: addr.address_line_1 || "",
+        district: addr.district || "",
+        division: addr.division || "",
+        upazila: addr.upazila || "",
+        area: addr.area || "",
+        postal_code: addr.postal_code || "",
+      },
+      customer_name: cust ? `${cust.first_name} ${cust.last_name}`.trim() : "Walk-in Customer",
+      customer_phone: cust?.phone || addr.phone || "",
     };
   }
 
   public findOrderByNumber(tenantId: string, orderNumber: string): Order | undefined {
-    return this.data.orders.find((o) => o.tenant_id === tenantId && o.order_number === orderNumber);
+    return this.rowsOf("orders", tenantId).find((o) => o.tenant_id === tenantId && o.order_number === orderNumber);
   }
 
   public getOrderItems(tenantId: string, orderId: string): OrderItem[] {
-    return this.data.order_items.filter((i) => i.tenant_id === tenantId && i.order_id === orderId);
+    return this.rowsOf("order_items", tenantId, "loaded").filter((i) => i.tenant_id === tenantId && i.order_id === orderId);
   }
 
   public createOrder(order: Order, items: OrderItem[]): Order {
-    this.data.orders.push(order);
+    const tenantId = order.tenant_id;
+    this.addRow("orders", tenantId, order);
     for (const item of items) {
-      this.data.order_items.push(item);
+      this.addRow("order_items", tenantId, item);
     }
 
     // Update customer stats
-    const cust = this.data.customers.find((c) => c.id === order.customer_id && c.tenant_id === order.tenant_id);
+    const cust = this.rowsOf("customers", tenantId, "loaded").find((c) => c.id === order.customer_id && c.tenant_id === order.tenant_id);
     if (cust) {
       cust.total_orders = (cust.total_orders || 0) + 1;
       cust.total_spent = (cust.total_spent || 0) + order.grand_total;
       cust.last_order_at = order.created_at;
       cust.updated_at = new Date().toISOString();
+      this.rowSaved("customers", tenantId, cust);
     }
 
     this.persist(["customers", "order_items", "orders"]);
@@ -5777,28 +6278,34 @@ export class CommerceDatabase {
   }
 
   public updateOrderStatus(tenantId: string, orderId: string, status: OrderStatus): Order | undefined {
-    const idx = this.data.orders.findIndex((o) => o.tenant_id === tenantId && o.id === orderId);
+    const orders = this.rowsOf("orders", tenantId, "loaded");
+    const idx = orders.findIndex((o) => o.tenant_id === tenantId && o.id === orderId);
     if (idx === -1) return undefined;
-    this.data.orders[idx].status = status;
-    this.data.orders[idx].updated_at = new Date().toISOString();
+    orders[idx].status = status;
+    orders[idx].updated_at = new Date().toISOString();
+    this.rowSaved("orders", tenantId, orders[idx]);
     this.persist(["customers", "order_items", "orders"]);
     return this.findOrderById(tenantId, orderId);
   }
 
   public updateOrderPaymentStatus(tenantId: string, orderId: string, status: PaymentStatus): Order | undefined {
-    const idx = this.data.orders.findIndex((o) => o.tenant_id === tenantId && o.id === orderId);
+    const orders = this.rowsOf("orders", tenantId, "loaded");
+    const idx = orders.findIndex((o) => o.tenant_id === tenantId && o.id === orderId);
     if (idx === -1) return undefined;
-    this.data.orders[idx].payment_status = status;
-    this.data.orders[idx].updated_at = new Date().toISOString();
+    orders[idx].payment_status = status;
+    orders[idx].updated_at = new Date().toISOString();
+    this.rowSaved("orders", tenantId, orders[idx]);
     this.persist(["customers", "order_items", "orders"]);
     return this.findOrderById(tenantId, orderId);
   }
 
   public updateOrderFulfillmentStatus(tenantId: string, orderId: string, status: FulfillmentStatus): Order | undefined {
-    const idx = this.data.orders.findIndex((o) => o.tenant_id === tenantId && o.id === orderId);
+    const orders = this.rowsOf("orders", tenantId, "loaded");
+    const idx = orders.findIndex((o) => o.tenant_id === tenantId && o.id === orderId);
     if (idx === -1) return undefined;
-    this.data.orders[idx].fulfillment_status = status;
-    this.data.orders[idx].updated_at = new Date().toISOString();
+    orders[idx].fulfillment_status = status;
+    orders[idx].updated_at = new Date().toISOString();
+    this.rowSaved("orders", tenantId, orders[idx]);
     this.persist(["customers", "order_items", "orders"]);
     return this.findOrderById(tenantId, orderId);
   }
@@ -5921,16 +6428,16 @@ export class CommerceDatabase {
 
   // ==================== COUPONS ====================
   public getCoupons(tenantId: string): Coupon[] {
-    return this.data.coupons.filter((c) => c.tenant_id === tenantId);
+    return this.rowsOf("coupons", tenantId).filter((c) => c.tenant_id === tenantId);
   }
 
   public findCouponByCode(tenantId: string, code: string): Coupon | undefined {
     const normalized = code.trim().toUpperCase();
-    return this.data.coupons.find((c) => c.tenant_id === tenantId && c.code === normalized);
+    return this.rowsOf("coupons", tenantId, "loaded").find((c) => c.tenant_id === tenantId && c.code === normalized);
   }
 
   public createCoupon(coupon: Coupon): Coupon {
-    this.data.coupons.push(coupon);
+    this.addRow("coupons", coupon.tenant_id, coupon);
     this.persist(["coupons"]);
     return coupon;
   }
@@ -5939,6 +6446,7 @@ export class CommerceDatabase {
     const c = this.findCouponByCode(tenantId, code);
     if (c) {
       c.usage_count = (c.usage_count || 0) + 1;
+      this.rowSaved("coupons", tenantId, c);
       this.persist(["coupons"]);
     }
   }
@@ -6005,13 +6513,16 @@ export class CommerceDatabase {
   /** Adds one violation to its day/directive/origin counter. Returns false when the day already has too many distinct counters. */
   public recordCspViolation(day: string, directive: string, blocked: string, at: string, overflowCounter = false): boolean {
     const id = `${day}|${directive}|${blocked}`;
-    const existing = this.data.csp_reports.find((r) => r.id === id);
+    // Zero-hydration: the day's counters loaded for this request (CspReportService.load)
+    const reports = this.rowsOf("csp_reports", PLATFORM_SCOPE, "loaded");
+    const existing = reports.find((r) => r.id === id);
     if (existing) {
       existing.count++;
       existing.last_seen_at = at;
+      this.rowSaved("csp_reports", PLATFORM_SCOPE, existing);
     } else {
-      if (!overflowCounter && this.data.csp_reports.filter((r) => r.day === day).length >= 500) return false;
-      this.data.csp_reports.push({ id, day, directive, blocked, count: 1, first_seen_at: at, last_seen_at: at });
+      if (!overflowCounter && reports.filter((r) => r.day === day).length >= 500) return false;
+      this.addRow("csp_reports", PLATFORM_SCOPE, { id, day, directive, blocked, count: 1, first_seen_at: at, last_seen_at: at });
     }
     this.persist(["csp_reports"]);
     // The "couldn't count" counter is recorded on a request that then answers 429: keep it anyway
@@ -6020,7 +6531,25 @@ export class CommerceDatabase {
   }
 
   public getCspReports(sinceDay: string): CspReportRecord[] {
-    return this.data.csp_reports.filter((r) => r.day >= sinceDay);
+    return this.rowsOf("csp_reports", PLATFORM_SCOPE, "loaded").filter((r) => r.day >= sinceDay);
+  }
+
+  // ---- Merchant notifications (owner alerts): one record per workspace
+  public findNotificationSettings(tenantId: string): NotificationSettingsRecord | undefined {
+    return this.data.notification_settings.find((r) => r.tenant_id === tenantId);
+  }
+
+  /** Every workspace's record, for the alerts bot: a pending link by its code, or the workspaces linked to one chat. */
+  public getAllNotificationSettings(): NotificationSettingsRecord[] {
+    return this.data.notification_settings;
+  }
+
+  public saveNotificationSettings(record: NotificationSettingsRecord): NotificationSettingsRecord {
+    const idx = this.data.notification_settings.findIndex((r) => r.tenant_id === record.tenant_id);
+    if (idx === -1) this.data.notification_settings.push(record);
+    else this.data.notification_settings[idx] = record;
+    this.persist(["notification_settings"]);
+    return record;
   }
 
   // ---- Scheduled job runs (FX-99 Part B), platform scope
@@ -6130,20 +6659,20 @@ export class CommerceDatabase {
       color: string;
     }>;
   } {
-    const orders = this.data.orders.filter((o) => o.tenant_id === tenantId);
+    const orders = this.rowsOf("orders", tenantId).filter((o) => o.tenant_id === tenantId);
     const paidOrders = orders.filter((o) => o.payment_status === "PAID");
     const totalRevenue = paidOrders.reduce((sum, o) => sum + o.grand_total, 0);
     const totalOrders = orders.length;
     const averageOrderValue = paidOrders.length > 0 ? totalRevenue / paidOrders.length : 0;
 
-    const customers = this.data.customers.filter((c) => c.tenant_id === tenantId);
+    const customers = this.rowsOf("customers", tenantId).filter((c) => c.tenant_id === tenantId);
     const customersById = new Map(customers.map((c) => [c.id, c]));
     const activeCustomers = customers.filter((c) => c.status === "ACTIVE").length;
 
-    const products = this.data.products.filter((p) => p.tenant_id === tenantId && p.status !== "ARCHIVED");
+    const products = this.rowsOf("products", tenantId).filter((p) => p.tenant_id === tenantId && p.status !== "ARCHIVED");
     const totalProducts = products.length;
 
-    const inventory = this.data.inventory_items.filter((i) => i.tenant_id === tenantId);
+    const inventory = this.rowsOf("inventory_items", tenantId).filter((i) => i.tenant_id === tenantId);
     const lowStockCount = inventory.filter((i) => i.quantity_available <= i.reorder_point).length;
 
     const pendingOrdersCount = orders.filter(
@@ -6295,7 +6824,7 @@ export class CommerceDatabase {
       pendingOrdersCount,
       pendingPaymentsCount,
       totalStockUnits: inventory.reduce((sum, i) => sum + i.quantity_on_hand, 0),
-      warehousesCount: this.data.warehouses.filter((w) => w.tenant_id === tenantId).length,
+      warehousesCount: this.rowsOf("warehouses", tenantId).filter((w) => w.tenant_id === tenantId).length,
       returningBuyerPercent,
       paymentMix,
       recentOrders: recent,
@@ -6364,8 +6893,9 @@ export class CommerceDatabase {
   }
 
   // ==================== SOCIAL COMMERCE: CUSTOMER IDENTITIES ====================
+  /** One customer's identities may come from the rows a flow loaded (loadCustomerRows); every identity needs them all. */
   public getCustomerIdentities(tenantId: string, customerId?: string): CustomerIdentity[] {
-    return this.data.customer_identities.filter((ci) => {
+    return this.rowsOf("customer_identities", tenantId, customerId ? "loaded" : "all").filter((ci) => {
       if (ci.tenant_id !== tenantId) return false;
       if (customerId && ci.customer_id !== customerId) return false;
       return true;
@@ -6373,7 +6903,7 @@ export class CommerceDatabase {
   }
 
   public findCustomerIdentity(tenantId: string, channelId: string, externalUserId: string): CustomerIdentity | undefined {
-    return this.data.customer_identities.find(
+    return this.rowsOf("customer_identities", tenantId, "loaded").find(
       (ci) => ci.tenant_id === tenantId && ci.channel_id === channelId && ci.external_user_id === externalUserId
     );
   }
@@ -6390,22 +6920,24 @@ export class CommerceDatabase {
     if (existing) {
       return this.updateCustomerIdentity(identity.tenant_id, existing.id, identity);
     }
-    this.data.customer_identities.push(identity);
+    this.addRow("customer_identities", identity.tenant_id, identity);
     this.persist(["customer_identities"]);
     return identity;
   }
 
   public updateCustomerIdentity(tenantId: string, id: string, patch: Partial<CustomerIdentity>): CustomerIdentity {
-    const idx = this.data.customer_identities.findIndex((ci) => ci.tenant_id === tenantId && ci.id === id);
+    const identities = this.rowsOf("customer_identities", tenantId, "loaded");
+    const idx = identities.findIndex((ci) => ci.tenant_id === tenantId && ci.id === id);
     if (idx === -1) {
       throw new Error(`Customer identity '${id}' not found`);
     }
     const updated = {
-      ...this.data.customer_identities[idx],
+      ...identities[idx],
       ...safePatch(patch),
       last_seen_at: new Date().toISOString(),
     };
-    this.data.customer_identities[idx] = updated;
+    identities[idx] = updated;
+    this.rowSaved("customer_identities", tenantId, updated);
     this.persist(["customer_identities"]);
     return updated;
   }
@@ -6484,6 +7016,11 @@ export class CommerceDatabase {
     });
 
     return { conversations: enriched, total };
+  }
+
+  /** Every conversation of a tenant, unhydrated. For analytics (ad attribution), not UI pages. */
+  public getAllConversations(tenantId: string): Conversation[] {
+    return this.data.conversations.filter((c) => c.tenant_id === tenantId);
   }
 
   public findConversationById(tenantId: string, id: string): Conversation | undefined {
@@ -6875,17 +7412,41 @@ export class CommerceDatabase {
 
   // ==================== PHASE 4: AGENTIC AI & KNOWLEDGE ====================
 
+  private resolveDynamicAgent(agent: AgentDefinition): AgentDefinition {
+    const configuredFast = process.env.LLM_MODEL_FAST?.trim();
+    const configuredReasoning = process.env.LLM_MODEL_REASONING?.trim() || configuredFast;
+    if (!configuredFast && !configuredReasoning) {
+      return agent;
+    }
+    if (
+      agent.model_name === "gemini-1.5-flash" ||
+      agent.model_name === "gemini-1.5-pro" ||
+      agent.model_name.startsWith("default-")
+    ) {
+      const dynamicName =
+        agent.model_tier === "TIER_2_REASONING"
+          ? (configuredReasoning || agent.model_name)
+          : (configuredFast || agent.model_name);
+      return { ...agent, model_name: dynamicName };
+    }
+    return agent;
+  }
+
   // Agents
   public getAgents(tenantId: string): AgentDefinition[] {
-    return this.data.agents.filter((a) => a.tenant_id === tenantId);
+    return this.data.agents
+      .filter((a) => a.tenant_id === tenantId)
+      .map((a) => this.resolveDynamicAgent(a));
   }
 
   public findAgentById(tenantId: string, id: string): AgentDefinition | undefined {
-    return this.data.agents.find((a) => a.tenant_id === tenantId && a.id === id);
+    const agt = this.data.agents.find((a) => a.tenant_id === tenantId && a.id === id);
+    return agt ? this.resolveDynamicAgent(agt) : undefined;
   }
 
   public findAgentByType(tenantId: string, agentType: AgentType): AgentDefinition | undefined {
-    return this.data.agents.find((a) => a.tenant_id === tenantId && a.agent_type === agentType);
+    const agt = this.data.agents.find((a) => a.tenant_id === tenantId && a.agent_type === agentType);
+    return agt ? this.resolveDynamicAgent(agt) : undefined;
   }
 
   public createAgent(agent: AgentDefinition): AgentDefinition {
@@ -6917,10 +7478,10 @@ export class CommerceDatabase {
       policy = {
         id: `pol_${tenantId}`,
         tenant_id: tenantId,
-        ai_mode: "AI_COPILOT",
+        ai_mode: "AI_AUTONOMOUS",
         is_enabled: true,
-        autonomous_sales_enabled: false,
-        autonomous_support_enabled: false,
+        autonomous_sales_enabled: true,
+        autonomous_support_enabled: true,
         autonomous_order_enabled: false,
         debounce_window_ms: 3000,
         confidence_threshold_high: 0.85,
@@ -6931,7 +7492,7 @@ export class CommerceDatabase {
         daily_cost_budget_usd: 10.0,
         monthly_cost_budget_usd: 150.0,
         pii_redaction_enabled: true,
-        allowed_channel_types: ["FACEBOOK_MESSENGER", "INSTAGRAM", "WHATSAPP", "WEBSITE_CHAT"],
+        allowed_channel_types: ["FACEBOOK_MESSENGER", "INSTAGRAM", "WHATSAPP", "WEBSITE_CHAT", "TELEGRAM"],
         disallowed_tool_names: [],
         human_handoff_reasons: [
           "CUSTOMER_REQUESTED",
@@ -7270,7 +7831,12 @@ export class CommerceDatabase {
     const chunk = this.data.knowledge_chunks.find((c) => c.tenant_id === tenantId && c.id === chunkId);
     if (!chunk) return;
     chunk.embedding = embedding;
-    chunk.metadata = { ...chunk.metadata, embedding_model: stamp.embedding_model, dimensions: stamp.dimensions ?? embedding.length };
+    chunk.metadata = {
+      ...chunk.metadata,
+      embedding_model: stamp.embedding_model,
+      embedding_dimensions: stamp.dimensions ?? embedding.length,
+      dimensions: stamp.dimensions ?? embedding.length,
+    };
     this.persist(["knowledge_chunks"]);
   }
 
@@ -7340,7 +7906,7 @@ export class CommerceDatabase {
 
   // AI Traces
   public getAITraces(tenantId: string, runId?: string): AITrace[] {
-    return this.data.ai_traces.filter((t) => {
+    return this.rowsOf("ai_traces", tenantId).filter((t) => {
       if (t.tenant_id !== tenantId) return false;
       if (runId && t.agent_run_id !== runId) return false;
       return true;
@@ -7348,7 +7914,7 @@ export class CommerceDatabase {
   }
 
   public createAITrace(trace: AITrace): AITrace {
-    this.data.ai_traces.push(trace);
+    this.addRow("ai_traces", trace.tenant_id, trace);
     this.persist(["ai_traces"]);
     return trace;
   }
@@ -7368,6 +7934,15 @@ export class CommerceDatabase {
 
   public recordAIUsage(usage: AIUsageRecord): AIUsageRecord {
     this.data.ai_usage.push(usage);
+    this.persist(["ai_usage"]);
+    return usage;
+  }
+
+  /** Update a usage row only when both the tenant and row id match. */
+  public updateAIUsage(tenantId: string, usageId: string, patch: Partial<AIUsageRecord>): AIUsageRecord | null {
+    const usage = this.data.ai_usage.find((record) => record.tenant_id === tenantId && record.id === usageId);
+    if (!usage) return null;
+    Object.assign(usage, patch, { tenant_id: usage.tenant_id, id: usage.id });
     this.persist(["ai_usage"]);
     return usage;
   }
@@ -7414,10 +7989,17 @@ export class CommerceDatabase {
           )
         : 0;
 
+    const totalConversationsCount = new Set(tenantRuns.map((r) => r.conversation_id)).size;
+    const totalRunsCount = tenantRuns.length;
+    const completedCount = completedRuns.length;
+    const escalatedCount = escalatedRuns.length;
+    const failedCount = failedRuns.length;
+    const totalChunksCount = tenantDocs.reduce((acc, d) => acc + (d.chunk_count || 0), 0);
+
     const resolutionRate =
-      tenantRuns.length > 0
-        ? Math.round(((completedRuns.length) / tenantRuns.length) * 100)
-        : 100;
+      totalRunsCount > 0
+        ? Math.round((completedCount / totalRunsCount) * 100)
+        : 0;
 
     const recentHandoffs = escalatedRuns
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
@@ -7431,17 +8013,36 @@ export class CommerceDatabase {
       }));
 
     return {
-      totalAIConversations: new Set(tenantRuns.map((r) => r.conversation_id)).size,
-      totalRuns: tenantRuns.length,
+      totalAIConversations: totalConversationsCount,
+      total_conversations: totalConversationsCount,
+      totalRuns: totalRunsCount,
+      total_runs: totalRunsCount,
+      completedRuns: completedCount,
+      completed_runs: completedCount,
+      escalatedRuns: escalatedCount,
+      escalated_runs: escalatedCount,
+      failedRuns: failedCount,
+      failed_runs: failedCount,
       aiResolutionRate: resolutionRate,
-      totalHandoffs: escalatedRuns.length,
+      resolution_rate: resolutionRate,
+      accuracy_rate: resolutionRate,
+      totalHandoffs: escalatedCount,
+      total_handoffs: escalatedCount,
       totalToolCalls: tenantTools.length,
+      total_tool_calls: tenantTools.length,
       totalCostUsd: Number(totalCostUsd.toFixed(4)),
+      total_cost_usd: totalCostUsd.toFixed(4),
       totalCostBdt: Number(totalCostBdt.toFixed(2)),
+      total_cost_bdt: totalCostBdt.toFixed(2),
       averageLatencyMs: avgLatencyMs,
-      errorCount: failedRuns.length,
+      avg_latency_ms: avgLatencyMs,
+      errorCount: failedCount,
+      error_count: failedCount,
       activeAgentsCount: this.getAgents(tenantId).filter((a) => a.status === "ACTIVE").length,
+      active_agents_count: this.getAgents(tenantId).filter((a) => a.status === "ACTIVE").length,
       knowledgeDocumentsCount: tenantDocs.length,
+      knowledge_documents_count: tenantDocs.length,
+      rag_chunks_count: totalChunksCount,
       feedbackStats: {
         total: tenantFeedback.length,
         helpful: tenantFeedback.filter((f) => f.rating === "HELPFUL").length,
@@ -7460,6 +8061,67 @@ export class CommerceDatabase {
     return this.data.workflows
       .filter((w) => w.tenant_id === tenantId && (!status || w.status === status))
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  }
+
+  public getWorkflowJobById(tenantId: string, id: string): WorkflowJob | undefined {
+    return this.data.workflow_jobs.find((job) => job.tenant_id === tenantId && job.id === id);
+  }
+
+  public findWorkflowJobByIdempotencyKey(tenantId: string, key: string): WorkflowJob | undefined {
+    return this.data.workflow_jobs.find((job) => job.tenant_id === tenantId && job.idempotency_key === key);
+  }
+
+  public getDueWorkflowJobs(nowIso: string, limit: number, afterTenantId?: string): WorkflowJob[] {
+    const due = this.data.workflow_jobs.filter((job) =>
+      job.status === "PENDING" ||
+      (job.status === "RETRY_SCHEDULED" && (!job.next_attempt_at || job.next_attempt_at <= nowIso)) ||
+      (job.status === "IN_FLIGHT" && !!job.claimed_until && job.claimed_until < nowIso)
+    );
+    const byTenant = new Map<string, WorkflowJob[]>();
+    for (const job of due.sort((a, b) => a.created_at.localeCompare(b.created_at))) {
+      const queue = byTenant.get(job.tenant_id) || [];
+      queue.push(job);
+      byTenant.set(job.tenant_id, queue);
+    }
+    // Interleave tenant queues so one busy tenant cannot fill every poll batch.
+    // Rotate the first tenant between passes to avoid starving later tenant IDs.
+    const tenantIds = [...byTenant.keys()].sort();
+    if (afterTenantId && tenantIds.length > 1) {
+      const next = tenantIds.findIndex((id) => id > afterTenantId);
+      const pivot = next < 0 ? 0 : next;
+      tenantIds.push(...tenantIds.splice(0, pivot));
+    }
+    const fair: WorkflowJob[] = [];
+    while (fair.length < Math.max(0, limit)) {
+      let added = false;
+      for (const tenantId of tenantIds) {
+        const next = byTenant.get(tenantId)?.shift();
+        if (next) {
+          fair.push(next);
+          added = true;
+          if (fair.length >= limit) break;
+        }
+      }
+      if (!added) break;
+    }
+    return fair;
+  }
+
+  public createWorkflowJob(job: WorkflowJob): WorkflowJob {
+    const existing = this.findWorkflowJobByIdempotencyKey(job.tenant_id, job.idempotency_key);
+    if (existing) return existing;
+    this.data.workflow_jobs.push(job);
+    this.persist(["workflow_jobs"]);
+    return job;
+  }
+
+  public updateWorkflowJob(tenantId: string, id: string, patch: Partial<WorkflowJob>): WorkflowJob | undefined {
+    const idx = this.data.workflow_jobs.findIndex((job) => job.tenant_id === tenantId && job.id === id);
+    if (idx < 0) return undefined;
+    const { id: _id, tenant_id: _tenant, workflow_id: _workflow, action: _action, idempotency_key: _key, ...safe } = patch;
+    this.data.workflow_jobs[idx] = { ...this.data.workflow_jobs[idx], ...safePatch(safe), updated_at: new Date().toISOString() };
+    this.persist(["workflow_jobs"]);
+    return this.data.workflow_jobs[idx];
   }
 
   public getWorkflowById(tenantId: string, id: string): AgentWorkflow | undefined {
@@ -7759,11 +8421,11 @@ export class CommerceDatabase {
 
   // --- Analytics Events ---
   public getAnalyticsEvents(tenantId: string): Array<{ id: string; tenant_id: string; event_type: string; payload: Record<string, unknown>; created_at: string }> {
-    return this.data.analytics_events.filter((e) => e.tenant_id === tenantId);
+    return this.rowsOf("analytics_events", tenantId).filter((e) => e.tenant_id === tenantId);
   }
 
   public insertAnalyticsEvent(event: { id: string; tenant_id: string; event_type: string; payload: Record<string, unknown>; created_at: string }) {
-    this.data.analytics_events.push(event);
+    this.addRow("analytics_events", event.tenant_id, event);
     this.persist(["analytics_events"]);
     return event;
   }
@@ -8547,59 +9209,63 @@ export class CommerceDatabase {
 
   // ==================== PHASE 8: PROCUREMENT ACCESSORS ====================
   public getSuppliers(tenantId: string): Supplier[] {
-    return this.data.suppliers.filter((s) => s.tenant_id === tenantId);
+    return this.rowsOf("suppliers", tenantId).filter((s) => s.tenant_id === tenantId);
   }
 
   public findSupplierById(tenantId: string, id: string): Supplier | undefined {
-    return this.data.suppliers.find((s) => s.tenant_id === tenantId && s.id === id);
+    return this.rowsOf("suppliers", tenantId, "loaded").find((s) => s.tenant_id === tenantId && s.id === id);
   }
 
   public createSupplier(supplier: Supplier): Supplier {
-    this.data.suppliers.push(supplier);
+    this.addRow("suppliers", supplier.tenant_id, supplier);
     this.persist(["suppliers"]);
     return supplier;
   }
 
   public updateSupplier(tenantId: string, id: string, updates: Partial<Supplier>): Supplier {
-    const idx = this.data.suppliers.findIndex((s) => s.tenant_id === tenantId && s.id === id);
+    const suppliers = this.rowsOf("suppliers", tenantId, "loaded");
+    const idx = suppliers.findIndex((s) => s.tenant_id === tenantId && s.id === id);
     if (idx === -1) throw new Error(`Supplier not found: ${id}`);
-    const updated = { ...this.data.suppliers[idx], ...safePatch(updates), updated_at: new Date().toISOString() };
-    this.data.suppliers[idx] = updated;
+    const updated = { ...suppliers[idx], ...safePatch(updates), updated_at: new Date().toISOString() };
+    suppliers[idx] = updated;
+    this.rowSaved("suppliers", tenantId, updated);
     this.persist(["suppliers"]);
     return updated;
   }
 
   public getSupplierProducts(tenantId: string, supplierId?: string): SupplierProduct[] {
-    return this.data.supplier_products.filter(
+    return this.rowsOf("supplier_products", tenantId).filter(
       (sp) => sp.tenant_id === tenantId && (!supplierId || sp.supplier_id === supplierId)
     );
   }
 
   public createSupplierProduct(sp: SupplierProduct): SupplierProduct {
-    this.data.supplier_products.push(sp);
+    this.addRow("supplier_products", sp.tenant_id, sp);
     this.persist(["supplier_products"]);
     return sp;
   }
 
   public getPurchaseOrders(tenantId: string): PurchaseOrder[] {
-    return this.data.purchase_orders.filter((po) => po.tenant_id === tenantId);
+    return this.rowsOf("purchase_orders", tenantId).filter((po) => po.tenant_id === tenantId);
   }
 
   public findPurchaseOrderById(tenantId: string, id: string): PurchaseOrder | undefined {
-    return this.data.purchase_orders.find((po) => po.tenant_id === tenantId && po.id === id);
+    return this.rowsOf("purchase_orders", tenantId, "loaded").find((po) => po.tenant_id === tenantId && po.id === id);
   }
 
   public createPurchaseOrder(po: PurchaseOrder): PurchaseOrder {
-    this.data.purchase_orders.push(po);
+    this.addRow("purchase_orders", po.tenant_id, po);
     this.persist(["purchase_orders"]);
     return po;
   }
 
   public updatePurchaseOrder(tenantId: string, id: string, updates: Partial<PurchaseOrder>): PurchaseOrder {
-    const idx = this.data.purchase_orders.findIndex((po) => po.tenant_id === tenantId && po.id === id);
+    const purchaseOrders = this.rowsOf("purchase_orders", tenantId, "loaded");
+    const idx = purchaseOrders.findIndex((po) => po.tenant_id === tenantId && po.id === id);
     if (idx === -1) throw new Error(`PurchaseOrder not found: ${id}`);
-    const updated = { ...this.data.purchase_orders[idx], ...safePatch(updates), updated_at: new Date().toISOString() };
-    this.data.purchase_orders[idx] = updated;
+    const updated = { ...purchaseOrders[idx], ...safePatch(updates), updated_at: new Date().toISOString() };
+    purchaseOrders[idx] = updated;
+    this.rowSaved("purchase_orders", tenantId, updated);
     this.persist(["purchase_orders"]);
     return updated;
   }
@@ -9101,6 +9767,7 @@ export class CommerceDatabase {
       agent_jobs: [],
       domain_events: [],
       job_runs: [],
+      notification_settings: [],
       csp_reports: [],
       agent_tool_calls: [],
       agent_prompts: [],
@@ -9114,6 +9781,7 @@ export class CommerceDatabase {
       ai_feedback: [],
       // Phase 5 Collections
       workflows: [],
+      workflow_jobs: [],
       tasks: [],
       agent_messages: [],
       workflow_contexts: [],
@@ -9290,8 +9958,20 @@ export class CommerceDatabase {
       platform_announcements: [],
       platform_api_keys: [],
       impersonation_sessions: [],
+      platform_approval_requests: [],
+      platform_addons: [],
+      tenant_addons: [],
       campaign_kill_switches: [],
       automation_kill_switches: [],
+      network_delivery_reputations: [],
+      order_rto_evaluations: [],
+      tenant_rto_settings: [],
+      courier_disputes: [],
+      agent_execution_traces: [],
+      agent_hitl_escalations: [],
+      tenant_ai_guard_settings: [],
+      comment_trigger_rules: [],
+      comment_trigger_events: [],
     };
     this.ensureDefaultSeed();
   }
@@ -10478,6 +11158,68 @@ export class CommerceDatabase {
     return announcement;
   }
 
+  // Two-person approval requests (platform scope; newest first)
+  public getPlatformApprovalRequests(): PlatformApprovalRequestRecord[] {
+    return this.data.platform_approval_requests || [];
+  }
+
+  public findPlatformApprovalRequest(id: string): PlatformApprovalRequestRecord | undefined {
+    return (this.data.platform_approval_requests || []).find((a) => a.id === id);
+  }
+
+  public savePlatformApprovalRequest(request: PlatformApprovalRequestRecord): PlatformApprovalRequestRecord {
+    if (!this.data.platform_approval_requests) this.data.platform_approval_requests = [];
+    const idx = this.data.platform_approval_requests.findIndex((a) => a.id === request.id);
+    if (idx >= 0) {
+      this.data.platform_approval_requests[idx] = request;
+    } else {
+      this.data.platform_approval_requests.unshift(request);
+    }
+    this.persist(["platform_approval_requests"]);
+    return request;
+  }
+
+  // Plan add-ons (platform scope) and add-ons granted to tenants
+  public getPlatformAddons(): PlatformAddonRecord[] {
+    return this.data.platform_addons || [];
+  }
+
+  public findPlatformAddon(id: string): PlatformAddonRecord | undefined {
+    return (this.data.platform_addons || []).find((a) => a.id === id);
+  }
+
+  public savePlatformAddon(addon: PlatformAddonRecord): PlatformAddonRecord {
+    if (!this.data.platform_addons) this.data.platform_addons = [];
+    const idx = this.data.platform_addons.findIndex((a) => a.id === addon.id);
+    if (idx >= 0) {
+      this.data.platform_addons[idx] = addon;
+    } else {
+      this.data.platform_addons.push(addon);
+    }
+    this.persist(["platform_addons"]);
+    return addon;
+  }
+
+  public getTenantAddons(tenantId: string): TenantAddonRecord[] {
+    return (this.data.tenant_addons || []).filter((a) => a.tenant_id === tenantId);
+  }
+
+  public findTenantAddon(tenantId: string, id: string): TenantAddonRecord | undefined {
+    return (this.data.tenant_addons || []).find((a) => a.tenant_id === tenantId && a.id === id);
+  }
+
+  public saveTenantAddon(addon: TenantAddonRecord): TenantAddonRecord {
+    if (!this.data.tenant_addons) this.data.tenant_addons = [];
+    const idx = this.data.tenant_addons.findIndex((a) => a.id === addon.id);
+    if (idx >= 0) {
+      this.data.tenant_addons[idx] = addon;
+    } else {
+      this.data.tenant_addons.push(addon);
+    }
+    this.persist(["tenant_addons"]);
+    return addon;
+  }
+
   public getPlatformApiKeys(): PlatformApiKeyRecord[] {
     return this.data.platform_api_keys || [];
   }
@@ -10512,6 +11254,239 @@ export class CommerceDatabase {
     }
     this.persist(["impersonation_sessions"]);
     return session;
+  }
+
+  // ==================== CROSS-TENANT RTO & COURIER FRAUD NETWORK ====================
+
+  public getNetworkDeliveryReputations(): NetworkDeliveryReputationRecord[] {
+    return this.data.network_delivery_reputations || [];
+  }
+
+  public findNetworkDeliveryReputationByHash(phoneHash: string): NetworkDeliveryReputationRecord | undefined {
+    return (this.data.network_delivery_reputations || []).find((r) => r.phone_hash === phoneHash);
+  }
+
+  public saveNetworkDeliveryReputation(record: NetworkDeliveryReputationRecord): NetworkDeliveryReputationRecord {
+    if (!this.data.network_delivery_reputations) this.data.network_delivery_reputations = [];
+    const idx = this.data.network_delivery_reputations.findIndex((r) => r.phone_hash === record.phone_hash);
+    if (idx >= 0) {
+      this.data.network_delivery_reputations[idx] = record;
+    } else {
+      this.data.network_delivery_reputations.push(record);
+    }
+    this.persist(["network_delivery_reputations"]);
+    return record;
+  }
+
+  public getOrderRtoEvaluations(tenantId: string, orderId?: string): OrderRtoEvaluationRecord[] {
+    const list = (this.data.order_rto_evaluations || []).filter((e) => e.tenant_id === tenantId);
+    return orderId ? list.filter((e) => e.order_id === orderId) : list;
+  }
+
+  public findOrderRtoEvaluation(tenantId: string, orderId: string): OrderRtoEvaluationRecord | undefined {
+    return (this.data.order_rto_evaluations || []).find(
+      (e) => e.tenant_id === tenantId && e.order_id === orderId
+    );
+  }
+
+  public saveOrderRtoEvaluation(evaluation: OrderRtoEvaluationRecord): OrderRtoEvaluationRecord {
+    if (!this.data.order_rto_evaluations) this.data.order_rto_evaluations = [];
+    const idx = this.data.order_rto_evaluations.findIndex(
+      (e) => e.tenant_id === evaluation.tenant_id && e.order_id === evaluation.order_id
+    );
+    if (idx >= 0) {
+      this.data.order_rto_evaluations[idx] = evaluation;
+    } else {
+      this.data.order_rto_evaluations.push(evaluation);
+    }
+    this.persist(["order_rto_evaluations"]);
+    return evaluation;
+  }
+
+  public getTenantRtoSettings(tenantId: string): TenantRtoSettingsRecord | undefined {
+    return (this.data.tenant_rto_settings || []).find((s) => s.tenant_id === tenantId);
+  }
+
+  public saveTenantRtoSettings(settings: TenantRtoSettingsRecord): TenantRtoSettingsRecord {
+    if (!this.data.tenant_rto_settings) this.data.tenant_rto_settings = [];
+    const idx = this.data.tenant_rto_settings.findIndex((s) => s.tenant_id === settings.tenant_id);
+    if (idx >= 0) {
+      this.data.tenant_rto_settings[idx] = settings;
+    } else {
+      this.data.tenant_rto_settings.push(settings);
+    }
+    this.persist(["tenant_rto_settings"]);
+    return settings;
+  }
+
+  public getCourierDisputes(tenantId?: string): CourierDisputeRecord[] {
+    const list = this.data.courier_disputes || [];
+    return tenantId ? list.filter((d) => d.tenant_id === tenantId) : list;
+  }
+
+  public saveCourierDispute(dispute: CourierDisputeRecord): CourierDisputeRecord {
+    if (!this.data.courier_disputes) this.data.courier_disputes = [];
+    const idx = this.data.courier_disputes.findIndex((d) => d.id === dispute.id);
+    if (idx >= 0) {
+      this.data.courier_disputes[idx] = dispute;
+    } else {
+      this.data.courier_disputes.unshift(dispute);
+    }
+    this.persist(["courier_disputes"]);
+    return dispute;
+  }
+
+  // ==================== COMMENT-TO-INBOX TRIGGERS ====================
+
+  public getCommentTriggerRules(tenantId: string): CommentTriggerRule[] {
+    return (this.data.comment_trigger_rules || []).filter((r) => r.tenant_id === tenantId);
+  }
+
+  public findCommentTriggerRule(tenantId: string, id: string): CommentTriggerRule | undefined {
+    return (this.data.comment_trigger_rules || []).find((r) => r.tenant_id === tenantId && r.id === id);
+  }
+
+  public saveCommentTriggerRule(rule: CommentTriggerRule): CommentTriggerRule {
+    if (!this.data.comment_trigger_rules) this.data.comment_trigger_rules = [];
+    const idx = this.data.comment_trigger_rules.findIndex((r) => r.tenant_id === rule.tenant_id && r.id === rule.id);
+    if (idx >= 0) this.data.comment_trigger_rules[idx] = rule;
+    else this.data.comment_trigger_rules.push(rule);
+    this.persist(["comment_trigger_rules"]);
+    return rule;
+  }
+
+  public deleteCommentTriggerRule(tenantId: string, id: string): boolean {
+    const list = this.data.comment_trigger_rules || [];
+    const remaining = list.filter((r) => !(r.tenant_id === tenantId && r.id === id));
+    if (remaining.length === list.length) return false;
+    this.data.comment_trigger_rules = remaining;
+    this.persist(["comment_trigger_rules"]);
+    return true;
+  }
+
+  /** Newest first. */
+  public getCommentTriggerEvents(tenantId: string, limit: number): CommentTriggerEvent[] {
+    return (this.data.comment_trigger_events || [])
+      .filter((e) => e.tenant_id === tenantId)
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))
+      .slice(0, limit);
+  }
+
+  public findCommentTriggerEvent(tenantId: string, id: string): CommentTriggerEvent | undefined {
+    return (this.data.comment_trigger_events || []).find((e) => e.tenant_id === tenantId && e.id === id);
+  }
+
+  /** The event for a provider comment on a channel: a comment gets at most one inbox message. */
+  public findCommentTriggerEventByComment(tenantId: string, channelId: string, commentId: string): CommentTriggerEvent | undefined {
+    return (this.data.comment_trigger_events || []).find(
+      (e) => e.tenant_id === tenantId && e.channel_id === channelId && e.comment_id === commentId
+    );
+  }
+
+  /** Whether this commenter already got (or is getting) this rule's message for this post since `sinceIso`. */
+  public hasRecentCommentTriggerEvent(tenantId: string, ruleId: string, channelId: string, commenterId: string, postId: string | undefined, sinceIso: string): boolean {
+    return (this.data.comment_trigger_events || []).some(
+      (e) =>
+        e.tenant_id === tenantId &&
+        e.rule_id === ruleId &&
+        e.channel_id === channelId &&
+        e.commenter_id === commenterId &&
+        e.post_id === postId &&
+        e.created_at >= sinceIso &&
+        (e.status === "PENDING" || e.status === "SENDING" || e.status === "SENT")
+    );
+  }
+
+  /** Events the worker should send now: PENDING and due, or SENDING with a claim older than `staleBefore`. Oldest first. */
+  public getDueCommentTriggerEvents(nowIso: string, staleBefore: string, limit: number): CommentTriggerEvent[] {
+    return (this.data.comment_trigger_events || [])
+      .filter((e) => (e.status === "PENDING" && e.next_attempt_at <= nowIso) || (e.status === "SENDING" && (e.claimed_at ?? "") < staleBefore))
+      .sort((a, b) => a.created_at.localeCompare(b.created_at))
+      .slice(0, limit);
+  }
+
+  public saveCommentTriggerEvent(event: CommentTriggerEvent): CommentTriggerEvent {
+    if (!this.data.comment_trigger_events) this.data.comment_trigger_events = [];
+    const idx = this.data.comment_trigger_events.findIndex((e) => e.tenant_id === event.tenant_id && e.id === event.id);
+    if (idx >= 0) this.data.comment_trigger_events[idx] = event;
+    else this.data.comment_trigger_events.push(event);
+    this.persist(["comment_trigger_events"]);
+    return event;
+  }
+
+  // ==================== AGENTIC OPERATIONS & HITL (LLM OBSERVABILITY) ====================
+
+  public getAgentExecutionTraces(tenantId: string, limit = 50, conversationId?: string): AgentExecutionTraceRecord[] {
+    const list = (this.data.agent_execution_traces || []).filter((t) => t.tenant_id === tenantId);
+    const filtered = conversationId ? list.filter((t) => t.conversation_id === conversationId) : list;
+    return filtered.slice(0, limit);
+  }
+
+  public getAllAgentExecutionTraces(): AgentExecutionTraceRecord[] {
+    return this.data.agent_execution_traces || [];
+  }
+
+  public saveAgentExecutionTrace(trace: AgentExecutionTraceRecord): AgentExecutionTraceRecord {
+    if (!this.data.agent_execution_traces) this.data.agent_execution_traces = [];
+    const idx = this.data.agent_execution_traces.findIndex((t) => t.id === trace.id);
+    if (idx >= 0) {
+      this.data.agent_execution_traces[idx] = trace;
+    } else {
+      this.data.agent_execution_traces.unshift(trace);
+    }
+    this.persist(["agent_execution_traces"]);
+    return trace;
+  }
+
+  public getAgentHitlEscalations(tenantId: string, status?: string): AgentHitlEscalationRecord[] {
+    const list = (this.data.agent_hitl_escalations || []).filter((e) => e.tenant_id === tenantId);
+    return status ? list.filter((e) => e.status === status) : list;
+  }
+
+  public findAgentHitlEscalation(tenantId: string, id: string): AgentHitlEscalationRecord | undefined {
+    return (this.data.agent_hitl_escalations || []).find((e) => e.tenant_id === tenantId && e.id === id);
+  }
+
+  public findAgentHitlEscalationByConversation(tenantId: string, conversationId: string): AgentHitlEscalationRecord | undefined {
+    return (this.data.agent_hitl_escalations || []).find(
+      (e) => e.tenant_id === tenantId && e.conversation_id === conversationId && e.status === "PENDING_REVIEW"
+    );
+  }
+
+  public getAllAgentHitlEscalations(): AgentHitlEscalationRecord[] {
+    return this.data.agent_hitl_escalations || [];
+  }
+
+  public saveAgentHitlEscalation(escalation: AgentHitlEscalationRecord): AgentHitlEscalationRecord {
+    if (!this.data.agent_hitl_escalations) this.data.agent_hitl_escalations = [];
+    const idx = this.data.agent_hitl_escalations.findIndex((e) => e.id === escalation.id);
+    if (idx >= 0) {
+      this.data.agent_hitl_escalations[idx] = escalation;
+    } else {
+      this.data.agent_hitl_escalations.unshift(escalation);
+    }
+    this.persist(["agent_hitl_escalations"]);
+    return escalation;
+  }
+
+  public getTenantAiGuardSettings(tenantId: string): TenantAiGuardSettingsRecord | undefined {
+    return (this.data.tenant_ai_guard_settings || []).find((s) => s.tenant_id === tenantId);
+  }
+
+  public getAllTenantAiGuardSettings(): TenantAiGuardSettingsRecord[] {
+    return this.data.tenant_ai_guard_settings || [];
+  }
+
+  public saveTenantAiGuardSettings(settings: TenantAiGuardSettingsRecord): TenantAiGuardSettingsRecord {
+    if (!this.data.tenant_ai_guard_settings) this.data.tenant_ai_guard_settings = [];
+    const idx = this.data.tenant_ai_guard_settings.findIndex((s) => s.tenant_id === settings.tenant_id);
+    if (idx >= 0) {
+      this.data.tenant_ai_guard_settings[idx] = settings;
+    } else {
+      this.data.tenant_ai_guard_settings.push(settings);
+    }
+    this.persist(["tenant_ai_guard_settings"]);
+    return settings;
   }
 }
 

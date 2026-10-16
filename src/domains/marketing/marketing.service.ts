@@ -1,4 +1,4 @@
-import { AppError } from "@/lib/errors";
+import { AppError, BadRequestError, ConflictError, NotFoundError } from "@/lib/errors";
 import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 8: Marketing & Campaigns Domain Service
@@ -21,6 +21,8 @@ import { contentService } from "@/domains/growth/services/content.service";
 import { consentService, frequencyCappingService } from "@/domains/growth/services/consent.service";
 import { marketingChannelService } from "@/domains/growth/services/marketing-channel.service";
 import { attributionService } from "@/domains/growth/services/attribution.service";
+import { loadCustomerRows } from "@/infrastructure/db/tenant-rows";
+import { orderRepository } from "@/domains/orders/order.repository";
 
 export interface EnrichedAbandonedCart extends AbandonedCartRecoveryItem {
   customer?: {
@@ -148,6 +150,7 @@ export class MarketingService {
       throw new Error(`Cart ${cartId} is already recovered.`);
     }
 
+    await loadCustomerRows(tenantId, [cart.customer_id]); // zero-hydration: the customer read here
     const customer = db.findCustomerById(tenantId, cart.customer_id);
     if (!customer) {
       throw new AppError("NOT_FOUND", `Customer not found: ${cart.customer_id}`, 404);
@@ -187,7 +190,7 @@ export class MarketingService {
     }
 
     // 3. Duplicate protection: Ensure no order was placed after cart creation
-    const recentOrders = db.getAllOrders(tenantId, { hydrate: true }).filter((o) => o.customer_id === customer.id);
+    const recentOrders = (await orderRepository.listOrders(tenantId, { customer_id: customer.id, limit: 500 })).orders; // newest first
     const cartTime = new Date(cart.abandoned_at).getTime();
     const placedAfter = recentOrders.some((o) => new Date(o.created_at).getTime() >= cartTime);
     if (placedAfter) {
@@ -290,31 +293,56 @@ export class MarketingService {
       throw new AppError("NOT_FOUND", `Cart not found: ${cartId}`, 404);
     }
 
+    // The order must be a real order of this tenant; the request only names it (never invent an id)
+    const order = db.findOrderById(tenantId, orderId);
+    if (!order) {
+      throw new NotFoundError("Order", orderId);
+    }
+    if (cart.customer_id && order.customer_id !== cart.customer_id) {
+      throw new BadRequestError("The order belongs to a different customer than the abandoned cart.", {
+        order_id: orderId,
+      });
+    }
+    if (order.status === "CANCELLED") {
+      throw new ConflictError("A cancelled order cannot be credited as a cart recovery.", { order_id: orderId });
+    }
+    if (cart.recovery_stage === "RECOVERED" && cart.recovered_order_id) {
+      if (cart.recovered_order_id === orderId) return cart; // repeat of the same credit: don't attribute twice
+      throw new ConflictError("This cart is already credited to another order.", {
+        recovered_order_id: cart.recovered_order_id,
+      });
+    }
+    const creditedElsewhere = db
+      .getAbandonedCarts(tenantId)
+      .some((c) => c.id !== cartId && c.recovered_order_id === orderId);
+    if (creditedElsewhere) {
+      throw new ConflictError("This order is already credited to another abandoned cart.", { order_id: orderId });
+    }
+
+    // Recovered revenue is what the order is actually worth, never a value from the request
+    const recoveredRevenue = order.grand_total;
     const updated = db.updateAbandonedCart(tenantId, cartId, {
       recovery_stage: "RECOVERED",
       recovered_order_id: orderId,
+      recovered_revenue_bdt: recoveredRevenue,
     });
 
-    // Record recovery attribution touchpoint if campaign exists
-    const order = db.findOrderById(tenantId, orderId); // was a lookup inside the first 50 orders only (FX-22)
-    if (order) {
-      attributionService.attributeOrder({
-        tenantId,
-        orderId,
-        customerId: cart.customer_id,
-        orderTotalBdt: order.grand_total || cart.abandoned_total_bdt,
-        touchpoints: [
-          {
-            touch_id: `touch_${Date.now()}_${randomSuffix()}`,
-            campaign_id: "cmp_cart_recovery",
-            channel: "WHATSAPP",
-            touched_at: new Date().toISOString(),
-            weight: 1,
-          },
-        ],
-        model: "LAST_TOUCH",
-      });
-    }
+    attributionService.attributeOrder({
+      tenantId,
+      orderId,
+      customerId: cart.customer_id,
+      orderTotalBdt: recoveredRevenue,
+      touchpoints: [
+        {
+          touch_id: `touch_${Date.now()}_${randomSuffix()}`,
+          campaign_id: "cmp_cart_recovery",
+          channel: "WHATSAPP",
+          touched_at: new Date().toISOString(),
+          weight: 1,
+        },
+      ],
+      model: "LAST_TOUCH",
+    });
 
     return updated;
   }
@@ -667,7 +695,8 @@ export class MarketingService {
     const recoveredCarts = carts.filter((c) => c.recovery_stage === "RECOVERED");
     const activeCarts = carts.filter((c) => c.recovery_stage === "PENDING" || c.recovery_stage === "MESSAGED");
 
-    const totalRecovered = recoveredCarts.reduce((sum, c) => sum + c.abandoned_total_bdt, 0);
+    // Only carts credited to a verified order carry recovered revenue (its grand_total); older records count as 0
+    const totalRecovered = recoveredCarts.reduce((sum, c) => sum + (c.recovered_revenue_bdt ?? 0), 0);
     const totalAbandoned = carts.reduce((sum, c) => sum + c.abandoned_total_bdt, 0);
 
     const recoveryRate = totalAbandoned > 0 ? Number(((totalRecovered / totalAbandoned) * 100).toFixed(1)) : 0;

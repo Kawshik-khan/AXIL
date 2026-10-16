@@ -20,11 +20,14 @@ import { Modal } from "@/components/ui/Modal/Modal";
 import { Badge } from "@/components/ui/Badge/Badge";
 import { EmptyState, LoadingState } from "@/components/ui/States/States";
 import { Customer } from "@/types/commerce";
+import { useDebounce } from "@/hooks/useDebounce";
 
 export default function CustomersPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
+  // ⚡ Bolt: Debounce search query to reduce API calls while typing
+  const debouncedSearchQuery = useDebounce(searchQuery, 300);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState("");
@@ -46,7 +49,7 @@ export default function CustomersPage() {
   const [page, setPage] = useState(0);
   const PAGE_SIZE = 25;
 
-  const loadCustomers = async (p = page, q = searchQuery) => {
+  const loadCustomers = async (p = page, q = debouncedSearchQuery) => {
     try {
       setIsLoading(true);
       const params = new URLSearchParams({
@@ -70,13 +73,14 @@ export default function CustomersPage() {
   };
 
   useEffect(() => {
-    loadCustomers(page, searchQuery);
-  }, [page]);
+    loadCustomers(page, debouncedSearchQuery);
+  }, [page, debouncedSearchQuery]);
 
   const handleSearch = (val: string) => {
     setSearchQuery(val);
-    setPage(0);
-    loadCustomers(0, val);
+    if (page !== 0) {
+      setPage(0);
+    }
   };
 
   const openCustomerDetails = async (id: string) => {
@@ -424,7 +428,9 @@ export default function CustomersPage() {
 
             <div>
               <div style={{ fontWeight: 600, marginBottom: "8px" }}>Order History</div>
-              {(selectedCustomer.orders || []).length === 0 ? (
+              {selectedCustomer.orders === null ? (
+                <p style={{ color: "var(--color-text-muted)" }}>Your role can&apos;t view orders.</p>
+              ) : (selectedCustomer.orders || []).length === 0 ? (
                 <p style={{ color: "var(--color-text-muted)" }}>No prior orders found.</p>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>

@@ -23,7 +23,10 @@ export async function loadStore(): Promise<void> {
   // Outbound webhooks are delivered in the background once the store has loaded (FX-54)
   void db
     .ready()
-    .then(async () => (await import("@/domains/enterprise/services/webhook-worker")).startWebhookWorker())
+    .then(async () => {
+      (await import("@/domains/enterprise/services/webhook-worker")).startWebhookWorker();
+      (await import("@/domains/ai/orchestration/engine/workflow-worker")).startWorkflowWorker();
+    })
     .catch(() => undefined); // the store logs its own start-up failure
   // Customer-agent turns (FX-76); nothing runs unless a workspace has the agent flags on
   void db

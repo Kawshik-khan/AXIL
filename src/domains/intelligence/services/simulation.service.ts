@@ -5,6 +5,7 @@
  */
 
 import { db } from "@/infrastructure/db";
+import { orderRepository } from "@/domains/orders/order.repository";
 import {
   SimulationInput,
   SimulationResult,
@@ -15,19 +16,43 @@ import { randomSuffix } from "@/lib/ids";
 
 export class SimulationService {
   /**
+   * Database-native async simulation using SQL aggregated baselines (Phase E).
+   */
+  public async simulateScenarioAsync(
+    tenantId: string,
+    scenarioName: string,
+    inputs: SimulationInput,
+    scenarioType: SimulationScenarioType = "CUSTOM"
+  ): Promise<SimulationResult> {
+    const baseline = await orderRepository.sumRevenueByTenant(tenantId);
+    return this.simulateScenario(tenantId, scenarioName, inputs, scenarioType, {
+      baselineOrders: baseline.totalOrders,
+      baselineRevenue: baseline.revenue,
+    });
+  }
+
+  /**
    * Simulates commercial outcomes under hypothetical parameter modifications
    */
   public simulateScenario(
     tenantId: string,
     scenarioName: string,
     inputs: SimulationInput,
-    scenarioType: SimulationScenarioType = "CUSTOM"
+    scenarioType: SimulationScenarioType = "CUSTOM",
+    baselineOverrides?: { baselineOrders: number; baselineRevenue: number }
   ): SimulationResult {
-    const orders = db.getAllOrders(tenantId, { hydrate: true }).filter((o) => o.status !== "CANCELLED");
+    let baselineOrders = baselineOverrides?.baselineOrders;
+    let baselineRevenue = baselineOverrides?.baselineRevenue;
 
-    // 1. Establish 30-day baseline metrics
-    const baselineOrders = orders.length;
-    const baselineRevenue = orders.reduce((sum, o) => sum + (o.grand_total || (o as any).total_amount || 0), 0);
+    if (baselineOrders === undefined || baselineRevenue === undefined) {
+      const orders = db.isCollectionHydrated("orders")
+        ? db.getAllOrders(tenantId).filter((o) => o.status !== "CANCELLED")
+        : [];
+      baselineOrders = orders.length;
+      baselineRevenue = orders.reduce((sum, o) => sum + (o.grand_total || (o as any).total_amount || 0), 0);
+    }
+
+    // 1. Establish baseline metrics
     const baselineAov = baselineOrders > 0 ? baselineRevenue / baselineOrders : 0;
     const baselineMargin = baselineRevenue * 0.35; // 35% standard margin
 

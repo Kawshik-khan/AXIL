@@ -3,14 +3,20 @@
  * Intelligent 3-tier model routing, cost calculation, and fallback management.
  */
 
-import { LLMProvider, LLMResponse, LLMMessage, LLMToolDefinition } from "./llm-provider.interface";
+import { LLMProvider, LLMResponse, LLMMessage, LLMToolDefinition, LLMProviderOptions } from "./llm-provider.interface";
 import { MockLLMProvider } from "./mock-llm.provider";
 import { OpenAICompatibleProvider, UnconfiguredProvider } from "./openai-compatible.provider";
 import { PlatformSafetyService } from "@/domains/platform/services/platform-safety.service";
 import { KillSwitchActiveError } from "@/lib/errors";
 import { LLM_BUSY, LLM_DEADLINE } from "./resilience";
+import { OutboundCancelledError } from "@/lib/outbound-http";
 
 export type ModelTier = "TIER_1_FAST" | "TIER_2_REASONING" | "TIER_3_EMBEDDING";
+
+/** A provider that knows its model names per tier (OpenAICompatibleProvider, or a wrapper that delegates to one). */
+function namesModels(p: LLMProvider | null | undefined): p is LLMProvider & { modelFor(tier: ModelTier): string } {
+  return Boolean(p) && typeof (p as { modelFor?: unknown }).modelFor === "function";
+}
 
 export interface ModelPricing {
   promptCostPer1M: number;
@@ -107,8 +113,8 @@ export class ModelRouter {
       );
     } else if (env.LLM_BASE_URL) {
       this.primaryProvider = new OpenAICompatibleProvider({
-        baseUrl: env.LLM_BASE_URL,
-        apiKey: env.LLM_API_KEY,
+        baseUrl: env.LLM_BASE_URL.trim(),
+        apiKey: env.LLM_API_KEY?.trim(), // a pasted key often ends in a newline, which Node refuses in a header
         name: env.LLM_PROVIDER_NAME,
         models,
         maxConcurrency: concurrencyShare(env.LLM_MAX_CONCURRENCY, env),
@@ -123,7 +129,7 @@ export class ModelRouter {
     this.embeddingProvider = env.LLM_EMBEDDING_BASE_URL
       ? new OpenAICompatibleProvider({
           baseUrl: env.LLM_EMBEDDING_BASE_URL,
-          apiKey: env.LLM_EMBEDDING_API_KEY,
+          apiKey: env.LLM_EMBEDDING_API_KEY?.trim(),
           name: env.LLM_EMBEDDING_PROVIDER_NAME || "embeddings",
           models,
           embeddingDimensions: Number.isInteger(dims) && dims > 0 ? dims : undefined,
@@ -136,7 +142,7 @@ export class ModelRouter {
       env.LLM_FALLBACK_BASE_URL && fallbackFast
         ? new OpenAICompatibleProvider({
             baseUrl: env.LLM_FALLBACK_BASE_URL,
-            apiKey: env.LLM_FALLBACK_API_KEY,
+            apiKey: env.LLM_FALLBACK_API_KEY?.trim(),
             name: env.LLM_FALLBACK_PROVIDER_NAME || "fallback",
             models: { TIER_1_FAST: fallbackFast, TIER_2_REASONING: env.LLM_FALLBACK_MODEL_REASONING?.trim() || fallbackFast, TIER_3_EMBEDDING: "" },
             maxConcurrency: concurrencyShare(env.LLM_FALLBACK_MAX_CONCURRENCY, env),
@@ -162,6 +168,16 @@ export class ModelRouter {
       },
       fallback: this.fallbackProvider?.providerName ?? null,
       embedding_provider: this.embeddingProvider?.providerName ?? null,
+    };
+  }
+
+  public getEmbeddingProfile(): { provider: string; model: string; configured_dimensions?: number } {
+    const status = this.getStatus();
+    const configured = Number(process.env.LLM_EMBEDDING_DIMENSIONS);
+    return {
+      provider: status.embedding_provider ?? status.provider,
+      model: status.models.TIER_3_EMBEDDING,
+      ...(Number.isInteger(configured) && configured > 0 ? { configured_dimensions: configured } : {}),
     };
   }
 
@@ -219,7 +235,7 @@ export class ModelRouter {
 
   /** The model a tier uses: from the configuration, not the hard-coded gemini-1.5 names (FX-32). */
   public resolveModelName(tier: ModelTier): string {
-    if (this.primaryProvider instanceof OpenAICompatibleProvider) return this.primaryProvider.modelFor(tier);
+    if (namesModels(this.primaryProvider)) return this.primaryProvider.modelFor(tier);
     if (this.primaryProvider instanceof MockLLMProvider) return "demo-keyword-mock";
     return "not-configured";
   }
@@ -245,7 +261,9 @@ export class ModelRouter {
 
   /** The model a given provider uses for a tier: each provider has its own names (FX-79, audit F24). */
   private modelOf(provider: LLMProvider, tier: ModelTier): string {
-    if (provider instanceof OpenAICompatibleProvider) return provider.modelFor(tier);
+    // Any provider that names its models, not only OpenAICompatibleProvider: a wrapper (the eval's RecordingProvider)
+    // used to fall through to "not-configured", and the provider answered 404 for that model
+    if (namesModels(provider)) return provider.modelFor(tier);
     return this.resolveModelName(tier);
   }
 
@@ -257,13 +275,14 @@ export class ModelRouter {
     tier: ModelTier,
     messages: LLMMessage[],
     tools?: LLMToolDefinition[],
-    options: { deadlineMs?: number; maxTokens?: number } = {}
+    options: Omit<LLMProviderOptions, "model"> & { deadlineMs?: number; maxTokens?: number } = {}
   ): Promise<LLMResponse & { costUsd: number; costBdt: number; isFallback: boolean; provider: string; demo: boolean }> {
     const { provider, isFallback } = this.getActiveProvider(tier);
     if (PlatformSafetyService.isExecutionBlocked("PROVIDER", provider.providerName)) {
       throw new KillSwitchActiveError("PROVIDER", `AI provider ${provider.providerName} is paused by the platform.`); // FX-34
     }
-    const callOptions = (p: LLMProvider) => ({
+    const callOptions = (p: LLMProvider): LLMProviderOptions => ({
+      ...options,
       model: this.modelOf(p, tier),
       ...(options.deadlineMs ? { deadline_ms: options.deadlineMs } : {}),
       ...(options.maxTokens ? { max_tokens: options.maxTokens } : {}),
@@ -286,6 +305,7 @@ export class ModelRouter {
         demo: this.getMode() === "DEMO",
       };
     } catch (err) {
+      if (options?.signal?.aborted || err instanceof OutboundCancelledError) throw err;
       if (this.getMode() === "NOT_CONFIGURED") throw err; // nothing to fall back to, and not a provider failure
       // Our own limits (no free slot, out of time) say nothing about the provider's health
       const code = (err as { code?: string }).code;
@@ -332,6 +352,16 @@ export class ModelRouter {
     }
     try {
       const embedding = await provider.embed(text);
+      if (!Array.isArray(embedding) || embedding.length === 0 || embedding.some((value) => !Number.isFinite(value))) {
+        throw new Error("Embedding provider returned an empty or non-finite vector.");
+      }
+      if (!embedding.some((value) => value !== 0)) {
+        throw new Error("Embedding provider returned an all-zero vector.");
+      }
+      const configuredDimensions = this.getEmbeddingProfile().configured_dimensions;
+      if (configuredDimensions && embedding.length !== configuredDimensions) {
+        throw new Error(`Embedding dimension mismatch: expected ${configuredDimensions}, received ${embedding.length}.`);
+      }
       this.recordSuccess();
       return embedding;
     } catch (err) {

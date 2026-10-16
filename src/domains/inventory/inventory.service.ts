@@ -1,5 +1,7 @@
 import { randomSuffix } from "@/lib/ids";
 import { db } from "@/infrastructure/db";
+import { inventoryRepository } from "./inventory.repository";
+import { loadReservationRows, loadVariantRows, readTenantRows } from "@/infrastructure/db/tenant-rows";
 import {
   InventoryItem,
   StockMovement,
@@ -18,7 +20,7 @@ export class InventoryService {
     options?: { warehouse_id?: string; low_stock_only?: boolean }
   ): Promise<(InventoryItem & { product_name: string; sku: string; variant_title: string })[]> {
     RbacService.assertCan(context, PERMISSIONS.INVENTORY_READ);
-    return db.getInventory(context.tenant.id, options);
+    return inventoryRepository.getStockLevels(context.tenant.id, options);
   }
 
   public static async adjustStock(
@@ -50,6 +52,7 @@ export class InventoryService {
 
     const allowOverselling = Boolean(context.tenant.settings?.allow_overselling);
 
+    await loadVariantRows(context.tenant.id, [params.product_variant_id]); // zero-hydration: the stock rows changed here
     let updatedItem: InventoryItem;
     try {
       updatedItem = db.adjustStock(context.tenant.id, {
@@ -99,6 +102,7 @@ export class InventoryService {
     }
   ): Promise<InventoryReservation> {
     // Internal reservation check
+    await loadVariantRows(context.tenant.id, [params.product_variant_id]);
     return db.reserveStock(context.tenant.id, {
       order_id: params.order_id,
       warehouse_id: params.warehouse_id,
@@ -111,6 +115,7 @@ export class InventoryService {
     context: RequestContext,
     reservationId: string
   ): Promise<boolean> {
+    await loadReservationRows(context.tenant.id, [reservationId]);
     return db.releaseReservation(context.tenant.id, reservationId);
   }
 
@@ -118,6 +123,7 @@ export class InventoryService {
     context: RequestContext,
     reservationId: string
   ): Promise<boolean> {
+    await loadReservationRows(context.tenant.id, [reservationId]);
     return db.commitReservation(context.tenant.id, reservationId, context.user.id);
   }
 
@@ -126,13 +132,13 @@ export class InventoryService {
     limit = 50
   ): Promise<StockMovement[]> {
     RbacService.assertCan(context, PERMISSIONS.INVENTORY_READ);
-    return db.getStockMovements(context.tenant.id, limit);
+    return inventoryRepository.recentStockMovements(context.tenant.id, limit);
   }
 
   // ==================== WAREHOUSES ====================
   public static async listWarehouses(context: RequestContext): Promise<Warehouse[]> {
     RbacService.assertCan(context, PERMISSIONS.INVENTORY_READ);
-    return db.getWarehouses(context.tenant.id);
+    return readTenantRows<Warehouse>("warehouses", context.tenant.id);
   }
 
   public static async createWarehouse(

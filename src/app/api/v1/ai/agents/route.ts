@@ -99,6 +99,7 @@ async function handlePOST(request: Request) {
         tenant_id: context.tenant.id,
         agent_type: existing.agent_type,
         autonomy_level: autonomyLevel,
+        version: existing.version + 1,
         updated_at: new Date().toISOString(),
       });
       return apiSuccess({ success: true, policy: updated });

@@ -4,6 +4,7 @@ import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response"
 import { db } from "@/infrastructure/db";
 import { exceptionManagementService } from "@/domains/operations/services/exception-management.service";
 import { withStore } from "@/lib/store-unit";
+import { OPERATIONS_COLLECTIONS } from "@/infrastructure/db/tenant-rows";
 
 async function handleGET(request: Request) {
   try {
@@ -57,4 +58,4 @@ async function handlePOST(request: Request) {
 }
 
 export const GET = withStore("GET", handleGET);
-export const POST = withStore("POST", handlePOST);
+export const POST = withStore("POST", handlePOST, { tenantRows: { collections: OPERATIONS_COLLECTIONS, permission: PERMISSIONS.EXCEPTIONS_MANAGE } });

@@ -124,7 +124,7 @@ function sameNumbers(a: Map<string, number>, b: Map<string, number>, epsilon = 0
  */
 export async function verifyStore(source: Record<string, unknown>, target: SqlClient): Promise<VerifyReport> {
   const checks: VerifyCheck[] = [];
-  const loaded = await new PgStorePersistence(target).load();
+  const loaded = await new PgStorePersistence(target).load({ all: true });
 
   // Per-tenant row counts, counted in SQL.
   const countMismatches: string[] = [];

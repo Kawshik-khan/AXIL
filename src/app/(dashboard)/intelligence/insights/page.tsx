@@ -116,9 +116,9 @@ export default function InsightsExplorerPage() {
                   <span className={styles.badgeNeutral}>Method: {anom.detection_method}</span>
                 </div>
                 {anom.evidence?.[0] && (
-                  <div style={{ marginTop: 8, padding: 10, background: "rgba(255, 255, 255, 0.03)", borderRadius: 8 }}>
-                    <div style={{ fontSize: 11, color: "#C7F900", fontWeight: 600 }}>CITED EVIDENCE</div>
-                    <div style={{ fontSize: 12, color: "#bbb", marginTop: 2 }}>{anom.evidence[0].description}</div>
+                  <div style={{ marginTop: 8, padding: 10, background: "var(--color-surface-soft, #FAFBF8)", border: "1px solid var(--color-border-subtle, rgba(30, 32, 30, 0.08))", borderRadius: 8 }}>
+                    <div style={{ fontSize: 11, color: "#3b4d00", fontWeight: 700 }}>✦ CITED EVIDENCE</div>
+                    <div style={{ fontSize: 12, color: "var(--color-text-secondary, #70736F)", marginTop: 2 }}>{anom.evidence[0].description}</div>
                   </div>
                 )}
               </div>
@@ -149,9 +149,9 @@ export default function InsightsExplorerPage() {
                   <span className={styles.badgeNeutral}>Type: {opp.type}</span>
                 </div>
                 {opp.evidence?.[0] && (
-                  <div style={{ marginTop: 8, padding: 10, background: "rgba(255, 255, 255, 0.03)", borderRadius: 8 }}>
-                    <div style={{ fontSize: 11, color: "#C7F900", fontWeight: 600 }}>EVIDENCE CITATION</div>
-                    <div style={{ fontSize: 12, color: "#bbb", marginTop: 2 }}>{opp.evidence[0].description}</div>
+                  <div style={{ marginTop: 8, padding: 10, background: "var(--color-surface-soft, #FAFBF8)", border: "1px solid var(--color-border-subtle, rgba(30, 32, 30, 0.08))", borderRadius: 8 }}>
+                    <div style={{ fontSize: 11, color: "#3b4d00", fontWeight: 700 }}>✦ EVIDENCE CITATION</div>
+                    <div style={{ fontSize: 12, color: "var(--color-text-secondary, #70736F)", marginTop: 2 }}>{opp.evidence[0].description}</div>
                   </div>
                 )}
               </div>
@@ -166,7 +166,7 @@ export default function InsightsExplorerPage() {
             {risks.map((risk) => (
               <div key={risk.id} className={`${styles.bentoCard} ${styles.col6}`}>
                 <div className={styles.cardTitle}>
-                  <span style={{ color: "#ff6b6b" }}>{risk.title}</span>
+                  <span style={{ color: "#dc2626" }}>{risk.title}</span>
                   <span className={styles.badgeRed}>{risk.severity}</span>
                 </div>
                 <p className={styles.recDesc}>{risk.description}</p>
@@ -175,9 +175,9 @@ export default function InsightsExplorerPage() {
                   <span className={styles.badgeNeutral}>Category: {risk.type}</span>
                 </div>
                 {risk.evidence?.[0] && (
-                  <div style={{ marginTop: 8, padding: 10, background: "rgba(255, 255, 255, 0.03)", borderRadius: 8 }}>
-                    <div style={{ fontSize: 11, color: "#ff6b6b", fontWeight: 600 }}>RISK SIGNAL</div>
-                    <div style={{ fontSize: 12, color: "#bbb", marginTop: 2 }}>{risk.evidence[0].description}</div>
+                  <div style={{ marginTop: 8, padding: 10, background: "var(--color-surface-soft, #FAFBF8)", border: "1px solid var(--color-border-subtle, rgba(30, 32, 30, 0.08))", borderRadius: 8 }}>
+                    <div style={{ fontSize: 11, color: "#dc2626", fontWeight: 700 }}>✦ RISK SIGNAL</div>
+                    <div style={{ fontSize: 12, color: "var(--color-text-secondary, #70736F)", marginTop: 2 }}>{risk.evidence[0].description}</div>
                   </div>
                 )}
               </div>
