@@ -6,7 +6,7 @@
  * 15 of 52 queries. "Ranked first" counts every no-answer query (9), because the search always returns its closest
  * documents and the agent decides relevance; Recall@3 in the plan becomes Recall@2 because the tool returns 2 documents.
  *
- *   Offline (hashing embedder + BM25, report only): node tests/ts-runner.cjs ./tests/agent-evals/retrieval-eval.ts
+ *   Offline (hashing embedder + BM25, lower floors, part of npm test): node tests/ts-runner.cjs ./tests/agent-evals/retrieval-eval.ts
  *   Nightly: EVAL_REAL_EMBEDDINGS=1 TEST_LLM_LIVE=1 LLM_EMBEDDING_BASE_URL=… LLM_EMBEDDING_MODEL=… (same command)
  */
 import fs from "fs";
@@ -18,8 +18,10 @@ import { buildFixture } from "./fixture";
 import { EVAL_DIR, localEmbedder } from "./harness";
 
 const REAL = process.env.EVAL_REAL_EMBEDDINGS === "1" && process.env.TEST_LLM_LIVE === "1" && Boolean(process.env.LLM_EMBEDDING_BASE_URL);
-const MIN_RECALL_AT_2 = 95;
-const MAX_IRRELEVANT_FIRST = 15;
+// The offline embedder is far weaker than a real one, so offline floors are lower; they still catch a retrieval
+// regression in `npm test` before the nightly gate does (the 2026-10-13 one took offline recall to 61/38/14).
+const MIN_RECALL_AT_2 = REAL ? 95 : 90;
+const MAX_IRRELEVANT_FIRST = REAL ? 15 : 12;
 
 const QUERIES: Array<{ q: string; lang: string; expect: string | null }> = [
   { q: "how many days does delivery take outside Dhaka", lang: "en", expect: "Delivery Policy" },
@@ -106,9 +108,9 @@ async function main() {
     ...(irrelevantFirst > MAX_IRRELEVANT_FIRST ? [`irrelevant document first in ${irrelevantFirst} > ${MAX_IRRELEVANT_FIRST} queries`] : []),
   ];
   if (failures.length) {
-    console.error(`RETRIEVAL GATE ${REAL ? "FAILED" : "(offline, report only)"}:\n- ${failures.join("\n- ")}`);
-    if (REAL) process.exit(1);
-  } else console.log("RETRIEVAL GATE PASSED");
+    console.error(`RETRIEVAL GATE ${REAL ? "FAILED" : "(offline) FAILED"}:\n- ${failures.join("\n- ")}`);
+    process.exit(1);
+  } else console.log(`RETRIEVAL GATE ${REAL ? "" : "(offline) "}PASSED`);
   process.exit(0);
 }
 main().catch((e) => {

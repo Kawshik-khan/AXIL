@@ -34,6 +34,9 @@ export interface AgenticRagControllerOptions {
   minRerankScore?: number; // Reranker cutoff (default 0.35); the customer agent passes 0 and decides relevance itself (FX-82)
   rerankTopK?: number; // Candidates kept after reranking (default: topK)
   customIntentRules?: readonly RagIntentRule[]; // Optional domain- or tenant-specific intent rules evaluated with priority
+  // Rerank against the question and its Bangla→English sub-query only. The topic phrases from expansion still widen
+  // retrieval, but in ranking they let any document sharing their keywords outrank the one that answers (FX-82)
+  rerankOnTranslationsOnly?: boolean;
 }
 
 /**
@@ -352,7 +355,9 @@ export class AgenticRagController {
         minRerankScore: options.minRerankScore ?? 0.35,
         resolveParentContext: resolveParent,
         deduplicateParents: true,
-        queryVariants: expandedQueries,
+        queryVariants: options.rerankOnTranslationsOnly
+          ? [banglaSubQuery(query)].filter((v): v is string => Boolean(v))
+          : expandedQueries,
       },
     );
 
@@ -537,6 +542,10 @@ export class AgenticRagController {
   private static expandQueryForBanglaCommerce(query: string): string[] {
     const q = query.toLowerCase().trim();
     const expansions: Set<string> = new Set([q]);
+
+    // Bangla script → English policy words (FX-82)
+    const bn = banglaSubQuery(query);
+    if (bn) expansions.add(bn);
 
     // Shipping & Delivery expansions
     if (

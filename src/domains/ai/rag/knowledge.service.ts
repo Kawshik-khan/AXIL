@@ -295,6 +295,7 @@ export class KnowledgeService {
       confidenceThresholdLow: 0,
       resolveParentContext: true,
       enableQueryExpansion: true,
+      rerankOnTranslationsOnly: true,
     });
     const out: Array<{ document_id: string; title: string; section: string; updated_at?: string; text: string }> = [];
     const seen = new Set<string>();
