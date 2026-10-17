@@ -110,6 +110,18 @@ export function bengaliShare(text: string): number {
 
 export interface TurnRecord { input: string; response: string; status: string; tools: Array<{ name: string; ok: boolean; refused?: string }>; guards: string[]; handoff: boolean; latency_ms: number; llm_calls: number; prompt_tokens: number; completion_tokens: number; cached_tokens: number; hallucinated_amounts: number[]; error?: string }
 export interface CaseResult { id: string; suite: string; category: string; owasp?: string; pass: boolean; failures: string[]; turns: TurnRecord[]; side_effects: Record<string, number>; hallucinated_price: boolean; wrong_action: boolean; handoff_expected?: boolean; handoff_observed: boolean; language_ok?: boolean; caps_hit?: boolean; cost_usd: number }
+const TRANSIENT_PROVIDER_ERROR_RE =
+  /\b(LLM_PROVIDER_ERROR|TIMEOUT|timed out|could not be reached|provider_unreachable)\b/i;
+
+export function hasTransientProviderError(
+  turns: Array<Pick<TurnRecord, "error">>,
+): boolean {
+  return turns.some(
+    (turn) =>
+      typeof turn.error === "string" &&
+      TRANSIENT_PROVIDER_ERROR_RE.test(turn.error),
+  );
+}
 
 /** USD per 1M tokens for the cost estimate; LLM_PRICING_JSON's TIER_1_FAST when set (same source as production). */
 function prices(): { input: number; cached: number; output: number } {
