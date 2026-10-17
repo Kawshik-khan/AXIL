@@ -140,6 +140,62 @@ export default function ConnectorPage() {
     }
   }, [providers]);
 
+  // Compute counts efficiently to avoid O(N^2) inline filtering during render
+  const counts = useMemo(() => {
+    const res = {
+      providers: {
+        logisticsOrSocial: 0,
+        logistics: 0,
+        socialAds: 0,
+        socialAdsNotGoogle: 0,
+        infra: 0,
+        ai: 0,
+        vectorDb: 0,
+        enterprise: 0,
+      },
+      configs: {
+        logisticsOrSocial: 0,
+        logistics: 0,
+        socialAdsNotGoogle: 0,
+      },
+    };
+
+    for (const p of providers) {
+      if (p.category === "LOGISTICS") {
+        res.providers.logistics++;
+        res.providers.logisticsOrSocial++;
+      } else if (p.category === "SOCIAL_ADS") {
+        res.providers.socialAds++;
+        res.providers.logisticsOrSocial++;
+        if (p.id !== "google_ads") res.providers.socialAdsNotGoogle++;
+      }
+
+      if (p.category !== "LOGISTICS" && p.category !== "SOCIAL_ADS") {
+        res.providers.infra++;
+      }
+
+      if (p.category === "AI_LLM") {
+        res.providers.ai++;
+      } else if (p.category === "VECTOR_DB") {
+        res.providers.vectorDb++;
+      } else if (p.category === "ENTERPRISE") {
+        res.providers.enterprise++;
+      }
+    }
+
+    for (const c of configurations) {
+      if (c.category === "LOGISTICS") {
+        res.configs.logistics++;
+        res.configs.logisticsOrSocial++;
+      } else if (c.category === "SOCIAL_ADS") {
+        res.configs.logisticsOrSocial++;
+        if (c.provider_id !== "google_ads") res.configs.socialAdsNotGoogle++;
+      }
+    }
+
+    return res;
+  }, [providers, configurations]);
+
   // Filtered providers
   const filteredProviders = useMemo(() => {
     return providers.filter((p) => {
@@ -523,7 +579,7 @@ export default function ConnectorPage() {
           <div className={styles.metricValueRow}>
             <span className={styles.metricValue}>
               {!isAdmin || viewScope === "STORE"
-                ? configurations.filter((c) => c.category === "LOGISTICS" || c.category === "SOCIAL_ADS").length
+                ? counts.configs.logisticsOrSocial
                 : stats?.total_active ?? configurations.length}
             </span>
             <span className={styles.metricSubtext}>
@@ -543,7 +599,7 @@ export default function ConnectorPage() {
                   {configurations.find((c) => c.category === "LOGISTICS")?.name || "Pending setup"}
                 </span>
                 <span className={styles.metricSubtext}>
-                  {configurations.filter((c) => c.category === "LOGISTICS").length} connected
+                  {counts.configs.logistics} connected
                 </span>
               </div>
             </div>
@@ -554,7 +610,7 @@ export default function ConnectorPage() {
               </span>
               <div className={styles.metricValueRow}>
                 <span className={styles.metricValue}>
-                  {configurations.filter((c) => c.category === "SOCIAL_ADS" && c.provider_id !== "google_ads").length} active
+                  {counts.configs.socialAdsNotGoogle} active
                 </span>
                 <span className={styles.metricSubtext}>Meta, WhatsApp, TikTok, TG</span>
               </div>
@@ -617,7 +673,7 @@ export default function ConnectorPage() {
               >
                 All Store Channels
                 <span className={styles.tabBadge}>
-                  {providers.filter((p) => p.category === "LOGISTICS" || p.category === "SOCIAL_ADS").length}
+                  {counts.providers.logisticsOrSocial}
                 </span>
               </button>
               <button
@@ -627,7 +683,7 @@ export default function ConnectorPage() {
               >
                 Parcel Delivery (Couriers)
                 <span className={styles.tabBadge}>
-                  {providers.filter((p) => p.category === "LOGISTICS").length}
+                  {counts.providers.logistics}
                 </span>
               </button>
               <button
@@ -637,7 +693,7 @@ export default function ConnectorPage() {
               >
                 Social Channels & Chats
                 <span className={styles.tabBadge}>
-                  {providers.filter((p) => p.category === "SOCIAL_ADS" && p.id !== "google_ads").length}
+                  {counts.providers.socialAdsNotGoogle}
                 </span>
               </button>
               <button
@@ -658,7 +714,7 @@ export default function ConnectorPage() {
               >
                 All Infrastructure
                 <span className={styles.tabBadge}>
-                  {providers.filter((p) => p.category !== "LOGISTICS" && p.category !== "SOCIAL_ADS").length}
+                  {counts.providers.infra}
                 </span>
               </button>
               <button
@@ -668,7 +724,7 @@ export default function ConnectorPage() {
               >
                 ✦ AI & LLM Models
                 <span className={styles.tabBadge}>
-                  {providers.filter((p) => p.category === "AI_LLM").length}
+                  {counts.providers.ai}
                 </span>
               </button>
               <button
@@ -678,7 +734,7 @@ export default function ConnectorPage() {
               >
                 Vector Databases (RAG)
                 <span className={styles.tabBadge}>
-                  {providers.filter((p) => p.category === "VECTOR_DB").length}
+                  {counts.providers.vectorDb}
                 </span>
               </button>
               <button
@@ -688,7 +744,7 @@ export default function ConnectorPage() {
               >
                 Enterprise & ERP Systems
                 <span className={styles.tabBadge}>
-                  {providers.filter((p) => p.category === "ENTERPRISE").length}
+                  {counts.providers.enterprise}
                 </span>
               </button>
             </>
@@ -709,7 +765,7 @@ export default function ConnectorPage() {
               >
                 Parcel Delivery
                 <span className={styles.tabBadge}>
-                  {providers.filter((p) => p.category === "LOGISTICS").length}
+                  {counts.providers.logistics}
                 </span>
               </button>
               <button
@@ -719,7 +775,7 @@ export default function ConnectorPage() {
               >
                 Social Media & Ads
                 <span className={styles.tabBadge}>
-                  {providers.filter((p) => p.category === "SOCIAL_ADS").length}
+                  {counts.providers.socialAds}
                 </span>
               </button>
               <button
@@ -729,7 +785,7 @@ export default function ConnectorPage() {
               >
                 ✦ AI Models
                 <span className={styles.tabBadge}>
-                  {providers.filter((p) => p.category === "AI_LLM").length}
+                  {counts.providers.ai}
                 </span>
               </button>
               <button
@@ -739,7 +795,7 @@ export default function ConnectorPage() {
               >
                 Vector DB
                 <span className={styles.tabBadge}>
-                  {providers.filter((p) => p.category === "VECTOR_DB").length}
+                  {counts.providers.vectorDb}
                 </span>
               </button>
               <button
@@ -749,7 +805,7 @@ export default function ConnectorPage() {
               >
                 Enterprise
                 <span className={styles.tabBadge}>
-                  {providers.filter((p) => p.category === "ENTERPRISE").length}
+                  {counts.providers.enterprise}
                 </span>
               </button>
             </>
