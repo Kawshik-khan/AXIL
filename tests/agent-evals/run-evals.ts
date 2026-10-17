@@ -14,7 +14,17 @@ import fs from "fs";
 import path from "path";
 import { modelRouter } from "@/domains/ai/providers/model-router";
 import type { LLMProvider } from "@/domains/ai/providers/llm-provider.interface";
-import { EVAL_DIR, RecordingProvider, loadCases, localEmbedder, runCase, runStamp, summarize, type CaseResult } from "./harness";
+import {
+  EVAL_DIR,
+  RecordingProvider,
+  hasTransientProviderError,
+  loadCases,
+  localEmbedder,
+  runCase,
+  runStamp,
+  summarize,
+  type CaseResult,
+} from "./harness";
 
 const LIVE = process.env.TEST_LLM_LIVE === "1" && Boolean(process.env.LLM_BASE_URL);
 
@@ -58,9 +68,16 @@ async function main() {
   for (const suite of suites) {
     const results: CaseResult[] = [];
     for (const c of loadCases(suite, only, limit)) {
-      const r = await runCase(suite, c);
+      let r = await runCase(suite, c);
+      if (!r.pass && hasTransientProviderError(r.turns)) {
+        console.warn(`${c.id} RETRY transient provider failure detected`);
+        const retried = await runCase(suite, c);
+        r = retried;
+      }
       results.push(r);
-      console.log(`${c.id} ${r.pass ? "PASS" : "FAIL"} ${r.failures.join(" | ").slice(0, 220)}`);
+      console.log(
+        `${c.id} ${r.pass ? "PASS" : "FAIL"} ${r.failures.join(" | ").slice(0, 220)}`,
+      );
       fs.writeFileSync(path.join(outDir, `agent-${suite}.json`), JSON.stringify({ meta, results }, null, 2));
       summary[`agent/${suite}`] = summarize(results);
       fs.writeFileSync(path.join(outDir, "summary.json"), JSON.stringify(summary, null, 2));
