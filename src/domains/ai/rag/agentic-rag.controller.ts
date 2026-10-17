@@ -57,7 +57,7 @@ const BANGLA_POLICY_TERMS: Array<[RegExp, string]> = [
   [/ক্যাশ অন ডেলিভারি|হাতে হাতে|পণ্য হাতে পেয়ে/u, "cash on delivery"],
   [/অগ্রিম|এডভান্স|অ্যাডভান্স/u, "advance payment"],
   [/সময়|কতদিন|কত দিন|কবে/u, "delivery time days"],
-  [/খোলা|অফিস সময়|সাপোর্ট/u, "support hours"],
+  [/খোলা|অফিস সময়|সাপোর্ট|উত্তর দেন|রিপ্লাই|শুক্রবার/u, "support hours team replies"],
   [/নষ্ট|ভাঙা|ছেঁড়া|ভুল পণ্য/u, "damaged product exchange"],
 ];
 
@@ -549,9 +549,12 @@ export class AgenticRagController {
 
     // Shipping & Delivery expansions
     if (
-      /delivery|shipping|charge|fee|khoroch|pathao|steadfast|courier|parcel|pouch|din lage|koy din|ডেলিভারি|খরচ|কুরিয়ার|কুরিয়ার|চার্জ|বিতরণ|দিন.*(পার্সেল|কুরিয়ার|কুরিয়ার|পৌঁছ)|ঢাকা.*(বাইরে|ভিতরে|খরচ|চার্জ|ডেলিভারি|কুরিয়ার|কুরিয়ার)/i.test(
+      /delivery|shipping|charge|fee|khoroch|pathao|steadfast|courier|parcel|pouch|ডেলিভারি|খরচ|কুরিয়ার|কুরিয়ার|চার্জ|বিতরণ|দিন.*(পার্সেল|কুরিয়ার|কুরিয়ার|পৌঁছ)|ঢাকা.*(বাইরে|ভিতরে|খরচ|চার্জ|ডেলিভারি|কুরিয়ার|কুরিয়ার)/i.test(
         q,
-      )
+      ) ||
+      // "koy din" / "din lage" are time phrases that also appear in return questions ("ferot dite parbo koy diner
+      // moddhe"); without a delivery word they must not pull delivery documents ahead of the return policy
+      (!/return|ferot|badla|exchange|refund/i.test(q) && /din lage|koy din/i.test(q))
     ) {
       expansions.add("delivery charge inside and outside dhaka");
       expansions.add("shipping fees courier charges");
@@ -586,6 +589,15 @@ export class AgenticRagController {
     ) {
       expansions.add("cash on delivery payment policy");
       expansions.add("advance payment requirements bkash nagad");
+    }
+
+    // Support hours expansions: "does the team reply at night", "kokhon khola thake" (the policy says "replies every day")
+    if (
+      /\b(reply|replies|respond|support|office hours|business hours|opening hours|open hours)\b|khola thake|kokhon khola|কখন খোলা|উত্তর দেন|রিপ্লাই|সাপোর্ট/i.test(
+        q,
+      )
+    ) {
+      expansions.add("support hours team replies every day");
     }
 
     // Keep a hard upper bound while preserving targeted variants after the original query.
