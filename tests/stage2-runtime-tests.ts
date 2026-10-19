@@ -423,7 +423,7 @@ async function main() {
     assert.strictEqual(turn.status, "FAILED");
     assert.ok(turn.handoff && turn.reply.length > 0);
     const run = db.getAgentRuns(tenantId, { conversation_id: pr.conversationId }).find((r) => r.id === turn.runId)!;
-    assert.strictEqual(run.prompt_version, "customer-agent.system.v2.3-cod");
+    assert.strictEqual(run.prompt_version, "customer-agent.system.v2.4-cod");
   });
 
   await runTest("tool-call arguments are stored redacted", () => {

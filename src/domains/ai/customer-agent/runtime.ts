@@ -36,7 +36,7 @@ import type { AgentExecutionTraceRecord, GuardrailTriggerType } from "@/types/ai
 import { envNumber } from "@/lib/env-number";
 import type { Order } from "@/types/commerce";
 
-export const PROMPT_FILE = "customer-agent.system.v2.3-cod.md";
+export const PROMPT_FILE = "customer-agent.system.v2.4-cod.md";
 export const PROMPT_VERSION = PROMPT_FILE.replace(/\.md$/, "");
 const MAX_MODEL_CALLS = 6;
 const MAX_TOOL_CALLS = 8;
