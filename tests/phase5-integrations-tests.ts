@@ -113,6 +113,9 @@ async function main() {
     assert.throws(() => parseSafeUrl("https://[::ffff:0:127.0.0.1]/"), OutboundBlockedError);
     assert.throws(() => parseSafeUrl("https://localhost./"), OutboundBlockedError);
     assert.throws(() => parseSafeUrl("https://metadata.google.internal./"), OutboundBlockedError);
+    // On Postgres (test:pg) the store's first background commit diffs every row and holds the event loop for seconds;
+    // let it happen now, so the timing below measures the DNS deadline and not the commit
+    await db.flush();
     setOutboundLookupForTesting(() => new Promise(() => undefined));
     try {
       const started = Date.now();
