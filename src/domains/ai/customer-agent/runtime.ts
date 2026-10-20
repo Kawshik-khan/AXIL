@@ -7,6 +7,8 @@
  * - <session_state> is computed by the server: reply script, linked customer, own recent orders, the open quote, and
  *   facts the customer stated anywhere in the chat (deterministic slots), so they survive the 10-message window.
  * - Loop: at most 6 model calls and 8 tool calls, duplicate calls refused, one 25-second budget for the whole turn.
+ *   A step that ends on a fresh quote (still missing details), a successful handoff or a placed order ends the turn with
+ *   a server-written reply, without another model call (prompt v2.5; each call costs ~2,600 fixed prompt tokens).
  * - Every reply goes through the output pipeline (output.ts) before the caller sends it.
  * - Every run is recorded (agent_runs, agent_tool_calls, ai_usage) with the prompt version, tokens and cost.
  */
@@ -24,7 +26,7 @@ import { findVisibleOrders, type CustomerAgentPrincipal } from "./principal";
 import { CUSTOMER_TOOLS, runCustomerTool, type ToolResult } from "./tools";
 import { isAffirmative } from "./confirmation";
 import {
-  PROMISES_HUMAN, allowedAmounts, capLength, guardOrderClaim, guardPaymentClaim, guardPhoneNumbers, formatQuote, mixedScript, notAMessage, quoteToShow, replyScript,
+  PROMISES_HUMAN, allowedAmounts, capLength, guardOrderClaim, guardPaymentClaim, guardPhoneNumbers, formatHandoffReply, formatPlaced, formatQuote, mixedScript, notAMessage, quoteToShow, replyScript,
   sanitizeOutbound, stripAmounts, synthesizeGroundedResponse, unsupportedAmounts,
 } from "./output";
 import { PromptInjectionClassifier } from "../safety/prompt-injection";
@@ -36,7 +38,7 @@ import type { AgentExecutionTraceRecord, GuardrailTriggerType } from "@/types/ai
 import { envNumber } from "@/lib/env-number";
 import type { Order } from "@/types/commerce";
 
-export const PROMPT_FILE = "customer-agent.system.v2.4-cod.md";
+export const PROMPT_FILE = "customer-agent.system.v2.5-cod.md";
 export const PROMPT_VERSION = PROMPT_FILE.replace(/\.md$/, "");
 const MAX_MODEL_CALLS = 6;
 const MAX_TOOL_CALLS = 8;
@@ -73,6 +75,8 @@ export interface CustomerTurn {
   guards: string[];
   /** The customer message this turn answered (the idempotency key for its reply). */
   answeredMessageId?: string;
+  /** What the tools returned this turn: the eval's grounding check reads it, since a server-written reply follows no model call. */
+  toolResults?: ToolResult[];
 }
 
 /** Refusals that are the tool's expected answer (the model asks the customer for the district), not failures. */
@@ -267,7 +271,14 @@ export async function runCustomerTurn(pr: CustomerAgentPrincipal, opts: { budget
     { role: "system", content: dynamic },
     { role: "user", content: current },
   ];
-  const tools = Object.values(CUSTOMER_TOOLS).map((t) => t.def);
+  // place_order is offered only once this chat has an open quote (it can do nothing without one); each tool definition
+  // costs prompt tokens on every model call
+  const tools = () => {
+    const quoteOpen = db
+      .getConversationQuotes(pr.tenantId, pr.conversationId)
+      .some((q) => (q.status === "QUOTED" || q.status === "PLACING") && Date.parse(q.expires_at) > Date.now());
+    return Object.values(CUSTOMER_TOOLS).filter((t) => quoteOpen || t.def.name !== "place_order").map((t) => t.def);
+  };
   const toolCalls: CustomerTurn["toolCalls"] = [];
   const toolResults: ToolResult[] = [];
   const placedOrderNumbers = db
@@ -399,7 +410,7 @@ export async function runCustomerTurn(pr: CustomerAgentPrincipal, opts: { budget
     };
     db.saveAgentExecutionTrace(traceRecord);
 
-    return { runId, status, reply, handoff, toolCalls, guards, answeredMessageId: last.id };
+    return { runId, status, reply, handoff, toolCalls, guards, answeredMessageId: last.id, toolResults };
   };
   const fallbackReply = () =>
     script === "bangla"
@@ -464,7 +475,7 @@ export async function runCustomerTurn(pr: CustomerAgentPrincipal, opts: { budget
 
   try {
     for (let call = 0; call < MAX_MODEL_CALLS && Date.now() < deadline; call++) {
-      const res = await modelRouter.chatWithRouting("TIER_1_FAST", messages, tools, { deadlineMs: deadline, maxTokens: 2048 });
+      const res = await modelRouter.chatWithRouting("TIER_1_FAST", messages, tools(), { deadlineMs: deadline, maxTokens: 2048 });
       calls.push({
         trace_id: traceId, kind: "agent", model: res.model, prompt_version: PROMPT_VERSION, prompt: res.usage.prompt_tokens,
         cached: res.usage.cached_tokens ?? 0, reasoning: res.usage.reasoning_tokens ?? 0, completion: res.usage.completion_tokens,
@@ -569,6 +580,33 @@ export async function runCustomerTurn(pr: CustomerAgentPrincipal, opts: { budget
           placedOrderNumbers.push(outcome.result.order_number);
         }
         messages.push({ role: "tool", name: tc.name, tool_call_id: tc.id, content: JSON.stringify(outcome.result) });
+      }
+
+      // ---- replies the server writes itself, so the turn ends without another model call (its text would only be
+      // replaced by the same layout, or restate a fixed acknowledgement). Each still goes through the output pipeline.
+      const step = toolCalls.slice(-res.tool_calls.length);
+      const stepResults = toolResults.slice(-res.tool_calls.length);
+      let serverText: string | null = null;
+      if (handoff) {
+        guards.push("handoff_reply");
+        serverText = formatHandoffReply(handoffReason ?? "other", script, current);
+      } else if (step.every((t) => t.name === "place_order") && stepResults[stepResults.length - 1]?.status === "PLACED") {
+        guards.push("placed_reply");
+        serverText = formatPlaced(stepResults[stepResults.length - 1] as { order_number: string }, script);
+      } else if (step.every((t) => t.name === "quote_order") && quoteToShow(toolResults)) {
+        // With name, phone and address all known the model goes on to place_order (the confirmation summary), so only
+        // a quote that still has to ask for details ends here
+        const details = extractCustomerOrderDetails(pr);
+        if (!(details.name && details.phone && details.address)) {
+          guards.push("quote_template");
+          serverText = formatQuote(quoteToShow(toolResults)!, script, details);
+        }
+      }
+      if (serverText) {
+        let text = sanitizeOutbound(serverText);
+        text = guardPhoneNumbers(pr.tenantId, pr.conversationId, text).text;
+        text = capLength(guardOrderClaim(text, placedOrderNumbers, script).text);
+        return finish(handoff ? "ESCALATED" : "COMPLETED", text);
       }
     }
   } catch (err) {
