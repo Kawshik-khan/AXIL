@@ -283,7 +283,7 @@ CREATE TABLE audit_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     actor_id UUID,
-    actor_type VARCHAR(50) NOT NULL, -- 'USER', 'AGENT', 'N8N_WORKFLOW'
+    actor_type VARCHAR(50) NOT NULL, -- 'USER', 'AGENT', 'SYSTEM'
     action VARCHAR(100) NOT NULL,
     resource_type VARCHAR(100) NOT NULL,
     resource_id VARCHAR(255) NOT NULL,
@@ -507,7 +507,7 @@ CREATE TABLE provider_health (
 CREATE INDEX idx_prov_health ON provider_health(tenant_id, provider_type);
 ```
 
-### 2.12 Automation Hub, n8n Orchestration & Webhooks (Phase 6)
+### 2.12 Automation tables & provider webhooks (Phase 6; the automation hub is removed, rows are kept)
 ```sql
 CREATE TABLE automations (
     id VARCHAR(100) PRIMARY KEY,
@@ -520,7 +520,7 @@ CREATE TABLE automations (
     trigger_config JSONB NOT NULL DEFAULT '{}',
     conditions JSONB NOT NULL DEFAULT '[]',
     actions JSONB NOT NULL DEFAULT '[]',
-    provider_type VARCHAR(50) NOT NULL DEFAULT 'INTERNAL', -- 'INTERNAL', 'N8N', 'WEBHOOK'
+    provider_type VARCHAR(50) NOT NULL DEFAULT 'INTERNAL', -- 'INTERNAL', 'WEBHOOK'
     provider_config JSONB NOT NULL DEFAULT '{}',
     execution_count INT NOT NULL DEFAULT 0,
     success_count INT NOT NULL DEFAULT 0,
@@ -641,7 +641,7 @@ CREATE TABLE automation_providers (
     id VARCHAR(100) PRIMARY KEY,
     tenant_id VARCHAR(100) NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     name VARCHAR(100) NOT NULL,
-    type VARCHAR(50) NOT NULL, -- 'N8N', 'INTERNAL', 'CUSTOM_WEBHOOK'
+    type VARCHAR(50) NOT NULL, -- 'INTERNAL', 'CUSTOM_WEBHOOK'
     base_url VARCHAR(500) NOT NULL,
     circuit_breaker_state VARCHAR(50) NOT NULL DEFAULT 'NORMAL', -- 'NORMAL', 'DEGRADED', 'OPEN', 'HALF_OPEN'
     failure_count INT NOT NULL DEFAULT 0,
@@ -814,7 +814,7 @@ CREATE TABLE platform_feature_flags (
 CREATE TABLE platform_settings (
     key VARCHAR(100) PRIMARY KEY,
     value JSONB NOT NULL,
-    category VARCHAR(50) NOT NULL, -- 'AI_MODELS', 'SECURITY', 'STORAGE', 'N8N_CLUSTER'
+    category VARCHAR(50) NOT NULL, -- 'AI_MODELS', 'SECURITY', 'STORAGE'
     description TEXT,
     is_sensitive BOOLEAN NOT NULL DEFAULT false,
     updated_at TIMESTAMPTZ DEFAULT clock_timestamp()
@@ -835,7 +835,7 @@ CREATE TABLE platform_incidents (
     title VARCHAR(255) NOT NULL,
     severity VARCHAR(20) NOT NULL, -- 'LOW', 'MEDIUM', 'HIGH', 'CRITICAL'
     status VARCHAR(50) NOT NULL DEFAULT 'INVESTIGATING', -- 'INVESTIGATING', 'IDENTIFIED', 'MONITORING', 'RESOLVED'
-    affected_components JSONB NOT NULL DEFAULT '[]', -- ['n8n', 'api', 'database', 'bkash_gateway']
+    affected_components JSONB NOT NULL DEFAULT '[]', -- ['api', 'database', 'bkash_gateway']
     impact_summary TEXT,
     started_at TIMESTAMPTZ DEFAULT clock_timestamp(),
     resolved_at TIMESTAMPTZ,

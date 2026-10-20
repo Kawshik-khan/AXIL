@@ -16,4 +16,3 @@ export { orderRepository, OrderRepository } from '@/domains/orders/order.reposit
 export { paymentRepository, PaymentRepository } from '@/domains/payments/payment.repository';
 export { shippingRepository, ShippingRepository } from '@/domains/shipping/shipping.repository';
 export { aiRepository, AiRepository } from '@/domains/ai/ai.repository';
-export { automationRepository, AutomationRepository } from '@/domains/automation/automation.repository';

@@ -1,7 +1,7 @@
 # CommerceOS — Agent Entry Point
 
 Multi-tenant agentic e-commerce OS for Bangladeshi commerce (web, Facebook, Instagram, WhatsApp).
-Next.js 14 App Router · React 18 · TypeScript (strict) · Zod · jose/bcryptjs · Neon · Pinecone · Upstash Redis · n8n.
+Next.js 14 App Router · React 18 · TypeScript (strict) · Zod · jose/bcryptjs · Neon · Pinecone · Upstash Redis.
 
 ## 1. Read this first
 
@@ -63,7 +63,6 @@ src/infrastructure/store/            Postgres persistence: pg-store.ts (load, di
 src/infrastructure/db/migrations/    006_align_domain_model.sql (schema `commerceos`), 007_multi_writer.sql, 008_apply_changes.sql; legacy/ = old 001-005, never run
 src/domains/intelligence/services/intelligence-snapshot.service.ts  GET reads (never write) vs recompute writes (ADR-105)
 src/styles/tokens.css                Design tokens (canonical)
-n8n/workflows/*.json                 Exported n8n workflows
 tests/*-tests.ts                     Test suites
 ```
 
@@ -123,7 +122,6 @@ In a write request, a store change is saved only if the response is a success; t
 | Super-admin / platform | `.agent/GOVERNANCE.md` §4–5, `.agent/skills/platform-control-plane/SKILL.md`, `.agent/workflows/create-platform-feature.md` |
 | AI agents, tools, prompts | `.agent/workflows/agent-development.md`, `.agent/rules/agents.md`, `.agent/rules/ai.md`, `.agent/runtime-agents/<agent>.md` |
 | RAG | `.agent/rules/rag.md`, `.agent/skills/rag-engineering/SKILL.md` |
-| n8n / automation | `.agent/workflows/n8n-workflow-development.md`, `.agent/rules/n8n.md` |
 | Tests | `.agent/rules/testing.md`, `.agent/skills/testing/SKILL.md` |
 | Bangladesh commerce rules | `.agent/skills/commerce-domain/SKILL.md`, `.agent/BANGLADESH_COMMERCE.md` |
 

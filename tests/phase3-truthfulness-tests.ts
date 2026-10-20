@@ -15,7 +15,6 @@ import { RoleName } from "@/lib/permissions";
 import { enterpriseHierarchyService } from "@/domains/enterprise/services/enterprise-hierarchy.service";
 import { webhookPlatformService } from "@/domains/enterprise/services/webhook-platform.service";
 import { ConnectorService } from "@/domains/connectors/service";
-import { N8nProviderService } from "@/domains/automation/services/n8n-provider.service";
 import { GetOrderStatusTool } from "@/domains/ai/tools/implementations/order-tools";
 import { GetIntegrationStatusTool } from "@/domains/ai/tools/implementations/enterprise-tools";
 import type { Order } from "@/types/commerce";
@@ -374,35 +373,6 @@ async function main() {
     }
   });
 
-  const invokeN8n = () =>
-    N8nProviderService.invokeWorkflow({
-      tenantId, automationId: uid("auto_p3"), workflowId: uid("wf_p3"), workflowVersionId: "v1",
-      webhookPath: "p3-test", event: { type: "p3" }, correlationId: uid("corr"), idempotencyKey: uid("idem"),
-      executionMode: "PRODUCTION",
-    });
-
-  await runTest("n8n: with no instance configured nothing is sent (no localhost default, no 'mock success')", async () => {
-    const saved = { host: process.env.N8N_HOST, base: process.env.COMMERCEOS_N8N_BASE_URL };
-    delete process.env.N8N_HOST;
-    delete process.env.COMMERCEOS_N8N_BASE_URL;
-    const calls: string[] = [];
-    setOutboundTransportForTesting(async (url) => {
-      calls.push(url.toString());
-      return { status: 200, headers: {}, body: "{}", truncated: false, durationMs: 1 };
-    });
-    try {
-      const result = await invokeN8n();
-      assert.strictEqual(calls.length, 0);
-      assert.strictEqual(result.success, false);
-      assert.strictEqual(result.statusCode, 424);
-      assert.strictEqual(result.execution.error_code, "N8N_NOT_CONFIGURED");
-    } finally {
-      setOutboundTransportForTesting(null);
-      if (saved.host !== undefined) process.env.N8N_HOST = saved.host;
-      if (saved.base !== undefined) process.env.COMMERCEOS_N8N_BASE_URL = saved.base;
-    }
-  });
-
   await runTest("AI: embeddings go to LLM_EMBEDDING_BASE_URL (own key, model, dimensions) while chat stays on the primary provider", async () => {
     const router = ModelRouter.getInstance();
     const calls: Array<{ url: string; auth: string | undefined; body: Record<string, unknown> }> = [];
@@ -444,114 +414,6 @@ async function main() {
       setOutboundTransportForTesting(null);
       setOutboundLookupForTesting(null);
       router.configure(process.env);
-    }
-  });
-
-  await runTest("n8n: calls carry X-CommerceOS-Token when COMMERCEOS_N8N_WEBHOOK_TOKEN is set, and none when it isn't", async () => {
-    const saved = { host: process.env.N8N_HOST, token: process.env.COMMERCEOS_N8N_WEBHOOK_TOKEN };
-    process.env.N8N_HOST = "http://n8n.tok.p3:5678";
-    let seen: Record<string, string> | null = null;
-    setOutboundTransportForTesting(async (_url, options) => {
-      seen = options.headers ?? {};
-      return { status: 200, headers: {}, body: "{}", truncated: false, durationMs: 1 };
-    });
-    try {
-      process.env.COMMERCEOS_N8N_WEBHOOK_TOKEN = "p3-token-0123456789abcdef";
-      await invokeN8n();
-      assert.strictEqual((seen as Record<string, string> | null)?.["X-CommerceOS-Token"], "p3-token-0123456789abcdef");
-      delete process.env.COMMERCEOS_N8N_WEBHOOK_TOKEN;
-      seen = null;
-      await invokeN8n();
-      assert.ok(seen, "n8n must still be called");
-      assert.strictEqual((seen as Record<string, string>)["X-CommerceOS-Token"], undefined);
-    } finally {
-      setOutboundTransportForTesting(null);
-      for (const [k, v] of [["N8N_HOST", saved.host], ["COMMERCEOS_N8N_WEBHOOK_TOKEN", saved.token]] as const) {
-        if (v === undefined) delete process.env[k];
-        else process.env[k] = v;
-      }
-    }
-  });
-
-  await runTest("n8n: with both COMMERCEOS_N8N_WEBHOOK_TOKEN and COMMERCEOS_N8N_WEBHOOK_SECRET set, a call carries the token AND a valid signature", async () => {
-    const saved = { host: process.env.N8N_HOST, token: process.env.COMMERCEOS_N8N_WEBHOOK_TOKEN, secret: process.env.COMMERCEOS_N8N_WEBHOOK_SECRET };
-    process.env.N8N_HOST = "http://n8n.both.p3:5678";
-    process.env.COMMERCEOS_N8N_WEBHOOK_TOKEN = "p3-token-0123456789abcdef";
-    process.env.COMMERCEOS_N8N_WEBHOOK_SECRET = "p3-secret-0123456789abcdef0123456789";
-    let seen: { headers: Record<string, string>; body: string } | null = null;
-    setOutboundTransportForTesting(async (_url, options) => {
-      seen = { headers: options.headers ?? {}, body: String(options.body) };
-      return { status: 200, headers: {}, body: "{}", truncated: false, durationMs: 1 };
-    });
-    try {
-      await invokeN8n();
-      assert.ok(seen, "n8n must be called");
-      const { headers, body } = seen as { headers: Record<string, string>; body: string };
-      assert.strictEqual(headers["X-CommerceOS-Token"], "p3-token-0123456789abcdef");
-      assert.ok(verifyOutboundSignature("p3-secret-0123456789abcdef0123456789", body, String(headers["X-CommerceOS-Timestamp"] ?? headers["x-commerceos-timestamp"]), String(headers["X-CommerceOS-Signature"] ?? headers["x-commerceos-signature"])), "signature must verify");
-      // secret only: no token header
-      delete process.env.COMMERCEOS_N8N_WEBHOOK_TOKEN;
-      seen = null;
-      await invokeN8n();
-      assert.strictEqual((seen as unknown as { headers: Record<string, string> }).headers["X-CommerceOS-Token"], undefined);
-    } finally {
-      setOutboundTransportForTesting(null);
-      for (const [k, v] of [["N8N_HOST", saved.host], ["COMMERCEOS_N8N_WEBHOOK_TOKEN", saved.token], ["COMMERCEOS_N8N_WEBHOOK_SECRET", saved.secret]] as const) {
-        if (v === undefined) delete process.env[k];
-        else process.env[k] = v;
-      }
-    }
-  });
-
-  await runTest("n8n workflows: Header Auth on the trigger; the Verify node needs the HMAC only when a secret is configured", async () => {
-    const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as new (...args: string[]) => (...a: unknown[]) => Promise<Array<{ json: Record<string, unknown> }>>;
-    const secret = "p3-hmac-secret-0123456789abcdef";
-    const raw = JSON.stringify({ execution_mode: "PRODUCTION", idempotency_key: "k1", event: { type: "order.created" } });
-    const ts = String(Math.floor(Date.now() / 1000));
-    const sig = "v1=" + crypto.createHmac("sha256", secret).update(`${ts}.${raw}`).digest("hex");
-    for (const file of ["signed-call-check", "order-created-notification", "inventory-low-stock-alert", "abandoned-checkout-recovery"]) {
-      const wf = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "n8n", "workflows", `commerceos-${file}.json`), "utf8")) as {
-        nodes: Array<{ name: string; type: string; parameters: Record<string, unknown>; credentials?: Record<string, unknown> }>;
-      };
-      const trigger = wf.nodes.find((n) => n.type === "n8n-nodes-base.webhook");
-      assert.strictEqual(trigger?.parameters.authentication, "headerAuth", `${file}: trigger must use Header Auth`);
-      assert.ok(trigger?.credentials?.httpHeaderAuth, `${file}: trigger must reference the Header Auth credential`);
-      const code = String(wf.nodes.find((n) => n.name === "Verify CommerceOS Signature")?.parameters.jsCode);
-      const run = (vars: Record<string, string>, headers: Record<string, string>, withBinary: boolean) =>
-        new AsyncFunction("$input", "$vars", "$env", "require", code).call(
-          { helpers: { getBinaryDataBuffer: async () => Buffer.from(raw) } },
-          { first: () => ({ json: { headers, body: JSON.parse(raw) }, binary: withBinary ? { data: {} } : undefined }) },
-          vars, {}, require,
-        );
-      // no secret configured: the token (checked by the trigger) is enough
-      assert.strictEqual((await run({}, {}, false))[0].json.signature_verified, true, `${file}: no secret, body accepted`);
-      // secret configured: an unsigned call is refused, a signed one accepted
-      assert.strictEqual((await run({ COMMERCEOS_N8N_WEBHOOK_SECRET: secret }, {}, true))[0].json.signature_verified, false, `${file}: secret set, unsigned refused`);
-      const ok = await run({ COMMERCEOS_N8N_WEBHOOK_SECRET: secret }, { "x-commerceos-timestamp": ts, "x-commerceos-signature": sig }, true);
-      assert.strictEqual(ok[0].json.signature_verified, true, `${file}: secret set, signed accepted`);
-      const bad = await run({ COMMERCEOS_N8N_WEBHOOK_SECRET: secret }, { "x-commerceos-timestamp": ts, "x-commerceos-signature": sig.slice(0, -2) + "00" }, true);
-      assert.strictEqual(bad[0].json.signature_verified, false, `${file}: secret set, bad signature refused`);
-    }
-  });
-
-  await runTest("n8n: an unreachable configured instance fails, and the tenant sees no internal host", async () => {
-    const saved = process.env.N8N_HOST;
-    process.env.N8N_HOST = "http://n8n.internal.p3:5678";
-    const calls: string[] = [];
-    setOutboundTransportForTesting(async (url) => {
-      calls.push(url.toString());
-      throw new Error("connect ECONNREFUSED n8n.internal.p3:5678");
-    });
-    try {
-      const result = await invokeN8n();
-      assert.strictEqual(calls.length, 1, "a real request was attempted");
-      assert.strictEqual(result.success, false);
-      assert.strictEqual(result.execution.status, "FAILED");
-      assert.ok(!JSON.stringify(result).includes("n8n.internal.p3"), "no internal host in the result");
-    } finally {
-      setOutboundTransportForTesting(null);
-      if (saved === undefined) delete process.env.N8N_HOST;
-      else process.env.N8N_HOST = saved;
     }
   });
 
@@ -1005,7 +867,7 @@ async function main() {
     assert.strictEqual((await call("POST", "autonomous/objectives", owner.token, { body: { name: "OK", target_value: 1, baseline_value: 0 } })).status, 201);
   });
 
-  await runTest("FX-34: provider and workflow kill switches are enforced by the model router and automations", async () => {
+  await runTest("FX-34: a provider kill switch is enforced by the model router", async () => {
     const router = ModelRouter.getInstance();
     const providerName = router.getActiveProvider().provider.providerName;
     PlatformSafetyService.activateKillSwitch({ scope: "PROVIDER", targetId: providerName, reason: "P3 provider outage", ticketRef: "INC-P3-2" }, operatorCtx as never);
@@ -1014,13 +876,6 @@ async function main() {
     } finally {
       PlatformSafetyService.deactivateKillSwitch(`KILL_SWITCH_PROVIDER_${providerName}`, "resolved after provider outage", operatorCtx as never, { ticketRef: "INC-P3-2" });
     }
-    const wf = uid("wf_p3_kill");
-    PlatformSafetyService.activateKillSwitch({ scope: "WORKFLOW", targetId: wf, reason: "P3 runaway workflow", ticketRef: "INC-P3-3" }, operatorCtx as never);
-    const result = await N8nProviderService.invokeWorkflow({
-      tenantId, automationId: uid("auto"), workflowId: wf, workflowVersionId: "v1", webhookPath: "x", event: {}, correlationId: uid("c"), idempotencyKey: uid("i"), executionMode: "PRODUCTION",
-    });
-    assert.strictEqual(result.success, false);
-    assert.strictEqual(result.execution.error_code, "KILL_SWITCH_HALTED");
   });
 
   await runTest("FX-34: plan limits count what exists (403 PLAN_LIMIT_REACHED)", async () => {
@@ -1293,6 +1148,11 @@ async function main() {
     assert.deepStrictEqual(old.courier_performances.map((x) => x.courier_provider), ["PATHAO"]);
     assert.strictEqual(old.business_objectives[0].progress_percent, 0);
     assert.strictEqual(old.business_objectives[1].progress_percent, 60, "an objective the user changed is left alone");
+  });
+
+  await runTest("n8n is removed: nothing under src/ mentions it", () => {
+    const hits = sourceFiles("src").filter((file) => /n8n/i.test(fs.readFileSync(file, "utf8")));
+    assert.deepStrictEqual(hits, []);
   });
 
   await runTest("grep gate: known fabrication patterns are gone from src/", () => {

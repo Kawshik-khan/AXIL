@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Scheduled jobs without n8n (FX-99 Part B): run every 10 minutes by the GitHub Actions
+ * Scheduled jobs (FX-99 Part B): run every 10 minutes by the GitHub Actions
  * workflow .github/workflows/scheduled-jobs.yml (free; a Render Cron Job running this script works the same).
  *
  * Calls POST /api/v1/jobs/<job>/run for every job. The server runs a job at most once per its own time bucket

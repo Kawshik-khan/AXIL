@@ -25,7 +25,6 @@ All platform administrative workflows are organized across 18 authoritative cont
 6. **Entitlements**: Quotas, limits, tenant-specific overrides.
 7. **Usage**: Real-time quota consumption telemetry.
 8. **Automations**: Cross-tenant automation health, throughput, error rates.
-9. **n8n**: Worker cluster topology, versions, rolling restarts.
 10. **Providers**: Gateway circuit breakers (couriers, MFS, AI providers).
 11. **System Health**: Database connection pools, Redis memory, queue depth.
 12. **Incidents**: Outage declarations, status updates, post-mortems.

@@ -9,7 +9,7 @@
 It transforms fragmented F-commerce (Facebook), Instagram, WhatsApp, and web retail operations into an automated, reliable, and intelligent enterprise-grade business engine.
 
 CommerceOS merges:
-$$\text{Social Channels} + \text{Commerce Backend} + \text{Agentic AI} + \text{RAG} + \text{n8n Workflows} + \text{Bento BI}$$
+$$\text{Social Channels} + \text{Commerce Backend} + \text{Agentic AI} + \text{RAG} + \text{Bento BI}$$
 into a single, cohesive human control plane.
 
 ---
@@ -36,7 +36,7 @@ into a single, cohesive human control plane.
 | **Fake Orders & Unconfirmed COD** | Automated COD confirmation workflows, fraud risk scoring, phone verification, and courier return history checks. |
 | **Inventory Desynchronization** | Real-time centralized inventory service with atomic reservation locks during checkout. |
 | **Payment Fraud via Fake Screenshots** | Strict verification pipeline: screenshots trigger automated or human OCR matching against authoritative bKash/Nagad merchant APIs. |
-| **Fragmented Manual Workflows** | Event-driven n8n workflow engine automating courier booking, customer notifications, low-stock alerts, and cart recovery. |
+| **Fragmented Manual Workflows** | Scheduled jobs inside CommerceOS: daily reports, low-stock proposals, courier polling, RTO follow-up and COD reconciliation. |
 | **Opaque Analytics** | Real-time Bento Grid dashboard tracking GMV, Cash in Transit, RTO rate, Net Profit, and AI automation rates. |
 
 ---
@@ -54,7 +54,7 @@ into a single, cohesive human control plane.
 - Safe tool execution via a Policy Engine with configurable Human-in-the-Loop thresholds.
 - Zero AI hallucinations on price, stock, order status, and financials.
 
-### Pillar 3: Workflow Automation (n8n Integration)
+### Pillar 3: Scheduled Jobs (in-app; n8n removed 2026-10-19)
 - Event-triggered webhooks for asynchronous operations.
 - Courier tracking pollers and multi-step delivery status synchronizers.
 - Abandoned cart nudges, review collection, and promotional campaigns.

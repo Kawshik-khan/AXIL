@@ -15,7 +15,6 @@ import type { AgentJob } from "@/types/ai";
 import { OutboundMessageService } from "@/domains/social/outbound/outbound-message.service";
 import { AgentPolicyService } from "@/domains/ai/policy/agent-policy.service";
 import { AgentHealthService } from "@/domains/platform/services/agent-health.service";
-import { dispatchOutboxOnce } from "@/domains/automation/outbox/dispatcher";
 import { dispatchCommentTriggersOnce } from "@/domains/social/comment-triggers/comment-trigger.service";
 import { capabilityContext, principalFor } from "./principal";
 import { runCustomerTool } from "./tools";
@@ -307,9 +306,6 @@ export function startCustomerAgentWorker(): void {
     runAgentJobsOnce()
       .then(async (s) => {
         if (s.claimed) logger.info("customer_agent.worker_pass", s);
-        // Domain-event outbox (FX-99 Part B): same worker, same never-overlap rule
-        const o = await dispatchOutboxOnce();
-        if (o.delivered || o.failed || o.dead) logger.info("outbox.dispatch_pass", o);
         // Comment-to-inbox replies: retries and anything the webhook's own kick missed
         const c = await dispatchCommentTriggersOnce();
         if (c.sent || c.failed || c.retrying) logger.info("comment_trigger.dispatch_pass", c);

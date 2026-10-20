@@ -7,8 +7,8 @@ Blueprint: [`render.yaml`](../render.yaml). Audit and plan: [`production-readine
 Two always-on Node web services (`next start`), region **oregon**, database on Neon (AWS us-east-2): `commerceos`
 (production) and `commerceos-staging` (FX-86: same settings, its own Neon branch, Qdrant collection, Upstash database and
 LLM/Gemini keys). The app holds the whole dataset in memory and syncs it from Postgres, so it is not a serverless workload
-and each instance needs RAM for the data. Background work (customer-agent jobs, the domain-event outbox, health alerts)
-runs inside the web process (`CUSTOMER_AGENT_WORKER`); scheduled jobs are triggered by n8n (`/api/v1/jobs/{job}/run`).
+and each instance needs RAM for the data. Background work (customer-agent jobs, comment-trigger replies, health alerts)
+runs inside the web process (`CUSTOMER_AGENT_WORKER`); scheduled jobs are triggered by the GitHub Actions schedule (`.github/workflows/scheduled-jobs.yml`, `/api/v1/jobs/{job}/run`).
 
 **Staging setup (FX-86):**
 - Render: deploy the Blueprint; fill `commerceos-staging`'s `sync: false` variables with **staging** values only (a Neon

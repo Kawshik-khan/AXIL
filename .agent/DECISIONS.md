@@ -119,6 +119,8 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 | [ADR-109](#adr-109-several-app-servers--units-of-work-over-a-shared-versioned-store)                                                         | Several app servers — units of work over a shared, versioned store                                                            |
 | [ADR-110](#adr-110-safe-outbound-http-live-connector-checks-signed-webhooks-and-n8n-phase-5-stage-1)                                         | Safe outbound HTTP, live connector checks, signed webhooks and n8n                                                            |
 | [ADR-111](#adr-111-durable-bounded-ai-workflow-execution)                                                                                    | Durable, bounded AI workflow execution                                                                                        |
+| [ADR-117](#adr-117-image-product-search--deterministic-matching-model-only-describes) | Image product search in customer chat (Proposed) |
+| [ADR-118](#adr-118-remove-n8n-and-the-automation-hub) | Remove n8n and the automation hub |
 
 > Earlier ADRs may describe target architecture. `.agent/STATUS.md` is the source of truth for current implementation and verification. Supersede an ADR with a new one rather than editing an approved decision.
 
@@ -1673,3 +1675,90 @@ The platform API had about 36 routes and 16 services, but `/super-admin` was one
 - Negative: a deployment with a single operator holding `approval.decide` can't run CRITICAL actions (no break-glass, plan D3). Scoped kill switches stay single-operator (HIGH) so containment isn't delayed; only the GLOBAL switch needs two operators.
 - Purge only schedules (archive + 14-day tombstone); no deletion job exists yet and the API says so.
 - New collections (`platform_approval_requests`, `platform_addons`, `tenant_addons`) are JSONB documents; no SQL migration.
+
+---
+
+## ADR-117: Image Product Search — Deterministic Matching, Model Only Describes
+
+**Date**: 2026-10-19 · **Status**: Proposed (awaiting owner decisions in the spec §8) · **Spec**: `.agent/specs/customer-agent/image-product-search.md`
+
+### 1. Context
+
+Customers on Messenger, Instagram, WhatsApp and Telegram often open with a photo or a screenshot ("ei product ta ache?").
+Today that message is lost or ignored: Telegram drops photo messages, WhatsApp stores a token-protected metadata URL,
+`MessageService.processInboundMessage` doesn't persist attachments, and the customer-agent runtime ends a turn with empty
+text as `NOTHING_TO_ANSWER`. `LLMMessage.content` is text only, `search_products` is keyword-only, and there is no
+object storage. Any fix must keep the invariants: LLMs never touch storage or decide price/stock (AGENTS.md §5.5),
+tenant scope from context only, outbound calls only via `outbound-http.ts` (ADR-110), turns run in the worker outside the
+store lock (ADR-112), honest fallbacks (ADR-106).
+
+### 2. Options Considered
+
+- **Option A — Give the agent the image directly** (multimodal chat model sees the photo and the catalog via tools, decides the match). Least code. But the match is an unverifiable model judgement, invites "yes we have it" hallucinations on look-alikes, sends every image to the chat model on every retry/turn, and lets text inside images steer the agent.
+- **Option B — Vision-to-text only** (vision model returns attributes/OCR; existing keyword `search_products` finds products). Cheap, no new index. Accuracy limited by catalog text quality; "black panjabi" matches every black panjabi.
+- **Option C — Deterministic match pipeline** (fetch → vision attributes + OCR → exact SKU lookup + image-embedding kNN over the tenant's catalog photos + attribute search → fused score → confidence band), result injected as untrusted data; the chat model only phrases the reply and must call `get_product`/`quote_order` for any amount.
+- **Option D — External visual-search SaaS.** Fast to start, but per-tenant catalog sync to a third party, cost, and data-residency questions; no existing connector.
+
+### 3. Decision
+
+Adopt **Option C**, delivered in phases so value ships before the index exists:
+
+1. **P1** capture images on all four channels, persist `attachments` rows with a provider reference (never a token), fetch through `outbound-http.ts` with per-provider host allow-lists, re-encode (strip EXIF), store in object storage; an image-only turn gets an acknowledgement and a human handoff. This alone ends silent drops.
+2. **P2** = Option B inside the pipeline (vision attributes + OCR + exact SKU lookup), shadow mode only.
+3. **P3** adds the product-image vector index (vector store with `tenant_id` payload filter, model-stamped like text embeddings, rebuilt by background jobs on catalog change — never by a GET), fused scoring and HIGH / MEDIUM / NONE bands. HIGH answers with the product and its catalog image; MEDIUM asks the customer to choose among ≤ 3; NONE says honestly it isn't available.
+4. **P4** image cases join the offline eval gate; precision at HIGH (target ≥ 95%) gates prompt/model/threshold changes.
+5. Everything sits behind a declared platform flag `customer_agent_image_search` (checked with `strictFlag`), the kill switch, the AI budget and a per-conversation rate limit. No vision model configured ⇒ P1 behaviour, never a guessed match.
+
+### 4. Consequences
+
+- **Positive**: matches are explainable (source + score) and reviewable in the shadow panel; price/stock remain tool-sourced; vision/embedding models are swappable behind the model router; P1 fixes a live bug independently.
+- **Negative / debt**: new infrastructure — object storage (none today) and an image index; one vision call per image plus catalog embedding cost; thresholds need calibration per model stamp; customer photos are new PII with retention and erasure duties (privacy notice update required).
+- **Not done by this ADR**: payment-screenshot verification (stays with the payment flow, handed to a human), video/voice, searching outside the tenant's catalog.
+- **Rollback**: flag off returns to P1 behaviour; the vector index is derived and can be dropped and rebuilt; stored media expire by retention.
+- **Security**: tenant scope from the persisted conversation in the worker; tokens used in memory only; image text treated as untrusted data under a strict schema; the `security-reviewer` agent and `smoke-security.mjs` run after the webhook/adapter changes.
+
+---
+
+## ADR-118: Remove n8n and the Automation Hub
+
+**Date**: 2026-10-19 · **Status**: Accepted (owner decision) · **Supersedes**: the n8n parts of ADR-110 and the Phase 6 automation hub
+
+### Context
+n8n was switched off on 2026-10-14: all workflows inactive, `SOCIAL_N8N_MODE=off`, scheduled jobs moved to the GitHub
+Actions schedule (`scripts/run-scheduled-jobs.mjs`). The automation hub (merchant Automations page, router, registry,
+templates, executions, dead letters, service tokens and the `/automation/actions/*` callbacks) had n8n as its only
+executor, so nothing it routed could run. The code stayed as dead weight and attack surface.
+
+### Decision
+Remove n8n and everything that only served it:
+- `n8n/` (workflows, compose file, deployment notes), `npm run n8n:*`, the n8n env vars in `.env.example` and `render.yaml`.
+- The social n8n bridge (`src/domains/social/n8n`), `/api/v1/social/ingest` and `/api/v1/social/dispatch`: social messages
+  are always received and sent by CommerceOS directly.
+- The automation hub: `/automations` page, `/api/v1/automation/*` (except the provider webhook ingress below),
+  `/api/v1/automations/*`, `/api/v1/platform/automations`, `/api/v1/platform/n8n`, the super-admin Automations module,
+  router, registry, n8n provider, templates, retry/dead-letter services, the outbox dispatcher.
+- Service tokens (`/api/v1/service-tokens`, the Settings tab, `cos_svc_` bearer auth): their only callers were n8n workflows.
+  A stored token is now refused (401).
+- Tenant permissions `automation.*`, `service_tokens.manage`, `notifications.send`; platform permissions `n8n.*`;
+  entitlements `automation.n8n`, `max_n8n_executions`, `max_automations`; the `automation.max_concurrency_global` setting.
+- New domain events no longer get an outbox row (nothing reads it).
+
+Kept:
+- The signed courier / payment webhook ingress `POST /api/v1/automation/webhooks/{provider}?wh=<id>` (FX-06, audit C4)
+  with its services (webhook gateway, idempotency, courier sync, circuit breaker).
+- The Store Knowledge Base, moved from an Automations tab to its own page `/knowledge` (`/agents` redirects there).
+- Scheduled jobs (`POST /api/v1/jobs/{job}/run`) and the platform job token.
+- Stored rows: the automation collections, `service_tokens`, `domain_events` and the Postgres tables stay untouched;
+  only `n8n_instances` is no longer loaded by the store. On Postgres its rows stay in `commerceos.documents` (the diff
+  only visits collections the store holds, so nothing deletes them); the JSON development store drops them (one seeded
+  demo row) the next time it saves. No migration.
+- Platform WORKFLOW / PROVIDER kill switches and `automation.*` platform permissions (they still gate AI and sending).
+
+### Consequences
+- **Positive**: less code and attack surface (no callback token, no service tokens, no outbound n8n calls); messages never
+  wait on a failed n8n call; docs no longer describe an engine that isn't running.
+- **Negative**: no workflow engine. Order/low-stock/shipment automations, cart recovery and automation notifications don't
+  exist until a replacement is chosen. Merchants can no longer list their courier webhook callback URLs in the UI (the
+  list was on the Automations page); only seeded webhook rows exist today.
+- **History**: older ADRs, the changelog, audit reports and STATUS rows still mention n8n as it was.
+- **Rollback**: `git revert` of the removal commit restores the code; the stored rows were never deleted.

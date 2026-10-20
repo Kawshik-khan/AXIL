@@ -63,7 +63,7 @@ Tenant automation permissions: `automation:view`, `automation:create`, `automati
 
 ### 3.2 Platform Scope RBAC Matrix (Separate Domain)
 
-| Platform Role | Tenants | Subscriptions | Plans & Entitlements | n8n & Infra | Platform Audit | Security & Kill-Switch | Impersonation |
+| Platform Role | Tenants | Subscriptions | Plans & Entitlements | Infra | Platform Audit | Security & Kill-Switch | Impersonation |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 | **SUPER_ADMIN** | Full Lifecycle | Full | Full | Full | Read All + Export | Full (Global) | Governed (Step-Up) |
 | **PLATFORM_ADMIN** | Manage / Provision | Manage | Manage | Manage | Read All | Limited | Governed (Step-Up) |
@@ -108,7 +108,7 @@ AI agents ingest untrusted natural language from external social media users. To
 
 ## 6. Secret Management & Audit Logging
 
-- **Zero-Secret Commit Policy**: No secret, token, key, or password may ever be committed to git. All credentials reside in environment variables or a secure key-vault. n8n workflow exports reference generic credentials and `$env` variables exclusively.
+- **Zero-Secret Commit Policy**: No secret, token, key, or password may ever be committed to git. All credentials reside in environment variables or a secure key-vault. Exports and fixtures reference generic credentials and `$env` variables exclusively.
 - **Audit Logging**: Every sensitive action (order cancellation, refund approval, role change, API key generation, automation rule modification, DLQ replay) generates an immutable row in `audit_logs` capturing `actor_id`, `action`, `resource_id`, `diff`, and timestamp.
 
 ---

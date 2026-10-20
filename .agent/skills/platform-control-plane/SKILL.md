@@ -26,7 +26,7 @@ description: Build or change CommerceOS super-admin / SaaS control-plane feature
 | Analytics | `platform-analytics.service.ts` | `rules/platform-data-access.md` (aggregates only, no PII) |
 | Platform users | `platform-user.service.ts` | `rules/platform-security.md` §3 |
 
-Automation fleet services (DLQ, circuit breakers, n8n provider, idempotency) live in `src/domains/automation/services/`.
+Provider webhook services (signature gateway, idempotency, circuit breakers, courier sync) live in `src/domains/automation/services/`; the automation hub and n8n were removed (ADR-118).
 
 ## 2. Route skeleton
 

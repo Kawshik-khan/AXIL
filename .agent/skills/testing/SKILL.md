@@ -18,7 +18,7 @@ Rules: `.agent/rules/testing.md`. Strategy (target): `.agent/TESTING.md`.
 | Catalog, orders, inventory, payments, shipping | `tests/commerce-tests.ts` |
 | Social inbox / webhooks | `tests/social-tests.ts` |
 | AI agents, policy, evals | `tests/ai-tests.ts`, `tests/agentic-rag-tests.ts`, `tests/jev-system-one-tests.ts` |
-| Automations / n8n / connectors | `tests/automation-hub-tests.ts`, `tests/connectors-tests.ts` |
+| Connectors | `tests/connectors-tests.ts` |
 | Super admin / platform | `tests/super-admin-tests.ts` |
 | Others | `growth`, `marketing`, `analytics`, `operations`, `enterprise`, `autonomous`, `intelligence`, `orchestration`, `bulk-import`, `google-sheets-connector` |
 

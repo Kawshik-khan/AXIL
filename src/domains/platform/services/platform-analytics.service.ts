@@ -58,19 +58,7 @@ export interface PlatformOverviewMetrics {
     /** null without agent runs */
     autonomous_resolution_rate: number | null;
   };
-  automation_health: {
-    total_automations: number;
-    active_automations: number;
-    total_executions: number;
-    failed_executions: number;
-    /** null without executions */
-    success_rate_percent: number | null;
-    failure_rate_percent: number;
-    dlq_items_count: number;
-  };
   infrastructure: {
-    n8n_instances_count: number;
-    healthy_n8n_instances: number;
     open_incidents_count: number;
     kill_switch_active: boolean;
   };
@@ -143,20 +131,7 @@ export class PlatformAnalyticsService {
     const autoResolutionRate =
       agentRuns.length > 0 ? Math.round((completedRuns / agentRuns.length) * 1000) / 10 : null;
 
-    // Automations telemetry
-    const automations = db.data.automations || [];
-    const activeAutomations = automations.filter((a) => a.status === "ACTIVE").length;
-    const executions = db.data.automation_executions || [];
-    const failedExecutions = executions.filter(
-      (e) => e.status === "FAILED" || e.status === "DEAD_LETTERED"
-    ).length;
-    const dlqItems = db.data.automation_dead_letters || [];
-    const failureRate = executions.length > 0 ? (failedExecutions / executions.length) * 100 : 0;
-    const successRate = executions.length > 0 ? Math.round((100 - failureRate) * 10) / 10 : null;
-
     // Infrastructure & incidents
-    const n8nInstances = db.data.n8n_instances || [];
-    const healthyN8n = n8nInstances.filter((n) => n.health_status === "HEALTHY").length;
     const incidents = db.getPlatformIncidents();
     const openIncidents = incidents.filter((i) => i.status !== "RESOLVED" && i.status !== "CLOSED").length;
     const killSwitches = db.getPlatformKillSwitches();
@@ -200,18 +175,7 @@ export class PlatformAnalyticsService {
         estimated_cost_bdt: estCostBdt,
         autonomous_resolution_rate: autoResolutionRate,
       },
-      automation_health: {
-        total_automations: automations.length,
-        active_automations: activeAutomations,
-        total_executions: executions.length,
-        failed_executions: failedExecutions,
-        success_rate_percent: successRate,
-        failure_rate_percent: Math.round(failureRate * 10) / 10,
-        dlq_items_count: dlqItems.length,
-      },
       infrastructure: {
-        n8n_instances_count: n8nInstances.length,
-        healthy_n8n_instances: healthyN8n,
         open_incidents_count: openIncidents,
         kill_switch_active: isKillSwitchActive,
       },

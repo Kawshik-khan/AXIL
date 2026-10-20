@@ -19,7 +19,7 @@ import { runLiveCheck } from "./live-checks";
 import { PROVIDER_MANIFESTS } from "./manifests";
 import { ChannelService } from "@/domains/social/channels/channel.service";
 import { telegramCall } from "@/domains/social/channels/adapters/telegram.adapter";
-import { appBaseUrl } from "@/domains/social/n8n/bridge";
+import { appBaseUrl } from "@/lib/app-url";
 import { enforceRateLimit, MINUTE } from "@/lib/rate-limit";
 import crypto from "crypto";
 

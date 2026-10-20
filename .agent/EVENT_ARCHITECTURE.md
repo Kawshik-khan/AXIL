@@ -4,7 +4,7 @@
 
 ## 1. Event Bus Model
 
-CommerceOS uses an asynchronous event-driven architecture powered by Redis Streams and Pub/Sub for decoupling domain events from downstream side-effects (notifications, courier syncs, analytics, and n8n workflows).
+CommerceOS uses an asynchronous event-driven architecture powered by Redis Streams and Pub/Sub for decoupling domain events from downstream side-effects (notifications, courier syncs, analytics and webhook subscriptions).
 
 ```
    DOMAINS               REDIS STREAMS                     CONSUMERS
@@ -12,7 +12,7 @@ CommerceOS uses an asynchronous event-driven architecture powered by Redis Strea
 │ Orders     │────┐    │               │──────────────►│ Notifications │
 └────────────┘    │    │               │               └───────────────┘
 ┌────────────┐    ├───►│  commerce.    │               ┌───────────────┐
-│ Inventory  │────┤    │  events       │──────────────►│ n8n Webhooks  │
+│ Inventory  │────┤    │  events       │──────────────►│ Webhook subs  │
 └────────────┘    │    │               │               └───────────────┘
 ┌────────────┐    │    │               │               ┌───────────────┐
 │ Payments   │────┘    └───────────────┘──────────────►│ Audit Logger  │
@@ -63,7 +63,7 @@ Every event emitted across the platform must conform to this schema:
 | **Shipments** | `shipment.created`<br>`shipment.in_transit`<br>`shipment.delivered`<br>`shipment.failed`<br>`shipment.returned` | Courier fulfillment lifecycle events |
 | **Campaigns** | `campaign.created`<br>`campaign.approved`<br>`campaign.completed` | Marketing broadcasts |
 | **AI Agents** | `agent.started`<br>`agent.completed`<br>`agent.failed`<br>`agent.escalated` | Autonomous agent execution telemetry |
-| **Workflows** | `workflow.started`<br>`workflow.completed`<br>`workflow.failed` | n8n automation run states |
+| **Workflows** | `workflow.started`<br>`workflow.completed`<br>`workflow.failed` | automation run states |
 
 ---
 

@@ -1,6 +1,6 @@
 /**
  * Phase 5, stage 1 (FIX_IMPLEMENTATION_PLAN FX-53, FX-54, FX-55; audit M17; ADR-110): the SSRF-guarded outbound
- * client, live connector checks, real signed enterprise webhooks with retries and dead-lettering, and signed n8n calls.
+ * client, live connector checks, and real signed enterprise webhooks with retries and dead-lettering.
  * Network tests use a local HTTP receiver on 127.0.0.1 (allow-listed); provider checks use a stubbed transport. No
  * request leaves this machine.
  * Run: node tests/ts-runner.cjs ./tests/phase5-integrations-tests.ts
@@ -14,7 +14,6 @@ import { db } from "@/infrastructure/db";
 import { AuthService } from "@/domains/auth/service";
 import { runLiveCheck } from "@/domains/connectors/live-checks";
 import { webhookPlatformService } from "@/domains/enterprise/services/webhook-platform.service";
-import { N8nProviderService } from "@/domains/automation/services/n8n-provider.service";
 import {
   OutboundBlockedError,
   OutboundCancelledError,
@@ -587,54 +586,6 @@ async function main() {
   setOutboundTransportForTesting(null);
   setOutboundLookupForTesting(null);
   process.env.OUTBOUND_ALLOWED_PRIVATE_HOSTS = `127.0.0.1:${local.port},127.0.0.1:${hooks.port}`;
-
-  // ---------------------------------------------------------------------------
-  out(`\n${ANSI_BOLD}[FX-55] n8n called for real, signed, with the SSRF guard on stored URLs${ANSI_RESET}`);
-  // ---------------------------------------------------------------------------
-  const invoke = () =>
-    N8nProviderService.invokeWorkflow({
-      tenantId, automationId: uid("auto"), workflowId: uid("wf"), workflowVersionId: "v1", webhookPath: "p5-flow",
-      event: { type: "p5" }, correlationId: uid("corr"), idempotencyKey: uid("idem"), executionMode: "PRODUCTION",
-    });
-
-  await runTest("the deployment's n8n (N8N_HOST) is called, and the call is signed", async () => {
-    const saved = { host: process.env.N8N_HOST, secret: process.env.COMMERCEOS_N8N_WEBHOOK_SECRET, allow: process.env.OUTBOUND_ALLOWED_PRIVATE_HOSTS };
-    process.env.N8N_HOST = `http://127.0.0.1:${hooks.port}`;
-    process.env.COMMERCEOS_N8N_WEBHOOK_SECRET = "n8n-shared-secret-for-tests-0123456789";
-    delete process.env.OUTBOUND_ALLOWED_PRIVATE_HOSTS; // platform configuration needs no allow-list
-    try {
-      const before = hooks.received.length;
-      const result = await invoke();
-      assert.strictEqual(result.success, true, `${result.execution.error_code}: ${result.execution.error_message_reference}`);
-      const got = hooks.received[before];
-      assert.strictEqual(got.path, "/webhook/p5-flow");
-      assert.ok(verifyOutboundSignature(process.env.COMMERCEOS_N8N_WEBHOOK_SECRET, got.body, String(got.headers["x-commerceos-timestamp"]), String(got.headers["x-commerceos-signature"])));
-    } finally {
-      for (const [k, v] of [["N8N_HOST", saved.host], ["COMMERCEOS_N8N_WEBHOOK_SECRET", saved.secret], ["OUTBOUND_ALLOWED_PRIVATE_HOSTS", saved.allow]] as const) {
-        if (v === undefined) delete process.env[k];
-        else process.env[k] = v;
-      }
-    }
-  });
-
-  await runTest("a stored n8n instance pointing at a private address is refused (M17) and nothing is sent", async () => {
-    const savedAllow = process.env.OUTBOUND_ALLOWED_PRIVATE_HOSTS;
-    delete process.env.OUTBOUND_ALLOWED_PRIVATE_HOSTS;
-    db.createN8nInstance({
-      id: uid("n8n"), tenant_id: tenantId, name: "Stored", base_url: `http://127.0.0.1:${hooks.port}`, environment: "PRODUCTION", status: "ACTIVE",
-      health_status: "UNKNOWN", credential_reference: "COMMERCEOS_N8N_API_KEY", workflow_namespace: "commerceos", created_at: nowIso(), updated_at: nowIso(),
-    });
-    try {
-      const before = hooks.received.length;
-      const result = await invoke();
-      assert.strictEqual(result.success, false);
-      assert.strictEqual(result.execution.error_message_reference, "the n8n address is not allowed");
-      assert.strictEqual(hooks.received.length, before);
-    } finally {
-      if (savedAllow === undefined) delete process.env.OUTBOUND_ALLOWED_PRIVATE_HOSTS;
-      else process.env.OUTBOUND_ALLOWED_PRIVATE_HOSTS = savedAllow;
-    }
-  });
 
   await hooks.close();
   await local.close();

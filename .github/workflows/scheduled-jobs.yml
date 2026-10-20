@@ -1,6 +1,6 @@
 name: Scheduled jobs
 
-# Free replacement for a paid Render Cron Job (FX-99 Part B, without n8n): calls POST /api/v1/jobs/<job>/run for every
+# Free replacement for a paid Render Cron Job (FX-99 Part B): calls POST /api/v1/jobs/<job>/run for every
 # job (scripts/run-scheduled-jobs.mjs). The app runs each job at most once per its own period (daily report and low
 # stock at the shop's local hour, courier poll every 30 min, ...), so calling all of them every 10 minutes is safe.
 # GitHub may start a scheduled run a few minutes late; nothing here depends on the exact minute.

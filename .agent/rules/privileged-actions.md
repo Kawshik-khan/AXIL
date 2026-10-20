@@ -11,7 +11,7 @@ Every administrative and platform action is categorized into one of four immutab
 
 | Risk Tier | Definition | Examples | Step-Up Required? | Approval Required? | Audit Requirements |
 | :--- | :--- | :--- | :---: | :---: | :--- |
-| **`LOW`** | Read-only operations, operational views, non-sensitive telemetry. | View platform dashboard, inspect n8n health, view plan list, check worker node status. | No | No | Standard structured log. |
+| **`LOW`** | Read-only operations, operational views, non-sensitive telemetry. | View platform dashboard, view plan list, check worker node status. | No | No | Standard structured log. |
 | **`MEDIUM`** | Routine operational mutations with reversible impacts on single entities. | Change tenant plan tier, update non-sensitive platform setting, adjust tenant entitlement quota. | No (within active session) | No | Mutation audit log with before/after state diff. |
 | **`HIGH`** | Operations affecting tenant availability, automation execution, or security sessions. | Suspend tenant workspace, initiate support impersonation, pause automation dispatching, trigger manual DLQ replay. | **Yes** (MFA / WebAuthn token within 5 min) | Optional (Required if tenant active $> 30$ days) | Full privileged audit log with justification reason and IP attribution. |
 | **`CRITICAL`** | Irreversible mutations, global kill switches, security policy changes, credential adjustments. | Purge/delete tenant data, activate global automation kill switch, modify platform auth keys, rotate root provider credentials. | **Yes** (Mandatory WebAuthn / Passkey) | **Yes** (Dual-custodian two-person rule) | Cryptographically signed immutable audit record, real-time security alert to ops team. |

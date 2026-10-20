@@ -111,34 +111,6 @@ Stack traces are never exposed to clients.
 - `POST /api/v1/knowledge/upload`: Upload policy PDF or markdown guide for ingestion and embedding.
 - `POST /api/v1/knowledge/query`: Semantic test query with similarity scores and citations.
 
-### Automations Hub & n8n Integration (`/api/v1/automation/*`, `/api/v1/automations/*`)
-- `GET /api/v1/automations`: List tenant automations with category, status, trigger, and search filters.
-- `POST /api/v1/automations`: Create new automation rule.
-- `GET /api/v1/automations/:id`: Retrieve automation rule specification and recent executions.
-- `PATCH /api/v1/automations/:id`: Update automation parameters, triggers, conditions, or actions.
-- `DELETE /api/v1/automations/:id`: Soft-delete automation rule.
-- `POST /api/v1/automations/:id/:action`: Dispatch automation actions (`execute`, `dry-run`, `toggle`, `duplicate`).
-- `GET /api/v1/automation/workflows`: List multi-step workflow graphs and semantic versions.
-- `POST /api/v1/automation/workflows`: Create multi-step workflow graph.
-- `GET /api/v1/automation/templates`: List 39 standard pre-built workflow templates across 8 domains.
-- `POST /api/v1/automation/templates/:id/install`: Install template into tenant environment with custom params.
-- `GET /api/v1/automation/executions`: Paginated execution history with status, trigger, duration, and dry-run filters.
-- `GET /api/v1/automation/failures`: Real-time operational failure feed with error codes.
-- `GET /api/v1/automation/dead-letters`: Dead letter queue (DLQ) entries with root cause categorization.
-- `POST /api/v1/automation/dead-letters/:id/:action`: DLQ operations (`replay`, `resolve`, `discard`).
-- `GET /api/v1/automation/providers`: Provider registry status and circuit breaker states (`NORMAL`, `DEGRADED`, `OPEN`, `HALF_OPEN`).
-- `GET /api/v1/automation/health`: Platform automation health, queue depth, DLQ count, and breaker summary.
-- `POST /api/v1/automation/events`: Ingest domain event into automation router for rule evaluation.
-- `POST /api/v1/automation/webhooks/:provider`: Public inbound webhook gateway with HMAC verification, replay defense, and status translation.
-
-### Authoritative Automation Actions (`/api/v1/automation/actions/*`)
-- `POST /api/v1/automation/actions/orders/:id/:action`: Atomic order transitions (`confirm`, `cancel`, `status`, `tag`) strictly enforcing state machine and idempotency.
-- `POST /api/v1/automation/actions/inventory/adjust`: Authoritative inventory stock adjustment with movement audit logs.
-- `POST /api/v1/automation/actions/shipments/:id/create`: Courier parcel booking dispatch.
-- `POST /api/v1/automation/actions/notifications/send`: Multi-channel notification delivery (SMS, WhatsApp, Email, In-App).
-
----
-
 ## 3. Platform Control Plane API Contracts (`/api/v1/platform/*`)
 
 Platform routes are segregated from merchant tenant routes. All platform endpoints require authenticated `PlatformSessionToken` with appropriate `platformRole` and granular permissions.
@@ -153,7 +125,7 @@ Platform routes are segregated from merchant tenant routes. All platform endpoin
 
 #### Platform Overview & Health
 - `GET /api/v1/platform/overview`: High-level aggregated SaaS metrics (total tenants, active MRR, system health, active incidents).
-- `GET /api/v1/platform/health`: Multi-cluster health status (Database pool, Redis cluster, n8n instances, provider circuit breakers).
+- `GET /api/v1/platform/health`: Multi-cluster health status (Database pool, Redis cluster, provider circuit breakers).
 
 #### Tenant Governance (`/api/v1/platform/tenants`)
 - `GET /api/v1/platform/tenants`: Paginated list of tenants with status, plan, creation date, and search filter.
@@ -171,15 +143,6 @@ Platform routes are segregated from merchant tenant routes. All platform endpoin
 - `GET /api/v1/platform/entitlements`: Catalog of feature entitlements and default quotas.
 - `PUT /api/v1/platform/tenants/:id/entitlements/:key`: Apply custom entitlement override for a tenant.
 - `GET /api/v1/platform/usage`: Aggregated and per-tenant usage records against quota ceilings.
-
-#### Platform Automation & n8n Cluster Administration
-- `GET /api/v1/platform/automations`: Cross-tenant automation metrics, failure rates, and throughput.
-- `GET /api/v1/platform/n8n`: Status of connected n8n worker nodes, versions, queue depth, and health.
-- `POST /api/v1/platform/n8n/restart`: Governed rolling restart of n8n worker instances.
-- `GET /api/v1/platform/providers`: Global status of third-party integration gateways and circuit breaker states.
-- `POST /api/v1/platform/providers/:id/reset-breaker`: Reset tripped circuit breaker after provider recovery.
-- `GET /api/v1/platform/dlq`: Global view of unresolved dead letter executions across tenants.
-- `POST /api/v1/platform/dlq/:id/retry`: Trigger platform-level retry of dead-letter event.
 
 #### Support Impersonation (`/api/v1/platform/impersonate`)
 - `POST /api/v1/platform/impersonate`: Initiate time-limited impersonation session (`READ_ONLY` by default; requires ticket ID, reason, and step-up auth).

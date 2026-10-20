@@ -48,13 +48,6 @@ export const CONSOLE_MODULES: ConsoleModule[] = [
     description: "Agent health, budgets, HITL queue and traces",
   },
   {
-    label: "Automations",
-    href: `${CONSOLE_ROOT}/automations`,
-    icon: <Workflow size={20} strokeWidth={2} />,
-    match: "prefix",
-    description: "n8n, workflows, dead letters and provider rails",
-  },
-  {
     label: "Safety & Releases",
     href: `${CONSOLE_ROOT}/safety`,
     icon: <Siren size={20} strokeWidth={2} />,

@@ -1,8 +1,8 @@
 /**
  * Early-access prices, per workspace and per month, in BDT. These mirror the plan versions seeded by the store
  * (`src/infrastructure/db/index.ts`, "Canonical SaaS Plans") and the only limit that differs between them and is
- * enforced today: staff users (`src/domains/platform/entitlement-catalog.ts`). Orders per month, automations,
- * n8n and priority support are not enforced yet, so they are deliberately not listed on the landing page.
+ * enforced today: staff users (`src/domains/platform/entitlement-catalog.ts`). Orders per month and priority
+ * support are not enforced yet, so they are deliberately not listed on the landing page.
  * tests/landing-routing-tests.ts fails when these drift from the seed. Keep the "may change" wording until billing is live.
  */
 export interface LandingPlan {

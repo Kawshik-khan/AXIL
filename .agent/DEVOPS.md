@@ -1,6 +1,6 @@
 # CommerceOS DevOps & Deployment Guide
 
-> **Status:** TARGET. No Dockerfile, Kubernetes, or CI exists; only `n8n/docker-compose.yml`. Env vars: see the real `.env.example` (Neon, Pinecone, Upstash).
+> **Status:** TARGET. No Dockerfile or Kubernetes exists. Env vars: see the real `.env.example` (Neon, Pinecone, Upstash).
 
 > **Current constraint — exactly one replica (FIX_IMPLEMENTATION_PLAN FX-24, decision D3).** Until the Postgres cutover (FX-45), data lives in one JSON file, `.data/commerceos.json`, owned by one process:
 > - At start the app takes `.data/commerceos.lock`. A second process (another `next dev`, a seed script, a second replica on this or another host) refuses to start with "CommerceOS refused to start". Every flush re-checks the lock and stops writing if it no longer names this process. `COMMERCEOS_FORCE_LOCK=1` takes over a lock left by a host that is certainly gone.
@@ -22,8 +22,8 @@ CommerceOS deploys as containerized micro-services managed via Docker Compose (l
 │  Port 3000                 │                               │
 │        │                   │                               │
 │        ▼                   ▼                               │
-│  [ redis:7 ] ◄────► [ n8n:latest ]                         │
-│  Port 6379          Port 5678                              │
+│  [ redis:7 ]                                               │
+│  Port 6379                                                 │
 │                                                            │
 └────────────────────────────────────────────────────────────┘
 ```
@@ -85,48 +85,4 @@ PLATFORM_AUDIT_RETENTION_DAYS=730
    - Stage 2: Minimal Alpine runtime with unprivileged user execution.
 4. **Database Migrations**: Executed via dedicated migration runner container before traffic cutover.
 5. **Zero-Downtime Rolling Update**: Traffic shifts to new container replicas only after passing `/health/ready`.
-
----
-
-## 4. Production n8n Orchestration Cluster & Deployment
-
-### 4.1 Pinned Engine Version & Topology
-- **Tested & Certified Version**: `n8n 1.76.0+` (Standard schema v1).
-- **Service Port**: `5678`
-- **Docker Compose Definition**:
-```yaml
-  n8n:
-    image: docker.n8n.io/n8nio/n8n:1.76.0
-    restart: always
-    environment:
-      - N8N_HOST=n8n.internal.commerceos.io
-      - N8N_PORT=5678
-      - N8N_PROTOCOL=https
-      - NODE_ENV=production
-      - WEBHOOK_URL=https://n8n.internal.commerceos.io/
-      - GENERIC_TIMEZONE=Asia/Dhaka
-      - COMMERCEOS_API_BASE_URL=http://app:3000
-    volumes:
-      - n8n_data:/home/node/.n8n
-      - ./n8n/workflows:/n8n/workflows:ro
-```
-
-### 4.2 Credential Setup in n8n UI
-Workflows strictly reference the generic HTTP Header credential named `"CommerceOS API"`:
-1. Go to **Credentials** $\rightarrow$ **Add Credential** $\rightarrow$ **Header Auth**.
-2. **Credential Name**: `CommerceOS API`
-3. **Header Name**: `x-api-key`
-4. **Header Value**: `<tenant_api_key>` (generated in CommerceOS Settings).
-
-### 4.3 Automated Workflow Import
-Workflows are delivered as real, validated JSON files in `/n8n/workflows/`:
-```bash
-# Bulk import all CommerceOS production workflows
-docker exec -u node n8n n8n import:workflow --input=/n8n/workflows/commerceos-order-created-notification.json
-docker exec -u node n8n n8n import:workflow --input=/n8n/workflows/commerceos-courier-status-sync.json
-docker exec -u node n8n n8n import:workflow --input=/n8n/workflows/commerceos-payment-verification.json
-docker exec -u node n8n n8n import:workflow --input=/n8n/workflows/commerceos-inventory-low-stock-alert.json
-docker exec -u node n8n n8n import:workflow --input=/n8n/workflows/commerceos-abandoned-checkout-recovery.json
-```
-See `/n8n/deployment/import.md` for full production setup and validation steps.
 

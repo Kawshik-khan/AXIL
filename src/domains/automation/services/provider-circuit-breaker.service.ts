@@ -1,7 +1,7 @@
 /**
  * CommerceOS Phase 6: Provider Circuit Breaker Service
  * Prevents cascade failures and retry storms by managing circuit states
- * (NORMAL -> DEGRADED -> OPEN -> HALF_OPEN -> NORMAL) for external providers and n8n instances.
+ * (NORMAL -> DEGRADED -> OPEN -> HALF_OPEN -> NORMAL) for external providers.
  */
 
 import { CircuitBreakerState } from "@/types/automation";

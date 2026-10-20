@@ -31,8 +31,6 @@ import { PIIRedactionService } from "@/domains/ai/context/pii-redaction.service"
 import { RetentionService } from "@/domains/privacy/retention.service";
 import { CustomerErasureService } from "@/domains/privacy/customer-erasure.service";
 import { RbacService } from "@/domains/rbac/service";
-import { AutomationRouterService } from "@/domains/automation/services/automation-router.service";
-import { dispatchOutboxOnce, MAX_DISPATCH_ATTEMPTS } from "@/domains/automation/outbox/dispatcher";
 import { JOBS, JobsService, bucketOf, localHour } from "@/domains/jobs/jobs.service";
 import { signSessionToken, signStepUpToken, WORKSPACE_STEP_UP_PREFIX } from "@/lib/security";
 import { PERMISSIONS } from "@/lib/permissions";
@@ -429,63 +427,10 @@ async function main() {
 
   // ================================================================ FX-99 Part B
   console.log(`\n${BOLD}FX-99 Part B outbox and jobs${RESET}`);
-  let placedOrderId = "";
-  await runTest("placing an order writes its outbox row together with the event", async () => {
+  await runTest("placing an order records its event and no outbox row (nothing consumes the outbox since the automation hub was removed)", async () => {
     const o = await OrderService.createOrder(owner, { customer: { first_name: "Karim", last_name: "Ahmed", phone: "01822000002" }, delivery_address: { district: "Sylhet", address_line_1: "Flat 3B" }, items: [{ variant_id: variantId, quantity: 1 }], payment_method: "COD" } as never);
-    placedOrderId = o.id;
-    const rows = db.getAllDomainEvents().filter((e) => e.aggregate_id === o.id);
-    assert.strictEqual(rows.length, 1);
-    assert.strictEqual(rows[0].type, "order.placed");
-    assert.strictEqual(rows[0].source_type, "order.created");
-    assert.ok(db.data.events.some((e) => e.id === rows[0].id), "same id as the recorded event");
-    assert.ok(!JSON.stringify(rows[0].payload).includes("01822000002"), "no raw phone in the outbox");
-  });
-
-  await runTest("the dispatcher delivers each event once, in order per order", async () => {
-    // A second event for the same order, then deliver
-    db.recordEvent({ id: `evt_deliv_${stamp}`, type: "order.delivered", version: "1.0", tenant_id: tenantId, aggregate_type: "order", aggregate_id: placedOrderId, timestamp: new Date(Date.now() + 1000).toISOString(), payload: {} });
-    const seen: string[] = [];
-    const original = AutomationRouterService.routeEvent;
-    AutomationRouterService.routeEvent = async (event) => {
-      seen.push(`${event.aggregate_id}:${event.type}`);
-      return [];
-    };
-    try {
-      const first = await dispatchOutboxOnce();
-      assert.ok(first.delivered >= 1);
-      assert.ok(!seen.includes(`${placedOrderId}:order.delivered`), "the later event waits for the earlier one");
-      await dispatchOutboxOnce();
-      await dispatchOutboxOnce();
-    } finally {
-      AutomationRouterService.routeEvent = original;
-    }
-    const mine = seen.filter((s) => s.startsWith(placedOrderId));
-    assert.deepStrictEqual(mine, [`${placedOrderId}:order.placed`, `${placedOrderId}:order.delivered`]);
-    assert.ok(db.getAllDomainEvents().filter((e) => e.aggregate_id === placedOrderId).every((e) => e.status === "DISPATCHED"));
-  });
-
-  await runTest("a failing delivery is retried with backoff, then dead after 5 attempts; a kill-switch cancel isn't retried", async () => {
-    db.recordEvent({ id: `evt_fail_${stamp}`, type: "shipment.updated", version: "1.0", tenant_id: tenantId, aggregate_type: "shipment", aggregate_id: `shp_${stamp}`, timestamp: new Date().toISOString(), payload: {} });
-    db.recordEvent({ id: `evt_cancel_${stamp}`, type: "shipment.updated", version: "1.0", tenant_id: tenantId, aggregate_type: "shipment", aggregate_id: `shp_c_${stamp}`, timestamp: new Date().toISOString(), payload: {} });
-    const original = AutomationRouterService.routeEvent;
-    AutomationRouterService.routeEvent = async (event) =>
-      event.id === `evt_cancel_${stamp}` ? [{ automationId: "a", workflowId: "w", executionId: "x", status: "CANCELLED", success: false }] : [{ automationId: "a", workflowId: "w", executionId: "x", status: "FAILED", success: false }];
-    try {
-      let t = Date.now();
-      for (let i = 0; i < MAX_DISPATCH_ATTEMPTS; i++) {
-        await dispatchOutboxOnce(20, t);
-        const row = db.findDomainEvent(tenantId, `evt_fail_${stamp}`)!;
-        if (i < MAX_DISPATCH_ATTEMPTS - 1) assert.ok(row.status === "PENDING" && row.next_attempt_at > new Date(t).toISOString());
-        t = Date.parse(row.next_attempt_at) + 1;
-      }
-    } finally {
-      AutomationRouterService.routeEvent = original;
-    }
-    assert.strictEqual(db.findDomainEvent(tenantId, `evt_fail_${stamp}`)!.status, "DEAD");
-    assert.strictEqual(db.findDomainEvent(tenantId, `evt_cancel_${stamp}`)!.status, "DISPATCHED");
-    // A dead row holds back later events of the same shipment
-    db.recordEvent({ id: `evt_after_dead_${stamp}`, type: "shipment.updated", version: "1.0", tenant_id: tenantId, aggregate_type: "shipment", aggregate_id: `shp_${stamp}`, timestamp: new Date(Date.now() + 5000).toISOString(), payload: {} });
-    assert.ok(!db.getDueDomainEvents(new Date(Date.now() + DAY).toISOString(), new Date(0).toISOString(), 100).some((e) => e.id === `evt_after_dead_${stamp}`));
+    assert.ok(db.data.events.some((e) => e.aggregate_id === o.id && e.type === "order.created"));
+    assert.strictEqual(db.data.domain_events.filter((e) => e.aggregate_id === o.id).length, 0);
   });
 
   await runTest("stock falling to its reorder point records one low-stock event", async () => {
@@ -493,10 +438,11 @@ async function main() {
     item.reorder_point = 5;
     // Restock well above the reorder point first (earlier tests' orders used some up)
     db.adjustStock(tenantId, { warehouse_id: item.warehouse_id, product_variant_id: variantId, quantity_delta: 20, type: "ADJUSTMENT" as never, reason: "restock", actor_user_id: reg.user.id });
-    const before = db.getAllDomainEvents().filter((e) => e.type === "inventory.low_stock").length;
+    const lowStock = () => db.data.events.filter((e) => e.tenant_id === tenantId && e.type === "inventory.low_stock").length;
+    const before = lowStock();
     db.adjustStock(tenantId, { warehouse_id: item.warehouse_id, product_variant_id: variantId, quantity_delta: -(item.quantity_available - 5), type: "ADJUSTMENT" as never, reason: "count", actor_user_id: reg.user.id });
     db.adjustStock(tenantId, { warehouse_id: item.warehouse_id, product_variant_id: variantId, quantity_delta: -1, type: "ADJUSTMENT" as never, reason: "count", actor_user_id: reg.user.id });
-    assert.strictEqual(db.getAllDomainEvents().filter((e) => e.type === "inventory.low_stock").length, before + 1);
+    assert.strictEqual(lowStock(), before + 1);
   });
 
   await runTest("job endpoint: off without a configured token, 401 for a wrong one, needs an Idempotency-Key", async () => {
@@ -514,7 +460,7 @@ async function main() {
       const ok = await call(token, "monitoring:1");
       assert.strictEqual(ok.status, 200, await ok.clone().text());
       const body = (await ok.json()) as R;
-      assert.ok(body.data.outbox && typeof body.data.outbox.dead === "number");
+      assert.ok(typeof body.data.healthy === "boolean" && !("outbox" in body.data));
       const session = await signSessionToken({ userId: reg.user.id, tenantId, role: "OWNER", email: reg.user.email, name: reg.user.name, sv: 1 });
       assert.strictEqual((await call(session, "monitoring:1")).status, 401, "a workspace session is not a job token");
       assert.strictEqual((await call("short", "monitoring:1")).status, 401);
@@ -523,7 +469,7 @@ async function main() {
     }
   });
 
-  await runTest("the scheduled-jobs script (no n8n) lists every job and calls each with the job token and an Idempotency-Key", async () => {
+  await runTest("the scheduled-jobs script lists every job and calls each with the job token and an Idempotency-Key", async () => {
     // Run for free by GitHub Actions: on a schedule, read-only, the token only from a secret
     const wf = fs.readFileSync(path.resolve(__dirname, "../.github/workflows/scheduled-jobs.yml"), "utf8");
     assert.match(wf, /schedule:\n\s+- cron: "\*\/10 \* \* \* \*"/);

@@ -1,9 +1,10 @@
 /**
- * Scheduled jobs (FX-99 Part B): n8n holds the clock, CommerceOS holds the decisions and the tenant list.
+ * Scheduled jobs (FX-99 Part B): the scheduler holds the clock, CommerceOS holds the decisions and the tenant list.
  *
- * n8n calls `POST /api/v1/jobs/{job}/run` on a schedule with the platform job token. Each job decides which workspaces
- * are due (active, not paused by a kill switch, opted in through their settings, in their own timezone) and returns
- * what to do: lists for n8n to deliver or check. n8n never chooses workspaces or recipients.
+ * The scheduler (scripts/run-scheduled-jobs.mjs, run by GitHub Actions) calls `POST /api/v1/jobs/{job}/run` with the
+ * platform job token. Each job decides which workspaces are due (active, not paused by a kill switch, opted in through
+ * their settings, in their own timezone) and returns what it did or found. The scheduler never chooses workspaces or
+ * recipients.
  *
  * Each job runs once per time bucket: a repeated call in the same bucket gets the stored result back (`replayed`).
  * Money and stock release never depend on these jobs (payment timers stay in the app worker).
@@ -45,7 +46,7 @@ export function dueTenants(): TenantRecord[] {
 }
 
 export const JOBS: Record<string, JobDefinition> = {
-  /** Shipments in the courier's hands with no update for 6 hours: n8n asks the courier and posts the status back. */
+  /** Shipments in the courier's hands with no update for 6 hours, listed for a status check. */
   "courier-poll": {
     cadenceMs: 30 * MINUTE,
     async run(now) {
@@ -178,18 +179,12 @@ export const JOBS: Record<string, JobDefinition> = {
   monitoring: {
     cadenceMs: 5 * MINUTE,
     async run(now) {
-      const outbox = db.getAllDomainEvents();
-      const pending = outbox.filter((e) => e.status === "PENDING" || e.status === "DISPATCHING");
-      const oldestPending = pending.reduce<string | null>((m, e) => (!m || e.occurred_at < m ? e.occurred_at : m), null);
-      const deadLetters = db.getTenants().reduce((n, t) => n + db.getAutomationDeadLetters(t.id).filter((d) => d.status !== "RESOLVED").length, 0);
       const alerts = AgentHealthService.evaluateAlerts(now);
       await CspReportService.load(now); // zero-hydration: the week's CSP counters
       return {
-        outbox: { pending: pending.length, dead: outbox.filter((e) => e.status === "DEAD").length, oldest_pending_minutes: oldestPending ? Math.round((now - Date.parse(oldestPending)) / MINUTE) : null },
-        automation_dead_letters_open: deadLetters,
         agent_alerts: alerts.map((a) => ({ title: a.title, severity: a.severity, detail: a.detail })),
         csp: CspReportService.summary(now),
-        healthy: alerts.length === 0 && outbox.every((e) => e.status !== "DEAD"),
+        healthy: alerts.length === 0,
       };
     },
   },
@@ -224,7 +219,7 @@ export function bucketOf(job: string, now: number): string {
 export class JobsService {
   /**
    * Runs a job for the current bucket once. A second call in the same bucket returns the stored result; a run still
-   * going (another n8n retry) gets 409. Writes happen in the job's own units; the run record in short ones.
+   * going (a scheduler retry) gets 409. Writes happen in the job's own units; the run record in short ones.
    */
   public static async run(job: string, idempotencyKey: string, now = Date.now()): Promise<Record<string, unknown>> {
     const def = Object.prototype.hasOwnProperty.call(JOBS, job) ? JOBS[job] : undefined;
