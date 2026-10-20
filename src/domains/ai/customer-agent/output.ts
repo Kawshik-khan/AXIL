@@ -224,6 +224,39 @@ export function formatQuote(r: QuoteResult, script: Script, details: QuoteCustom
   return [greeting, "", ...lines, total, "", next].join("\n");
 }
 
+/** The reply to a placed order: the order number and the total from place_order. */
+export function formatPlaced(r: { order_number: string; grand_total_bdt?: unknown; grand_total?: unknown }, script: Script): string {
+  const grandTotal = r.grand_total_bdt ?? r.grand_total;
+  const totalPart = typeof grandTotal === "number" ? ` ${taka(grandTotal)}` : "";
+  if (script === "bangla") {
+    return `ধন্যবাদ! আপনার অর্ডারটি গ্রহণ করা হয়েছে। অর্ডার নম্বর: ${r.order_number}${totalPart ? `। সর্বমোট${totalPart} (ক্যাশ অন ডেলিভারি)` : ""}। আমাদের টিম শীঘ্রই এটি প্রসেস করবে।`;
+  }
+  return `Dhonnobad! Apnar order ti place kora hoyeche. Order number: ${r.order_number}${totalPart ? `. Grand total${totalPart} (Cash on delivery)` : ""}. Amader team shiggiri order ti process korbe.`;
+}
+
+const SHARED_SECRET = /\b(?:pin|otp|password|passcode|cvv)\b|পিন|ওটিপি|পাসওয়ার্ড/i;
+
+/**
+ * The reply after a successful handoff: the chat is with the team now, so it says only that, in the customer's script.
+ * It never says what the team will decide (no refund, cancellation or payment confirmed), and a customer who sent a
+ * PIN, OTP or password is told not to share it.
+ */
+export function formatHandoffReply(reason: string, script: Script, customerText: string): string {
+  const bn = script === "bangla";
+  const secret = SHARED_SECRET.test(customerText)
+    ? bn ? "আপনার পিন, ওটিপি বা পাসওয়ার্ড কারও সাথে শেয়ার করবেন না। " : "Apnar PIN, OTP ba password karo sathe share korben na. "
+    : "";
+  const body =
+    reason === "payment_problem"
+      ? bn
+        ? "আপনার পেমেন্টের বিষয়টি আমাদের টিমের কাছে পাঠিয়েছি। টিম যাচাই করে এই চ্যাটেই আপনাকে উত্তর দেবে।"
+        : "Apnar payment er bishoy ta amader team er kache pathiye diyechi. Team check kore ei chat e apnake reply dibe."
+      : bn
+        ? "আপনার বিষয়টি আমাদের টিমের কাছে পাঠিয়েছি। টিমের একজন এই চ্যাটেই আপনাকে উত্তর দেবেন।"
+        : "Apnar bishoy ta amader team er kache pathiye diyechi. Team er ekjon ei chat e apnake reply dibe.";
+  return secret + body;
+}
+
 /** The quote this turn ends on: the last quote_order result, unless the order moved on (confirmation or placed) after it. */
 export function quoteToShow(toolResults: unknown[]): QuoteResult | null {
   for (let i = toolResults.length - 1; i >= 0; i--) {
@@ -247,14 +280,7 @@ export function synthesizeGroundedResponse(toolResults: unknown[], script: Scrip
     if (!r || typeof r !== "object") continue;
 
     // Order successfully placed
-    if (r.status === "PLACED" && r.order_number) {
-      const grandTotal = r.grand_total_bdt ?? r.grand_total;
-      const totalPart = typeof grandTotal === "number" ? ` ৳${grandTotal.toLocaleString("en-US")}` : "";
-      if (script === "bangla") {
-        return `ধন্যবাদ! আপনার অর্ডারটি গ্রহণ করা হয়েছে। অর্ডার নম্বর: ${r.order_number}${totalPart ? `। সর্বমোট${totalPart} (ক্যাশ অন ডেলিভারি)` : ""}। আমাদের টিম শীঘ্রই এটি প্রসেস করবে।`;
-      }
-      return `Dhonnobad! Apnar order ti place kora hoyeche. Order number: ${r.order_number}${totalPart ? `. Grand total${totalPart} (Cash on delivery)` : ""}. Amader team shiggiri order ti process korbe.`;
-    }
+    if (r.status === "PLACED" && r.order_number) return formatPlaced(r as { order_number: string }, script);
 
     // Order confirmation required
     if (r.status === "CONFIRMATION_REQUIRED" && r.summary) {

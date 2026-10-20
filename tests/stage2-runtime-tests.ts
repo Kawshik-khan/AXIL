@@ -20,7 +20,7 @@ import { modelRouter } from "@/domains/ai/providers/model-router";
 import { LLM_BUSY, retryAfterMs, Semaphore } from "@/domains/ai/providers/resilience";
 import { principalFor, type CustomerAgentPrincipal } from "@/domains/ai/customer-agent/principal";
 import {
-  allowedAmounts, capLength, guardOrderClaim, guardPaymentClaim, guardPhoneNumbers, notAMessage, replyScript, sanitizeOutbound,
+  allowedAmounts, capLength, formatHandoffReply, guardOrderClaim, guardPaymentClaim, guardPhoneNumbers, notAMessage, replyScript, sanitizeOutbound,
   stripAmounts, unsupportedAmounts,
 } from "@/domains/ai/customer-agent/output";
 import { conversationSlots, runCustomerTurn } from "@/domains/ai/customer-agent/runtime";
@@ -75,11 +75,13 @@ class ScriptedProvider implements LLMProvider {
   public readonly providerName = "scripted";
   public steps: Step[] = [];
   public calls: LLMMessage[][] = [];
+  public toolNames: string[][] = [];
   public lockHeldDuringCall = false;
   public failWith: Error | null = null;
-  async chat(messages: LLMMessage[], _tools?: LLMToolDefinition[]): Promise<LLMResponse> {
+  async chat(messages: LLMMessage[], tools?: LLMToolDefinition[]): Promise<LLMResponse> {
     if (db.isInUnit()) this.lockHeldDuringCall = true;
     this.calls.push(messages.map((m) => ({ ...m })));
+    this.toolNames.push((tools ?? []).map((t) => t.name));
     if (this.failWith) throw this.failWith;
     const step = this.steps.shift();
     if (!step) throw new Error("scripted provider: no step left");
@@ -381,13 +383,11 @@ async function main() {
     await inbound("rt_chat", "yes");
     scripted.steps = [
       call("place_order", () => ({ quote_id: quoteId, customer_name: "Rahim Uddin", phone: "01711000001", address_line: "House 12 Road 5 Mirpur 10", payment_method: "COD" })),
-      (m) => {
-        orderNumber = lastTool(m).order_number;
-        return { content: `Apnar order ${orderNumber} placed hoyeche. Dhonnobad!` };
-      },
     ];
-    const turn = await runCustomerTurn(pr);
+    const turn = await runCustomerTurn(pr); // PLACED: the server writes the reply, no second model call
+    orderNumber = db.findQuote(tenantId, pr.conversationId, quoteId)!.order_number ?? "";
     assert.ok(/^ORD-/.test(orderNumber), orderNumber);
+    assert.ok(turn.guards.includes("placed_reply"), turn.guards.join(","));
     assert.ok(turn.reply.includes(orderNumber));
     assert.ok(!turn.guards.includes("order_claim_blocked"));
     const order = db.getAllOrders(tenantId).find((o) => o.order_number === orderNumber)!;
@@ -423,7 +423,7 @@ async function main() {
     assert.strictEqual(turn.status, "FAILED");
     assert.ok(turn.handoff && turn.reply.length > 0);
     const run = db.getAgentRuns(tenantId, { conversation_id: pr.conversationId }).find((r) => r.id === turn.runId)!;
-    assert.strictEqual(run.prompt_version, "customer-agent.system.v2.4-cod");
+    assert.strictEqual(run.prompt_version, "customer-agent.system.v2.5-cod");
   });
 
   await runTest("tool-call arguments are stored redacted", () => {
@@ -602,12 +602,53 @@ async function main() {
     const convo = await inbound("rf_handoff", "taka kete geche kintu order ashe nai");
     makeDue(convo.id);
     scripted.steps = [call("handoff_to_human", () => ({ reason: "payment_problem", summary: "charged, no order" })), say("Amader team er ekjon ekhane reply dibe.")];
+    const callsBefore = scripted.calls.length;
     await runAgentJobsOnce();
+    scripted.steps = [];
     const after = conv("rf_handoff");
+    assert.strictEqual(scripted.calls.length - callsBefore, 1, "the acknowledgement is the server's: no model call after the handoff");
     assert.strictEqual(outbound(convo.id).length, 1, "the acknowledgement was sent");
+    assert.strictEqual(outbound(convo.id)[0].text, formatHandoffReply("payment_problem", "latin", ""));
     assert.strictEqual(after.automation_paused, true);
     assert.strictEqual(after.mode, "HUMAN");
     assert.strictEqual(after.status, "WAITING_AGENT");
+  });
+
+  await runTest("a handoff reason outside the list is kept as 'other' instead of failing; the PIN warning is added", async () => {
+    setMode(true, false);
+    const convo = await inbound("rf_handoff_reason", "amar bkash pin 4589, manush chai");
+    makeDue(convo.id);
+    scripted.steps = [call("handoff_to_human", () => ({ reason: "human_request", summary: "x".repeat(800) }))];
+    const callsBefore = scripted.calls.length;
+    await runAgentJobsOnce();
+    scripted.steps = [];
+    assert.strictEqual(scripted.calls.length - callsBefore, 1);
+    const card = conv("rf_handoff_reason").metadata.handoff_card as R;
+    assert.strictEqual(card.reason, "other");
+    assert.strictEqual((card.summary as string).length, 500);
+    const sent = outbound(convo.id)[0].text;
+    assert.ok(sent.startsWith("Apnar PIN, OTP ba password karo sathe share korben na.") && !sent.includes("4589"), sent);
+  });
+
+  await runTest("place_order is offered to the model only once the chat has an open quote", async () => {
+    setMode(true, false);
+    const convo = await inbound("rf_tools", "black t-shirt L size, Dhaka");
+    makeDue(convo.id);
+    scripted.steps = [
+      call("search_products", () => ({ query: "black t-shirt" })),
+      call("quote_order", (m) => ({ items: [{ variant_id: (lastTool(m).results[0].variants as R[]).find((v) => v.size === "L")!.variant_id, quantity: 1 }], district: "Dhaka" })),
+    ];
+    const from = scripted.toolNames.length;
+    await runAgentJobsOnce();
+    scripted.steps = [];
+    const offered = scripted.toolNames.slice(from);
+    assert.strictEqual(offered.length, 2);
+    assert.ok(offered.every((names) => !names.includes("place_order") && names.includes("quote_order")), JSON.stringify(offered));
+    await inbound("rf_tools", "Rahim Uddin 01711000001 House 12 Road 5 Mirpur 10");
+    makeDue(convo.id);
+    scripted.steps = [say("Ji, confirm korchi.")];
+    await runAgentJobsOnce();
+    assert.ok(scripted.toolNames[scripted.toolNames.length - 1].includes("place_order"), "with a quote open it is offered");
   });
 
   await runTest("a failed turn's apology doesn't reopen the chat either", async () => {
@@ -692,9 +733,9 @@ async function main() {
     scripted.steps = [
       call("search_products", () => ({ query: "black t-shirt" })),
       call("quote_order", (m) => ({ items: [{ variant_id: (lastTool(m).results[0].variants as R[]).find((v) => v.size === "M")!.variant_id, quantity: 1 }], district: "Dhaka" })),
-      (m) => ((qid = lastTool(m).quote_id), { content: "Total dekhacchi, confirm korben?" }),
     ];
-    await runAgentJobsOnce(); // shadow: draft only
+    await runAgentJobsOnce(); // shadow: draft only (the server's quote layout; no model call after the quote)
+    qid = db.getConversationQuotes(tenantId, convo.id).pop()?.id ?? "";
     assert.ok(qid, "a quote was made");
     assert.strictEqual(db.findQuote(tenantId, convo.id, qid)!.shown_message_id, undefined, "a shadow quote was never delivered");
 
@@ -711,23 +752,26 @@ async function main() {
     await inbound("rf_quote", "yes");
     makeDue(convo.id);
     let second: R = {};
-    scripted.steps = [call("place_order", place), (m) => ((second = lastTool(m)), { content: `Order ${lastTool(m).order_number} placed hoyeche.` })];
+    scripted.steps = [call("place_order", place)];
     await runAgentJobsOnce();
+    second = { status: db.findQuote(tenantId, convo.id, qid)!.status };
     assert.strictEqual(second.status, "PLACED", JSON.stringify(second));
   });
 
-  await runTest("a quote turn always shows the server's quote layout, even when the model claims the order is placed", async () => {
+  await runTest("a quote turn ends on the server's quote layout without another model call", async () => {
     setMode(true, false);
     const convo = await inbound("rf_guarded", "black t-shirt L size Dhaka, Rahim Uddin 01711000001 House 12 Road 5 Mirpur 10");
     makeDue(convo.id);
-    let qid = "";
     scripted.steps = [
       call("search_products", () => ({ query: "black t-shirt" })),
       call("quote_order", (m) => ({ items: [{ variant_id: (lastTool(m).results[0].variants as R[]).find((v) => v.size === "L")!.variant_id, quantity: 1 }], district: "Dhaka" })),
-      (m) => ((qid = lastTool(m).quote_id), { content: "Your order has been placed!" }),
+      say("Your order has been placed!"),
     ];
+    const callsBefore = scripted.calls.length;
     await runAgentJobsOnce();
-    const q = db.findQuote(tenantId, convo.id, qid)!;
+    scripted.steps = [];
+    assert.strictEqual(scripted.calls.length - callsBefore, 2, "no model call after the quote");
+    const q = db.getConversationQuotes(tenantId, convo.id).pop()!;
     const sent = db.getMessages(tenantId, convo.id, { limit: 50 }).messages.filter((m) => m.sender_type !== "CUSTOMER").pop()!;
     assert.ok(!/has been placed/i.test(sent.text), "no false order claim reaches the customer");
     assert.ok(sent.text.includes(`Grand total – ৳${q.grand_total.toLocaleString("en-US")} (Cash on delivery)`), sent.text);
