@@ -11,6 +11,8 @@ import { AppError } from "@/lib/errors";
 import { decryptCredential } from "@/lib/security";
 import { outboundRequest, OutboundBlockedError, OutboundTimeoutError, OutboundNetworkError } from "@/lib/outbound-http";
 import { ChannelService } from "@/domains/social/channels/channel.service";
+import { OAuthBroker } from "@/domains/connectors/auth/oauth-broker";
+import { resolveAdsAccess } from "@/domains/connectors/resources";
 
 export const GRAPH_HOST = "graph.facebook.com";
 export const GRAPH_API = `https://${GRAPH_HOST}/v21.0`;
@@ -38,7 +40,9 @@ export function normalizeAdAccountId(raw: string): string {
 
 /** The tenant's Meta credentials for reading insights, or null when nothing is connected. Never throws for "not set up". */
 export function resolveMetaReadCredentials(tenantId: string): MetaReadCredentials | null {
-  const connector = db.findConnectorByProvider(tenantId, "meta_graph");
+  // A manual connector (pasted tokens). A sign-in connection (auth_method oauth2) holds a user token, not a Page
+  // token, and is reached through the channels below.
+  const connector = db.getConnectors(tenantId).find((c) => c.provider_id === "meta_graph" && c.auth_method !== "oauth2");
   if (connector && connector.enabled !== false) {
     try {
       const raw = decryptCredential<Record<string, unknown>>(connector.credentials_encrypted);
@@ -64,17 +68,47 @@ export function resolveMetaReadCredentials(tenantId: string): MetaReadCredential
   if (!facebook && !instagram) return null;
   let pageId = "";
   let pageToken = "";
+  let adAccountId = "";
+  let adsToken = "";
+  // The ad account's token: the sign-in connection named on the channel (tenant-scoped lookup), or a token stored on the
+  // channel by the first ad-account release
+  const adsTokenOf = (creds: Record<string, unknown>): string => {
+    const connectionId = str(creds.adsConnectionId);
+    if (connectionId) {
+      const connection = db.findConnectorById(tenantId, connectionId);
+      return connection ? OAuthBroker.connectionToken(connection) : "";
+    }
+    return str(creds.adsToken);
+  };
   try {
     if (facebook) {
       const creds = ChannelService.getDecryptedCredentials(facebook);
       pageId = str(creds.pageId) || facebook.external_page_id || facebook.provider_account_id;
       pageToken = str(creds.accessToken);
+      adAccountId = normalizeAdAccountId(str(creds.adAccountId));
+      adsToken = adsTokenOf(creds);
     }
-    if (!pageToken && instagram) {
-      pageToken = str(ChannelService.getDecryptedCredentials(instagram).accessToken);
+    if ((!pageToken || !adAccountId) && instagram) {
+      const creds = ChannelService.getDecryptedCredentials(instagram);
+      pageToken = pageToken || str(creds.accessToken);
+      if (!adAccountId) {
+        adAccountId = normalizeAdAccountId(str(creds.adAccountId));
+        adsToken = adsTokenOf(creds);
+      }
     }
   } catch {
     return null;
+  }
+  // The workspace's bound ad account (ADR-119) wins over an ad account recorded on a channel before resources existed
+  const access = resolveAdsAccess(tenantId);
+  const hasAdResource = db.getConnectionResources(tenantId).some((r) => r.kind === "AD_ACCOUNT" && r.status !== "DETACHED");
+  if (access) {
+    adAccountId = access.adAccountId;
+    adsToken = access.adsToken;
+  } else if (hasAdResource) {
+    // The bound ad account's connection can't be used (disabled, expired, needs sign-in): reconnect, don't fall back
+    adAccountId = "";
+    adsToken = "";
   }
   if (!pageToken) return null;
   return {
@@ -82,8 +116,9 @@ export function resolveMetaReadCredentials(tenantId: string): MetaReadCredential
     pageId,
     pageToken,
     instagramUserId: instagram?.provider_account_id ?? "",
-    adAccountId: "",
-    adsToken: "",
+    // Picked during Connect with Facebook; the connection's user token (ads_read) reads the ad account
+    adAccountId: adsToken ? adAccountId : "",
+    adsToken: adAccountId ? adsToken : "",
   };
 }
 
@@ -104,7 +139,7 @@ export type GraphJson = Record<string, unknown>;
 
 /** GET a Graph path (or a paging.next URL on graph.facebook.com) and return the parsed body. */
 export async function graphGet(pathOrUrl: string, params: Record<string, string>, token: string, signal?: AbortSignal): Promise<GraphJson> {
-  if (!token) throw new AppError("META_NOT_CONNECTED", "Meta is not connected. Add the Meta Graph connector in Connector Hub.", 424);
+  if (!token) throw new AppError("META_NOT_CONNECTED", "Meta is not connected. Open Connectors and Connect with Facebook.", 424);
   let url: URL;
   if (/^https:\/\//.test(pathOrUrl)) {
     url = new URL(pathOrUrl);
@@ -141,7 +176,7 @@ export async function graphGet(pathOrUrl: string, params: Record<string, string>
 
   const code = parsed.error?.code ?? res.status;
   const msg = safeError(parsed.error?.message);
-  if (code === 190) throw new AppError("META_TOKEN_EXPIRED", "The Meta access token has expired or was revoked. Update it in Connector Hub.", 424);
+  if (code === 190) throw new AppError("META_TOKEN_EXPIRED", "Facebook access expired or was revoked. Open Connectors and Connect with Facebook again.", 424);
   if (code === 4 || code === 17 || code === 32 || code === 613 || code === 80000 || code === 80004) {
     throw new AppError("META_RATE_LIMITED", "Meta's rate limit was hit. Try again in a few minutes.", 429);
   }

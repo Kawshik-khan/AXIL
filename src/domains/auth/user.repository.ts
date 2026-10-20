@@ -9,6 +9,7 @@ import { query, queryOne, execute } from '@/infrastructure/neon/client';
 import { db, UserRecord, MembershipRecord, InvitationRecord, AuditLogRecord } from '@/infrastructure/db';
 import { RoleName } from '@/lib/permissions';
 import { AuditService } from '@/domains/audit/service';
+import { revokeMemberConnections } from '@/domains/connectors/connection-lifecycle';
 
 export class UserRepository extends GlobalRepository<UserRecord> {
   constructor() {
@@ -127,6 +128,8 @@ export class UserRepository extends GlobalRepository<UserRecord> {
   }
 
   async removeMembership(tenantId: string, userId: string): Promise<boolean> {
+    // A removed member's sign-in connections lose their token (ADR-119 E8)
+    revokeMemberConnections(tenantId, userId, 'system:membership-removed', 'MEMBER_REMOVED');
     if (!this.isNeonConfigured()) {
       return db.removeMembership(tenantId, userId);
     }

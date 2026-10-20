@@ -6,7 +6,7 @@ import os from "os";
 import { AsyncLocalStorage } from "async_hooks";
 import { logger } from "@/lib/logger";
 import { envNumber } from "@/lib/env-number";
-import { AppError, NotFoundError } from "@/lib/errors";
+import { AppError, ConflictError, NotFoundError } from "@/lib/errors";
 import { mergeComputedRow } from "@/lib/computed-rows";
 import { channelOfOrder, SALES_CHANNEL_NAMES } from "@/lib/sales-channel";
 import type { SalesChannel as OrderSalesChannel } from "@/types/analytics";
@@ -15,7 +15,7 @@ import { RoleName, type Permission } from "@/lib/permissions";
 import { DISABLED_PASSWORD_HASH, encryptCredential } from "@/lib/security";
 import { PgStorePersistence, StoreConflictError, logUnwritable, type QueuedRow, type RejectedRow } from "@/infrastructure/store/pg-store";
 import { createNeonSqlClient, isDataRejected, pgErrorFields, storeConnectionString, type SqlClient } from "@/infrastructure/store/sql-client";
-import { ConnectorConfigRecord } from "@/types/connector";
+import { ConnectorConfigRecord, ConnectionResource, EXCLUSIVE_RESOURCE_KINDS, type ConnectionResourceKind } from "@/types/connector";
 import type { NotificationSettingsRecord } from "@/types/notifications";
 import {
   NetworkDeliveryReputationRecord,
@@ -662,6 +662,8 @@ export interface DatabaseSchema {
   // Comment-to-inbox triggers (Engagement page)
   comment_trigger_rules: CommentTriggerRule[];
   comment_trigger_events: CommentTriggerEvent[];
+  // Connection platform (ADR-119): what each connector connection reaches at the provider
+  connection_resources: ConnectionResource[];
 }
 
 /**
@@ -1896,6 +1898,7 @@ export class CommerceDatabase {
       tenant_ai_guard_settings: [],
       comment_trigger_rules: [],
       comment_trigger_events: [],
+      connection_resources: [],
     };
   }
 
@@ -6781,12 +6784,22 @@ export class CommerceDatabase {
   }
 
   public deleteConnectedChannel(tenantId: string, id: string): boolean {
+    const channel = this.data.connected_channels.find((c) => c.tenant_id === tenantId && c.id === id);
     const initialLen = this.data.connected_channels.length;
     this.data.connected_channels = this.data.connected_channels.filter(
       (c) => !(c.tenant_id === tenantId && c.id === id)
     );
     const deleted = this.data.connected_channels.length < initialLen;
     if (deleted) this.persist(["connected_channels"]);
+    // Its resource is detached unless another of the workspace's channels still serves it (ADR-119)
+    const resourceId = channel?.resource_id;
+    if (deleted && resourceId && !this.data.connected_channels.some((c) => c.tenant_id === tenantId && c.resource_id === resourceId)) {
+      const resource = this.findConnectionResource(tenantId, resourceId);
+      if (resource && resource.status !== "DETACHED") {
+        // Its token goes too: a detached Page keeps nothing it could be used with
+        this.updateConnectionResource(tenantId, resourceId, { status: "DETACHED", token_encrypted: undefined, activated_at: undefined });
+      }
+    }
     return deleted;
   }
 
@@ -9861,6 +9874,7 @@ export class CommerceDatabase {
       tenant_ai_guard_settings: [],
       comment_trigger_rules: [],
       comment_trigger_events: [],
+      connection_resources: [],
     };
     this.ensureDefaultSeed();
   }
@@ -10652,10 +10666,14 @@ export class CommerceDatabase {
     return this.data.connector_configurations.find((c) => c.id === id);
   }
 
+  /**
+   * The workspace's hub connector for a provider (credentials entered in Connector Hub). Never a sign-in connection
+   * (`auth_method: "oauth2"`, ADR-119): those hold a user token and are reached through their own flows.
+   */
   public findConnectorByProvider(tenantId: string, providerId: string): ConnectorConfigRecord | undefined {
     if (!this.data.connector_configurations) this.data.connector_configurations = [];
     return this.data.connector_configurations.find(
-      (c) => c.tenant_id === tenantId && c.provider_id === providerId
+      (c) => c.tenant_id === tenantId && c.provider_id === providerId && c.auth_method !== "oauth2"
     );
   }
 
@@ -10682,6 +10700,8 @@ export class CommerceDatabase {
     const changed = this.data.connector_configurations.length < initialLen;
     if (changed) {
       this.persist(["connector_configurations"]);
+      // A connection's resources go with it (ADR-119); nothing may route to a deleted connection
+      this.deleteConnectionResources(tenantId, id);
     }
     return changed;
   }
@@ -11195,6 +11215,81 @@ export class CommerceDatabase {
     }
     this.persist(["courier_disputes"]);
     return dispute;
+  }
+
+  // ==================== CONNECTION RESOURCES (ADR-119) ====================
+
+  /** A tenant's resources, optionally for one connection. */
+  public getConnectionResources(tenantId: string, connectionId?: string): ConnectionResource[] {
+    return (this.data.connection_resources || []).filter(
+      (r) => r.tenant_id === tenantId && (connectionId === undefined || r.connection_id === connectionId)
+    );
+  }
+
+  public findConnectionResource(tenantId: string, id: string): ConnectionResource | undefined {
+    return (this.data.connection_resources || []).find((r) => r.tenant_id === tenantId && r.id === id);
+  }
+
+  /**
+   * Live (not DETACHED) resources with this provider id, in every tenant. Platform use only: webhook routing and the
+   * one-workspace check (audit H5). Callers acting for a tenant must not return other tenants' rows.
+   */
+  public findLiveConnectionResourcesByExternalId(kind: ConnectionResourceKind, externalId: string): ConnectionResource[] {
+    return (this.data.connection_resources || []).filter(
+      (r) => r.kind === kind && r.external_id === externalId && r.status !== "DETACHED"
+    );
+  }
+
+  /**
+   * Refuses a second live resource with the same (kind, external_id): across workspaces for exclusive kinds (a Page
+   * routes inbound messages to one workspace), within the workspace for every kind (no duplicate pickers).
+   */
+  private assertConnectionResourceFree(resource: ConnectionResource): void {
+    if (resource.status === "DETACHED") return;
+    const clash = this.findLiveConnectionResourcesByExternalId(resource.kind, resource.external_id).find(
+      (r) => r.id !== resource.id && (r.tenant_id === resource.tenant_id || EXCLUSIVE_RESOURCE_KINDS.has(resource.kind))
+    );
+    if (!clash) return;
+    throw clash.tenant_id === resource.tenant_id
+      ? new ConflictError(`This ${resource.kind} is already connected in this workspace.`)
+      : new ConflictError(`This ${resource.kind} is connected to another CommerceOS workspace.`);
+  }
+
+  /** Creates a resource. The id is the caller's; an existing id in any tenant is refused. */
+  public createConnectionResource(resource: ConnectionResource): ConnectionResource {
+    if (!this.data.connection_resources) this.data.connection_resources = [];
+    if (this.data.connection_resources.some((r) => r.id === resource.id)) {
+      throw new ConflictError("A connection resource with this id already exists.");
+    }
+    this.assertConnectionResourceFree(resource);
+    this.data.connection_resources.push(resource);
+    this.persist(["connection_resources"]);
+    return resource;
+  }
+
+  /** Updates a tenant's resource. Its identity (tenant, connection, kind, provider id) can't change. */
+  public updateConnectionResource(tenantId: string, id: string, patch: Partial<ConnectionResource>): ConnectionResource {
+    const list = this.data.connection_resources || [];
+    const idx = list.findIndex((r) => r.tenant_id === tenantId && r.id === id);
+    if (idx < 0) throw new NotFoundError("Connection resource");
+    const { connection_id: _c, kind: _k, external_id: _e, ...rest } = safePatch(patch);
+    const next: ConnectionResource = { ...list[idx], ...rest, updated_at: new Date().toISOString() };
+    this.assertConnectionResourceFree(next);
+    list[idx] = next;
+    this.persist(["connection_resources"]);
+    return next;
+  }
+
+  /** Deletes every resource of one connection (disconnect). Returns how many were removed. */
+  public deleteConnectionResources(tenantId: string, connectionId: string): number {
+    const list = this.data.connection_resources || [];
+    const remaining = list.filter((r) => !(r.tenant_id === tenantId && r.connection_id === connectionId));
+    const removed = list.length - remaining.length;
+    if (removed > 0) {
+      this.data.connection_resources = remaining;
+      this.persist(["connection_resources"]);
+    }
+    return removed;
   }
 
   // ==================== COMMENT-TO-INBOX TRIGGERS ====================

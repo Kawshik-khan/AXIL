@@ -5,6 +5,7 @@ import { db } from "@/infrastructure/db";
 import { ChannelService } from "@/domains/social/channels/channel.service";
 import { verifyMetaAccountOwnership } from "@/domains/social/meta/meta-login.service";
 import { withStore } from "@/lib/store-unit";
+import { BadRequestError } from "@/lib/errors";
 
 const ConnectBody = z
   .object({
@@ -37,6 +38,11 @@ async function handlePOST(request: Request) {
   try {
     const context = await extractRequestContext(request);
     const body = parseOrThrow(ConnectBody, await readJson(request));
+    // A pasted token can't prove which WhatsApp number it owns, and webhooks for numbers subscribed to the platform app
+    // are signed with the platform secret: WhatsApp is connected only through "Connect WhatsApp" (ADR-119 P5)
+    if (body.type === "WHATSAPP") {
+      throw new BadRequestError("Connect WhatsApp from Connectors (Connect WhatsApp); a pasted token can't be used (USE_SIGN_IN).");
+    }
     if (body.type === "FACEBOOK_MESSENGER" || body.type === "INSTAGRAM") {
       const token = typeof body.credentials.accessToken === "string" ? body.credentials.accessToken : "";
       await verifyMetaAccountOwnership(body.type, body.provider_account_id, token);

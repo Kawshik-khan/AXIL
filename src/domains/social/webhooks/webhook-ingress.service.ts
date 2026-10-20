@@ -97,6 +97,14 @@ export class WebhookIngressService {
         verified.push(target); // the widget route has its own limits
         continue;
       }
+      // A channel whose connection resource was disconnected (deauthorized, taken over) receives nothing (ADR-119)
+      if (channel.resource_id) {
+        const resource = db.findConnectionResource(channel.tenant_id, channel.resource_id);
+        if (!resource || resource.status === "DETACHED") {
+          logger.warn("social_webhook.channel_disconnected", { tenant_id: channel.tenant_id, channel_id: channel.id });
+          continue;
+        }
+      }
       let credentials: ChannelCredentials = {};
       try {
         credentials = ChannelService.getDecryptedCredentials(channel);
@@ -104,6 +112,13 @@ export class WebhookIngressService {
         // Unreadable per-channel credentials: the adapter can still use a platform-level secret or reject; it never
         // falls back to a built-in default.
         logger.warn("social_webhook.channel_credentials_unreadable", { tenant_id: channel.tenant_id, channel_id: channel.id });
+      }
+      // Meta signs every number subscribed to the platform app with META_APP_SECRET: that secret proves a WhatsApp
+      // event belongs to a channel only when the channel came from the platform app's sign-up (a live resource) or an
+      // older Connector Hub connection. A channel without either must verify with its own app secret.
+      if (channelType === "WHATSAPP" && !channel.resource_id && !channel.connector_id && !credentials.appSecret) {
+        logger.warn("social_webhook.signature_rejected", { tenant_id: channel.tenant_id, channel_id: channel.id, reason: "no_channel_secret" });
+        continue;
       }
       const ok = adapter.verifyWebhook(rawBody, signature, headers, credentials);
       if (!ok) {

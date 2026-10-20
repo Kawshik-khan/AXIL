@@ -6,6 +6,7 @@ import { useSearchParams } from "next/navigation";
 import { Facebook, Instagram, RefreshCw } from "lucide-react";
 import { LoadingSkeleton, PermissionDenied } from "@/components/ui/States/States";
 import type { ConnectedChannel } from "@/types/social";
+import { handOffSignInToOpener, popupQueryOf } from "@/components/social/meta-login-popup";
 import styles from "./facebook.module.css";
 
 type PageState = "NOT_CONNECTED" | "CONNECTED_HERE" | "IN_ANOTHER_WORKSPACE";
@@ -15,6 +16,12 @@ interface PickablePage {
   can_message: boolean;
   facebook: PageState;
   instagram?: { id: string; username?: string; state: PageState };
+}
+interface PickableAdAccount {
+  id: string;
+  name: string;
+  currency: string;
+  active: boolean;
 }
 type Outcome = "CONNECTED" | "RECONNECTED" | "CONNECTED_NO_WEBHOOKS" | "IN_ANOTHER_WORKSPACE" | "FAILED" | "SKIPPED";
 interface ConnectResult {
@@ -53,10 +60,14 @@ const OUTCOME_LABEL: Record<Outcome, string> = {
 
 function ConnectFacebook() {
   const params = useSearchParams();
+  const [inPopup] = useState(() => handOffSignInToOpener("meta", popupQueryOf(new URLSearchParams(params.toString()))));
   const [pages, setPages] = useState<PickablePage[] | null>(null);
   const [missing, setMissing] = useState<string[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [includeInstagram, setIncludeInstagram] = useState(true);
+  const [adAccounts, setAdAccounts] = useState<PickableAdAccount[]>([]);
+  const [ads, setAds] = useState<{ requested: boolean; granted: boolean }>({ requested: false, granted: false });
+  const [adAccountId, setAdAccountId] = useState("");
   const [channels, setChannels] = useState<ConnectedChannel[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -79,7 +90,7 @@ function ConnectFacebook() {
   const loadPages = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/v1/social/meta/pages");
+      const res = await fetch("/api/v1/connections/meta/pending/resources");
       const json = await res.json().catch(() => ({}));
       if (res.status === 403) setForbidden(true);
       if (!res.ok) {
@@ -91,7 +102,15 @@ function ConnectFacebook() {
       const list: PickablePage[] = json.data?.pages ?? [];
       setPages(list);
       setMissing(json.data?.missing_permissions ?? []);
-      setSelected(new Set(list.filter((p) => p.facebook !== "IN_ANOTHER_WORKSPACE").map((p) => p.id)));
+      const accounts: PickableAdAccount[] = json.data?.ad_accounts ?? [];
+      const adsState = { requested: json.data?.ads?.requested === true, granted: json.data?.ads?.granted === true };
+      setAdAccounts(accounts);
+      setAds(adsState);
+      // One active ad account: preselect it; otherwise the merchant chooses (or skips)
+      const active = accounts.filter((a) => a.active);
+      setAdAccountId(active.length === 1 ? active[0].id : "");
+      // "Connect ads" is about the ad account: Pages stay as they are unless the merchant ticks them
+      setSelected(adsState.requested ? new Set() : new Set(list.filter((p) => p.facebook !== "IN_ANOTHER_WORKSPACE").map((p) => p.id)));
     } catch {
       setError("Could not reach the server.");
     } finally {
@@ -100,15 +119,21 @@ function ConnectFacebook() {
   }, []);
 
   useEffect(() => {
+    if (inPopup) return;
     loadChannels();
     loadPages();
-  }, [loadChannels, loadPages]);
+  }, [inPopup, loadChannels, loadPages]);
 
-  const start = async () => {
+  /** Full-page sign-in from this page. `["ads"]` also asks Facebook for read access to ads (Connect ads). */
+  const start = async (features: string[] = []) => {
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch("/api/v1/social/meta/connect", { method: "POST" });
+      const res = await fetch("/api/v1/connections/meta/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ features }),
+      });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
         setError(res.status === 403 ? CALLBACK_ERRORS.FORBIDDEN : json?.error?.message ?? "Could not start Facebook sign-in.");
@@ -126,10 +151,14 @@ function ConnectFacebook() {
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch("/api/v1/social/meta/pages", {
+      const res = await fetch("/api/v1/connections/meta/activate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ page_ids: Array.from(selected), include_instagram: includeInstagram }),
+        body: JSON.stringify({
+          page_ids: Array.from(selected),
+          include_instagram: includeInstagram,
+          ...(adAccountId ? { ad_account_id: adAccountId } : {}),
+        }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -153,6 +182,14 @@ function ConnectFacebook() {
       else next.add(id);
       return next;
     });
+
+  if (inPopup) {
+    return (
+      <div className={styles.page}>
+        <p className={styles.muted}>Facebook sign-in finished. You can close this window.</p>
+      </div>
+    );
+  }
 
   if (forbidden) {
     return (
@@ -179,6 +216,7 @@ function ConnectFacebook() {
       {results && (
         <section className={styles.card} aria-label="Connection results">
           <h2 className={styles.cardTitle}>Result</h2>
+          {results.length === 0 && <p className={styles.success}>Ad account saved. Ad Manager now reads it.</p>}
           <ul className={styles.pageList}>
             {results.map((r) => (
               <li key={r.page_id} className={styles.pageRow}>
@@ -204,7 +242,7 @@ function ConnectFacebook() {
           </ul>
           <div className={styles.actions}>
             <Link href="/engagement" className={styles.primaryButton}>Set up comment triggers</Link>
-            <button type="button" className={styles.ghostButton} onClick={start} disabled={busy}>Connect more Pages</button>
+            <button type="button" className={styles.ghostButton} onClick={() => start()} disabled={busy}>Connect more Pages</button>
           </div>
         </section>
       )}
@@ -255,11 +293,44 @@ function ConnectFacebook() {
           <label className={styles.check}>
             <input type="checkbox" checked={includeInstagram} onChange={(e) => setIncludeInstagram(e.target.checked)} /> Also connect linked Instagram accounts
           </label>
+          <div className={styles.field}>
+            <label htmlFor="ad-account" className={styles.fieldLabel}>Ad account for Ad Manager</label>
+            {!ads.requested ? (
+              <p className={styles.muted}>
+                Not connected. Ad Manager asks Facebook for read access to your ads only when you choose to.{" "}
+                <button type="button" className={styles.linkButton} onClick={() => start(["ads"])} disabled={busy}>
+                  Connect ads
+                </button>
+              </p>
+            ) : !ads.granted ? (
+              <p className={styles.muted}>
+                Facebook didn&apos;t grant read access to your ads (ads_read), so Ad Manager can&apos;t read them.{" "}
+                <button type="button" className={styles.linkButton} onClick={() => start(["ads"])} disabled={busy}>
+                  Try again
+                </button>
+              </p>
+            ) : adAccounts.length === 0 ? (
+              <p className={styles.muted}>This Facebook account has no ad accounts.</p>
+            ) : (
+              <select id="ad-account" className={styles.select} value={adAccountId} onChange={(e) => setAdAccountId(e.target.value)}>
+                <option value="">Don&apos;t use an ad account</option>
+                {adAccounts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name} · act_{a.id}{a.currency ? ` · ${a.currency}` : ""}{a.active ? "" : " · inactive"}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
           <div className={styles.actions}>
-            <button type="button" className={styles.primaryButton} onClick={connect} disabled={busy || selected.size === 0}>
-              {busy ? "Connecting…" : `Connect ${selected.size} Page${selected.size === 1 ? "" : "s"}`}
+            <button type="button" className={styles.primaryButton} onClick={connect} disabled={busy || (selected.size === 0 && !adAccountId)}>
+              {busy
+                ? "Connecting…"
+                : selected.size === 0
+                  ? "Save ad account"
+                  : `Connect ${selected.size} Page${selected.size === 1 ? "" : "s"}`}
             </button>
-            <button type="button" className={styles.ghostButton} onClick={start} disabled={busy}>
+            <button type="button" className={styles.ghostButton} onClick={() => start(ads.requested ? ["ads"] : [])} disabled={busy}>
               <RefreshCw size={14} /> Sign in again
             </button>
           </div>
@@ -273,7 +344,7 @@ function ConnectFacebook() {
               <li>Pick your Page(s) and allow the permissions Facebook asks for.</li>
               <li>Come back here and confirm. Comments and messages start arriving right away.</li>
             </ol>
-            <button type="button" className={styles.primaryButton} onClick={start} disabled={busy}>
+            <button type="button" className={styles.primaryButton} onClick={() => start()} disabled={busy}>
               <Facebook size={16} /> {busy ? "Opening Facebook…" : "Connect with Facebook"}
             </button>
           </section>

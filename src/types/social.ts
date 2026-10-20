@@ -33,6 +33,11 @@ export interface ConnectedChannel {
   credentials_encrypted: string; // AES-256-GCM encrypted JSON payload
   /** When set, the credentials live in this connector (connector_configurations) and credentials_encrypted is unused (connector plan D3). */
   connector_id?: string;
+  /**
+   * The connection resource (Page, Instagram account) this channel serves (ADR-119). Its token wins over the channel's
+   * own copy, which is kept for one release so a rollback still works.
+   */
+  resource_id?: string;
   configuration: {
     welcome_message?: string;
     auto_reply_enabled?: boolean;

@@ -1763,3 +1763,44 @@ Kept:
   list was on the Automations page); only seeded webhook rows exist today.
 - **History**: older ADRs, the changelog, audit reports and STATUS rows still mention n8n as it was.
 - **Rollback**: `git revert` of the removal commit restores the code; the stored rows were never deleted.
+
+## ADR-119: Connections and Resources
+
+**Date**: 2026-10-20 · **Status**: Accepted (owner decision) · **Plan**: `docs/connection-platform-plan.md` · **Builds on**: the connector plan (D1 capability dispatch, D3 one credential store)
+
+### Context
+One Facebook login put the Page token on every channel row and (since the 2026-10-20 ad-account change) the long-lived
+user token and ad account too; a manual `meta_graph` connector could hold another copy. The user token had no owner,
+expiry or revoke, carried every granted scope, and outlived the member who granted it (security review, MEDIUM). Each
+provider had its own connect flow and the connector page branched on provider ids. Status meant "saved", not "working".
+
+### Decision
+- **E1** `connector_configurations` is the **Connection**: one row per tenant grant and the only copy of its token set.
+  New optional fields: `auth_method`, `owner_user_id`, `scopes_granted`, `token_expires_at`, `connection_status`,
+  `health_checked_at`, `health_code`.
+- **E2** New document collection **`connection_resources`**: what a grant reaches (FB Page, Instagram account, ad account,
+  WhatsApp number, Telegram bot, courier store, shop), each with `kind`, `external_id`, its own token only when it has
+  one (Page token), and a status. No SQL migration (documents, ADR-108).
+- **E3** Channels and features bind to a resource (`resource_id`); channel `credentials_encrypted` is kept one release
+  for rollback, then emptied.
+- **E4** One user token per connection, with owner, scopes and expiry. Page tokens live on their Page resource.
+- **E5** Incremental consent: a feature asks for its extra scopes (Ad Manager → `ads_read`) when it is turned on.
+- **E6** One OAuth broker (signed state, nonce cookie, popup hand-off) with per-provider adapters; the Meta login becomes
+  the first adapter. The callback writes nothing (non-negotiable 9): the token waits in the encrypted pending cookie and
+  the connection is created by the activate POST.
+- **E7** Health is computed by a background job and stored; GET routes only read it.
+- **E8** Removing a member deletes the tokens of connections they own and marks them `NEEDS_REAUTH`.
+- **E9** No provider SDKs; every call through `outboundRequest` (ADR-110).
+- Manifests declare `auth_method` (`oauth2`, `embedded_signup`, `api_key`, `bot_token`), `base_scopes`,
+  `optional_scopes` (per feature) and `resource_kinds`. The UI picks the connect flow from `auth_method`.
+- A Page, Instagram account, WhatsApp number or Telegram bot can be held by one workspace only (keeps audit H5); the
+  store refuses a second live resource with the same `(kind, external_id)`. Ad accounts and shops may be shared (the
+  provider enforces access).
+
+### Consequences
+- **Positive**: one place per credential, an owner and expiry for every user token, least-privilege scopes, adding an
+  OAuth provider is one adapter, status can be truthful.
+- **Negative**: a data migration of existing channels (P2, dry run first); two credential paths live side by side for one
+  release; the pending-cookie flow fails if the merchant changes browser mid-sign-in (they sign in again).
+- **Rollback**: each phase is behind the `connections_v2` platform flag; channels keep their old credentials for one
+  release; the new collection can be left empty.

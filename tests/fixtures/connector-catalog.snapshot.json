@@ -6,6 +6,9 @@
       "category": "AI_LLM",
       "status": "BETA",
       "default_endpoint": "https://api.openai.com/v1",
+      "auth_method": "api_key",
+      "goal": "PLATFORM",
+      "resource_kinds": [],
       "fields": [
         {
           "name": "api_key",
@@ -39,6 +42,9 @@
       "category": "AI_LLM",
       "status": "BETA",
       "default_endpoint": "https://api.anthropic.com/v1",
+      "auth_method": "api_key",
+      "goal": "PLATFORM",
+      "resource_kinds": [],
       "fields": [
         {
           "name": "api_key",
@@ -66,6 +72,9 @@
       "category": "AI_LLM",
       "status": "BETA",
       "default_endpoint": "https://generativelanguage.googleapis.com/v1beta",
+      "auth_method": "api_key",
+      "goal": "PLATFORM",
+      "resource_kinds": [],
       "fields": [
         {
           "name": "api_key",
@@ -87,6 +96,9 @@
       "category": "AI_LLM",
       "status": "BETA",
       "default_endpoint": "https://api.deepseek.com/v1",
+      "auth_method": "api_key",
+      "goal": "PLATFORM",
+      "resource_kinds": [],
       "fields": [
         {
           "name": "api_key",
@@ -108,6 +120,9 @@
       "category": "AI_LLM",
       "status": "BETA",
       "default_endpoint": "https://api.groq.com/openai/v1",
+      "auth_method": "api_key",
+      "goal": "PLATFORM",
+      "resource_kinds": [],
       "fields": [
         {
           "name": "api_key",
@@ -129,6 +144,9 @@
       "category": "AI_LLM",
       "status": "BETA",
       "default_endpoint": "https://openrouter.ai/api/v1",
+      "auth_method": "api_key",
+      "goal": "PLATFORM",
+      "resource_kinds": [],
       "fields": [
         {
           "name": "api_key",
@@ -150,6 +168,9 @@
       "category": "AI_LLM",
       "status": "BETA",
       "default_endpoint": "http://localhost:11434/v1",
+      "auth_method": "api_key",
+      "goal": "PLATFORM",
+      "resource_kinds": [],
       "fields": [
         {
           "name": "endpoint_url",
@@ -177,6 +198,9 @@
       "category": "AI_LLM",
       "status": "BETA",
       "default_endpoint": "http://localhost:8000/v1",
+      "auth_method": "api_key",
+      "goal": "PLATFORM",
+      "resource_kinds": [],
       "fields": [
         {
           "name": "endpoint_url",
@@ -204,56 +228,14 @@
       "category": "SOCIAL_ADS",
       "status": "BETA",
       "default_endpoint": null,
-      "fields": [
-        {
-          "name": "app_id",
-          "type": "text",
-          "required": true,
-          "has_default": false
-        },
-        {
-          "name": "app_secret",
-          "type": "password",
-          "required": true,
-          "has_default": false
-        },
-        {
-          "name": "page_id",
-          "type": "text",
-          "required": true,
-          "has_default": false
-        },
-        {
-          "name": "page_access_token",
-          "type": "password",
-          "required": true,
-          "has_default": false
-        },
-        {
-          "name": "webhook_verify_token",
-          "type": "password",
-          "required": true,
-          "has_default": false
-        },
-        {
-          "name": "instagram_account_id",
-          "type": "text",
-          "required": false,
-          "has_default": false
-        },
-        {
-          "name": "ad_account_id",
-          "type": "text",
-          "required": false,
-          "has_default": false
-        },
-        {
-          "name": "ads_access_token",
-          "type": "password",
-          "required": false,
-          "has_default": false
-        }
-      ]
+      "auth_method": "oauth2",
+      "goal": "SELL_CHAT",
+      "resource_kinds": [
+        "FB_PAGE",
+        "IG_ACCOUNT",
+        "AD_ACCOUNT"
+      ],
+      "fields": []
     },
     {
       "id": "google_ads",
@@ -261,6 +243,11 @@
       "category": "SOCIAL_ADS",
       "status": "COMING_SOON",
       "default_endpoint": null,
+      "auth_method": "oauth2",
+      "goal": "ADS",
+      "resource_kinds": [
+        "AD_ACCOUNT"
+      ],
       "fields": [
         {
           "name": "customer_id",
@@ -300,32 +287,12 @@
       "category": "SOCIAL_ADS",
       "status": "BETA",
       "default_endpoint": null,
-      "fields": [
-        {
-          "name": "phone_number_id",
-          "type": "text",
-          "required": true,
-          "has_default": false
-        },
-        {
-          "name": "waba_id",
-          "type": "text",
-          "required": true,
-          "has_default": false
-        },
-        {
-          "name": "permanent_access_token",
-          "type": "password",
-          "required": true,
-          "has_default": false
-        },
-        {
-          "name": "webhook_verify_token",
-          "type": "password",
-          "required": true,
-          "has_default": false
-        }
-      ]
+      "auth_method": "embedded_signup",
+      "goal": "SELL_CHAT",
+      "resource_kinds": [
+        "WA_NUMBER"
+      ],
+      "fields": []
     },
     {
       "id": "tiktok_shop",
@@ -333,6 +300,11 @@
       "category": "SOCIAL_ADS",
       "status": "COMING_SOON",
       "default_endpoint": null,
+      "auth_method": "oauth2",
+      "goal": "SELL_CHAT",
+      "resource_kinds": [
+        "SHOP"
+      ],
       "fields": [
         {
           "name": "app_key",
@@ -366,6 +338,11 @@
       "category": "SOCIAL_ADS",
       "status": "BETA",
       "default_endpoint": null,
+      "auth_method": "bot_token",
+      "goal": "SELL_CHAT",
+      "resource_kinds": [
+        "TELEGRAM_BOT"
+      ],
       "fields": [
         {
           "name": "bot_token",
@@ -393,6 +370,11 @@
       "category": "LOGISTICS",
       "status": "BETA",
       "default_endpoint": "https://portal.steadfast.com.bd/api/v1",
+      "auth_method": "api_key",
+      "goal": "DELIVER",
+      "resource_kinds": [
+        "COURIER_STORE"
+      ],
       "fields": [
         {
           "name": "api_key",
@@ -432,6 +414,11 @@
       "category": "LOGISTICS",
       "status": "BETA",
       "default_endpoint": "https://api-hermes.pathao.com",
+      "auth_method": "api_key",
+      "goal": "DELIVER",
+      "resource_kinds": [
+        "COURIER_STORE"
+      ],
       "fields": [
         {
           "name": "client_id",
@@ -477,6 +464,11 @@
       "category": "LOGISTICS",
       "status": "COMING_SOON",
       "default_endpoint": "https://openapi.redx.com.bd/v1.0.0-beta",
+      "auth_method": "api_key",
+      "goal": "DELIVER",
+      "resource_kinds": [
+        "COURIER_STORE"
+      ],
       "fields": [
         {
           "name": "access_token",
@@ -504,6 +496,11 @@
       "category": "LOGISTICS",
       "status": "COMING_SOON",
       "default_endpoint": null,
+      "auth_method": "api_key",
+      "goal": "DELIVER",
+      "resource_kinds": [
+        "COURIER_STORE"
+      ],
       "fields": [
         {
           "name": "username",
@@ -531,6 +528,11 @@
       "category": "LOGISTICS",
       "status": "COMING_SOON",
       "default_endpoint": null,
+      "auth_method": "api_key",
+      "goal": "DELIVER",
+      "resource_kinds": [
+        "COURIER_STORE"
+      ],
       "fields": [
         {
           "name": "api_key",
@@ -558,6 +560,11 @@
       "category": "LOGISTICS",
       "status": "COMING_SOON",
       "default_endpoint": null,
+      "auth_method": "api_key",
+      "goal": "DELIVER",
+      "resource_kinds": [
+        "COURIER_STORE"
+      ],
       "fields": [
         {
           "name": "account_number",
@@ -585,6 +592,9 @@
       "category": "VECTOR_DB",
       "status": "BETA",
       "default_endpoint": "http://localhost:6333",
+      "auth_method": "api_key",
+      "goal": "PLATFORM",
+      "resource_kinds": [],
       "fields": [
         {
           "name": "endpoint_url",
@@ -624,6 +634,9 @@
       "category": "ENTERPRISE",
       "status": "COMING_SOON",
       "default_endpoint": null,
+      "auth_method": "api_key",
+      "goal": "SELL_MORE",
+      "resource_kinds": [],
       "fields": [
         {
           "name": "endpoint_url",
@@ -669,6 +682,9 @@
       "category": "ENTERPRISE",
       "status": "COMING_SOON",
       "default_endpoint": null,
+      "auth_method": "api_key",
+      "goal": "SELL_MORE",
+      "resource_kinds": [],
       "fields": [
         {
           "name": "account_id",
@@ -720,6 +736,9 @@
       "category": "ENTERPRISE",
       "status": "COMING_SOON",
       "default_endpoint": null,
+      "auth_method": "api_key",
+      "goal": "SELL_MORE",
+      "resource_kinds": [],
       "fields": [
         {
           "name": "instance_url",
@@ -759,6 +778,9 @@
       "category": "ENTERPRISE",
       "status": "BETA",
       "default_endpoint": null,
+      "auth_method": "api_key",
+      "goal": "SELL_MORE",
+      "resource_kinds": [],
       "fields": [
         {
           "name": "access_token",
@@ -786,6 +808,11 @@
       "category": "ENTERPRISE",
       "status": "COMING_SOON",
       "default_endpoint": "https://api.daraz.com.bd/rest",
+      "auth_method": "api_key",
+      "goal": "SELL_MORE",
+      "resource_kinds": [
+        "SHOP"
+      ],
       "fields": [
         {
           "name": "app_key",
@@ -825,6 +852,11 @@
       "category": "ENTERPRISE",
       "status": "BETA",
       "default_endpoint": null,
+      "auth_method": "api_key",
+      "goal": "SELL_MORE",
+      "resource_kinds": [
+        "SHOP"
+      ],
       "fields": [
         {
           "name": "shop_domain",
@@ -864,6 +896,9 @@
       "category": "ENTERPRISE",
       "status": "BETA",
       "default_endpoint": null,
+      "auth_method": "api_key",
+      "goal": "SELL_MORE",
+      "resource_kinds": [],
       "fields": [
         {
           "name": "spreadsheet_url",

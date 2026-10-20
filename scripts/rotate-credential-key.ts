@@ -105,6 +105,18 @@ void (async () => {
     }
   }
 
+  for (const resource of db.data.connection_resources || []) {
+    if (!resource.token_encrypted) continue;
+    const { result, next } = classify(resource.token_encrypted);
+    counts[result]++;
+    out(`resource     ${resource.id} (${resource.tenant_id}): ${result}`);
+    if (result === "reencrypted" && next) {
+      writes.push(() => db.updateConnectionResource(resource.tenant_id, resource.id, { token_encrypted: next }));
+    } else if (result === "unreadable") {
+      writes.push(() => db.updateConnectionResource(resource.tenant_id, resource.id, { status: "NEEDS_ATTENTION" }));
+    }
+  }
+
   for (const installation of db.data.integration_installations || []) {
     const { result, next } = classify(installation.credentials_encrypted);
     counts[result]++;

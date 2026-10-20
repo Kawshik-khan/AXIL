@@ -981,3 +981,29 @@ Fields added (all optional, backward compatible):
 - `TenantEntitlementRecord`: `expires_at` (override ends on read), `granted_by`, `ticket_ref`.
 - `TenantRecord`: `purge_requested_at`, `purge_after` (14-day tombstone; no deletion job yet).
 - `PlatformSettingRecord.category`: widened to the registry categories (BILLING, TRIALS, AI, OPERATIONS, FINANCE).
+
+## Connection resources (ADR-119, 2026-10-20)
+
+Document collection `connection_resources` (`commerceos.documents` on Postgres; no table, no migration). One row per thing a
+connection (`connector_configurations` row) reaches at the provider.
+
+| Field | Notes |
+|---|---|
+| `id`, `tenant_id`, `connection_id` | Every accessor filters by `tenant_id`; `connection_id` is the connector row |
+| `kind` | `FB_PAGE`, `IG_ACCOUNT`, `AD_ACCOUNT`, `WA_NUMBER`, `TELEGRAM_BOT`, `COURIER_STORE`, `SHOP` |
+| `external_id`, `name`, `metadata` | Provider id and display facts (no secrets) |
+| `token_encrypted?` | Only for resources with their own token (Page token); `encryptCredential` |
+| `status` | `ACTIVE`, `NEEDS_ATTENTION`, `DETACHED` |
+| `activated_at?`, `last_event_at?`, `created_at`, `updated_at` | |
+
+Rules: one live (`status` not `DETACHED`) `FB_PAGE` / `IG_ACCOUNT` / `WA_NUMBER` / `TELEGRAM_BOT` per `external_id` across all
+workspaces (audit H5); no duplicate live `(kind, external_id)` inside a workspace; identity fields can't be patched; deleting the
+connector deletes its resources.
+
+`ConnectorConfigRecord` gains optional `auth_method`, `owner_user_id`, `scopes_granted`, `token_expires_at`, `connection_status`
+(`ACTIVE`, `DEGRADED`, `NEEDS_REAUTH`, `DISCONNECTED`), `health_checked_at`, `health_code`. Not written by any flow yet (P1+).
+
+P2 (2026-10-20): `ConnectedChannel.resource_id?` points at the `FB_PAGE` / `IG_ACCOUNT` resource whose token the channel uses
+(the channel keeps its own copy for one release). A workspace's Ad Manager account is its single live `AD_ACCOUNT` resource
+(read with the token of that resource's connection); picking another detaches the first. Deleting a channel detaches its
+resource unless another channel of the workspace still uses it.

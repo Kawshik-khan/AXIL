@@ -24,6 +24,7 @@ import { localHour } from "@/lib/local-time";
 import { inventoryRepository } from "@/domains/inventory/inventory.repository";
 import { loadOrderRows } from "@/infrastructure/db/tenant-rows";
 import { NotificationService } from "@/domains/notifications/notification.service";
+import { runConnectionHealth } from "@/domains/connectors/connection-lifecycle";
 
 export { localHour };
 
@@ -195,6 +196,14 @@ export const JOBS: Record<string, JobDefinition> = {
     async run(now) {
       const result = await db.unit(async () => RetentionService.purge(now), () => true);
       return { ...result };
+    },
+  },
+
+  /** Every 6 hours: sign-in connections' tokens checked with the provider (ADR-119 P4): expiry, revocation, scopes. */
+  "connection-health": {
+    cadenceMs: 6 * HOUR,
+    async run(now) {
+      return { ...(await runConnectionHealth(now)) };
     },
   },
 

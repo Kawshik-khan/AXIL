@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Target, Wallet, TrendingUp, MousePointerClick, MessageSquare, ShoppingBag, UserCheck, Banknote, RefreshCw, PlugZap } from "lucide-react";
 import { BentoGrid } from "@/components/bento/BentoGrid";
 import { BentoCard } from "@/components/bento/BentoCard";
@@ -8,6 +9,7 @@ import { LoadingSkeleton, ErrorState, PermissionDenied } from "@/components/ui/S
 import { StatTile, ColumnChart, HBarChart, Funnel, compact, money, pct } from "@/components/insights/Charts";
 import { SuggestionPanel } from "@/components/insights/SuggestionPanel";
 import styles from "@/components/insights/insights.module.css";
+import { isMetaPopupMessage, pickerUrlOf, startMetaLoginPopup } from "@/components/social/meta-login-popup";
 import type { AdsReport, AdCampaignRow } from "@/domains/social/insights/ad-performance.service";
 
 const RANGES = [7, 14, 30, 90] as const;
@@ -39,6 +41,31 @@ export default function AdManagerPage() {
   const [metric, setMetric] = useState<DailyMetric>("spend");
   const [sortKey, setSortKey] = useState<SortKey>("spend");
   const [selected, setSelected] = useState<string | null>(null);
+  const router = useRouter();
+  const [connecting, setConnecting] = useState(false);
+  const [connectError, setConnectError] = useState<string | null>(null);
+
+  // "Connect ads": the Facebook popup reports back here, then the merchant picks the ad account
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      if (!isMetaPopupMessage(event)) return;
+      router.push(pickerUrlOf(event.data));
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [router]);
+
+  const connectAds = async () => {
+    setConnecting(true);
+    setConnectError(null);
+    try {
+      await startMetaLoginPopup(["ads"]);
+    } catch (err) {
+      setConnectError(err instanceof Error ? err.message : "Could not start Facebook sign-in.");
+    } finally {
+      setConnecting(false);
+    }
+  };
 
   const load = useCallback(async (range: number, refresh = false) => {
     setLoading(true);
@@ -125,10 +152,11 @@ export default function AdManagerPage() {
               <div>
                 <strong>{report.status === "ERROR" ? "Meta returned an error" : "Ad account not connected"}</strong>
                 <p>{report.message}</p>
+                {connectError && <p role="alert">{connectError}</p>}
               </div>
-              <a className={styles.primaryButton} href="/connector?category=SOCIAL_ADS">
-                Open Connector Hub
-              </a>
+              <button type="button" className={styles.primaryButton} onClick={connectAds} disabled={connecting}>
+                {connecting ? "Opening Facebook…" : report.status === "ERROR" ? "Reconnect ads" : "Connect ads"}
+              </button>
             </div>
           )}
 

@@ -933,3 +933,18 @@
     max-width: 100%;
   }
 }
+
+.metaAlert {
+  margin: 0 0 var(--space-16);
+  padding: var(--space-12) var(--space-16);
+  border-radius: var(--radius-md);
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+  font-size: var(--font-size-body);
+}
+
+.statusAttention {
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
+  border: 1px solid var(--color-warning-bg);
+}

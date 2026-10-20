@@ -7,6 +7,7 @@ import { ASSIGNABLE_ROLES, PERMISSIONS } from "@/lib/permissions";
 import { ConflictError, NotFoundError, ValidationError, ForbiddenError } from "@/lib/errors";
 import { parseOrThrow, readJson } from "@/lib/validation";
 import { withStore } from "@/lib/store-unit";
+import { memberMayHoldConnections, revokeMemberConnections } from "@/domains/connectors/connection-lifecycle";
 
 
 /**
@@ -86,6 +87,11 @@ async function handlePATCH(
         resourceId: targetUserId,
         metadata: { new_status: patch.status },
       });
+    }
+
+    // A member who is suspended or loses channel management no longer powers the workspace's sign-in connections (ADR-119 E8)
+    if ((patch.role || patch.status) && !memberMayHoldConnections(context.tenant.id, targetUserId)) {
+      revokeMemberConnections(context.tenant.id, targetUserId, context.user.id, patch.status === "SUSPENDED" ? "MEMBER_SUSPENDED" : "ROLE_CHANGED");
     }
 
     return apiSuccess({ message: "User updated successfully." });

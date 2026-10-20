@@ -23,6 +23,7 @@ const JOB_NAMES = [
   "cod-reconciliation",
   "retention-purge",
   "knowledge-reindex",
+  "connection-health",
 ];
 
 const TIMEOUT_MS = 120_000;

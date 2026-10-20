@@ -219,7 +219,7 @@ export function adSuggestions(report: Omit<AdsReport, "suggestions" | "fetched_a
         severity: "info",
         title: "Connect your ad account to see cost and ROAS",
         detail: `${commerce.ad_conversations} conversations came from ads, but without the ad account CommerceOS cannot tell what they cost.`,
-        action: "Add the ad account ID and an access token with ads_read to the Meta Graph connector.",
+        action: "Press Connect ads on Ad Manager and pick your ad account.",
         evidence: `${commerce.orders} orders from ad conversations`,
       });
     }
@@ -387,7 +387,7 @@ export class AdPerformanceService {
       const partial = {
         ...base,
         status: "NOT_CONNECTED" as const,
-        message: "Add your ad account ID and an access token with ads_read to the Meta Graph connector in Connector Hub.",
+        message: "Press Connect ads and pick your ad account. Facebook will ask for read access to your ads (ads_read).",
       };
       return { ...partial, suggestions: adSuggestions(partial), fetched_at: new Date().toISOString() };
     }

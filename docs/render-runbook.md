@@ -99,3 +99,20 @@ the Free plan only for staging; production is `starter` or larger. Neon also sca
 | A bad migration | Run the rollback SQL noted in the migration file; if there is none, restore from a Neon point-in-time branch. Ask before touching production data. |
 | This blueprint | Delete the service (or the blueprint file). Nothing else depends on it. |
 | A wrong setting | Change the variable in the dashboard; Render redeploys. |
+
+## Meta app settings (Connect with Facebook)
+
+One CommerceOS Meta app serves every workspace (ADR-119). Set `META_APP_ID`, `META_APP_SECRET`, `META_VERIFY_TOKEN` and an
+https `APP_URL` on the service, then in the Meta app:
+
+| Setting | Value |
+|---|---|
+| Facebook Login → Valid OAuth Redirect URIs | `${APP_URL}/api/v1/connections/meta/callback` and `${APP_URL}/api/v1/connections/whatsapp/callback` |
+| Facebook Login for Business → Configurations | a WhatsApp Embedded Signup configuration; its id goes in `META_WA_CONFIG_ID` |
+| Webhooks (WhatsApp Business Account) → Callback URL | `${APP_URL}/api/v1/social/webhooks/whatsapp`, verify token = `META_VERIFY_TOKEN` |
+| Webhooks (Page, Instagram) → Callback URL | `${APP_URL}/api/v1/social/webhooks/facebook` and `/instagram`, verify token = `META_VERIFY_TOKEN` |
+| Settings → Basic → Deauthorize Callback URL | `${APP_URL}/api/v1/connections/meta/deauthorize` |
+| Settings → Basic → Data Deletion Request URL | `${APP_URL}/api/v1/connections/meta/data-deletion` |
+
+The scheduled job `connection-health` (every 6 hours, `scripts/run-scheduled-jobs.mjs`) checks every sign-in token with Meta.
+Until App Review grants Advanced Access, only people with a role on the Meta app can connect.
