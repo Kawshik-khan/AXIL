@@ -1680,14 +1680,15 @@ The platform API had about 36 routes and 16 services, but `/super-admin` was one
 
 ## ADR-117: Image Product Search — Deterministic Matching, Model Only Describes
 
-**Date**: 2026-10-19 · **Status**: Proposed (awaiting owner decisions in the spec §8) · **Spec**: `.agent/specs/customer-agent/image-product-search.md`
+**Date**: 2026-10-19 · **Status**: Proposed (awaiting owner decisions in the spec §8; re-checked 2026-10-20 against ADR-118) · **Spec**: `.agent/specs/customer-agent/image-product-search.md`
 
 ### 1. Context
 
 Customers on Messenger, Instagram, WhatsApp and Telegram often open with a photo or a screenshot ("ei product ta ache?").
 Today that message is lost or ignored: Telegram drops photo messages, WhatsApp stores a token-protected metadata URL,
 `MessageService.processInboundMessage` doesn't persist attachments, and the customer-agent runtime ends a turn with empty
-text as `NOTHING_TO_ANSWER`. `LLMMessage.content` is text only, `search_products` is keyword-only, and there is no
+text as `NOTHING_TO_ANSWER`. Since ADR-118 (n8n removed) the channel webhook → adapter → `WebhookIngressService` is the only
+inbound path, so images are normalised in the adapters alone. `LLMMessage.content` is text only, `search_products` is keyword-only, and there is no
 object storage. Any fix must keep the invariants: LLMs never touch storage or decide price/stock (AGENTS.md §5.5),
 tenant scope from context only, outbound calls only via `outbound-http.ts` (ADR-110), turns run in the worker outside the
 store lock (ADR-112), honest fallbacks (ADR-106).
