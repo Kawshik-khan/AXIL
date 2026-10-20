@@ -131,7 +131,8 @@ const PlaceArgs = z
       .transform((s) => s.replace(/[\s-]/g, ""))
       .refine((s) => BD_MOBILE.test(s), "must be a Bangladeshi mobile number (11 digits starting 01)"),
     address_line: z.string().trim().min(5).max(200),
-    payment_method: z.literal("COD"), // cash on delivery only until prepaid payments ship (FX-89, owner decision)
+    // Cash on delivery only until prepaid payments ship (FX-89, owner decision); left out means COD, anything else is refused
+    payment_method: z.literal("COD").default("COD"),
   })
   .strict();
 const NoArgs = z.object({}).strict();
@@ -488,7 +489,7 @@ export const CUSTOMER_TOOLS: Record<string, CustomerTool> = {
   place_order: {
     def: def(
       "place_order",
-      "Place a cash-on-delivery order for an open quote. The first call returns CONFIRMATION_REQUIRED with a summary to show; the order is placed only on a later call after the customer's yes. Never to 'hold' items.",
+      "Place a cash-on-delivery order for an open quote. The first call returns CONFIRMATION_REQUIRED with a summary to show; the order is placed only on a later call after the customer's yes. Never to 'hold' items. Example: {\"quote_id\": \"q_abc\", \"customer_name\": \"Rahim Uddin\", \"phone\": \"01711000001\", \"address_line\": \"House 12, Road 5, Mirpur 10\", \"payment_method\": \"COD\"}",
       {
         type: "object",
         properties: {
@@ -496,7 +497,7 @@ export const CUSTOMER_TOOLS: Record<string, CustomerTool> = {
           customer_name: { type: "string" },
           phone: { type: "string", description: "01XXXXXXXXX" },
           address_line: { type: "string", description: "House, road, area" },
-          payment_method: { type: "string", enum: ["COD"] },
+          payment_method: { type: "string", enum: ["COD"], description: "Cash on delivery only" },
         },
         required: ["quote_id", "customer_name", "phone", "address_line", "payment_method"],
       }

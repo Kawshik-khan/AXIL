@@ -339,6 +339,8 @@ async function main() {
 
   await runTest("place_order is cash on delivery only for now", async () => {
     assert.strictEqual((await runCustomerTool(prA, "place_order", { ...details, quote_id: "q_x", payment_method: "BKASH" })).refused, "INVALID_ARGS");
+    const { payment_method: _omitted, ...withoutMethod } = { ...details, quote_id: "q_x", payment_method: "COD" };
+    assert.notStrictEqual((await runCustomerTool(prA, "place_order", withoutMethod)).refused, "INVALID_ARGS", "no payment_method means COD");
   });
 
   // ------------------------------------------------------------------ FX-73
