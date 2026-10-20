@@ -14,7 +14,7 @@ import { RequestHumanHandoffTool } from "@/domains/ai/tools/implementations/huma
 import { searchTokens } from "@/domains/catalog/search-synonyms";
 import { productRepository } from "@/domains/catalog/product.repository";
 import { orderRepository } from "@/domains/orders/order.repository";
-import { findDistrict, mentionsDistrict } from "@/lib/bd-geography";
+import { findDistrictOrArea, mentionsDistrict } from "@/lib/bd-geography";
 import { assertNotKilled } from "@/lib/safety-gate";
 import { logger } from "@/lib/logger";
 import type { LLMToolDefinition } from "@/domains/ai/providers/llm-provider.interface";
@@ -196,7 +196,7 @@ async function getProduct(pr: CustomerAgentPrincipal, a: z.infer<typeof ProductA
 }
 
 async function getDeliveryCharge(pr: CustomerAgentPrincipal, a: z.infer<typeof DistrictArgs>): Promise<ToolResult> {
-  const place = findDistrict(a.district);
+  const place = findDistrictOrArea(a.district);
   if (!place) return { error: "UNKNOWN_DISTRICT", message: "That isn't one of the 64 districts. Ask the customer for their district." };
   const fees = PricingService.getDeliveryFees(pr.tenantId);
   return {
@@ -207,7 +207,7 @@ async function getDeliveryCharge(pr: CustomerAgentPrincipal, a: z.infer<typeof D
 }
 
 async function quoteOrder(pr: CustomerAgentPrincipal, a: z.infer<typeof QuoteArgs>): Promise<ToolResult> {
-  const place = findDistrict(a.district);
+  const place = findDistrictOrArea(a.district);
   if (!place) return { error: "UNKNOWN_DISTRICT", message: "Ask the customer for one of the 64 districts." };
   for (const it of a.items) {
     const v = db.findVariantById(pr.tenantId, it.variant_id);
@@ -444,7 +444,7 @@ export const CUSTOMER_TOOLS: Record<string, CustomerTool> = {
   search_products: {
     def: def(
       "search_products",
-      "Find products by name, type, colour or size words (English, Bangla or Banglish). Returns each match's variants with variant_id, size, price_bdt and stock_status. Call it before stating any price or stock; not for orders or policies.",
+      "Find products by name, type, colour or size words (English, Bangla or Banglish). Returns each match's variants with variant_id, size, price_bdt and stock_status. Call it before stating any price or stock; not for orders or policies. Example: {\"query\": \"black t-shirt\"}",
       { type: "object", properties: { query: { type: "string", description: "What the customer wants, e.g. \"panjabi\", \"kalo genji\"; no size words" }, max_price_bdt: { type: "number", description: "Optional price ceiling" } }, required: ["query"] }
     ),
     schema: SearchArgs,
@@ -462,8 +462,8 @@ export const CUSTOMER_TOOLS: Record<string, CustomerTool> = {
   get_delivery_charge: {
     def: def(
       "get_delivery_charge",
-      "Delivery charge in BDT for one of the 64 districts, when the customer asks what delivery costs. For an order total use quote_order instead.",
-      { type: "object", properties: { district: { type: "string", description: "District in English or Bangla; areas like Mirpur or Uttara are in Dhaka" } }, required: ["district"] }
+      "Delivery charge in BDT for one of the 64 districts, when the customer asks what delivery costs. For an order total use quote_order instead. Example: {\"district\": \"Sylhet\"}",
+      { type: "object", properties: { district: { type: "string", description: "District in English or Bangla, e.g. \"Dhaka\", \"সিলেট\"; Mirpur or Uttara is Dhaka" } }, required: ["district"] }
     ),
     schema: DistrictArgs,
     run: getDeliveryCharge as CustomerTool["run"],
@@ -471,12 +471,12 @@ export const CUSTOMER_TOOLS: Record<string, CustomerTool> = {
   quote_order: {
     def: def(
       "quote_order",
-      "Price an order on the server: items, coupon discount, delivery charge for the district and grand total in BDT, and the quote_id place_order needs. Only with a district the customer gave (never guess one). 1-10 per item.",
+      "Price an order on the server: items, coupon discount, delivery charge for the district and grand total in BDT, and the quote_id place_order needs. Only with a district the customer gave (never guess one). 1-10 per item. Example: {\"items\": [{\"variant_id\": \"var_1\", \"quantity\": 2}], \"district\": \"Dhaka\"}",
       {
         type: "object",
         properties: {
           items: { type: "array", minItems: 1, maxItems: 10, items: { type: "object", properties: { variant_id: { type: "string" }, quantity: { type: "integer", minimum: 1, maximum: 10 } }, required: ["variant_id", "quantity"] } },
-          district: { type: "string" },
+          district: { type: "string", description: "District, e.g. \"Dhaka\" (Mirpur or Uttara is Dhaka)" },
           coupon_code: { type: "string", description: "Only a code the customer typed" },
         },
         required: ["items", "district"],

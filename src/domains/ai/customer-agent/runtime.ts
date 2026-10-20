@@ -75,6 +75,8 @@ export interface CustomerTurn {
   guards: string[];
   /** The customer message this turn answered (the idempotency key for its reply). */
   answeredMessageId?: string;
+  /** What the tools returned this turn: the eval's grounding check reads it, since a server-written reply follows no model call. */
+  toolResults?: ToolResult[];
 }
 
 const cap = (text: string, max: number) => (text.length > max ? `${text.slice(0, max)} …[message truncated: ${text.length - max} more characters]` : text);
@@ -393,7 +395,7 @@ export async function runCustomerTurn(pr: CustomerAgentPrincipal, opts: { budget
     };
     db.saveAgentExecutionTrace(traceRecord);
 
-    return { runId, status, reply, handoff, toolCalls, guards, answeredMessageId: last.id };
+    return { runId, status, reply, handoff, toolCalls, guards, answeredMessageId: last.id, toolResults };
   };
   const fallbackReply = () =>
     script === "bangla"

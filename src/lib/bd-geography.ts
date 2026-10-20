@@ -128,6 +128,14 @@ const DHAKA_AREAS = new Set(
   ].map(normalize)
 );
 
+/** The district by name, or Dhaka for a well-known Dhaka area ("Mirpur", "Uttara sector 7"), which is where it is. */
+export function findDistrictOrArea(name: string | null | undefined): DistrictSpec | undefined {
+  const d = findDistrict(name);
+  if (d || !name) return d;
+  const first = normalize(name).split(/[\s,]+/)[0];
+  return DHAKA_AREAS.has(first) ? findDistrict("Dhaka") : undefined;
+}
+
 /**
  * Whether the text names this district: the district itself (English, old spellings or Bangla) or, for Dhaka, a
  * well-known area of the city. Used to check that a district came from the customer, not from a guess.
