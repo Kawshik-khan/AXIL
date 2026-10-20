@@ -125,6 +125,7 @@ function prices(): { input: number; cached: number; output: number } {
 export async function runTurn(fx: Fixture, convId: string, input: string, budgetMs?: number): Promise<TurnRecord> {
   meter.calls = [];
   const t0 = Date.now();
+  let toolOutput = "";
   const rec: TurnRecord = { input, response: "", status: "", tools: [], guards: [], handoff: false, latency_ms: 0, llm_calls: 0, prompt_tokens: 0, completion_tokens: 0, cached_tokens: 0, hallucinated_amounts: [] };
   try {
     const pr = principalFor(fx.tenantId, convId);
@@ -139,6 +140,7 @@ export async function runTurn(fx: Fixture, convId: string, input: string, budget
       rec.handoff = turn.handoff;
       rec.tools = turn.toolCalls;
       rec.guards = turn.guards;
+      toolOutput = JSON.stringify(turn.toolResults ?? []);
     }
   } catch (err) {
     rec.status = "ERROR";
@@ -150,9 +152,11 @@ export async function runTurn(fx: Fixture, convId: string, input: string, budget
   rec.completion_tokens = meter.calls.reduce((n, c) => n + c.completion_tokens, 0);
   rec.cached_tokens = meter.calls.reduce((n, c) => n + c.cached_tokens, 0);
   if (!rec.error) rec.error = meter.calls.find((c) => c.error)?.error;
-  // Every number the server or the customer put in front of the model this turn
+  // Every number the server or the customer put in front of the model this turn, or a tool returned
   const allowed = new Set<number>();
   for (const c of meter.calls) for (const m of c.messages) if (m.role !== "assistant") for (const n of allNumbers(m.content)) allowed.add(n);
+  // A server-written reply (quote layout, placed order) follows no model call: its amounts come from this turn's tool results
+  for (const n of allNumbers(toolOutput)) allowed.add(n);
   rec.hallucinated_amounts = moneyAmounts(rec.response).filter((n) => !allowed.has(n));
   return rec;
 }

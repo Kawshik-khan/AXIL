@@ -12,6 +12,7 @@ import type { LLMMessage, LLMProvider, LLMResponse, LLMToolDefinition } from "@/
 import { modelRouter } from "@/domains/ai/providers/model-router";
 import { PROMPT_VERSION } from "@/domains/ai/customer-agent/runtime";
 import { RecordingProvider, loadCases, localEmbedder, meter, runCase, runStamp, summarize, type CaseResult } from "./agent-evals/harness";
+import { fixedCost } from "./agent-evals/token-report";
 
 const GREEN = "\x1b[32m";
 const RED = "\x1b[31m";
@@ -111,6 +112,14 @@ async function main() {
     assert.strictEqual(stamp.prompt_version, PROMPT_VERSION);
     assert.match(stamp.dataset_sha256, /^[0-9a-f]{16}$/);
     assert.ok(stamp.git_sha.length > 0);
+  });
+
+  await runTest("every model call's fixed prompt (system prompt + tool definitions) stays within budget", () => {
+    // The live budget is 9,000 prompt tokens per turn over ~1.8 calls; v2.4 with tool set v2 sent ~3,700 per call
+    const f = fixedCost();
+    const perCall = f.current.prompt_tokens + f.current.tool_tokens;
+    console.log(`    fixed per call: ${perCall} est. tokens (prompt ${f.current.prompt_tokens}, tools ${f.current.tool_tokens}); v2.4 baseline ${f.baseline.prompt_tokens + f.baseline.tool_tokens}`);
+    assert.ok(perCall <= 2800, `fixed prompt per call ${perCall} est. tokens > 2,800: see tests/agent-evals/token-report.ts`);
   });
 
   console.log(`\n  Tests Passed: ${passed} | Tests Failed: ${failed}\n`);

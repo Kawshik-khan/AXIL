@@ -272,7 +272,9 @@ async function main() {
     assert.strictEqual((await run(prA, "get_delivery_charge", { district: "Dhaka" })).delivery_charge_bdt, 60);
     assert.strictEqual((await run(prA, "get_delivery_charge", { district: "Gazipur" })).delivery_charge_bdt, 120);
     assert.strictEqual((await run(prA, "get_delivery_charge", { district: "সিলেট" })).district, "Sylhet");
-    assert.strictEqual((await run(prA, "get_delivery_charge", { district: "Mirpur" })).error, "UNKNOWN_DISTRICT");
+    // A well-known Dhaka area is Dhaka (the model passed "Mirpur" in the 2026-10-20 smoke run); anything else is refused
+    assert.strictEqual((await run(prA, "get_delivery_charge", { district: "Mirpur 10" })).district, "Dhaka");
+    assert.strictEqual((await run(prA, "get_delivery_charge", { district: "Atlantis" })).error, "UNKNOWN_DISTRICT");
   });
 
   await runTest("quote refuses quantities outside 1-10 and sizes that are out of stock", async () => {
@@ -337,6 +339,8 @@ async function main() {
 
   await runTest("place_order is cash on delivery only for now", async () => {
     assert.strictEqual((await runCustomerTool(prA, "place_order", { ...details, quote_id: "q_x", payment_method: "BKASH" })).refused, "INVALID_ARGS");
+    const { payment_method: _omitted, ...withoutMethod } = { ...details, quote_id: "q_x", payment_method: "COD" };
+    assert.notStrictEqual((await runCustomerTool(prA, "place_order", withoutMethod)).refused, "INVALID_ARGS", "no payment_method means COD");
   });
 
   // ------------------------------------------------------------------ FX-73
