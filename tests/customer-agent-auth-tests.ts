@@ -463,7 +463,8 @@ async function main() {
     const w = await variant(pr, "wallet", "Free");
     const q = await run(pr, "quote_order", { items: [{ variant_id: w.variant_id, quantity: 1 }], district: "Dhaka" });
     assert.strictEqual((await run(pr, "place_order", { ...details, quote_id: q.quote_id })).status, "CONFIRMATION_REQUIRED");
-    say(pr, "customer", "yes");
+    // The customer gives a new address with the yes: that address needs its own summary and yes
+    say(pr, "customer", "ji, address Somewhere else entirely, Gulshan");
     const swapped = await run(pr, "place_order", { ...details, quote_id: q.quote_id, address_line: "Somewhere else entirely, Gulshan" });
     assert.strictEqual(swapped.status, "CONFIRMATION_REQUIRED", "a different address after the summary isn't confirmed");
     assert.strictEqual(swapped.summary.address, "Somewhere else entirely, Gulshan");
@@ -472,6 +473,20 @@ async function main() {
     assert.strictEqual(placed.status, "PLACED", JSON.stringify(placed));
     const order = db.getAllOrders(tenantId).find((o) => o.order_number === placed.order_number)!;
     assert.strictEqual(order.shipping_address_snapshot.address_line_1, "Somewhere else entirely, Gulshan");
+  });
+
+  await runTest("a plain yes places exactly the summary shown, whatever details the model re-sends", async () => {
+    const pr = await conversation(messenger, "FACEBOOK_MESSENGER", customerA);
+    say(pr, "customer", "1 ta wallet Dhaka");
+    const w = await variant(pr, "wallet", "Free");
+    const q = await run(pr, "quote_order", { items: [{ variant_id: w.variant_id, quantity: 1 }], district: "Dhaka" });
+    const shown = await run(pr, "place_order", { ...details, quote_id: q.quote_id });
+    assert.strictEqual(shown.status, "CONFIRMATION_REQUIRED");
+    say(pr, "customer", "ha confirm");
+    const placed = await run(pr, "place_order", { ...details, quote_id: q.quote_id, address_line: "Somewhere else entirely, Gulshan" });
+    assert.strictEqual(placed.status, "PLACED", JSON.stringify(placed));
+    const order = db.getAllOrders(tenantId).find((o) => o.order_number === placed.order_number)!;
+    assert.strictEqual(order.shipping_address_snapshot.address_line_1, shown.summary.address, "the model's other address never reaches the order");
   });
 
   await runTest("a claim abandoned by a crash (PLACING for over 2 minutes) can be placed again; a fresh one can't", async () => {
