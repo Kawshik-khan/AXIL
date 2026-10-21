@@ -23,7 +23,7 @@ import {
   allowedAmounts, capLength, formatHandoffReply, guardOrderClaim, guardPaymentClaim, guardPhoneNumbers, notAMessage, replyScript, sanitizeOutbound,
   stripAmounts, unsupportedAmounts,
 } from "@/domains/ai/customer-agent/output";
-import { conversationSlots, runCustomerTurn } from "@/domains/ai/customer-agent/runtime";
+import { conversationSlots, hasUnrecoveredToolFailure, runCustomerTurn } from "@/domains/ai/customer-agent/runtime";
 import { AUTONOMOUS_FLAG, SHADOW_FLAG, agentMode } from "@/domains/ai/customer-agent/jobs";
 import { customerMessages } from "@/domains/ai/customer-agent/confirmation";
 import { runAgentJobsOnce } from "@/domains/ai/customer-agent/worker";
@@ -430,6 +430,58 @@ async function main() {
     const rows = (db.data.agent_tool_calls as R[]).filter((c) => c.conversation_id === pr.conversationId && c.tool_name === "place_order");
     assert.ok(rows.length > 0);
     for (const r of rows) assert.ok(Object.values(r.input_arguments).every((v) => v === "[redacted]"), JSON.stringify(r.input_arguments));
+  });
+
+  // A refused tool call the model recovered from, or a refusal that is the expected answer, must not pause the chat
+  // (live eval G28, run 39468142400: place_order INVALID_ARGS, retried and placed, yet the chat went to HITL)
+  // (the autonomous flag is off here, so ingress leaves mode HUMAN; an escalation is what sets automation_paused)
+  const botStillOwns = (conversationId: string) => !db.findConversationById(tenantId, conversationId)!.automation_paused;
+
+  await runTest("a refused call followed by a successful retry leaves the chat with the bot (G28)", async () => {
+    const convo = await inbound("retry_chat", "Black t-shirt ache?");
+    scripted.steps = [
+      call("search_products", () => ({ query: "" })),
+      call("search_products", () => ({ query: "black t-shirt" })),
+      say("Ji, black t-shirt ache. Kon size lagbe?"),
+    ];
+    const turn = await runCustomerTurn(principalFor(tenantId, convo.id)!);
+    assert.strictEqual(turn.status, "COMPLETED", JSON.stringify(turn));
+    assert.deepStrictEqual(turn.toolCalls.map((t) => [t.name, t.ok, t.refused]), [["search_products", false, "INVALID_ARGS"], ["search_products", true, undefined]]);
+    assert.strictEqual(turn.handoff, false);
+    assert.ok(botStillOwns(convo.id), "a recovered refusal must not pause the chat");
+  });
+
+  await runTest("an expected refusal (UNKNOWN_DISTRICT) is an answer, not a tool failure", async () => {
+    const convo = await inbound("district_chat", "Atlantis e delivery charge koto?");
+    scripted.steps = [call("get_delivery_charge", () => ({ district: "Atlantis" })), say("Apnar district ta bolben? 64 district er moddhe kon ta?")];
+    const turn = await runCustomerTurn(principalFor(tenantId, convo.id)!);
+    assert.strictEqual(turn.status, "COMPLETED", JSON.stringify(turn));
+    assert.deepStrictEqual(turn.toolCalls.map((t) => t.ok), [false]);
+    assert.ok(botStillOwns(convo.id), "an expected refusal must not pause the chat");
+  });
+
+  await runTest("a tool failure the model did not recover from still escalates", async () => {
+    const convo = await inbound("unrecovered_chat", "Black t-shirt ache?");
+    scripted.steps = [call("search_products", () => ({ query: "" })), say("Ekhon dekhte parchi na, ektu por abar jiggesh korben?")];
+    await runCustomerTurn(principalFor(tenantId, convo.id)!);
+    assert.ok(!botStillOwns(convo.id), "an unrecovered failure goes to a person");
+  });
+
+  await runTest("unrecovered tool failure: only a later success of the same tool recovers it", () => {
+    const ok = (name: string) => ({ name, ok: true });
+    const bad = (name: string, error: string, refused?: string) => ({ call: { name, ok: false, ...(refused ? { refused } : {}) }, error });
+    const check = (seq: Array<{ name: string; ok: boolean } | ReturnType<typeof bad>>) =>
+      hasUnrecoveredToolFailure(
+        seq.map((s) => ("call" in s ? s.call : s)),
+        seq.map((s) => ("call" in s ? { error: s.error } : {})),
+      );
+    assert.strictEqual(check([bad("place_order", "INVALID_ARGUMENTS", "INVALID_ARGS"), ok("place_order")]), false);
+    assert.strictEqual(check([bad("quote_order", "DISTRICT_NOT_GIVEN")]), false);
+    assert.strictEqual(check([bad("quote_order", "UNKNOWN_DISTRICT")]), false);
+    assert.strictEqual(check([bad("place_order", "TOOL_FAILED")]), true);
+    assert.strictEqual(check([bad("place_order", "TOOL_FAILED"), ok("search_products")]), true, "another tool's success doesn't recover it");
+    assert.strictEqual(check([ok("place_order"), bad("place_order", "ORDER_FAILED")]), true, "an earlier success doesn't recover a later failure");
+    assert.strictEqual(check([bad("handoff_to_human", "TOOL_FAILED")]), true);
   });
 
   // ================================================================ FX-76 jobs and worker

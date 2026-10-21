@@ -79,6 +79,21 @@ export interface CustomerTurn {
   toolResults?: ToolResult[];
 }
 
+/** Refusals that are the tool's expected answer (the model asks the customer for the district), not failures. */
+const EXPECTED_REFUSALS = new Set(["UNKNOWN_DISTRICT", "DISTRICT_NOT_GIVEN"]);
+
+/**
+ * A failed tool call lowers confidence only when nothing fixed it: a later call of the same tool in the turn succeeded
+ * (live eval G28: place_order INVALID_ARGS, then retried and placed, still paused the chat). `results[i]` is the result
+ * of `calls[i]`.
+ */
+export function hasUnrecoveredToolFailure(calls: Array<{ name: string; ok: boolean }>, results: ToolResult[]): boolean {
+  return calls.some((tc, i) => {
+    if (tc.ok || EXPECTED_REFUSALS.has(String(results[i]?.error))) return false;
+    return !calls.slice(i + 1).some((later) => later.name === tc.name && later.ok);
+  });
+}
+
 const cap = (text: string, max: number) => (text.length > max ? `${text.slice(0, max)} …[message truncated: ${text.length - max} more characters]` : text);
 
 /**
@@ -326,7 +341,7 @@ export async function runCustomerTurn(pr: CustomerAgentPrincipal, opts: { budget
       customerMessage: current,
       agentReply: reply,
       isCatalogGrounded,
-      hasToolExecutionError: toolCalls.some((tc) => !tc.ok),
+      hasToolExecutionError: hasUnrecoveredToolFailure(toolCalls, toolResults),
     });
 
     // A guard that rewrote the reply (stripped amount, blocked claim, removed number) already protected the customer:
