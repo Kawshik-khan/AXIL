@@ -11,10 +11,11 @@ import { Modal } from "@/components/ui/Modal/Modal";
 import { LoadingSkeleton, PermissionDenied } from "@/components/ui/States/States";
 import styles from "./settings.module.css";
 import { NotificationsPanel } from "@/components/settings/NotificationsPanel";
+import { ProductCardsPanel } from "@/components/settings/ProductCardsPanel";
 import dashStyles from "../dashboard.module.css";
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<"workspace" | "users" | "notifications" | "security">("workspace");
+  const [activeTab, setActiveTab] = useState<"workspace" | "users" | "notifications" | "product-cards" | "security">("workspace");
   const [session, setSession] = useState<any>(null);
   const [tenant, setTenant] = useState<any>(null);
   const [users, setUsers] = useState<any[]>([]);
@@ -44,7 +45,7 @@ export default function SettingsPage() {
   useEffect(() => {
     if (typeof window !== "undefined" && window.location.hash) {
       const hash = window.location.hash.replace("#", "");
-      if (hash === "users" || hash === "security" || hash === "workspace" || hash === "notifications") {
+      if (hash === "users" || hash === "security" || hash === "workspace" || hash === "notifications" || hash === "product-cards") {
         setActiveTab(hash as any);
       }
     }
@@ -251,6 +252,12 @@ export default function SettingsPage() {
           onClick={() => setActiveTab("notifications")}
         >
           Notifications
+        </button>
+        <button
+          className={`${dashStyles.tabButton} ${activeTab === "product-cards" ? dashStyles.tabActive : ""}`}
+          onClick={() => setActiveTab("product-cards")}
+        >
+          Product Cards
         </button>
         <button
           className={`${dashStyles.tabButton} ${activeTab === "security" ? dashStyles.tabActive : ""}`}
@@ -551,6 +558,8 @@ export default function SettingsPage() {
 
       {/* Owner alerts on Telegram, delivered by the scheduled jobs */}
       {activeTab === "notifications" && <NotificationsPanel />}
+
+      {activeTab === "product-cards" && <ProductCardsPanel />}
 
 
       {/* Tab 3: Security & Audit Logs */}

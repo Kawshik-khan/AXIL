@@ -107,6 +107,11 @@ Stack traces are never exposed to clients.
   postback button each; WhatsApp: up to 3 interactive reply-button messages; website chat: drawn by the widget; Telegram:
   none. A tap returns through the channel webhook as the customer's text `"Order now: <title>"` (or `"অর্ডার করুন: …"`
   for Bangla), a fixed label whatever the shop's button says; the confirmation gate never counts it as a yes.
+- `GET|PUT /api/v1/tenants/current/product-cards`: the shop's card template. GET (`settings.read`) returns
+  `{ settings, defaults }` (defaults when never saved; nothing stored). PUT (`settings.update`) takes the complete
+  template, strict: `{ enabled, channels: { FACEBOOK_MESSENGER, INSTAGRAM, WHATSAPP, WEBSITE_CHAT }, max_cards (1-5),
+  button_label_latin, button_label_bangla (1-20 chars, plain text), show_photo, show_regular_price, show_out_of_stock,
+  theme: "lime" | "dark" | "light" }`; 400 on anything else; audited `PRODUCT_CARD_SETTINGS_UPDATED`.
 
 ### Agent Runtime Gateway (`/api/v1/agents`)
 - `POST /api/v1/agents/run`: Submit a task or conversation context to the Agent Orchestrator.
