@@ -804,10 +804,40 @@ async function main() {
     await inbound("rf_quote", "yes");
     makeDue(convo.id);
     let second: R = {};
-    scripted.steps = [call("place_order", place)];
+    // The model re-types the address a little differently on the yes (nightly G28, 2026-10-21): a plain yes confirms what
+    // the customer was shown, and the order gets the shown address
+    scripted.steps = [call("place_order", () => ({ ...place(), address_line: "House 12 Road 5 Mirpur 10, Dhaka" }))];
     await runAgentJobsOnce();
-    second = { status: db.findQuote(tenantId, convo.id, qid)!.status };
+    const placedQuote = db.findQuote(tenantId, convo.id, qid)!;
+    second = { status: placedQuote.status };
     assert.strictEqual(second.status, "PLACED", JSON.stringify(second));
+    const order = db.getAllOrders(tenantId).find((o) => o.order_number === placedQuote.order_number)!;
+    assert.strictEqual(order.shipping_address_snapshot.address_line_1, "House 12 Road 5 Mirpur 10");
+  });
+
+  await runTest("a yes that carries new details still needs a new summary", async () => {
+    setMode(true, false);
+    const convo = await inbound("rf_quote_change", "black t-shirt M size Dhaka");
+    makeDue(convo.id);
+    scripted.steps = [
+      call("search_products", () => ({ query: "black t-shirt" })),
+      call("quote_order", (m) => ({ items: [{ variant_id: (lastTool(m).results[0].variants as R[]).find((v) => v.size === "M")!.variant_id, quantity: 1 }], district: "Dhaka" })),
+    ];
+    await runAgentJobsOnce();
+    const qid = db.getConversationQuotes(tenantId, convo.id).pop()!.id;
+    const place = (address_line: string) => () => ({ quote_id: qid, customer_name: "Rahim Uddin", phone: "01711000001", address_line, payment_method: "COD" });
+    await inbound("rf_quote_change", "Rahim Uddin 01711000001 House 12 Road 5 Mirpur 10");
+    makeDue(convo.id);
+    scripted.steps = [call("place_order", place("House 12 Road 5 Mirpur 10")), say("Summary dekhacchi. Confirm korben?")];
+    await runAgentJobsOnce();
+    await inbound("rf_quote_change", "ji, address House 14 Road 2 Banani");
+    makeDue(convo.id);
+    let res: R = {};
+    scripted.steps = [call("place_order", place("House 14 Road 2 Banani")), (m) => ((res = lastTool(m)), { content: "Notun summary. Confirm korben?" })];
+    await runAgentJobsOnce();
+    scripted.steps = [];
+    assert.strictEqual(res.status, "CONFIRMATION_REQUIRED", JSON.stringify(res));
+    assert.strictEqual(db.findQuote(tenantId, convo.id, qid)!.status, "QUOTED");
   });
 
   await runTest("a quote turn ends on the server's quote layout without another model call", async () => {
