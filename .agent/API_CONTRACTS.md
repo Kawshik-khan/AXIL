@@ -99,7 +99,14 @@ Stack traces are never exposed to clients.
 - `POST /api/v1/social/orders/draft`: Controlled social order creation delegating to Commerce Core `OrderService.createOrder`.
 - `GET /api/v1/social/customers/:id/identities`: List linked customer social profiles and identities.
 - `GET|POST /api/v1/social/webhooks/:channel`: Inbound webhook ingress with HMAC signature verification (`X-Hub-Signature-256`, Meta `hub.challenge`).
-- `GET|POST /api/v1/social/widget/*`: First-party website live chat widget session, config, and messaging.
+- `GET|POST /api/v1/social/widget/*`: First-party website live chat widget session, config, and messaging. A product-card
+  message (`PRODUCT`) in `GET /api/v1/social/widget/message` also carries `product_cards`: `[{ product_id, title, price_bdt,
+  price_varies, regular_price_bdt?, in_stock, image_url?, button_label, button_payload }]` (card fields only).
+- Product cards (customer agent): after a turn that looked products up, the worker sends the matches as a second,
+  `PRODUCT` message (`metadata.product_cards`; `text` is the plain list). Messenger/Instagram: one generic template with a
+  postback button each; WhatsApp: up to 3 interactive reply-button messages; website chat: drawn by the widget; Telegram:
+  none. A tap returns through the channel webhook as the customer's text `"Order now: <title>"` (or `"অর্ডার করুন: …"`
+  for Bangla), a fixed label whatever the shop's button says; the confirmation gate never counts it as a yes.
 
 ### Agent Runtime Gateway (`/api/v1/agents`)
 - `POST /api/v1/agents/run`: Submit a task or conversation context to the Agent Orchestrator.

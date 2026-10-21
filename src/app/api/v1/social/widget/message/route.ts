@@ -5,6 +5,7 @@ import { WebhookIngressService } from "@/domains/social/webhooks/webhook-ingress
 import { logger } from "@/lib/logger";
 import { checkRateLimit, clientKey, MINUTE } from "@/lib/rate-limit";
 import { withStore } from "@/lib/store-unit";
+import { readProductCards } from "@/lib/product-card-shape";
 
 /**
  * Public website chat widget ingress (audit H5, FX-07).
@@ -161,6 +162,7 @@ async function handleGET(request: Request) {
         id: m.id,
         sender: m.sender_type === "CUSTOMER" ? "visitor" : "agent",
         text: m.text,
+        ...(m.message_type === "PRODUCT" ? { product_cards: readProductCards(m.metadata?.product_cards) } : {}),
         timestamp: new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
         status: m.status,
         created_at: m.created_at,

@@ -1,0 +1,138 @@
+.row {
+  list-style: none;
+  margin: 0;
+  padding: 2px 2px var(--space-4);
+  display: flex;
+  gap: var(--space-8);
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  max-width: 100%;
+}
+
+.card {
+  flex: 0 0 168px;
+  scroll-snap-align: start;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-surface-pure);
+  color: var(--color-text-primary);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+}
+
+.media {
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-surface-soft);
+  color: var(--color-text-muted);
+}
+
+.image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-8);
+}
+
+.title {
+  font-size: var(--font-size-meta);
+  font-weight: 600;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: 2.6em;
+}
+
+.priceRow {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+}
+
+.price {
+  font-size: var(--font-size-body);
+  font-weight: 700;
+}
+
+.regular {
+  font-size: var(--font-size-meta);
+  color: var(--color-text-muted);
+  text-decoration: line-through;
+}
+
+.button {
+  margin-top: var(--space-4);
+  padding: var(--space-8);
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--color-lime-primary);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: var(--font-size-meta);
+  font-weight: 700;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.button:hover:not(:disabled) {
+  background: var(--color-lime-hover);
+}
+
+.button:disabled {
+  background: var(--color-surface-soft);
+  color: var(--color-text-muted);
+  cursor: default;
+}
+
+/* ---- Themes (Settings → Product cards) ---- */
+
+/* lime: the default above */
+.lime {
+}
+
+.dark {
+  background: var(--color-surface-dark);
+  border-color: var(--color-border-dark);
+  color: var(--color-text-inverse);
+}
+
+.dark .media {
+  background: var(--color-dark-card);
+  color: var(--color-text-dark-muted);
+}
+
+.dark .regular {
+  color: var(--color-text-dark-muted);
+}
+
+.dark .button:disabled {
+  background: var(--color-dark-card);
+  color: var(--color-text-dark-muted);
+}
+
+.light .button {
+  background: var(--color-surface-dark);
+  color: var(--color-text-inverse);
+}
+
+.light .button:hover:not(:disabled) {
+  background: var(--color-dark-elevated);
+}
+
+.light .button:disabled {
+  background: var(--color-surface-soft);
+  color: var(--color-text-muted);
+}

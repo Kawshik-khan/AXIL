@@ -13,6 +13,11 @@ import { AppError, KillSwitchActiveError } from "@/lib/errors";
 import { assertNotKilled } from "@/lib/safety-gate";
 import type { AgentJob } from "@/types/ai";
 import { OutboundMessageService } from "@/domains/social/outbound/outbound-message.service";
+import { ChannelService } from "@/domains/social/channels/channel.service";
+import { buildProductCards, productCardsText, turnShowsProductCards } from "@/domains/social/outbound/product-cards";
+import { cardsEnabledFor, getProductCardSettings } from "@/domains/social/outbound/product-card-settings";
+import type { CustomerAgentPrincipal } from "./principal";
+import type { CustomerTurn } from "./runtime";
 import { AgentPolicyService } from "@/domains/ai/policy/agent-policy.service";
 import { AgentHealthService } from "@/domains/platform/services/agent-health.service";
 import { dispatchCommentTriggersOnce } from "@/domains/social/comment-triggers/comment-trigger.service";
@@ -242,7 +247,10 @@ async function runLoadedAgentJob(job: AgentJob): Promise<Finish> {
       { text: turn.reply, idempotency_key: `agent:${job.id}:${turn.answeredMessageId ?? job.last_message_id}` },
       { asAgent: true, agentTurnStartedAt: turnStartedAt, agentHandedOff: turn.handoff, traceId: job.id }
     );
-    if (DELIVERED.has(sent.status)) await markQuotesShown(job, turnStartedAt, sent.id, turn.reply);
+    if (DELIVERED.has(sent.status)) {
+      await markQuotesShown(job, turnStartedAt, sent.id, turn.reply);
+      await sendProductCards(job, pr, turn, turnStartedAt);
+    }
     return { status: "DONE", outcome: `${turn.status}:${sent.status}` };
   } catch (err) {
     if (err instanceof AppError && err.code === "AGENT_SUPERSEDED") return { status: "CANCELLED", outcome: "STAFF_REPLIED" };
@@ -252,6 +260,39 @@ async function runLoadedAgentJob(job: AgentJob): Promise<Finish> {
       return { status: "BLOCKED", outcome: `SEND_REFUSED:${err.code}` };
     }
     throw err;
+  }
+}
+
+/**
+ * After a reply that looked products up, the products as cards (photo, title, price, order button) in a second
+ * message. Best effort: the text reply already named the products, so a failure here is logged, not retried.
+ */
+async function sendProductCards(job: AgentJob, pr: CustomerAgentPrincipal, turn: CustomerTurn, turnStartedAt: string): Promise<void> {
+  if (!turnShowsProductCards(turn)) return;
+  const settings = getProductCardSettings(pr.tenantId);
+  if (!cardsEnabledFor(settings, pr.channelType)) return; // the shop turned cards off, or off for this channel
+  let supported = false;
+  try {
+    supported = Boolean(ChannelService.getAdapter(pr.channelType).sendProductCards);
+  } catch {
+    supported = false; // a channel type without an adapter
+  }
+  if (!supported) return;
+  try {
+    const cards = await buildProductCards(pr.tenantId, turn.toolResults ?? [], pr.channelType, replyScript(turn.reply), settings);
+    if (!cards.length) return;
+    await OutboundMessageService.sendMessage(
+      capabilityContext(pr, "send"),
+      job.conversation_id,
+      { text: productCardsText(cards), productCards: cards, idempotency_key: `agent:${job.id}:${turn.answeredMessageId ?? job.last_message_id}:cards` },
+      { asAgent: true, agentTurnStartedAt: turnStartedAt, agentHandedOff: turn.handoff, traceId: job.id }
+    );
+  } catch (err) {
+    logger.warn("customer_agent.product_cards_failed", {
+      tenant_id: job.tenant_id,
+      conversation_id: job.conversation_id,
+      code: err instanceof AppError ? err.code : "ERROR",
+    });
   }
 }
 

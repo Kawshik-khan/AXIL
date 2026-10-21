@@ -1,7 +1,8 @@
 import { IntegrationNotConfiguredError, AppError } from "@/lib/errors";
 import crypto from "crypto";
 import { outboundRequest, OutboundBlockedError, OutboundTimeoutError, OutboundNetworkError } from "@/lib/outbound-http";
-import { ChannelType, NormalizedIncomingMessage } from "@/types/social";
+import { ChannelType, NormalizedIncomingMessage, ProductCard } from "@/types/social";
+import { MAX_WHATSAPP_PRODUCT_CARDS, productTapText, scriptOfCards, whatsappProductMessage } from "@/domains/social/outbound/product-cards";
 import {
   IChannelProvider,
   ChannelCredentials,
@@ -151,8 +152,12 @@ export class WhatsAppAdapter implements IChannelProvider {
               mimeType: doc.mime_type,
             });
           } else if (type === "interactive") {
-            const inter = msg.interactive as { button_reply?: { title?: string }; list_reply?: { title?: string } };
-            text = inter.button_reply?.title || inter.list_reply?.title || "Interactive Selection";
+            const inter = msg.interactive as { button_reply?: { id?: string; title?: string }; list_reply?: { title?: string } };
+            // A product card's button carries the product in its id: "Order now: Blue Panjabi"
+            const tap = productTapText(inter.button_reply?.id);
+            // A card button never falls back to its title: the shop may have labelled it "yes"
+            const cardButton = inter.button_reply?.id?.startsWith("PRODUCT_ORDER") ?? false;
+            text = tap?.text || (cardButton ? "Order now:" : inter.button_reply?.title || inter.list_reply?.title || "Interactive Selection");
             messageType = "TEXT";
           }
 
@@ -260,6 +265,28 @@ export class WhatsAppAdapter implements IChannelProvider {
     const msgId = (result.messages as Array<{ id?: string }>)?.[0]?.id;
     if (!msgId) throw new AppError("WHATSAPP_API_ERROR", "WhatsApp did not return a message id.", 502);
     return { externalMessageId: msgId, status: "SENT", providerTimestamp: new Date().toISOString() };
+  }
+
+  /** One message per card (WhatsApp has no carousel without a Meta catalog); the first message's id is returned. */
+  public async sendProductCards(credentials: ChannelCredentials, recipientId: string, cards: ProductCard[]): Promise<SendMessageResult> {
+    const phoneNumberId = typeof credentials.phoneNumberId === "string" ? credentials.phoneNumberId : "";
+    if (!phoneNumberId) throw new IntegrationNotConfiguredError("WhatsApp messaging", "phone number id is required");
+    const script = scriptOfCards(cards);
+    const ids: string[] = [];
+    for (const card of cards.slice(0, MAX_WHATSAPP_PRODUCT_CARDS)) {
+      try {
+        const result = await graphCall(credentials, `/${phoneNumberId}/messages`, whatsappProductMessage(card, recipientId, script));
+        const msgId = (result.messages as Array<{ id?: string }>)?.[0]?.id;
+        if (!msgId) throw new AppError("WHATSAPP_API_ERROR", "WhatsApp did not return a message id.", 502);
+        ids.push(msgId);
+      } catch (err) {
+        // Once a card is out, report success with what was sent: a retry would send the first cards twice
+        if (ids.length) break;
+        throw err;
+      }
+    }
+    if (!ids.length) throw new AppError("WHATSAPP_API_ERROR", "No product card to send.", 400);
+    return { externalMessageId: ids[0], status: "SENT", providerTimestamp: new Date().toISOString(), rawResponse: { message_ids: ids } };
   }
 
   public async sendTemplateMessage(
