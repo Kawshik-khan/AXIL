@@ -35,6 +35,15 @@ export function isAffirmative(text: string): boolean {
   return AFFIRM_AT_START.test(t);
 }
 
+/**
+ * A yes and nothing else ("ji", "ha confirm", "yes"): no digits and at most four words, so it can't carry a new name,
+ * phone or address. Such a yes confirms exactly the summary the customer was shown.
+ */
+export function isPlainYes(text: string): boolean {
+  const t = text.normalize("NFC").trim();
+  return isAffirmative(t) && !/[\d০-৯]/.test(t) && t.split(/\s+/).length <= 4;
+}
+
 /** The texts of all the customer's messages in a conversation, oldest first (uncapped: the gate compares counts). */
 export function customerMessages(tenantId: string, conversationId: string): string[] {
   return db

@@ -114,6 +114,27 @@ async function main() {
     assert.ok(stamp.git_sha.length > 0);
   });
 
+  await runTest("a provider timeout is a provider error: left out of the scores, counted against its own limit", async () => {
+    // A provider that times out like the 2026-10-21 nightly (60 s TIMEOUT -> LLM_PROVIDER_ERROR)
+    const down: LLMProvider = Object.assign(Object.create(model), {
+      chat: async () => {
+        throw Object.assign(new Error("AI provider timed out."), { code: "LLM_PROVIDER_ERROR" });
+      },
+    });
+    modelRouter.setPrimaryProvider(new RecordingProvider(down));
+    const timedOut = await runCase("golden", loadCases("golden", new Set(["G21"]))[0]);
+    modelRouter.setPrimaryProvider(new RecordingProvider(model));
+    assert.strictEqual(timedOut.provider_error, true, timedOut.failures.join(" | "));
+    assert.ok(timedOut.failures[0].startsWith("PROVIDER_ERROR"), timedOut.failures[0]);
+    const answered = results.find((r) => r.id === "G01")!;
+    const s = summarize([answered, timedOut]);
+    assert.strictEqual(s.scored_cases, 1);
+    assert.strictEqual(s.provider_errors, 1);
+    assert.strictEqual(s.provider_error_rate, 50);
+    assert.strictEqual(s.turns, answered.turns.length, "the timed-out turn is not in latency or token averages");
+    assert.strictEqual(s.tool_capability_recall, answered.caps_hit === undefined ? null : answered.caps_hit ? 100 : 0);
+  });
+
   await runTest("every model call's fixed prompt (system prompt + tool definitions) stays within budget", () => {
     // The live budget is 9,000 prompt tokens per turn over ~1.8 calls; v2.4 with tool set v2 sent ~3,700 per call
     const f = fixedCost();

@@ -21,7 +21,7 @@ import type { LLMToolDefinition } from "@/domains/ai/providers/llm-provider.inte
 import type { CustomerQuote } from "@/types/ai";
 import type { Order, Product } from "@/types/commerce";
 import { canSeeOrder, capabilityContext, visibleOrders, findVisibleOrders, type CustomerAgentPrincipal } from "./principal";
-import { confirmedAfter, customerMessages } from "./confirmation";
+import { confirmedAfter, customerMessages, isPlainYes } from "./confirmation";
 import { loadOrderRows, loadTenantRows } from "@/infrastructure/db/tenant-rows";
 
 export type ToolResult = Record<string, unknown>;
@@ -329,7 +329,11 @@ async function placeOrder(pr: CustomerAgentPrincipal, a: z.infer<typeof PlaceArg
     // The customer confirms what the summary showed. Different name, phone or address after a summary means a new
     // summary and a new yes (the confirmation point moves to now).
     const shown = q.confirmation_details;
-    const changed = Boolean(shown) && JSON.stringify(shown) !== JSON.stringify(details);
+    // A plain yes to a shown summary confirms that summary: details the model re-typed differently ("Mirpur 10, Dhaka"
+    // for "Mirpur 10") are not the customer's change (nightly G28, 2026-10-21). New details in the yes need a new summary.
+    const latest = customerMessages(pr.tenantId, pr.conversationId).pop() ?? "";
+    const yesToSummary = Boolean(shown) && isPlainYes(latest);
+    const changed = Boolean(shown) && !yesToSummary && JSON.stringify(shown) !== JSON.stringify(details);
     // A yes counts only after the customer was actually sent the quote (shown_message_id, set by the worker on delivery)
     if (changed || !q.shown_message_id || !confirmedAfter(pr.tenantId, pr.conversationId, q.customer_msg_count_at_quote)) {
       db.updateQuote(pr.tenantId, q.id, {
@@ -489,7 +493,7 @@ export const CUSTOMER_TOOLS: Record<string, CustomerTool> = {
   place_order: {
     def: def(
       "place_order",
-      "Place a cash-on-delivery order for an open quote. The first call returns CONFIRMATION_REQUIRED with a summary to show; the order is placed only on a later call after the customer's yes. Never to 'hold' items. Example: {\"quote_id\": \"q_abc\", \"customer_name\": \"Rahim Uddin\", \"phone\": \"01711000001\", \"address_line\": \"House 12, Road 5, Mirpur 10\", \"payment_method\": \"COD\"}",
+      "Place a cash-on-delivery order for an open quote. The first call returns CONFIRMATION_REQUIRED with a summary to show; the order is placed only on a later call, with the same details, after the customer's yes. Never to 'hold' items. Example: {\"quote_id\": \"q_abc\", \"customer_name\": \"Rahim Uddin\", \"phone\": \"01711000001\", \"address_line\": \"House 12, Road 5, Mirpur 10\", \"payment_method\": \"COD\"}",
       {
         type: "object",
         properties: {
