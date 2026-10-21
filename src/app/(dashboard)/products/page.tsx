@@ -12,6 +12,7 @@ import {
   Trash2,
   AlertCircle,
   UploadCloud,
+  Images,
 } from "lucide-react";
 import { BentoCard } from "@/components/bento/BentoCard";
 import { Button } from "@/components/ui/Button/Button";
@@ -20,6 +21,8 @@ import { Modal } from "@/components/ui/Modal/Modal";
 import { Badge } from "@/components/ui/Badge/Badge";
 import { EmptyState, LoadingState } from "@/components/ui/States/States";
 import { BulkImportModal } from "@/components/catalog/BulkImportModal";
+import { ProductImageUploader } from "@/components/catalog/ProductImageUploader";
+import { ProductPhotosModal } from "@/components/catalog/ProductPhotosModal";
 import { Product } from "@/types/commerce";
 
 export default function ProductsPage() {
@@ -39,6 +42,9 @@ export default function ProductsPage() {
   const [compareAtPrice, setCompareAtPrice] = useState("");
   const [initialStock, setInitialStock] = useState("10");
   const [description, setDescription] = useState("");
+  const [images, setImages] = useState<string[]>([]);
+  const [imagesBusy, setImagesBusy] = useState(false);
+  const [photosProduct, setPhotosProduct] = useState<Product | null>(null);
 
   const loadProducts = async () => {
     try {
@@ -67,6 +73,10 @@ export default function ProductsPage() {
       setFormError("Product name is required.");
       return;
     }
+    if (imagesBusy) {
+      setFormError("Wait for the photos to finish uploading.");
+      return;
+    }
     const priceNum = parseFloat(basePrice);
     if (isNaN(priceNum) || priceNum <= 0) {
       setFormError("A valid positive base price is required.");
@@ -87,6 +97,7 @@ export default function ProductsPage() {
           compare_at_price: compareAtPrice ? parseFloat(compareAtPrice) : undefined,
           initial_stock: parseInt(initialStock, 10) || 0,
           description: description.trim(),
+          images,
           status: "ACTIVE",
         }),
       });
@@ -104,6 +115,7 @@ export default function ProductsPage() {
       setCompareAtPrice("");
       setDescription("");
       setInitialStock("10");
+      setImages([]);
       await loadProducts();
     } catch (err: any) {
       setFormError(err.message || "An error occurred");
@@ -229,12 +241,42 @@ export default function ProductsPage() {
                     }}
                   >
                     <td style={{ padding: "14px 10px", fontWeight: 600 }}>
-                      <div>{product.name}</div>
-                      {product.description && (
-                        <div style={{ fontSize: "11px", color: "var(--color-text-muted)", fontWeight: 400 }}>
-                          {product.description.slice(0, 60)}...
+                      <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                        {product.primary_image || product.images?.[0] ? (
+                          // eslint-disable-next-line @next/next/no-img-element -- uploaded files come from the media bucket
+                          <img
+                            src={product.primary_image || product.images[0]}
+                            alt=""
+                            width={40}
+                            height={40}
+                            style={{ objectFit: "cover", borderRadius: "var(--radius-sm)", flexShrink: 0 }}
+                          />
+                        ) : (
+                          <span
+                            aria-hidden
+                            style={{
+                              width: 40,
+                              height: 40,
+                              display: "inline-flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              borderRadius: "var(--radius-sm)",
+                              background: "var(--color-surface-soft)",
+                              flexShrink: 0,
+                            }}
+                          >
+                            <Package size={16} color="var(--color-text-muted)" />
+                          </span>
+                        )}
+                        <div>
+                          <div>{product.name}</div>
+                          {product.description && (
+                            <div style={{ fontSize: "11px", color: "var(--color-text-muted)", fontWeight: 400 }}>
+                              {product.description.slice(0, 60)}...
+                            </div>
+                          )}
                         </div>
-                      )}
+                      </div>
                     </td>
                     <td style={{ padding: "14px 10px" }}>
                       <code>{product.sku}</code>
@@ -265,7 +307,17 @@ export default function ProductsPage() {
                         {product.status}
                       </Badge>
                     </td>
-                    <td style={{ padding: "14px 10px", textAlign: "right" }}>
+                    <td style={{ padding: "14px 10px", textAlign: "right", whiteSpace: "nowrap" }}>
+                      {product.status !== "ARCHIVED" && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setPhotosProduct(product)}
+                          aria-label={`Edit photos of ${product.name}`}
+                        >
+                          <Images size={14} />
+                        </Button>
+                      )}
                       {product.status !== "ARCHIVED" && (
                         <Button
                           variant="ghost"
@@ -350,6 +402,8 @@ export default function ProductsPage() {
             />
           </div>
 
+          <ProductImageUploader value={images} onChange={setImages} onBusyChange={setImagesBusy} disabled={isSubmitting} />
+
           <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
             <label style={{ fontSize: "13px", fontWeight: 500 }}>Description</label>
             <textarea
@@ -372,12 +426,21 @@ export default function ProductsPage() {
             <Button variant="outline" type="button" onClick={() => setIsModalOpen(false)}>
               Cancel
             </Button>
-            <Button variant="primary" type="submit" isLoading={isSubmitting}>
+            <Button variant="primary" type="submit" isLoading={isSubmitting} disabled={imagesBusy}>
               Create Product
             </Button>
           </div>
         </form>
       </Modal>
+
+      <ProductPhotosModal
+        product={photosProduct}
+        onClose={() => setPhotosProduct(null)}
+        onSaved={async () => {
+          setPhotosProduct(null);
+          await loadProducts();
+        }}
+      />
 
       {/* Bulk Catalog Import Modal */}
       <BulkImportModal

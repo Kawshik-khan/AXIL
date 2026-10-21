@@ -116,3 +116,24 @@ https `APP_URL` on the service, then in the Meta app:
 
 The scheduled job `connection-health` (every 6 hours, `scripts/run-scheduled-jobs.mjs`) checks every sign-in token with Meta.
 Until App Review grants Advanced Access, only people with a role on the Meta app can connect.
+
+## Product image storage (Cloudflare R2, ADR-120)
+
+Without these settings the photo picker in Products answers "Image storage is not connected" and nothing is stored.
+Do staging first, with its own bucket.
+
+1. Cloudflare dashboard → R2 → **Create bucket** (e.g. `commerceos-media`, `commerceos-media-staging`). Location: Asia-Pacific.
+2. Bucket → Settings → **Public access**: connect a custom domain (e.g. `media.yourshop.com`) or allow the `r2.dev`
+   subdomain (rate-limited, fine for staging). The URL shown is `MEDIA_PUBLIC_BASE_URL` (https, no trailing slash).
+3. R2 → **Manage API tokens** → Create token: permission *Object Read & Write*, applied to this bucket only.
+   Copy the Access Key ID and Secret Access Key (shown once) and the Account ID.
+4. Render → the service → Environment: set `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`,
+   `MEDIA_PUBLIC_BASE_URL` (`MEDIA_STORAGE=r2` comes from render.yaml). Deploy.
+5. Check: Products → Add Product → choose a photo → it appears with a Cover badge; open its URL in a private window:
+   it should load from `MEDIA_PUBLIC_BASE_URL`. A wrong key shows "Image storage refused the upload (HTTP 403, …)".
+
+No bucket CORS rule is needed: browsers upload to the app, and the app uploads to R2.
+
+Hardening for the public bucket (security review, 2026-10-21): put the custom domain on a registrable domain of its
+own (e.g. `yourshop-media.com`), not a subdomain of the app's domain, and add a Cloudflare Transform Rule (Modify
+Response Header) on it that sets `X-Content-Type-Options: nosniff`.

@@ -59,6 +59,19 @@ services:
       - key: DEFAULT_LANGUAGE
         value: en
       # ---- secrets and endpoints: set in the dashboard ----
+      # Product image uploads (ADR-120). Unset R2_* = uploads answer 424 and nothing is stored.
+      - key: MEDIA_STORAGE
+        value: r2
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET
+        sync: false
+      - key: MEDIA_PUBLIC_BASE_URL
+        sync: false
       - key: APP_URL
         sync: false
       - key: JWT_SECRET
@@ -204,6 +217,19 @@ services:
       - key: DEFAULT_LANGUAGE
         value: en
       # ---- secrets and endpoints: set in the dashboard ----
+      # Product image uploads (ADR-120). Unset R2_* = uploads answer 424 and nothing is stored.
+      - key: MEDIA_STORAGE
+        value: r2
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET
+        sync: false
+      - key: MEDIA_PUBLIC_BASE_URL
+        sync: false
       - key: APP_URL
         sync: false
       - key: JWT_SECRET

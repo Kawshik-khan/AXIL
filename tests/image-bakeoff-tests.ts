@@ -105,7 +105,7 @@ async function main() {
       seg(0xe0, Buffer.from("JFIF\0")),
       seg(0xe1, Buffer.from("Exif\0\0GPS-SECRET")),
       seg(0xfe, Buffer.from("comment")),
-      seg(0xe2, Buffer.from("ICC_PROFILE")),
+      seg(0xe2, Buffer.from("ICC_PROFILE\0")),
       Buffer.from([0xff, 0xda, 0x00, 0x02, 0x11, 0x22, 0xff, 0xd9]),
     ]);
     assert.strictEqual(sniffImageMime(jpeg), "image/jpeg");

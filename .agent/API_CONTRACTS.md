@@ -111,6 +111,17 @@ Stack traces are never exposed to clients.
 - `POST /api/v1/knowledge/upload`: Upload policy PDF or markdown guide for ingestion and embedding.
 - `POST /api/v1/knowledge/query`: Semantic test query with similarity scores and citations.
 
+### Media (`/api/v1/media`, ADR-120)
+- `POST /api/v1/media/product-images`: one product photo as the raw request body, `Content-Type: image/jpeg|png|webp`
+  (anything else 415). Needs `products.create` or `products.update`. The type is sniffed from the bytes; at most 5 MB
+  (413), 8000 px a side and 40 megapixels; EXIF/GPS, XMP, IPTC and comments removed before storing. Returns
+  `{ image: { id, url, content_type, bytes, width, height, reused } }`: 201 when stored, 200 when the workspace already
+  had the same image. 424 `INTEGRATION_NOT_CONFIGURED` without storage, 403 `PLAN_LIMIT_REACHED` at 5000 images,
+  429 above 300 uploads an hour, 502 `MEDIA_STORAGE_FAILED` when R2 refuses. Put the returned `url` in a product's
+  `images` (create body or `PATCH /api/v1/products/:id`).
+- `GET /api/v1/media/files/*key`: development only (`MEDIA_STORAGE=local`): serves the caller's own workspace's file
+  (`products.read`); anything else is 404. With R2 images are served from `MEDIA_PUBLIC_BASE_URL`.
+
 ## 3. Platform Control Plane API Contracts (`/api/v1/platform/*`)
 
 Platform routes are segregated from merchant tenant routes. All platform endpoints require authenticated `PlatformSessionToken` with appropriate `platformRole` and granular permissions.

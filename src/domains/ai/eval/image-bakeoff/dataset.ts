@@ -12,6 +12,9 @@ import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";
 import { z } from "zod";
+import { ImageFormatError, sniffImageMime, stripImageMetadata as stripBytes, type ImageMime } from "@/domains/media/image-bytes";
+
+export { sniffImageMime, type ImageMime };
 
 export const IMAGE_KINDS = ["product", "payment_proof", "person", "document", "other"] as const;
 export type ImageKind = (typeof IMAGE_KINDS)[number];
@@ -132,8 +135,6 @@ export function readManifest(datasetDir: string): Manifest {
 
 // ---- Images ----------------------------------------------------------------------------------------------------------
 
-export type ImageMime = "image/jpeg" | "image/png" | "image/webp";
-
 export interface LoadedImage {
   /** Path relative to the dataset directory, as written in the manifest. */
   file: string;
@@ -146,13 +147,6 @@ export interface LoadedImage {
 
 export function toDataUri(image: LoadedImage): string {
   return `data:${image.mime};base64,${image.bytes.toString("base64")}`;
-}
-
-export function sniffImageMime(buf: Buffer): ImageMime | null {
-  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "image/jpeg";
-  if (buf.length >= 8 && buf.subarray(0, 8).equals(PNG_SIGNATURE)) return "image/png";
-  if (buf.length >= 12 && buf.toString("latin1", 0, 4) === "RIFF" && buf.toString("latin1", 8, 12) === "WEBP") return "image/webp";
-  return null;
 }
 
 /** Reads one image of the dataset. The path must stay inside the dataset directory. */
@@ -170,84 +164,17 @@ export function loadImage(datasetDir: string, relFile: string): LoadedImage {
   return { file: relFile, mime, bytes, sha256: crypto.createHash("sha256").update(bytes).digest("hex") };
 }
 
-/** Removes EXIF/GPS, XMP, IPTC and text comments. Keeps colour profiles. Throws DatasetError on a malformed file. */
+/** Removes EXIF/GPS, XMP, IPTC and text comments (see image-bytes.ts). Throws DatasetError on a malformed file. */
 export function stripImageMetadata(buf: Buffer, mime: ImageMime, label = "image"): Buffer {
-  if (mime === "image/jpeg") return stripJpeg(buf, label);
-  if (mime === "image/png") return stripPng(buf, label);
-  return stripWebp(buf, label);
-}
-
-function stripJpeg(buf: Buffer, label: string): Buffer {
-  const parts: Buffer[] = [buf.subarray(0, 2)];
-  let i = 2;
-  while (i + 1 < buf.length) {
-    if (buf[i] !== 0xff) throw new DatasetError(`${label}: malformed JPEG`);
-    const marker = buf[i + 1];
-    if (marker === 0xff) {
-      i += 1; // fill byte
-      continue;
-    }
-    if (marker === 0xda) {
-      parts.push(buf.subarray(i)); // start of scan: the rest is image data
-      return Buffer.concat(parts);
-    }
-    if ((marker >= 0xd0 && marker <= 0xd7) || marker === 0x01) {
-      parts.push(buf.subarray(i, i + 2));
-      i += 2;
-      continue;
-    }
-    if (i + 4 > buf.length) break;
-    const length = buf.readUInt16BE(i + 2);
-    if (length < 2 || i + 2 + length > buf.length) throw new DatasetError(`${label}: malformed JPEG segment`);
-    // APP1 = EXIF/XMP, APP13 = IPTC, COM = comment. APP0 (JFIF), APP2 (ICC) and APP14 (Adobe) affect colour: kept.
-    if (marker !== 0xe1 && marker !== 0xed && marker !== 0xfe) parts.push(buf.subarray(i, i + 2 + length));
-    i += 2 + length;
+  try {
+    return stripBytes(buf, mime, label);
+  } catch (err) {
+    if (err instanceof ImageFormatError) throw new DatasetError(err.message);
+    throw err;
   }
-  throw new DatasetError(`${label}: JPEG has no image data`);
 }
 
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-const PNG_DROPPED = new Set(["eXIf", "tEXt", "iTXt", "zTXt", "tIME"]);
-
-function stripPng(buf: Buffer, label: string): Buffer {
-  const parts: Buffer[] = [PNG_SIGNATURE];
-  let i = 8;
-  while (i + 12 <= buf.length) {
-    const length = buf.readUInt32BE(i);
-    const type = buf.toString("latin1", i + 4, i + 8);
-    const end = i + 12 + length;
-    if (end > buf.length) throw new DatasetError(`${label}: malformed PNG chunk`);
-    if (!PNG_DROPPED.has(type)) parts.push(buf.subarray(i, end));
-    i = end;
-    if (type === "IEND") return Buffer.concat(parts);
-  }
-  throw new DatasetError(`${label}: PNG has no IEND chunk`);
-}
-
-const WEBP_FLAG_EXIF = 0x08;
-const WEBP_FLAG_XMP = 0x04;
-
-function stripWebp(buf: Buffer, label: string): Buffer {
-  const parts: Buffer[] = [];
-  let i = 12;
-  while (i + 8 <= buf.length) {
-    const fourcc = buf.toString("latin1", i, i + 4);
-    const size = buf.readUInt32LE(i + 4);
-    const end = i + 8 + size + (size % 2);
-    if (i + 8 + size > buf.length) throw new DatasetError(`${label}: malformed WebP chunk`);
-    const chunk = Buffer.from(buf.subarray(i, Math.min(end, buf.length)));
-    if (fourcc === "VP8X" && size >= 1) chunk[8] &= ~(WEBP_FLAG_EXIF | WEBP_FLAG_XMP);
-    if (fourcc !== "EXIF" && fourcc !== "XMP ") parts.push(chunk);
-    i = end;
-  }
-  if (!parts.length) throw new DatasetError(`${label}: WebP has no chunks`);
-  const body = Buffer.concat(parts);
-  const header = Buffer.alloc(12);
-  header.write("RIFF", 0, "latin1");
-  header.writeUInt32LE(body.length + 4, 4);
-  header.write("WEBP", 8, "latin1");
-  return Buffer.concat([header, body]);
-}
 
 // ---- Synthetic images (sample dataset and tests) ---------------------------------------------------------------------
 
