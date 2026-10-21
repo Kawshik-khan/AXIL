@@ -2,6 +2,7 @@ import {
   ChannelType,
   NormalizedIncomingMessage,
   MessageStatus,
+  ProductCard,
 } from "@/types/social";
 
 export interface ChannelCredentials {
@@ -97,6 +98,16 @@ export interface IChannelProvider {
     recipientId: string,
     templateName: string,
     parameters: Record<string, string>
+  ): Promise<SendMessageResult>;
+
+  /**
+   * Product cards (photo, title, price, an order button). Channels without it get no cards: the agent's text reply
+   * already names the products.
+   */
+  sendProductCards?(
+    credentials: ChannelCredentials,
+    recipientId: string,
+    cards: ProductCard[]
   ): Promise<SendMessageResult>;
 
   /**

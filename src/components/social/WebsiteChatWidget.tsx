@@ -2,6 +2,10 @@
 
 import React, { useState, useEffect } from "react";
 import { Send, MessageSquare, User, Phone, Globe, CheckCircle2, RotateCw } from "lucide-react";
+import type { ProductCard } from "@/types/social";
+import { readProductCards } from "@/lib/product-card-shape";
+import { productTapText } from "@/domains/social/outbound/product-tap";
+import { ProductCardList } from "./ProductCardList";
 import styles from "./SocialInbox.module.css";
 
 interface WidgetMessage {
@@ -9,6 +13,8 @@ interface WidgetMessage {
   sender: "visitor" | "agent";
   text: string;
   timestamp: string;
+  /** Product cards sent by the agent: shown instead of the text list. */
+  cards?: ProductCard[];
 }
 
 interface WebsiteChatWidgetProps {
@@ -97,13 +103,14 @@ export const WebsiteChatWidget: React.FC<WebsiteChatWidgetProps> = ({
       try {
         const res = await fetch(`/api/v1/social/widget/message?channel_id=${encodeURIComponent(channelId)}&anonymous_id=${encodeURIComponent(anonymousId)}`);
         if (!res.ok) return;
-        const data = (await res.json().catch(() => null)) as { success?: boolean; messages?: Array<{ id: string; sender: "visitor" | "agent"; text: string; timestamp: string }> } | null;
+        const data = (await res.json().catch(() => null)) as { success?: boolean; messages?: Array<{ id: string; sender: "visitor" | "agent"; text: string; timestamp: string; product_cards?: unknown }> } | null;
         if (active && data?.success && Array.isArray(data.messages) && data.messages.length > 0) {
           const serverMsgs: WidgetMessage[] = data.messages.map((m) => ({
             id: m.id,
             sender: m.sender,
             text: m.text,
             timestamp: m.timestamp,
+            cards: readProductCards(m.product_cards),
           }));
 
           const welcome: WidgetMessage = {
@@ -309,7 +316,14 @@ export const WebsiteChatWidget: React.FC<WebsiteChatWidgetProps> = ({
 
         {/* Message Thread */}
         <div className={styles.widgetBody}>
-          {messages.map((m) => (
+          {messages.map((m) =>
+            m.cards && m.cards.length > 0 ? (
+              // A tap sends what the other channels' buttons send ("Order now: Blue Panjabi"), not the shop's button text
+              <ProductCardList key={m.id} cards={m.cards} disabled={isSending} onOrder={(card) => {
+                const tap = productTapText(card.button_payload);
+                if (tap) handleSendMessage(tap.text);
+              }} />
+            ) : (
             <div
               key={m.id}
               className={m.sender === "visitor" ? styles.widgetVisitorBubble : styles.widgetAgentBubble}
@@ -319,7 +333,8 @@ export const WebsiteChatWidget: React.FC<WebsiteChatWidgetProps> = ({
                 {m.timestamp}
               </div>
             </div>
-          ))}
+            )
+          )}
           {isSending && (
             <div className={styles.widgetVisitorBubble} style={{ opacity: 0.6 }}>
               <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>

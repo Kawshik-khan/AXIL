@@ -1,7 +1,8 @@
 import { IntegrationNotConfiguredError, AppError } from "@/lib/errors";
 import crypto from "crypto";
 import { outboundRequest, OutboundBlockedError, OutboundTimeoutError, OutboundNetworkError } from "@/lib/outbound-http";
-import { ChannelType, NormalizedIncomingMessage } from "@/types/social";
+import { ChannelType, NormalizedIncomingMessage, ProductCard } from "@/types/social";
+import { metaGenericTemplate, productTapText } from "@/domains/social/outbound/product-cards";
 import {
   IChannelProvider,
   ChannelCredentials,
@@ -89,6 +90,29 @@ export class FacebookAdapter implements IChannelProvider {
     for (const entry of entries) {
       const messaging = (entry.messaging as Array<Record<string, unknown>>) || [];
       for (const item of messaging) {
+        // A tap on a product card's button (postback): becomes the customer's text, e.g. "Order now: Blue Panjabi"
+        const tap = item.postback as { mid?: string; title?: string; payload?: string } | undefined;
+        const tapSender = item.sender as { id: string } | undefined;
+        const tapText = tap && productTapText(tap.payload);
+        if (tap && tapSender && tapText) {
+          const mid = tap.mid || `fb_postback_${item.timestamp}_${tapSender.id}`;
+          results.push({
+            channelType: "FACEBOOK_MESSENGER",
+            channelId,
+            externalEventId: `fb_evt_${mid}`,
+            externalMessageId: mid,
+            externalConversationId: `fb_conv_${tapSender.id}`,
+            externalSenderId: tapSender.id,
+            senderProfile: { displayName: `Facebook User (${tapSender.id.slice(-4)})`, username: tapSender.id },
+            direction: "INBOUND",
+            messageType: "TEXT",
+            text: tapText.text,
+            attachments: [],
+            timestamp: item.timestamp ? new Date(Number(item.timestamp)).toISOString() : new Date().toISOString(),
+            rawPayload: item,
+          });
+          continue;
+        }
         // Skip delivery or read receipts here, handle them in parseDeliveryReceipts
         if (!item.message) continue;
 
@@ -235,6 +259,17 @@ export class FacebookAdapter implements IChannelProvider {
           payload: { template_type: "generic", elements },
         },
       },
+      messaging_type: "RESPONSE",
+    });
+    const msgId = typeof result.message_id === "string" ? result.message_id : "";
+    if (!msgId) throw new AppError("MESSENGER_API_ERROR", "Facebook did not return a message id.", 502);
+    return { externalMessageId: msgId, status: "SENT", providerTimestamp: new Date().toISOString() };
+  }
+
+  public async sendProductCards(credentials: ChannelCredentials, recipientId: string, cards: ProductCard[]): Promise<SendMessageResult> {
+    const result = await graphCall(credentials, "/me/messages", {
+      recipient: { id: recipientId },
+      message: { attachment: metaGenericTemplate(cards) },
       messaging_type: "RESPONSE",
     });
     const msgId = typeof result.message_id === "string" ? result.message_id : "";

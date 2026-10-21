@@ -15,6 +15,7 @@ import { RoleName, type Permission } from "@/lib/permissions";
 import { DISABLED_PASSWORD_HASH, encryptCredential } from "@/lib/security";
 import { PgStorePersistence, StoreConflictError, logUnwritable, type QueuedRow, type RejectedRow } from "@/infrastructure/store/pg-store";
 import { createNeonSqlClient, isDataRejected, pgErrorFields, storeConnectionString, type SqlClient } from "@/infrastructure/store/sql-client";
+import type { MediaAsset } from "@/types/media";
 import { ConnectorConfigRecord, ConnectionResource, EXCLUSIVE_RESOURCE_KINDS, type ConnectionResourceKind } from "@/types/connector";
 import type { NotificationSettingsRecord } from "@/types/notifications";
 import {
@@ -664,6 +665,8 @@ export interface DatabaseSchema {
   comment_trigger_events: CommentTriggerEvent[];
   // Connection platform (ADR-119): what each connector connection reaches at the provider
   connection_resources: ConnectionResource[];
+  // Uploaded media (ADR-120): product images in object storage
+  media_assets: MediaAsset[];
 }
 
 /**
@@ -1899,6 +1902,7 @@ export class CommerceDatabase {
       comment_trigger_rules: [],
       comment_trigger_events: [],
       connection_resources: [],
+      media_assets: [],
     };
   }
 
@@ -9875,6 +9879,7 @@ export class CommerceDatabase {
       comment_trigger_rules: [],
       comment_trigger_events: [],
       connection_resources: [],
+      media_assets: [],
     };
     this.ensureDefaultSeed();
   }
@@ -11290,6 +11295,19 @@ export class CommerceDatabase {
       this.persist(["connection_resources"]);
     }
     return removed;
+  }
+
+  // ==================== MEDIA ASSETS (ADR-120) ====================
+
+  /** Records an uploaded file. The id is the caller's; an existing id in any tenant is refused. */
+  public createMediaAsset(asset: MediaAsset): MediaAsset {
+    if (!this.data.media_assets) this.data.media_assets = [];
+    if (this.data.media_assets.some((a) => a.id === asset.id)) {
+      throw new ConflictError("A media asset with this id already exists.");
+    }
+    this.data.media_assets.push(asset);
+    this.persist(["media_assets"]);
+    return asset;
   }
 
   // ==================== COMMENT-TO-INBOX TRIGGERS ====================

@@ -1804,3 +1804,46 @@ provider had its own connect flow and the connector page branched on provider id
   release; the pending-cookie flow fails if the merchant changes browser mid-sign-in (they sign in again).
 - **Rollback**: each phase is behind the `connections_v2` platform flag; channels keep their old credentials for one
   release; the new collection can be left empty.
+
+## ADR-120: Product Image Storage and Uploads
+
+**Date**: 2026-10-21 · **Status**: Accepted · **Spec**: `.agent/specs/customer-agent/image-product-search.md` §8 decision 3 (product images only)
+
+### Context
+Products held image URLs only: no upload, no object storage, no image field in the create form. Merchants' photos are
+on their phones or Facebook Pages, not at public URLs. Image product search (ADR-117) also needs stored catalog images.
+
+### Decision
+- **Storage**: Cloudflare R2 (S3 API, no egress fees) with public read for product images, behind a `MediaStorage`
+  interface (`src/domains/media/media-storage.ts`). PUTs are SigV4-signed in code and sent through `outboundRequest`
+  (no AWS SDK). `MEDIA_STORAGE=local` stores files on disk for development and is refused in production.
+- **Upload through the app, not presigned URLs**: the browser shrinks the photo (≤ 1600 px, WebP/JPEG, ~200-600 KB)
+  and sends it as the raw body of `POST /api/v1/media/product-images`. The server checks the bytes before anything is
+  stored: type sniffed (JPEG/PNG/WebP only, never SVG), ≤ 5 MB, ≤ 8000 px a side and 40 MP, and only an allow-list of
+  chunks kept (pixel data, palette, transparency, colour profile; JPEG cut at end-of-image), so EXIF/GPS, MPF second
+  images and hidden payloads in private chunks can't be stored. No pixels are decoded server-side. With
+  presigned PUTs unchecked bytes would land in a public bucket first and need a second "complete" call, bucket CORS and
+  a CSP change. At this size the extra bandwidth through one Render server is small.
+- **Keys** are content-addressed and tenant-prefixed: `tenants/<tenant_id>/products/<sha256[0..40]>.<ext>`. One image
+  per tenant is stored once (`reused: true`); keys never change content, so they are cached for a year.
+- **Record**: new document collection `media_assets` (no SQL migration, ADR-108) with key, url, type, size, pixel size,
+  sha256 and uploader; `MEDIA_UPLOADED` audit entry.
+- **Limits** in code until plans carry a media entitlement: 5000 images per workspace, 300 uploads an hour per
+  workspace and 120 per member, checked before the body is read. Storage failures answer a generic 502; the bucket's
+  error code and host stay in the server log.
+- **Raw image Content-Type required**: a cross-site page can't send one without a CORS preflight, so the cookie session
+  can't be used for uploads from another site.
+
+### Consequences
+- **Positive**: merchants pick or photograph products from the form; nothing unchecked reaches storage; bake-off and
+  uploads share one image-byte module; one storage interface for later Facebook-post import and image search.
+- **Negative**: images in the bucket are public to anyone with the URL (product photos are public anyway). **Customer
+  photos (ADR-117 P1) must not use this public bucket**: they need a private prefix or bucket with signed URLs. Files
+  are not deleted yet: removing a photo from a product or archiving the product leaves the object (no orphan cleanup
+  job). Product `images` still accept any URL (bulk import); they are not checked against `media_assets`, so anything
+  that later downloads catalog images (image search) must treat them as tenant-supplied URLs (`tenantSupplied: true`).
+  The quota check and dedupe are check-then-act: concurrent uploads can pass the cap by a few or store a duplicate
+  record. Serve the bucket from its own domain (not a subdomain of the app's) and add `X-Content-Type-Options: nosniff`
+  there (runbook).
+- **Rollback**: unset `MEDIA_STORAGE`; uploads answer 424, existing URLs keep working while the bucket exists.
+

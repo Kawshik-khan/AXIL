@@ -27,6 +27,8 @@ import { Button } from "@/components/ui/Button/Button";
 import styles from "./SocialInbox.module.css";
 import { HandoffContextCard, isHandoffCard } from "./HandoffContextCard";
 import { ShadowDraftCard, isShadowDraft } from "./ShadowDraftCard";
+import { ProductCardList } from "./ProductCardList";
+import { readProductCards } from "@/lib/product-card-shape";
 
 const STATUS_OPTIONS = [
   { value: "OPEN", label: "Open", color: "#10B981" },
@@ -452,7 +454,11 @@ export const ConversationThread: React.FC<ConversationThreadProps> = ({
                     )}
                   </div>
                 )}
-                <div>{msg.text}</div>
+                {msg.message_type === "PRODUCT" && readProductCards(msg.metadata?.product_cards).length > 0 ? (
+                  <ProductCardList cards={readProductCards(msg.metadata?.product_cards)} />
+                ) : (
+                  <div>{msg.text}</div>
+                )}
                 {Boolean(msg.metadata?.policy_citation) && (
                   <div className={styles.aiCitationPill}>
                     📚 {String(msg.metadata.policy_citation)}

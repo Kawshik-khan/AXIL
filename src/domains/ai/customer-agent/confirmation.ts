@@ -7,6 +7,7 @@
  * confirms; "ok so how much for 2?", "not sure", "yes but make it 2" and "জিন্স টা কত?" don't.
  */
 import { db } from "@/infrastructure/db";
+import { isProductTapText } from "@/domains/social/outbound/product-tap";
 
 // Word boundaries that understand Bangla: a letter, vowel sign (mark) or digit on either side means "inside a word"
 const word = (alternatives: string) => new RegExp(`(?<![\\p{L}\\p{M}\\p{N}])(?:${alternatives})(?![\\p{L}\\p{M}\\p{N}])`, "iu");
@@ -31,6 +32,8 @@ const NEGATE = word(
 export function isAffirmative(text: string): boolean {
   const t = text.normalize("NFC").trim();
   if (!t || /[?？]/.test(t)) return false;
+  // A product-card tap ("অর্ডার করুন: Blue Panjabi") asks about a product; it never confirms an open quote
+  if (isProductTapText(t)) return false;
   if (NEGATE.test(t)) return false;
   return AFFIRM_AT_START.test(t);
 }

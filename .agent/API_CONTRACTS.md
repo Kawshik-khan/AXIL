@@ -99,7 +99,19 @@ Stack traces are never exposed to clients.
 - `POST /api/v1/social/orders/draft`: Controlled social order creation delegating to Commerce Core `OrderService.createOrder`.
 - `GET /api/v1/social/customers/:id/identities`: List linked customer social profiles and identities.
 - `GET|POST /api/v1/social/webhooks/:channel`: Inbound webhook ingress with HMAC signature verification (`X-Hub-Signature-256`, Meta `hub.challenge`).
-- `GET|POST /api/v1/social/widget/*`: First-party website live chat widget session, config, and messaging.
+- `GET|POST /api/v1/social/widget/*`: First-party website live chat widget session, config, and messaging. A product-card
+  message (`PRODUCT`) in `GET /api/v1/social/widget/message` also carries `product_cards`: `[{ product_id, title, price_bdt,
+  price_varies, regular_price_bdt?, in_stock, image_url?, button_label, button_payload }]` (card fields only).
+- Product cards (customer agent): after a turn that looked products up, the worker sends the matches as a second,
+  `PRODUCT` message (`metadata.product_cards`; `text` is the plain list). Messenger/Instagram: one generic template with a
+  postback button each; WhatsApp: up to 3 interactive reply-button messages; website chat: drawn by the widget; Telegram:
+  none. A tap returns through the channel webhook as the customer's text `"Order now: <title>"` (or `"অর্ডার করুন: …"`
+  for Bangla), a fixed label whatever the shop's button says; the confirmation gate never counts it as a yes.
+- `GET|PUT /api/v1/tenants/current/product-cards`: the shop's card template. GET (`settings.read`) returns
+  `{ settings, defaults }` (defaults when never saved; nothing stored). PUT (`settings.update`) takes the complete
+  template, strict: `{ enabled, channels: { FACEBOOK_MESSENGER, INSTAGRAM, WHATSAPP, WEBSITE_CHAT }, max_cards (1-5),
+  button_label_latin, button_label_bangla (1-20 chars, plain text), show_photo, show_regular_price, show_out_of_stock,
+  theme: "lime" | "dark" | "light" }`; 400 on anything else; audited `PRODUCT_CARD_SETTINGS_UPDATED`.
 
 ### Agent Runtime Gateway (`/api/v1/agents`)
 - `POST /api/v1/agents/run`: Submit a task or conversation context to the Agent Orchestrator.
@@ -110,6 +122,17 @@ Stack traces are never exposed to clients.
 - `GET /api/v1/knowledge/documents`: List uploaded merchant knowledge files.
 - `POST /api/v1/knowledge/upload`: Upload policy PDF or markdown guide for ingestion and embedding.
 - `POST /api/v1/knowledge/query`: Semantic test query with similarity scores and citations.
+
+### Media (`/api/v1/media`, ADR-120)
+- `POST /api/v1/media/product-images`: one product photo as the raw request body, `Content-Type: image/jpeg|png|webp`
+  (anything else 415). Needs `products.create` or `products.update`. The type is sniffed from the bytes; at most 5 MB
+  (413), 8000 px a side and 40 megapixels; EXIF/GPS, XMP, IPTC and comments removed before storing. Returns
+  `{ image: { id, url, content_type, bytes, width, height, reused } }`: 201 when stored, 200 when the workspace already
+  had the same image. 424 `INTEGRATION_NOT_CONFIGURED` without storage, 403 `PLAN_LIMIT_REACHED` at 5000 images,
+  429 above 300 uploads an hour, 502 `MEDIA_STORAGE_FAILED` when R2 refuses. Put the returned `url` in a product's
+  `images` (create body or `PATCH /api/v1/products/:id`).
+- `GET /api/v1/media/files/*key`: development only (`MEDIA_STORAGE=local`): serves the caller's own workspace's file
+  (`products.read`); anything else is 404. With R2 images are served from `MEDIA_PUBLIC_BASE_URL`.
 
 ## 3. Platform Control Plane API Contracts (`/api/v1/platform/*`)
 

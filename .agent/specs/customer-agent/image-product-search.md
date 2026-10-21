@@ -201,9 +201,15 @@ override only if the eval shows a need.
 ---
 
 ## 8. Open Decisions (owner)
+
+Decisions 1 and 2 are made from measurements, not model cards: the bake-off harness (`scripts/image-bakeoff.ts`,
+runbook `docs/image-bakeoff.md`) runs every vision × embedding pair on a labelled shop dataset and reports HIGH-band
+precision (with a 95% lower bound), coverage, wrong-answer causes and latency. Candidates to test first: a Gemini
+Flash-class and an OpenAI mini-class vision model; SigLIP2 self-hosted and Jina CLIP v2 hosted for embeddings.
+
 1. **Vision model** — hosted (OpenAI-compatible vision endpoint, Gemini, Claude) vs. self-hosted (e.g. a Qwen-VL / Llama-Vision class model behind the existing `LLM_BASE_URL`). Affects cost, Bangla/Banglish OCR quality, data residency.
 2. **Image embedding model** — CLIP/SigLIP-class self-hosted vs. a hosted multimodal embedding API. Must be stamped and swappable (like text embeddings).
-3. **Object storage** — none exists today. Options: S3-compatible bucket (R2/S3/Backblaze), or Neon/Postgres bytea for P1 only. Recommendation: S3-compatible with per-tenant prefixes and signed URLs.
+3. **Object storage** — decided for product images by ADR-120 (Cloudflare R2, public read, `MediaStorage` in `src/domains/media/`). Customer photos still need a private prefix or bucket with signed URLs; they must not go to the public product-image bucket.
 4. **Retention** for customer images (proposal 30 days; orders keep no customer image).
 5. **Telegram** is not in the default `allowed_channel_types`; include it in the pilot or not.
 6. Whether P1 ships on its own first (recommended — it fixes a live silent-drop).

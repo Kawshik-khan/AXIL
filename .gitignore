@@ -47,3 +47,7 @@ coverage/
 .AUDIT_REPORT_2026-09-27.md
 # Live agent-eval results (FX-80): uploaded as CI artifacts, not committed
 tests/agent-evals/results/
+
+# Image search bake-off (docs/image-bakeoff.md): datasets hold customer photos, reports are local
+eval-data/
+eval-out/

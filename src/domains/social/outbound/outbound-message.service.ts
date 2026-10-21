@@ -1,7 +1,7 @@
 import { AppError, IntegrationNotConfiguredError, BadRequestError, NotFoundError, FeatureNotEntitledError } from "@/lib/errors";
 import { randomSuffix } from "@/lib/ids";
 import { db } from "@/infrastructure/db";
-import { Message, MessageType } from "@/types/social";
+import { Message, MessageType, ProductCard } from "@/types/social";
 import { RequestContext } from "@/lib/context";
 import { RbacService } from "@/domains/rbac/service";
 import { PERMISSIONS } from "@/lib/permissions";
@@ -21,6 +21,8 @@ export interface SendOutboundPayload {
   mediaType?: "IMAGE" | "VIDEO" | "AUDIO" | "FILE";
   templateName?: string;
   templateParameters?: Record<string, string>;
+  /** Product cards (channels with sendProductCards only); `text` is their plain-text form for the inbox. */
+  productCards?: ProductCard[];
   replyToMessageId?: string;
   idempotency_key?: string;
   client_message_id?: string;
@@ -45,7 +47,8 @@ export class OutboundMessageService {
     const prepared = await db.unit(async () => {
       RbacService.assertCan(context, PERMISSIONS.SOCIAL_MESSAGE_SEND);
 
-      if (!payload.text && !payload.mediaUrl && !payload.templateName) {
+      if (payload.productCards && !payload.productCards.length) throw new BadRequestError("No product cards to send.");
+      if (!payload.text && !payload.mediaUrl && !payload.templateName && !payload.productCards) {
         throw new BadRequestError("Message must contain text, media, or template.");
       }
       if (payload.messageType === "INTERNAL_NOTE") {
@@ -57,6 +60,9 @@ export class OutboundMessageService {
       const channel = db.findConnectedChannelById(context.tenant.id, conversation.channel_id);
       if (!channel) throw new BadRequestError(`Connected channel '${conversation.channel_id}' not found or disconnected.`);
       assertNotKilled(context.tenant.id, "CHANNEL", channel.id, channel.type);
+      if (payload.productCards && !ChannelService.getAdapter(channel.type).sendProductCards) {
+        throw new AppError("PRODUCT_CARDS_UNSUPPORTED", `${channel.type} chats can't show product cards.`, 422);
+      }
       if (!isFeatureEnabled("real_messaging", context.tenant.id)) throw new FeatureNotEntitledError("real_messaging");
 
       if (options.asAgent && options.agentTurnStartedAt) {
@@ -94,12 +100,18 @@ export class OutboundMessageService {
         direction: "OUTBOUND",
         sender_type: options.asAgent ? "BOT" : "AGENT",
         sender_id: context.user.id,
-        message_type: payload.messageType || (payload.mediaUrl ? "IMAGE" : "TEXT"),
+        message_type: payload.messageType || (payload.productCards ? "PRODUCT" : payload.mediaUrl ? "IMAGE" : "TEXT"),
         text: payload.text || "",
         status: "QUEUED",
         reply_to_message_id: payload.replyToMessageId,
         retry_count: 0,
-        metadata: { agent_name: context.user.name, agent_email: context.user.email, channel_type: channel.type, ...(options.traceId ? { trace_id: options.traceId } : {}) },
+        metadata: {
+          agent_name: context.user.name,
+          agent_email: context.user.email,
+          channel_type: channel.type,
+          ...(options.traceId ? { trace_id: options.traceId } : {}),
+          ...(payload.productCards ? { product_cards: payload.productCards } : {}),
+        },
         created_at: now,
         updated_at: now,
       };
@@ -160,7 +172,9 @@ export class OutboundMessageService {
         attempts++;
         let sendResult;
 
-        if (payload.templateName) {
+        if (payload.productCards && adapter.sendProductCards) {
+          sendResult = await adapter.sendProductCards(credentials, recipientId, payload.productCards);
+        } else if (payload.templateName) {
           sendResult = await adapter.sendTemplateMessage(
             credentials,
             recipientId,
@@ -183,8 +197,15 @@ export class OutboundMessageService {
           );
         }
 
+        // WhatsApp sends one message per card and stops early on a failure: keep only the cards that went out
+        const sentIds = sendResult.rawResponse?.message_ids;
+        const sentCards = payload.productCards && Array.isArray(sentIds) && sentIds.length < payload.productCards.length
+          ? payload.productCards.slice(0, sentIds.length)
+          : undefined;
         const updated = await db.unit(async () => {
+          const current = sentCards ? db.findMessageById(context.tenant.id, messageId) : undefined;
           const saved = db.updateMessage(context.tenant.id, messageId, {
+            ...(sentCards ? { metadata: { ...(current?.metadata ?? {}), product_cards: sentCards } } : {}),
             status: "SENT",
             external_message_id: sendResult.externalMessageId,
             sent_at: new Date().toISOString(),
@@ -209,6 +230,8 @@ export class OutboundMessageService {
         // Telegram sendMessage has no idempotency key. A timeout or lost response may follow an accepted message,
         // so never automatically repeat it; a human can inspect Telegram before choosing to retry.
         if (channel.type === "TELEGRAM") break;
+        // Cards follow a text reply that already went out: a lost response mustn't send them twice
+        if (payload.productCards) break;
         if (attempts < this.MAX_RETRIES) {
           // Exponential backoff: 200ms * 2^(attempt-1)
           const backoffMs = 200 * Math.pow(2, attempts - 1);

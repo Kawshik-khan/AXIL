@@ -285,6 +285,34 @@ export interface ChatSession {
   last_seen_at: string;
 }
 
+/**
+ * One product shown as a card in a chat (photo, title, price, a button). Built by the server from the catalog and
+ * this turn's tool results, never from model text (non-negotiable 5).
+ */
+export interface ProductCard {
+  product_id: string;
+  title: string;
+  /** Lowest price of the product's variants, BDT. */
+  price_bdt: number;
+  /** True when the variants have different prices: shown as "from ৳…". */
+  price_varies: boolean;
+  /** Set when the shop shows a higher crossed-out price. */
+  regular_price_bdt?: number;
+  in_stock: boolean;
+  /** Cover photo; absent when the product has none the channel can show. */
+  image_url?: string;
+  /** The shop's button text (merchant setting); a tap comes back with a fixed label, whatever this says. */
+  button_label: string;
+  /** What a tap sends back: `PRODUCT_ORDER|<product_id>|<title>|<bn|en>` (channel button id / postback payload). */
+  button_payload: string;
+  /** The customer's script: the card's words ("from", "Out of stock") and the tap's label follow it. */
+  script: "bangla" | "latin";
+  /** How the website widget and the staff inbox draw the card (merchant setting). */
+  theme?: ProductCardTheme;
+}
+
+export type ProductCardTheme = "lime" | "dark" | "light";
+
 export interface NormalizedIncomingMessage {
   channelType: ChannelType;
   channelId: string;
