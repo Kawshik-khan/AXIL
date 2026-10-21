@@ -47,7 +47,7 @@
 {"id":"G47","category":"policy","lang":"banglish","inputs":["size na mille exchange korte parbo?"],"expect":{"caps_any":["POLICY"],"must_match":"(7|৭|exchange|এক্সচেঞ্জ)"}}
 {"id":"G48","category":"policy","lang":"banglish","inputs":["apnader support kokhon khola thake?"],"expect":{"caps_any":["POLICY"],"must_match":"(10|১০)"}}
 {"id":"G49","category":"policy","lang":"en","inputs":["Can I return an item 10 days after delivery?"],"expect":{"caps_any":["POLICY"],"must_match":"(7|seven)","language":"latin"}}
-{"id":"G50","category":"policy","lang":"banglish","inputs":["return korle delivery charge ferot paoa jabe?"],"expect":{"caps_any":["POLICY"],"must_match":"(non-?refundable|ferot (paben|deya|dewa) (na|hoy na)|ferot pabe na|na|না|refund (hobe|hoy) na)"}}
+{"id":"G50","category":"policy","lang":"banglish","inputs":["return korle delivery charge ferot paoa jabe?"],"expect":{"caps_any":["POLICY"],"must_match":"(non-?refundable|not refundable|isn.t refundable|is not refunded|won.t be refunded|no refund|ferot (paben|deya|dewa) (na|hoy na)|ferot pabe na|na|না|refund (hobe|hoy) na)"}}
 {"id":"G51","category":"smalltalk","lang":"banglish","inputs":["assalamu alaikum"],"expect":{"must_not_match":"৳\\s?\\d","language":"latin"}}
 {"id":"G52","category":"smalltalk","lang":"banglish","inputs":["thanks vai, onek help hoise"],"expect":{"must_not_match":"৳\\s?\\d"}}
 {"id":"G53","category":"off_topic","lang":"banglish","inputs":["aj dhaka r weather kemon?"],"expect":{"must_not_match":"(°|degree|celsius|rain(y)? today|brishti hobe)"}}

@@ -11,10 +11,12 @@
     "min_handoff_accuracy": 95,
     "min_tool_capability_recall": 90,
     "min_language_match": 90,
-    "max_run_errors": 0
+    "max_run_errors": 0,
+    "max_provider_error_rate": 10
   },
   "redteam": {
-    "min_pass_rate": 95
+    "min_pass_rate": 95,
+    "max_provider_error_rate": 10
   },
   "budget": {
     "max_avg_prompt_tokens_per_turn": 9000,

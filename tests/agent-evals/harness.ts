@@ -109,7 +109,12 @@ export function bengaliShare(text: string): number {
 }
 
 export interface TurnRecord { input: string; response: string; status: string; tools: Array<{ name: string; ok: boolean; refused?: string }>; guards: string[]; handoff: boolean; latency_ms: number; llm_calls: number; prompt_tokens: number; completion_tokens: number; cached_tokens: number; hallucinated_amounts: number[]; error?: string }
-export interface CaseResult { id: string; suite: string; category: string; owasp?: string; pass: boolean; failures: string[]; turns: TurnRecord[]; side_effects: Record<string, number>; hallucinated_price: boolean; wrong_action: boolean; handoff_expected?: boolean; handoff_observed: boolean; language_ok?: boolean; caps_hit?: boolean; cost_usd: number }
+/**
+ * provider_error: a turn failed because the model provider was unreachable, busy or timed out (the runtime's
+ * `provider_failed:` guard). Such a case says nothing about the agent: the summary counts it as a provider error and
+ * leaves it out of the quality scores, latency and tokens (the gate limits how many there may be). Wrong actions still count.
+ */
+export interface CaseResult { id: string; suite: string; category: string; owasp?: string; pass: boolean; provider_error: boolean; failures: string[]; turns: TurnRecord[]; side_effects: Record<string, number>; hallucinated_price: boolean; wrong_action: boolean; handoff_expected?: boolean; handoff_observed: boolean; language_ok?: boolean; caps_hit?: boolean; cost_usd: number }
 
 /** USD per 1M tokens for the cost estimate; LLM_PRICING_JSON's TIER_1_FAST when set (same source as production). */
 function prices(): { input: number; cached: number; output: number } {
@@ -190,6 +195,8 @@ export async function runCase(suite: string, c: Case, budgetMs?: number): Promis
   const handoffObserved = turns.some((t) => t.handoff || t.tools.some((x) => x.ok && CAPS[x.name]?.includes("HANDOFF")));
 
   if (turns.some((t) => t.status === "ERROR")) failures.push(`RUN_ERROR: ${turns.find((t) => t.error)?.error}`);
+  const providerFailed = turns.flatMap((t) => t.guards).find((g) => g.startsWith("provider_failed:"));
+  if (providerFailed) failures.push(`PROVIDER_ERROR: ${providerFailed.slice("provider_failed:".length)} (${turns.find((t) => t.error)?.error ?? "no detail"})`);
   const capsHit = e.caps_any ? e.caps_any.some((x) => executedCaps.has(x)) : undefined;
   if (capsHit === false) failures.push(`TOOLS: expected one of ${e.caps_any} got ${[...executedCaps].join(",") || "none"}`);
   for (const x of e.caps_none || []) if (executedCaps.has(x)) failures.push(`FORBIDDEN_TOOL: ${x}`);
@@ -229,7 +236,7 @@ export async function runCase(suite: string, c: Case, budgetMs?: number): Promis
   if (e.max_turn_tokens && turns.some((t) => t.prompt_tokens + t.completion_tokens > e.max_turn_tokens!)) failures.push(`TOKENS > ${e.max_turn_tokens}`);
   const p = prices();
   const cost = turns.reduce((n, t) => n + ((t.prompt_tokens - t.cached_tokens) * p.input + t.cached_tokens * p.cached + t.completion_tokens * p.output) / 1e6, 0);
-  return { id: c.id, suite, category: c.category, owasp: c.owasp, pass: failures.length === 0, failures, turns, side_effects: effects, hallucinated_price: hallucinated, wrong_action: wrongAction, handoff_expected: e.handoff, handoff_observed: handoffObserved, language_ok: languageOk, caps_hit: capsHit, cost_usd: cost };
+  return { id: c.id, suite, category: c.category, owasp: c.owasp, pass: failures.length === 0, provider_error: Boolean(providerFailed), failures, turns, side_effects: effects, hallucinated_price: hallucinated, wrong_action: wrongAction, handoff_expected: e.handoff, handoff_observed: handoffObserved, language_ok: languageOk, caps_hit: capsHit, cost_usd: cost };
 }
 
 /** Quotes whose total the delivered reply showed become confirmable, as the worker does after a send. */
@@ -248,28 +255,34 @@ export function quantile(xs: number[], q: number) {
   const s = [...xs].sort((a, b) => a - b);
   return s[Math.min(s.length - 1, Math.floor(q * s.length))];
 }
-export function summarize(results: CaseResult[]) {
+export function summarize(all: CaseResult[]) {
+  // Quality, latency and tokens are scored on the cases the provider actually answered; wrong actions on every case
+  const results = all.filter((r) => !r.provider_error);
   const turns = results.flatMap((r) => r.turns).filter((t) => t.status !== "BLOCKED");
   const handoffCases = results.filter((r) => r.handoff_expected !== undefined);
   const langCases = results.filter((r) => r.language_ok !== undefined);
   const capCases = results.filter((r) => r.caps_hit !== undefined);
+  const providerErrors = all.filter((r) => r.provider_error).length;
   const avg = (f: (t: TurnRecord) => number) => (turns.length ? Math.round(turns.reduce((n, t) => n + f(t), 0) / turns.length) : 0);
   return {
-    cases: results.length,
+    cases: all.length,
+    scored_cases: results.length,
+    provider_errors: providerErrors,
+    provider_error_rate: pct(providerErrors, all.length),
     pass_rate: pct(results.filter((r) => r.pass).length, results.length),
     hallucinated_price_rate: pct(results.filter((r) => r.hallucinated_price).length, results.length),
-    wrong_action_rate: pct(results.filter((r) => r.wrong_action).length, results.length),
+    wrong_action_rate: pct(all.filter((r) => r.wrong_action).length, all.length),
     handoff_accuracy: pct(handoffCases.filter((r) => r.handoff_observed === r.handoff_expected).length, handoffCases.length),
     tool_capability_recall: pct(capCases.filter((r) => r.caps_hit).length, capCases.length),
     language_match: pct(langCases.filter((r) => r.language_ok).length, langCases.length),
-    run_errors: results.filter((r) => r.failures.some((f) => f.startsWith("RUN_ERROR"))).length,
+    run_errors: all.filter((r) => r.failures.some((f) => f.startsWith("RUN_ERROR"))).length,
     turns: turns.length,
     avg_prompt_tokens_per_turn: avg((t) => t.prompt_tokens),
     avg_completion_tokens_per_turn: avg((t) => t.completion_tokens),
     avg_llm_calls_per_turn: turns.length ? Math.round((turns.reduce((n, t) => n + t.llm_calls, 0) / turns.length) * 100) / 100 : 0,
     p50_turn_latency_ms: quantile(turns.map((t) => t.latency_ms), 0.5),
     p95_turn_latency_ms: quantile(turns.map((t) => t.latency_ms), 0.95),
-    cost_per_case_usd: results.length ? Number((results.reduce((n, r) => n + r.cost_usd, 0) / results.length).toFixed(6)) : 0,
+    cost_per_case_usd: all.length ? Number((all.reduce((n, r) => n + r.cost_usd, 0) / all.length).toFixed(6)) : 0,
   };
 }
 
