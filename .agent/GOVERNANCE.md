@@ -16,7 +16,6 @@ POLICY ENGINE   = Authorization, validation, HITL      (src/domains/ai/policy/ag
 COMMERCE API    = Authoritative business logic         (src/app/api/v1/** -> src/domains/**)
 DATABASE        = Source of truth                      (today: JSON store; target: Neon Postgres — see STATUS.md)
 RAG             = Tenant-isolated knowledge retrieval  (src/domains/ai/rag)
-n8n             = Workflow orchestration only          (n8n/workflows, src/domains/automation)
 FRONTEND        = Human control plane                  (src/app/(dashboard), src/app/super-admin)
 ```
 
@@ -25,7 +24,7 @@ FRONTEND        = Human control plane                  (src/app/(dashboard), src
 1. An LLM / agent never reads or writes storage directly. Path is always `Agent -> Policy Engine -> Commerce API/Domain Service -> Store`.
 2. An LLM never makes arbitrary outbound HTTP calls; tools target internal, validated services only.
 3. AI output is never the source of truth for: stock, prices/discounts/totals, payment status, order/fulfilment state, courier status, customer identity, financial/refund records.
-4. n8n never holds business logic or authoritative state.
+4. Schedulers and external automations never hold business logic or authoritative state.
 5. `tenant_id` comes only from the verified session/API key (`extractRequestContext`) — never from body, query, or params.
 6. Chain-of-thought and system prompts are never shown to end users; show structured metadata (agent, tools, sources, confidence).
 7. No authentication shortcuts of any kind: no master passwords, no test headers, no "dev fallback" identities, no step-up that accepts arbitrary input. (See `rules/security.md`.)
@@ -42,7 +41,6 @@ FRONTEND        = Human control plane                  (src/app/(dashboard), src
 | Policy engine | RBAC, rate/budget limits, business rules, require human approval | Performing mutations itself |
 | Commerce API / domain services | Validate with Zod, run transactions, emit events | Trusting LLM assertions for facts |
 | Store | Authoritative state, tenant scoping | Plaintext secrets |
-| n8n | Webhooks, schedules, retries, fan-out via `/api/v1/automation/*` | Direct DB access, holding state |
 | Frontend | Render, call authenticated API routes | Direct DB or LLM calls |
 
 ## 4. Platform scope vs tenant scope

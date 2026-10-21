@@ -657,81 +657,20 @@ async function main() {
   });
 
   // ---------------------------------------------------------------------------
-  console.log(`\n${ANSI_BOLD}[FX-18] Service tokens for automations; webhook duplicates (N2)${ANSI_RESET}`);
+  console.log(`
+${ANSI_BOLD}[FX-18] Service tokens retired with the automation hub; webhook duplicates (N2)${ANSI_RESET}`);
   // ---------------------------------------------------------------------------
 
-  const ownerNow = (await AuthService.login(shop.user.email, "Phase1-Owner-Pass-4471!")).token;
-  const tokensRoute = (await import("@/app/api/v1/service-tokens/route")) as {
-    GET: (r: Request) => Promise<Response>;
-    POST: (r: Request) => Promise<Response>;
-  };
-  const createToken = (token: string, body: unknown) =>
-    tokensRoute.POST(new Request(`${BASE}/service-tokens`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-      body: JSON.stringify(body),
-    }));
-  const notify = async (bearer: string) => {
-    const route = (await import("@/app/api/v1/automation/actions/notifications/send/route")) as Route;
-    return route.POST(new Request(`${BASE}/automation/actions/notifications/send`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json", "idempotency-key": uid("idem") },
-      // The recipient comes from a record in the workspace, never from the body (F33)
-      body: JSON.stringify({ channel: "SMS", user_id: shop.user.id, message: "Your order shipped" }),
-    }));
-  };
-  let serviceToken = "";
-
-  await runTest("an OWNER creates a service token; it is shown once and never listed", async () => {
-    const res = await createToken(ownerNow, { name: "n8n", scopes: ["notifications.send"], expires_in_days: 30 });
-    assert.strictEqual(res.status, 201);
-    serviceToken = ((await res.json()) as { data: { token: string } }).data.token;
-    assert.ok(serviceToken.startsWith("cos_svc_"));
-    const list = await tokensRoute.GET(new Request(`${BASE}/service-tokens`, { headers: { authorization: `Bearer ${ownerNow}` } }));
-    const text = await list.text();
-    assert.ok(!text.includes(serviceToken) && !text.includes("key_hash"), "neither the token nor its hash is listed");
-  });
-
-  await runTest("the token works for its scope and nothing else", async () => {
-    // Authenticated and allowed; the action then says honestly that nothing was sent (424, F33), never DELIVERED
-    const sent = await notify(serviceToken);
-    assert.strictEqual(sent.status, 424);
-    assert.strictEqual(((await sent.json()) as { error: { code: string } }).error.code, "INTEGRATION_NOT_CONFIGURED");
-    const inventory = (await import("@/app/api/v1/automation/actions/inventory/adjust/route")) as Route;
-    const res = await inventory.POST(new Request(`${BASE}/automation/actions/inventory/adjust`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${serviceToken}`, "content-type": "application/json", "idempotency-key": uid("idem") },
-      body: JSON.stringify({ warehouse_id: "wh_x", product_variant_id: "var_x", quantity_delta: 5 }),
-    }));
-    assert.strictEqual(res.status, 403);
-  });
-
-  await runTest("tokens can't carry disallowed scopes or scopes the creator lacks", async () => {
-    assert.strictEqual((await createToken(ownerNow, { name: "too much", scopes: ["user.invite"] })).status, 400);
-    const analyst2 = await member(tenantId, "ANALYST");
-    assert.strictEqual((await createToken(analyst2.token, { name: "nope", scopes: ["orders.read"] })).status, 403);
-  });
-
-  await runTest("revoked and expired tokens are refused (401)", async () => {
-    const created = await createToken(ownerNow, { name: "short", scopes: ["notifications.send"] });
-    const { token, service_token } = ((await created.json()) as { data: { token: string; service_token: { id: string } } }).data;
-    const del = (await import("@/app/api/v1/service-tokens/[id]/route")) as {
-      DELETE: (r: Request, ctx: { params: { id: string } }) => Promise<Response>;
-    };
-    assert.strictEqual((await del.DELETE(new Request(`${BASE}/service-tokens/${service_token.id}`, {
-      method: "DELETE", headers: { authorization: `Bearer ${ownerNow}` },
-    }), { params: { id: service_token.id } })).status, 200);
-    assert.strictEqual((await notify(token)).status, 401);
-
-    const expiring = await createToken(ownerNow, { name: "expiring", scopes: ["notifications.send"], expires_in_days: 1 });
-    const exp = ((await expiring.json()) as { data: { token: string; service_token: { id: string } } }).data;
-    db.updateServiceToken(tenantId, exp.service_token.id, { expires_at: new Date(Date.now() - 1000).toISOString() });
-    assert.strictEqual((await notify(exp.token)).status, 401);
-  });
-
-  await runTest("notification actions now need notifications.send (SUPPORT gets 403)", async () => {
-    const support = await member(tenantId, "SUPPORT");
-    assert.strictEqual((await notify(support.token)).status, 403);
+  await runTest("a stored service token no longer authenticates anything (401)", async () => {
+    const { extractRequestContext } = await import("@/lib/api-response");
+    const token = `cos_svc_${crypto.randomBytes(24).toString("hex")}`;
+    db.createServiceToken({
+      id: uid("svc"), tenant_id: tenantId, name: "legacy", key_prefix: token.slice(0, 12),
+      key_hash: crypto.createHash("sha256").update(token).digest("hex"), scopes: ["orders.read"],
+      created_by: shop.user.id, created_at: nowIso(),
+    });
+    const request = new Request(`${BASE}/orders`, { headers: { authorization: `Bearer ${token}` } });
+    await assert.rejects(() => extractRequestContext(request), (err: unknown) => (err as { statusCode?: number }).statusCode === 401);
   });
 
   await runTest("N2: an identical signed courier webhook is applied once; the repeat is acknowledged as a duplicate", async () => {
@@ -916,15 +855,6 @@ async function main() {
     let last = 0;
     for (let i = 0; i < 11; i++) last = (await post("invitations/[token]", null, { password: `guess-${i}` }, { token: inv.token })).status;
     assert.strictEqual(last, 429);
-  });
-
-  await runTest("a service token stops working when its creator is suspended", async () => {
-    const creator = await member(tenantId, "ADMIN");
-    const created = await createToken(creator.token, { name: "creator-bound", scopes: ["notifications.send"] });
-    const { token } = ((await created.json()) as { data: { token: string } }).data;
-    assert.strictEqual((await notify(token)).status, 424, "accepted, then honestly not sent (F33)");
-    db.updateMembershipStatus(tenantId, creator.id, "SUSPENDED");
-    assert.strictEqual((await notify(token)).status, 401);
   });
 
   await runTest("the payment AI tool needs payments.verify and confirmation", async () => {

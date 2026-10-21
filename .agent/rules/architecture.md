@@ -16,7 +16,7 @@ description: Layer boundaries: Agent -> Policy -> API -> Store; no LLM storage a
    - **No Monolithic AI Service**: Do not centralize unrelated domain logic inside an AI controller.
    - **No Direct Database Querying by Agents or LLMs**: All data access must pass through typed domain APIs.
    - **No Unrestricted External HTTP Execution by Agents**: Tool calling must target internal validated endpoints.
-   - **No n8n as Authoritative Database**: Workflows orchestrate events; the PostgreSQL database holds source of truth.
+   - **No External Automation as Authoritative Database**: Schedulers and webhooks trigger work; the PostgreSQL database holds source of truth.
 
 3. **Domain Ownership**:
    - Each business entity (Order, Product, Customer, Payment, Shipment) belongs strictly to its domain service. Cross-domain mutations must use explicit domain service methods or event messages.

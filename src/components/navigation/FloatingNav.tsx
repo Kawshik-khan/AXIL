@@ -36,7 +36,7 @@ const DOCK_ROUTES: DockItem[] = [
   { label: "Ad Manager", href: "/ads", icon: <Target size={20} strokeWidth={2} /> },
   { label: "Analytics", href: "/analytics", icon: <BarChart3 size={20} strokeWidth={2} /> },
   { label: "Intelligence", href: "/intelligence", icon: <TrendingUp size={20} strokeWidth={2} />, badge: "AI" },
-  { label: "Automations", href: "/automations", icon: <Workflow size={20} strokeWidth={2} /> },
+  { label: "Knowledge", href: "/knowledge", icon: <Workflow size={20} strokeWidth={2} /> },
   { label: "Connectors", href: "/connector", icon: <PlugZap size={20} strokeWidth={2} />, badge: "Hub" },
 ];
 

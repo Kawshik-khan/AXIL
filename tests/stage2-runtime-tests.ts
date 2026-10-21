@@ -295,6 +295,10 @@ async function main() {
     const out = guardPhoneNumbers(tenantId, convo.id, "Call 01711000001 or bKash 01999888777");
     assert.strictEqual(out.removed, 1);
     assert.ok(out.text.includes("01711000001") && out.text.includes("[number removed]"));
+    // The seeded flags are on here, so this message queued a turn; left PENDING it falls due mid-suite and the
+    // worker (one job per workspace per pass) runs it instead of a later test's job
+    const job = db.findAgentJob(tenantId, convo.id);
+    if (job) db.saveAgentJob({ ...job, status: "DONE" });
   });
 
   await runTest("order claim without a placed order number is replaced", () => {

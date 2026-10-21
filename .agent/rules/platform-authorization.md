@@ -13,7 +13,7 @@ CommerceOS defines two independent, non-overlapping authorization matrices. Plat
 Platform roles reside exclusively in `PlatformMembership` and govern the SaaS control plane:
 - **`SUPER_ADMIN`**: Full platform authority across all infrastructure, tenants, security, and global kill switches.
 - **`PLATFORM_ADMIN`**: Tenant provisioning, subscription and entitlement adjustments, platform settings.
-- **`PLATFORM_OPERATIONS`**: n8n fleet health, dead-letter queue (DLQ) replay, provider circuit breaker resets, operational kill-switch execution.
+- **`PLATFORM_OPERATIONS`**: provider circuit breaker resets, operational kill-switch execution.
 - **`PLATFORM_SUPPORT`**: Tenant diagnostics, governed `READ_ONLY` support impersonation with step-up verification.
 - **`PLATFORM_FINANCE`**: SaaS billing records, invoices, MRR analytics, plan pricing versions.
 - **`PLATFORM_SECURITY`**: Full platform audit log inspection, security event triage, session revocation, break-glass oversight.
@@ -99,15 +99,12 @@ Hardcoded role checks in controllers (e.g. `if (role === 'SUPER_ADMIN')`) are st
 - `feature_flag.read`: View platform feature flags.
 - `feature_flag.manage`: Toggle or reconfigure global and tenant-level feature flags.
 
-### Platform Automation & n8n
+### Platform Automation
 - `automation.read`: View cross-tenant automation health and execution stats.
 - `automation.manage`: Configure automation engine parameters.
 - `automation.pause`: Temporarily pause automation dispatching.
 - `automation.resume`: Resume automation dispatching.
 - `automation.kill`: Trigger emergency automation kill-switch.
-- `n8n.read`: View n8n cluster worker nodes and queues.
-- `n8n.manage`: Perform rolling restarts and node scaling.
-- `n8n.health`: Run diagnostics on n8n webhook ingress.
 - `provider.read`: View external provider statuses and circuit breakers.
 - `provider.manage`: Reset circuit breakers and update provider configurations.
 - `execution.read`: View platform-wide execution records.

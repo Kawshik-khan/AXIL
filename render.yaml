@@ -140,20 +140,10 @@ services:
       # From this ISO date, privileged workspace approvals need a fresh authenticator code (FX-97 Part A)
       - key: WORKSPACE_STEP_UP_ENFORCED_FROM
         sync: false
-      - key: N8N_HOST
-        sync: false
-      - key: COMMERCEOS_N8N_WEBHOOK_SECRET
-        sync: false
-      - key: COMMERCEOS_N8N_WEBHOOK_TOKEN
-        sync: false
       # FX-86: "1" turns the Content-Security-Policy from Report-Only to enforcing. Switch it once the monitoring job
       # (POST /api/v1/jobs/monitoring/run) reports csp.ready_to_enforce = true for a full week.
       - key: CSP_ENFORCE
         value: "0"
-      # n8n is switched off (2026-10-14): social messages are handled by CommerceOS directly, without a failed call to
-      # n8n first. Leave N8N_HOST unset too; scheduled jobs run from GitHub Actions (see below).
-      - key: SOCIAL_N8N_MODE
-        value: "off"
       # Merchant alerts (Settings → Notifications): one platform bot token from @BotFather
       - key: TELEGRAM_ALERTS_BOT_TOKEN
         sync: false
@@ -295,18 +285,10 @@ services:
       # From this ISO date, privileged workspace approvals need a fresh authenticator code (FX-97 Part A)
       - key: WORKSPACE_STEP_UP_ENFORCED_FROM
         sync: false
-      - key: N8N_HOST
-        sync: false
-      - key: COMMERCEOS_N8N_WEBHOOK_SECRET
-        sync: false
-      - key: COMMERCEOS_N8N_WEBHOOK_TOKEN
-        sync: false
       # FX-86: "1" turns the Content-Security-Policy from Report-Only to enforcing. Switch it once the monitoring job
       # (POST /api/v1/jobs/monitoring/run) reports csp.ready_to_enforce = true for a full week.
       - key: CSP_ENFORCE
         value: "1" # staging enforces first, so a violating change shows up here before production
-      - key: SOCIAL_N8N_MODE
-        value: "off"
       # Its own bot from @BotFather, never production's: a bot has one webhook
       - key: TELEGRAM_ALERTS_BOT_TOKEN
         sync: false

@@ -86,8 +86,7 @@ export class TelegramAdapter implements IChannelProvider {
   }
 
   /**
-   * Update -> message, for the direct (no n8n) path and for tests. With n8n in the path the same mapping is done by the
-   * "normalize" workflow; tests/social-n8n-tests.ts runs both on the same samples.
+   * Update -> message.
    */
   public normalizeIncomingEvent(rawPayload: Record<string, unknown>, channelId: string): NormalizedIncomingMessage[] {
     const updateId = rawPayload.update_id;

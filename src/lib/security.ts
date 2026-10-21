@@ -21,8 +21,8 @@ export const TOKEN_AUDIENCE = {
   impersonation: "commerceos:impersonation",
   /** Password checked, TOTP still required (5 minutes). Never a session (FX-15). */
   mfaPending: "commerceos:mfa-pending",
-  /** The `state` of a "Connect with Facebook" round trip (10 minutes), bound to one workspace, user and browser. */
-  metaOAuth: "commerceos:meta-oauth",
+  /** The `state` of a provider sign-in round trip (10 minutes), bound to one workspace, user, browser and provider (ADR-119). */
+  connectionOAuth: "commerceos:connection-oauth",
 } as const;
 
 /** Stored for accounts that must not be able to log in until a real password is set. Never matches bcrypt. */
@@ -298,30 +298,37 @@ export async function verifyMfaPendingToken(token: string): Promise<{ userId: st
   }
 }
 
-export interface MetaOAuthState {
+export interface OAuthState {
   tenantId: string;
   userId: string;
   /** Also kept in an httpOnly cookie: a state can only be completed in the browser that started it. */
   nonce: string;
+  /** The provider slug the round trip is for ("meta"); a state for one provider is refused by another's callback. */
+  provider: string;
+  /** Optional features whose extra scopes were asked (incremental consent). */
+  features: string[];
 }
 
-export async function signMetaOAuthState(state: MetaOAuthState): Promise<string> {
-  return new SignJWT({ ...state, scope: "META_OAUTH" })
+export async function signOAuthState(state: OAuthState): Promise<string> {
+  return new SignJWT({ ...state, scope: "CONNECTION_OAUTH" })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuer(TOKEN_ISSUER)
-    .setAudience(TOKEN_AUDIENCE.metaOAuth)
+    .setAudience(TOKEN_AUDIENCE.connectionOAuth)
     .setIssuedAt()
     .setExpirationTime("10m")
     .sign(jwtKey());
 }
 
-export async function verifyMetaOAuthState(token: string): Promise<MetaOAuthState | null> {
+export async function verifyOAuthState(token: string): Promise<OAuthState | null> {
   try {
-    const claims = await verifyToken(token, TOKEN_AUDIENCE.metaOAuth);
-    if (claims.scope !== "META_OAUTH") return null;
-    const { tenantId, userId, nonce } = claims;
-    if (typeof tenantId !== "string" || typeof userId !== "string" || typeof nonce !== "string") return null;
-    return { tenantId, userId, nonce };
+    const claims = await verifyToken(token, TOKEN_AUDIENCE.connectionOAuth);
+    if (claims.scope !== "CONNECTION_OAUTH") return null;
+    const { tenantId, userId, nonce, provider, features } = claims;
+    if (typeof tenantId !== "string" || typeof userId !== "string" || typeof nonce !== "string" || typeof provider !== "string") {
+      return null;
+    }
+    if (!Array.isArray(features) || !features.every((f) => typeof f === "string")) return null;
+    return { tenantId, userId, nonce, provider, features: features as string[] };
   } catch {
     return null;
   }

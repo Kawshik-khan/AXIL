@@ -1,18 +1,19 @@
 /**
- * "Connect with Facebook" (Facebook Login for Business) for one CommerceOS Meta app shared by every workspace.
+ * "Connect with Facebook": the Meta resource picker on top of the OAuth broker (ADR-119 P1,
+ * src/domains/connectors/auth/oauth-broker.ts), which owns the state, nonce, cookies and the connection record.
  *
- * 1. start: a signed, 10-minute `state` bound to the workspace, the user and a nonce that also sits in an httpOnly
- *    cookie, so the round trip can only finish in the browser that began it, for the same signed-in user.
- * 2. callback (GET, writes nothing to the store): checks the state, swaps the code for a long-lived user token and
- *    keeps it encrypted in a short-lived httpOnly cookie. The token never reaches page JavaScript or the store.
- * 3. pages: lists the Pages that token manages (and their linked Instagram accounts), without tokens.
- * 4. connect: for each Page the merchant picked, Page tokens are fetched again from Meta (never taken from the client),
- *    the Page is subscribed to the app's webhooks (feed + messages), and FACEBOOK_MESSENGER / INSTAGRAM channels are
- *    created or refreshed. A Page held by another workspace is refused (audit H5).
+ * 1. start / callback: delegated to the broker (provider slug "meta"); the callback writes nothing to the store.
+ * 2. pages: lists the Pages the signed-in token manages (and their linked Instagram accounts) and its ad accounts,
+ *    without tokens.
+ * 3. connect: the broker saves the connection (owner, granted scopes, expiry, the one copy of the user token); then for
+ *    each Page the merchant picked, Page tokens are fetched again from Meta (never taken from the client), the Page is
+ *    subscribed to the app's webhooks (feed + messages), and FACEBOOK_MESSENGER / INSTAGRAM channels are created or
+ *    refreshed. Each Page / Instagram account is saved as a resource of the connection (holding the Page token) and
+ *    its channel points at it. A Page held by another workspace is refused (audit H5). A picked ad account (checked
+ *    with Meta again) becomes the workspace's AD_ACCOUNT resource, which Ad Manager reads with the connection's token.
  *
  * Every Graph call carries `appsecret_proof`. Nothing is reported connected unless Meta answered.
  */
-import crypto from "crypto";
 import { db } from "@/infrastructure/db";
 import { logger } from "@/lib/logger";
 import { randomSuffix } from "@/lib/ids";
@@ -20,119 +21,40 @@ import { RequestContext } from "@/lib/context";
 import { RbacService } from "@/domains/rbac/service";
 import { PERMISSIONS } from "@/lib/permissions";
 import { AppError, BadRequestError } from "@/lib/errors";
-import { decryptCredential, encryptCredential, signMetaOAuthState, verifyMetaOAuthState } from "@/lib/security";
-import { outboundRequest, OutboundBlockedError, OutboundNetworkError, OutboundTimeoutError } from "@/lib/outbound-http";
+import { encryptCredential } from "@/lib/security";
 import { ChannelService } from "../channels/channel.service";
+import { bindAdAccount, upsertConnectionResource } from "@/domains/connectors/resources";
+import { normalizeAdAccountId } from "../insights/meta-graph-reader";
+import { metaGraph as graph, metaOAuthAdapter } from "@/domains/connectors/auth/meta.adapter";
+import {
+  OAuthBroker,
+  OAUTH_COOKIE_PATH,
+  appOrigin as brokerAppOrigin,
+  nonceCookieName,
+  oauthCookieOptions,
+  pendingCookieName,
+  scopesFor,
+} from "@/domains/connectors/auth/oauth-broker";
 import type { ChannelType, ConnectedChannel } from "@/types/social";
 
-export const GRAPH_VERSION = "v21.0";
-const GRAPH_API = `https://graph.facebook.com/${GRAPH_VERSION}`;
-const DIALOG_URL = `https://www.facebook.com/${GRAPH_VERSION}/dialog/oauth`;
-const CALL_TIMEOUT_MS = 10_000;
-const PENDING_TTL_MS = 15 * 60_000;
+export { GRAPH_VERSION } from "@/domains/connectors/auth/meta.adapter";
 
-export const META_NONCE_COOKIE = "cos_meta_oauth";
-export const META_PENDING_COOKIE = "cos_meta_pending";
-export const META_COOKIE_PATH = "/api/v1/social/meta";
-
-/** What CommerceOS asks for: comments and DMs on Pages and Instagram, and Page selection through Business Manager. */
-export const META_SCOPES = [
-  "pages_show_list",
-  "pages_manage_metadata",
-  "pages_read_engagement",
-  "pages_read_user_content",
-  "pages_messaging",
-  "instagram_basic",
-  "instagram_manage_comments",
-  "instagram_manage_messages",
-  "business_management",
-] as const;
+const META = metaOAuthAdapter.slug;
+export const META_NONCE_COOKIE = nonceCookieName(metaOAuthAdapter);
+export const META_PENDING_COOKIE = pendingCookieName(metaOAuthAdapter);
+export const META_COOKIE_PATH = OAUTH_COOKIE_PATH;
+/** The optional feature whose extra scope (`ads_read`) is asked only when the merchant connects Ad Manager (ADR-119 E5). */
+export const ADS_FEATURE = "ads";
 
 /** Page webhook fields the app subscribes each connected Page to (Instagram fields are set on the app). */
 export const PAGE_SUBSCRIBED_FIELDS = ["feed", "messages", "messaging_postbacks"] as const;
 
-interface MetaConfig {
-  appId: string;
-  appSecret: string;
-  redirectUri: string;
-}
-
-function config(): MetaConfig {
-  const appId = process.env.META_APP_ID ?? "";
-  const appSecret = process.env.META_APP_SECRET ?? "";
-  const appUrl = (process.env.APP_URL ?? "").replace(/\/+$/, "");
-  const scheme = process.env.NODE_ENV === "production" ? /^https:\/\// : /^https?:\/\//;
-  if (!appId || !appSecret || !scheme.test(appUrl)) {
-    throw new AppError("META_LOGIN_NOT_CONFIGURED", "Connect with Facebook isn't set up on this server (META_APP_ID, META_APP_SECRET and APP_URL).", 503);
-  }
-  return { appId, appSecret, redirectUri: `${appUrl}${META_COOKIE_PATH}/oauth/callback` };
-}
-
 /** Where the callback sends the browser back to: APP_URL (validated), not the request's Host header. */
 export function appOrigin(fallback: string): string {
-  try {
-    return new URL(config().redirectUri).origin;
-  } catch {
-    return fallback;
-  }
+  return brokerAppOrigin(metaOAuthAdapter, fallback);
 }
 
-export function metaLoginConfigured(): boolean {
-  try {
-    config();
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** The part of a Meta error that is safe to show: short, with anything token-shaped removed. */
-function safeError(raw: unknown): string {
-  const text = typeof raw === "string" ? raw : "request failed";
-  return text.replace(/[A-Za-z0-9_-]{20,}/g, "[redacted]").slice(0, 200);
-}
-
-async function graph(
-  method: "GET" | "POST",
-  path: string,
-  params: Record<string, string>,
-  token?: string
-): Promise<Record<string, unknown>> {
-  const appSecret = process.env.META_APP_SECRET ?? "";
-  const query = new URLSearchParams(params);
-  if (token) {
-    query.set("access_token", token);
-    if (appSecret) query.set("appsecret_proof", crypto.createHmac("sha256", appSecret).update(token).digest("hex"));
-  }
-  let res;
-  try {
-    res = await outboundRequest(`${GRAPH_API}${path}${method === "GET" ? `?${query}` : ""}`, {
-      method,
-      headers: method === "POST" ? { "Content-Type": "application/x-www-form-urlencoded" } : undefined,
-      body: method === "POST" ? query.toString() : undefined,
-      timeoutMs: CALL_TIMEOUT_MS,
-      maxResponseBytes: 512 * 1024,
-      platformConfigured: true,
-    });
-  } catch (err) {
-    if (err instanceof OutboundBlockedError || err instanceof OutboundTimeoutError || err instanceof OutboundNetworkError) {
-      throw new AppError("META_UNREACHABLE", "Facebook could not be reached. Try again.", 502);
-    }
-    throw err;
-  }
-  let parsed: Record<string, unknown> & { error?: { code?: number; message?: string } } = {};
-  try {
-    parsed = JSON.parse(res.body);
-  } catch {
-    // not JSON: handled below
-  }
-  if (res.status >= 200 && res.status < 300 && !parsed.error) return parsed;
-  const code = parsed.error?.code ?? res.status;
-  if (code === 190) throw new AppError("META_TOKEN_INVALID", "Facebook sign-in expired or was revoked. Connect again.", 401);
-  if (code === 4 || code === 17 || code === 32) throw new AppError("META_RATE_LIMITED", "Facebook rate limit hit. Try again in a few minutes.", 429);
-  if (code === 10 || code === 200) throw new AppError("META_PERMISSION_DENIED", "Facebook didn't grant the permission this needs.", 403);
-  throw new AppError("META_API_ERROR", `Facebook refused the request: ${safeError(parsed.error?.message)}`, 502);
-}
+export const metaCookieOptions = oauthCookieOptions;
 
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
 
@@ -165,33 +87,36 @@ async function fetchPages(userToken: string): Promise<MetaPage[]> {
     .filter((p) => /^\d{1,32}$/.test(p.id) && p.accessToken);
 }
 
-async function missingPermissions(userToken: string): Promise<string[]> {
+/** An ad account the Facebook user can read (Ad Manager). Listed to the browser: ids and names only, no token. */
+export interface PickableAdAccount {
+  id: string;
+  name: string;
+  currency: string;
+  active: boolean;
+}
+
+async function fetchAdAccounts(userToken: string): Promise<PickableAdAccount[]> {
+  let res: Record<string, unknown>;
+  try {
+    res = await graph("GET", "/me/adaccounts", { fields: "account_id,name,currency,account_status", limit: "100" }, userToken);
+  } catch (err) {
+    // ads_read not granted: no ad accounts to offer (missing_permissions says why)
+    if (err instanceof AppError && err.code === "META_PERMISSION_DENIED") return [];
+    throw err;
+  }
+  const rows = Array.isArray(res.data) ? (res.data as Array<Record<string, unknown>>) : [];
+  return rows
+    .map((r) => {
+      const id = normalizeAdAccountId(str(r.account_id) || str(r.id));
+      return { id, name: str(r.name).slice(0, 120) || `Ad account ${id}`, currency: str(r.currency).slice(0, 8), active: r.account_status === 1 };
+    })
+    .filter((a) => a.id);
+}
+
+async function grantedPermissions(userToken: string): Promise<Set<string>> {
   const res = await graph("GET", "/me/permissions", {}, userToken);
   const rows = Array.isArray(res.data) ? (res.data as Array<{ permission?: unknown; status?: unknown }>) : [];
-  const granted = new Set(rows.filter((r) => r.status === "granted").map((r) => String(r.permission)));
-  return META_SCOPES.filter((s) => !granted.has(s));
-}
-
-interface PendingLogin {
-  t: string;
-  u: string;
-  token: string;
-  exp: number;
-}
-
-function readPending(context: RequestContext, cookieValue: string | undefined): PendingLogin {
-  if (!cookieValue) throw new AppError("META_LOGIN_REQUIRED", "Connect with Facebook first.", 404);
-  let pending: PendingLogin;
-  try {
-    pending = decryptCredential<PendingLogin>(cookieValue);
-  } catch {
-    throw new AppError("META_LOGIN_REQUIRED", "Connect with Facebook first.", 404);
-  }
-  // Bound to the workspace and user that signed in to Facebook; a copied cookie is useless anywhere else
-  if (pending.t !== context.tenant.id || pending.u !== context.user.id || typeof pending.token !== "string" || !(pending.exp > Date.now())) {
-    throw new AppError("META_LOGIN_REQUIRED", "Your Facebook sign-in expired. Connect again.", 404);
-  }
-  return pending;
+  return new Set(rows.filter((r) => r.status === "granted").map((r) => String(r.permission)));
 }
 
 export type PageChannelState = "NOT_CONNECTED" | "CONNECTED_HERE" | "IN_ANOTHER_WORKSPACE";
@@ -206,7 +131,9 @@ export interface PickablePage {
 
 function channelState(tenantId: string, type: ChannelType, accountId: string): PageChannelState {
   const holders = db.findConnectedChannelsByProviderId(type, accountId);
+  const kind = type === "INSTAGRAM" ? "IG_ACCOUNT" : "FB_PAGE";
   if (holders.some((c) => c.tenant_id !== tenantId)) return "IN_ANOTHER_WORKSPACE";
+  if (db.findLiveConnectionResourcesByExternalId(kind, accountId).some((r) => r.tenant_id !== tenantId)) return "IN_ANOTHER_WORKSPACE";
   return holders.length ? "CONNECTED_HERE" : "NOT_CONNECTED";
 }
 
@@ -225,23 +152,16 @@ export interface PageConnectResult {
 }
 
 export class MetaLoginService {
-  /** Step 1. Returns the Facebook dialog URL and the nonce the route puts in an httpOnly cookie. */
-  public static async start(context: RequestContext): Promise<{ url: string; nonce: string }> {
-    RbacService.assertCan(context, PERMISSIONS.SOCIAL_CHANNEL_MANAGE);
-    const { appId, redirectUri } = config();
-    const nonce = crypto.randomBytes(24).toString("base64url");
-    const state = await signMetaOAuthState({ tenantId: context.tenant.id, userId: context.user.id, nonce });
-    const url = new URL(DIALOG_URL);
-    url.searchParams.set("client_id", appId);
-    url.searchParams.set("redirect_uri", redirectUri);
-    url.searchParams.set("state", state);
-    url.searchParams.set("response_type", "code");
-    url.searchParams.set("scope", META_SCOPES.join(","));
-    return { url: url.toString(), nonce };
+  /**
+   * Step 1. Returns the Facebook dialog URL and the nonce the route puts in an httpOnly cookie. A plain sign-in asks only
+   * the Page and Instagram scopes; `["ads"]` also asks `ads_read` (Ad Manager's "Connect ads").
+   */
+  public static async start(context: RequestContext, features: string[] = []): Promise<{ url: string; nonce: string }> {
+    return OAuthBroker.start(context, META, features);
   }
 
   /**
-   * Step 2 (the GET callback; writes nothing to the store). Returns the encrypted pending-login cookie value.
+   * Step 2 (the GET callback; writes nothing to the store). Returns the encrypted pending-sign-in cookie value.
    * Throws AppError with a short code the route turns into a redirect.
    */
   public static async completeCallback(
@@ -249,39 +169,37 @@ export class MetaLoginService {
     params: { code?: string | null; state?: string | null; error?: string | null },
     nonceCookie: string | undefined
   ): Promise<string> {
-    RbacService.assertCan(context, PERMISSIONS.SOCIAL_CHANNEL_MANAGE);
-    if (params.error) throw new AppError("META_DENIED", "Facebook sign-in was cancelled.", 400);
-    const state = params.state ? await verifyMetaOAuthState(params.state) : null;
-    if (!state || !nonceCookie || !params.code) throw new AppError("META_STATE_INVALID", "The Facebook sign-in link is invalid or expired.", 400);
-    const a = Buffer.from(state.nonce);
-    const b = Buffer.from(nonceCookie);
-    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
-      throw new AppError("META_STATE_INVALID", "The Facebook sign-in link is invalid or expired.", 400);
-    }
-    if (state.tenantId !== context.tenant.id || state.userId !== context.user.id) {
-      throw new AppError("META_STATE_INVALID", "The Facebook sign-in was started by another account or workspace.", 400);
-    }
-
-    const { appId, appSecret, redirectUri } = config();
-    const short = await graph("GET", "/oauth/access_token", { client_id: appId, client_secret: appSecret, redirect_uri: redirectUri, code: params.code });
-    const shortToken = str(short.access_token);
-    if (!shortToken) throw new AppError("META_API_ERROR", "Facebook did not return an access token.", 502);
-    // Page tokens fetched with a long-lived user token don't expire
-    const long = await graph("GET", "/oauth/access_token", { grant_type: "fb_exchange_token", client_id: appId, client_secret: appSecret, fb_exchange_token: shortToken });
-    const userToken = str(long.access_token) || shortToken;
-    return encryptCredential({ t: context.tenant.id, u: context.user.id, token: userToken, exp: Date.now() + PENDING_TTL_MS });
+    return OAuthBroker.completeCallback(context, META, params, nonceCookie);
   }
 
-  /** Step 3. The Pages (and linked Instagram accounts) the merchant can connect. No tokens leave the server. */
+  /**
+   * Step 3. The Pages (and linked Instagram accounts) the merchant can connect, and, when the sign-in asked for Ad
+   * Manager, the ad accounts. No tokens leave the server. `missing_permissions` lists only required scopes; an optional
+   * one the merchant declined shows in `ads.granted: false`.
+   */
   public static async listPages(
     context: RequestContext,
     pendingCookie: string | undefined
-  ): Promise<{ pages: PickablePage[]; missing_permissions: string[] }> {
+  ): Promise<{
+    pages: PickablePage[];
+    ad_accounts: PickableAdAccount[];
+    missing_permissions: string[];
+    ads: { requested: boolean; granted: boolean };
+  }> {
     RbacService.assertCan(context, PERMISSIONS.SOCIAL_CHANNEL_MANAGE);
-    const pending = readPending(context, pendingCookie);
-    const [pages, missing] = await Promise.all([fetchPages(pending.token), missingPermissions(pending.token)]);
+    const pending = OAuthBroker.readPending(context, META, pendingCookie);
+    const userToken = pending.token.accessToken;
+    const adsRequested = pending.features.includes(ADS_FEATURE);
+    const [pages, granted] = await Promise.all([fetchPages(userToken), grantedPermissions(userToken)]);
+    const adsGranted = scopesFor(metaOAuthAdapter, [ADS_FEATURE])
+      .filter((s) => !scopesFor(metaOAuthAdapter, []).includes(s))
+      .every((s) => granted.has(s));
+    // Ad accounts are listed only when the merchant asked to connect Ad Manager
+    const adAccounts = adsRequested && adsGranted ? await fetchAdAccounts(userToken) : [];
     return {
-      missing_permissions: missing,
+      missing_permissions: scopesFor(metaOAuthAdapter, []).filter((s) => !granted.has(s)),
+      ads: { requested: adsRequested, granted: adsGranted },
+      ad_accounts: adAccounts,
       pages: pages.map((p) => ({
         id: p.id,
         name: p.name,
@@ -299,14 +217,28 @@ export class MetaLoginService {
   public static async connectPages(
     context: RequestContext,
     pendingCookie: string | undefined,
-    input: { page_ids: string[]; include_instagram: boolean }
+    input: { page_ids: string[]; include_instagram: boolean; ad_account_id?: string }
   ): Promise<PageConnectResult[]> {
     RbacService.assertCan(context, PERMISSIONS.SOCIAL_CHANNEL_MANAGE);
-    const pending = readPending(context, pendingCookie);
+    const pending = OAuthBroker.readPending(context, META, pendingCookie);
+    const userToken = pending.token.accessToken;
+    if (input.page_ids.length === 0 && !input.ad_account_id) throw new BadRequestError("Pick a Page or an ad account.");
     const wanted = new Set(input.page_ids);
-    // Tokens come from Meta for pages this Facebook user manages; an id the user doesn't manage is simply not found
-    const pages = (await fetchPages(pending.token)).filter((p) => wanted.has(p.id));
-    if (pages.length === 0) throw new BadRequestError("None of the selected Pages are managed by this Facebook account.");
+    // Tokens come from Meta for pages this Facebook user manages; an id the user doesn't manage is simply not found.
+    // "Connect ads" may pick only an ad account (no Pages).
+    const pages = input.page_ids.length ? (await fetchPages(userToken)).filter((p) => wanted.has(p.id)) : [];
+    if (input.page_ids.length && pages.length === 0) throw new BadRequestError("None of the selected Pages are managed by this Facebook account.");
+
+    // The ad account must be one this Facebook user can read (asked of Meta again, never trusted from the client)
+    let account: PickableAdAccount | undefined;
+    if (input.ad_account_id) {
+      const wantedAd = normalizeAdAccountId(input.ad_account_id);
+      account = (await fetchAdAccounts(userToken)).find((a) => a.id === wantedAd);
+      if (!account) throw new BadRequestError("That ad account isn't available to this Facebook account.");
+    }
+
+    // The connection: the one stored copy of the user token, with its owner, granted scopes and expiry (ADR-119)
+    const connection = await OAuthBroker.saveConnection(context, META, pending);
 
     const results: PageConnectResult[] = [];
     for (const page of pages) {
@@ -328,12 +260,12 @@ export class MetaLoginService {
 
       const webhookError = result.webhooks_subscribed ? undefined : "Meta hasn't confirmed the webhook subscription; comments and messages may not arrive. Connect again.";
       await db.unit(async () => {
-        result.facebook = await this.upsertChannel(context, "FACEBOOK_MESSENGER", page.id, page.name, page, webhookError);
+        result.facebook = await this.activatePage(context, connection.id, "FACEBOOK_MESSENGER", page.id, page.name, page, webhookError);
         if (page.instagram && input.include_instagram) {
           const igName = page.instagram.username ? `@${page.instagram.username}` : `${page.name} (Instagram)`;
           result.instagram = channelState(context.tenant.id, "INSTAGRAM", page.instagram.id) === "IN_ANOTHER_WORKSPACE"
             ? "IN_ANOTHER_WORKSPACE"
-            : await this.upsertChannel(context, "INSTAGRAM", page.instagram.id, igName, page, webhookError);
+            : await this.activatePage(context, connection.id, "INSTAGRAM", page.instagram.id, igName, page, webhookError, page.instagram.username);
         }
         db.createAuditLog({
           id: `aud_${Date.now()}_${randomSuffix()}`,
@@ -342,12 +274,20 @@ export class MetaLoginService {
           action: "social.channel.meta_connected",
           resource_type: "connected_channel",
           resource_id: page.id,
-          metadata: { page_id: page.id, facebook: result.facebook, instagram: result.instagram ?? "NONE", webhooks_subscribed: result.webhooks_subscribed },
+          metadata: {
+            page_id: page.id,
+            facebook: result.facebook,
+            instagram: result.instagram ?? "NONE",
+            webhooks_subscribed: result.webhooks_subscribed,
+            connection_id: connection.id,
+          },
           created_at: new Date().toISOString(),
         });
         return true;
       }, () => true).catch((err: unknown) => {
-        result.facebook = result.facebook === "SKIPPED" ? "FAILED" : result.facebook;
+        // The unit didn't commit, so nothing for this Page was saved, whatever the steps before the error returned
+        result.facebook = "FAILED";
+        if (page.instagram && input.include_instagram && result.instagram !== "IN_ANOTHER_WORKSPACE") result.instagram = "FAILED";
         // Store errors can name internal ids: show a fixed message, log the detail
         result.error = err instanceof AppError ? err.message : "Could not save the channel. Try again.";
         logger.warn("meta_login.save_failed", { tenant_id: context.tenant.id, page_id: page.id, error: err instanceof Error ? err.message : "error" });
@@ -361,19 +301,76 @@ export class MetaLoginService {
       });
       results.push(result);
     }
+
+    // The picked ad account becomes Ad Manager's account; reconnecting without a pick keeps the current one
+    if (account) {
+      const picked = account;
+      await db.unit(async () => {
+        const resource = upsertConnectionResource(context.tenant.id, connection.id, "AD_ACCOUNT", picked.id, {
+          name: picked.name,
+          metadata: picked.currency ? { currency: picked.currency } : {},
+          status: "ACTIVE",
+          activated: true,
+        });
+        const replaced = bindAdAccount(context.tenant.id, resource.id);
+        db.createAuditLog({
+          id: `aud_${Date.now()}_${randomSuffix()}`,
+          tenant_id: context.tenant.id,
+          actor_user_id: context.user.id,
+          action: "connection.ad_account_bound",
+          resource_type: "connection_resource",
+          resource_id: resource.id,
+          metadata: { ad_account_id: picked.id, connection_id: connection.id, replaced_ad_account_ids: replaced.join(",") || "NONE" },
+          created_at: new Date().toISOString(),
+        });
+        return true;
+      }, () => true);
+    }
     return results;
   }
 
-  private static async upsertChannel(
+  /**
+   * Saves the Page (or its Instagram account) as a resource of the connection, holding the Page token, and creates or
+   * refreshes its channel pointing at that resource. The channel keeps a copy of the Page token for one release so a
+   * rollback still works (ADR-119 E3).
+   */
+  private static async activatePage(
     context: RequestContext,
+    connectionId: string,
     type: "FACEBOOK_MESSENGER" | "INSTAGRAM",
     accountId: string,
     name: string,
     page: MetaPage,
-    webhookError?: string
+    webhookError?: string,
+    username?: string
   ): Promise<ConnectOutcome> {
-    const credentials = { accessToken: page.accessToken, pageId: page.id, connectedVia: "facebook_login", connectedBy: context.user.id };
+    const resource = upsertConnectionResource(context.tenant.id, connectionId, type === "INSTAGRAM" ? "IG_ACCOUNT" : "FB_PAGE", accountId, {
+      name,
+      metadata: type === "INSTAGRAM" ? { page_id: page.id, ...(username ? { username } : {}) } : {},
+      token: page.accessToken,
+      status: webhookError ? "NEEDS_ATTENTION" : "ACTIVE",
+      activated: !webhookError,
+    });
     const existing = db.findConnectedChannelsByProviderId(type, accountId).find((c) => c.tenant_id === context.tenant.id);
+    // An ad account picked before resources existed stays readable until the migration moves it (no token is kept here)
+    let legacyAds: Record<string, string> = {};
+    if (existing) {
+      try {
+        const old = ChannelService.getDecryptedCredentials(existing);
+        for (const key of ["adAccountId", "adAccountName", "adsConnectionId"] as const) {
+          if (typeof old[key] === "string" && old[key]) legacyAds = { ...legacyAds, [key]: old[key] as string };
+        }
+      } catch {
+        // unreadable old credentials: nothing to keep
+      }
+    }
+    const credentials = {
+      accessToken: page.accessToken,
+      pageId: page.id,
+      connectedVia: "facebook_login",
+      connectedBy: context.user.id,
+      ...legacyAds,
+    };
     const now = new Date().toISOString();
     if (existing) {
       db.updateConnectedChannel(context.tenant.id, existing.id, {
@@ -382,6 +379,7 @@ export class MetaLoginService {
         external_page_id: page.id,
         credentials_encrypted: encryptCredential(credentials),
         connector_id: undefined,
+        resource_id: resource.id,
         error_message: webhookError,
         last_sync_at: now,
         updated_at: now,
@@ -397,11 +395,8 @@ export class MetaLoginService {
       // Automatic replies are on for a newly connected page; the merchant can turn them off per channel
       configuration: { auto_reply_enabled: true },
     });
-    if (webhookError) {
-      db.updateConnectedChannel(context.tenant.id, created.id, { error_message: webhookError });
-      return "CONNECTED_NO_WEBHOOKS";
-    }
-    return "CONNECTED";
+    db.updateConnectedChannel(context.tenant.id, created.id, { resource_id: resource.id, ...(webhookError ? { error_message: webhookError } : {}) });
+    return webhookError ? "CONNECTED_NO_WEBHOOKS" : "CONNECTED";
   }
 }
 
@@ -432,14 +427,4 @@ export function readCookie(request: Request, name: string): string | undefined {
     if (idx > 0 && part.slice(0, idx).trim() === name) return decodeURIComponent(part.slice(idx + 1).trim());
   }
   return undefined;
-}
-
-export function metaCookieOptions(maxAgeSeconds: number) {
-  return {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax" as const, // sent on the top-level redirect back from facebook.com
-    path: META_COOKIE_PATH,
-    maxAge: maxAgeSeconds,
-  };
 }

@@ -1,7 +1,7 @@
 ---
 trigger: glob
 description: Env config, readiness, headers, live-service commands
-globs: next.config.js, package.json, .env.example, n8n/docker-compose.yml, src/app/health/**/*
+globs: next.config.js, package.json, .env.example, src/app/health/**/*
 ---
 
 # DevOps & Infrastructure Rules
@@ -18,4 +18,4 @@ Current reality: no Dockerfile, no CI, no git repository (STATUS.md). Items belo
 
 5. **Version control** (TARGET): initialize git with a `.gitignore` covering `.env*` (except `.env.example`), `.data/`, `.next/`, `node_modules/`, `*.tsbuildinfo`, `.backups/`.
 
-6. **Live services**: commands that touch Neon, Pinecone, Upstash, or n8n (`db:*`, `test:db`, `n8n:*`) need the user's go-ahead.
+6. **Live services**: commands that touch Neon, Pinecone or Upstash (`db:*`, `test:db`) need the user's go-ahead.

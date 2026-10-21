@@ -283,7 +283,7 @@ CREATE TABLE audit_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     actor_id UUID,
-    actor_type VARCHAR(50) NOT NULL, -- 'USER', 'AGENT', 'N8N_WORKFLOW'
+    actor_type VARCHAR(50) NOT NULL, -- 'USER', 'AGENT', 'SYSTEM'
     action VARCHAR(100) NOT NULL,
     resource_type VARCHAR(100) NOT NULL,
     resource_id VARCHAR(255) NOT NULL,
@@ -507,7 +507,7 @@ CREATE TABLE provider_health (
 CREATE INDEX idx_prov_health ON provider_health(tenant_id, provider_type);
 ```
 
-### 2.12 Automation Hub, n8n Orchestration & Webhooks (Phase 6)
+### 2.12 Automation tables & provider webhooks (Phase 6; the automation hub is removed, rows are kept)
 ```sql
 CREATE TABLE automations (
     id VARCHAR(100) PRIMARY KEY,
@@ -520,7 +520,7 @@ CREATE TABLE automations (
     trigger_config JSONB NOT NULL DEFAULT '{}',
     conditions JSONB NOT NULL DEFAULT '[]',
     actions JSONB NOT NULL DEFAULT '[]',
-    provider_type VARCHAR(50) NOT NULL DEFAULT 'INTERNAL', -- 'INTERNAL', 'N8N', 'WEBHOOK'
+    provider_type VARCHAR(50) NOT NULL DEFAULT 'INTERNAL', -- 'INTERNAL', 'WEBHOOK'
     provider_config JSONB NOT NULL DEFAULT '{}',
     execution_count INT NOT NULL DEFAULT 0,
     success_count INT NOT NULL DEFAULT 0,
@@ -641,7 +641,7 @@ CREATE TABLE automation_providers (
     id VARCHAR(100) PRIMARY KEY,
     tenant_id VARCHAR(100) NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     name VARCHAR(100) NOT NULL,
-    type VARCHAR(50) NOT NULL, -- 'N8N', 'INTERNAL', 'CUSTOM_WEBHOOK'
+    type VARCHAR(50) NOT NULL, -- 'INTERNAL', 'CUSTOM_WEBHOOK'
     base_url VARCHAR(500) NOT NULL,
     circuit_breaker_state VARCHAR(50) NOT NULL DEFAULT 'NORMAL', -- 'NORMAL', 'DEGRADED', 'OPEN', 'HALF_OPEN'
     failure_count INT NOT NULL DEFAULT 0,
@@ -814,7 +814,7 @@ CREATE TABLE platform_feature_flags (
 CREATE TABLE platform_settings (
     key VARCHAR(100) PRIMARY KEY,
     value JSONB NOT NULL,
-    category VARCHAR(50) NOT NULL, -- 'AI_MODELS', 'SECURITY', 'STORAGE', 'N8N_CLUSTER'
+    category VARCHAR(50) NOT NULL, -- 'AI_MODELS', 'SECURITY', 'STORAGE'
     description TEXT,
     is_sensitive BOOLEAN NOT NULL DEFAULT false,
     updated_at TIMESTAMPTZ DEFAULT clock_timestamp()
@@ -835,7 +835,7 @@ CREATE TABLE platform_incidents (
     title VARCHAR(255) NOT NULL,
     severity VARCHAR(20) NOT NULL, -- 'LOW', 'MEDIUM', 'HIGH', 'CRITICAL'
     status VARCHAR(50) NOT NULL DEFAULT 'INVESTIGATING', -- 'INVESTIGATING', 'IDENTIFIED', 'MONITORING', 'RESOLVED'
-    affected_components JSONB NOT NULL DEFAULT '[]', -- ['n8n', 'api', 'database', 'bkash_gateway']
+    affected_components JSONB NOT NULL DEFAULT '[]', -- ['api', 'database', 'bkash_gateway']
     impact_summary TEXT,
     started_at TIMESTAMPTZ DEFAULT clock_timestamp(),
     resolved_at TIMESTAMPTZ,
@@ -981,3 +981,29 @@ Fields added (all optional, backward compatible):
 - `TenantEntitlementRecord`: `expires_at` (override ends on read), `granted_by`, `ticket_ref`.
 - `TenantRecord`: `purge_requested_at`, `purge_after` (14-day tombstone; no deletion job yet).
 - `PlatformSettingRecord.category`: widened to the registry categories (BILLING, TRIALS, AI, OPERATIONS, FINANCE).
+
+## Connection resources (ADR-119, 2026-10-20)
+
+Document collection `connection_resources` (`commerceos.documents` on Postgres; no table, no migration). One row per thing a
+connection (`connector_configurations` row) reaches at the provider.
+
+| Field | Notes |
+|---|---|
+| `id`, `tenant_id`, `connection_id` | Every accessor filters by `tenant_id`; `connection_id` is the connector row |
+| `kind` | `FB_PAGE`, `IG_ACCOUNT`, `AD_ACCOUNT`, `WA_NUMBER`, `TELEGRAM_BOT`, `COURIER_STORE`, `SHOP` |
+| `external_id`, `name`, `metadata` | Provider id and display facts (no secrets) |
+| `token_encrypted?` | Only for resources with their own token (Page token); `encryptCredential` |
+| `status` | `ACTIVE`, `NEEDS_ATTENTION`, `DETACHED` |
+| `activated_at?`, `last_event_at?`, `created_at`, `updated_at` | |
+
+Rules: one live (`status` not `DETACHED`) `FB_PAGE` / `IG_ACCOUNT` / `WA_NUMBER` / `TELEGRAM_BOT` per `external_id` across all
+workspaces (audit H5); no duplicate live `(kind, external_id)` inside a workspace; identity fields can't be patched; deleting the
+connector deletes its resources.
+
+`ConnectorConfigRecord` gains optional `auth_method`, `owner_user_id`, `scopes_granted`, `token_expires_at`, `connection_status`
+(`ACTIVE`, `DEGRADED`, `NEEDS_REAUTH`, `DISCONNECTED`), `health_checked_at`, `health_code`. Not written by any flow yet (P1+).
+
+P2 (2026-10-20): `ConnectedChannel.resource_id?` points at the `FB_PAGE` / `IG_ACCOUNT` resource whose token the channel uses
+(the channel keeps its own copy for one release). A workspace's Ad Manager account is its single live `AD_ACCOUNT` resource
+(read with the token of that resource's connection); picking another detaches the first. Deleting a channel detaches its
+resource unless another channel of the workspace still uses it.

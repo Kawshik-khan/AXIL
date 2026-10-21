@@ -38,7 +38,7 @@ CommerceOS is structured as a resilient, multi-tenant distributed system designe
                 │
                 ▼
    ┌───────────────────────────┐   ┌───────────────────────────────┐
-   │    n8n Workflow Hub       │   │     External Integrations     │
+   │    Scheduled Jobs         │   │     External Integrations     │
    │  - Background Workers     │◄──┤  - bKash, Nagad, SSLCommerz   │
    │  - Scheduled Cron Syncs   │   │  - Steadfast, Pathao, RedX    │
    │  - Long-running Retries   │   │  - Meta Graph & WA Cloud API  │
@@ -75,7 +75,7 @@ Long-running and high-latency operations must never block customer interactions 
 | Queue Name | Worker | Concurrency | Retry Strategy | Purpose |
 | :--- | :--- | :--- | :--- | :--- |
 | `events.domain` | Core Event Consumer | High (20) | 3 retries, exponential backoff | Distribute domain events across listeners |
-| `webhooks.outbound` | Webhook Dispatcher | Moderate (10) | 5 retries, 1m/5m/15m/1h backoff | Push notifications to n8n or partner endpoints |
+| `webhooks.outbound` | Webhook Dispatcher | Moderate (10) | 5 retries, 1m/5m/15m/1h backoff | Push notifications to partner endpoints |
 | `rag.ingestion` | Document Worker | Low (2) | 2 retries | PDF parsing, chunking, OpenAI/local embeddings |
 | `shipments.sync` | Courier Poller | Moderate (5) | Linear backoff | Periodic sync of active in-transit tracking statuses |
 | `campaigns.dispatch`| Marketing Worker | Rate-limited | Strictly capped to provider limits | WhatsApp / Messenger batch message dispatch |
@@ -105,7 +105,7 @@ To ensure tenant isolation, high availability, and operational resilience, Comme
 │  - PlatformContext                        - RequestContext             │
 │  - SaaS Plans & Entitlements              - Catalog, Orders, Inventory │
 │  - Cross-Tenant Fleet Telemetry           - Store-level Analytics      │
-│  - n8n Cluster Health & DLQ               - Store Automation Triggers  │
+│  - Scheduled Job Health                   - Store Notifications        │
 │  - Governed Support Impersonation         - Merchant Customer Support  │
 │  - Emergency Global Kill Switch           - Store-level Settings       │
 │                                                                        │

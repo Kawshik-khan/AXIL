@@ -8,7 +8,7 @@
  */
 import crypto from "crypto";
 import { telegramCall, TELEGRAM_SECRET_HEADER } from "@/domains/social/channels/adapters/telegram.adapter";
-import { appBaseUrl } from "@/domains/social/n8n/bridge";
+import { appBaseUrl } from "@/lib/app-url";
 import { AppError } from "@/lib/errors";
 import { logger } from "@/lib/logger";
 

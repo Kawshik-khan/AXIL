@@ -127,10 +127,10 @@ async function main(): Promise<void> {
 
   await runTest("the page lists only limits the platform enforces", () => {
     const catalog = read("src/domains/platform/entitlement-catalog.ts");
-    // Orders per month, automations, n8n, storage and priority support have `enforcedBy: null`: they must not be promised.
+    // Orders per month, storage and priority support have `enforcedBy: null`: they must not be promised.
     const page = ["Pricing", "Landing", "Faq"].map((f) => read(`src/components/marketing/${f}.tsx`)).join("\n");
     assert.ok(/enforcedBy: null/.test(catalog), "this guard assumes some limits are still unenforced");
-    for (const promise of [/orders per month/i, /monthly order/i, /priority support/i, /dedicated SLA/i, /n8n executions/i]) {
+    for (const promise of [/orders per month/i, /monthly order/i, /priority support/i, /dedicated SLA/i]) {
       assert.ok(!promise.test(page), `the landing page promises ${promise}, which is not enforced`);
     }
   });

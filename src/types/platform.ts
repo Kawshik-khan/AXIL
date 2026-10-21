@@ -157,7 +157,6 @@ export interface PlatformSettingRecord {
     | "AI"
     | "SECURITY"
     | "STORAGE"
-    | "N8N_CLUSTER"
     | "RATE_LIMITS"
     | "NOTIFICATIONS"
     | "BILLING"

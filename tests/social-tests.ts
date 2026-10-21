@@ -241,14 +241,12 @@ export async function runSocialCommerceTests() {
     };
     const normalized = adapter.normalizeIncomingEvent(update, channel.id);
     assert.strictEqual(normalized.length, 1);
-    const previousN8nModeForIngress = process.env.SOCIAL_N8N_MODE;
-    process.env.SOCIAL_N8N_MODE = "off";
     const requestFor = (secret: string) => new Request(`https://commerceos.example/api/v1/connectors/${connector.id}/webhook`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-telegram-bot-api-secret-token": secret },
       body: JSON.stringify(update),
     });
-    try {
+    {
       await assert.rejects(
         () => telegramConnectorWebhook(requestFor("wrong"), { params: Promise.resolve({ id: connector.id }) }),
         (err: unknown) => err instanceof AuthenticationError,
@@ -266,9 +264,6 @@ export async function runSocialCommerceTests() {
       const duplicateResponse = await telegramConnectorWebhook(requestFor(webhookSecret), { params: Promise.resolve({ id: connector.id }) });
       const duplicate = await duplicateResponse.json();
       assert.strictEqual(duplicate.messagesProcessed, 0, "a retried update is not ingested twice");
-    } finally {
-      if (previousN8nModeForIngress === undefined) delete process.env.SOCIAL_N8N_MODE;
-      else process.env.SOCIAL_N8N_MODE = previousN8nModeForIngress;
     }
 
     const conversation = db.findConversationByExternalId(contextA.tenant.id, channel.id, "501");
@@ -283,9 +278,7 @@ export async function runSocialCommerceTests() {
     }, channel.id);
     assert.strictEqual(secondChat.length, 1);
     // A distinct private chat may reuse Telegram's per-chat message_id without colliding in this tenant.
-    const previousN8nModeForSecondChat = process.env.SOCIAL_N8N_MODE;
-    process.env.SOCIAL_N8N_MODE = "off";
-    try {
+    {
       const secondResponse = await telegramConnectorWebhook(new Request(`https://commerceos.example/api/v1/connectors/${connector.id}/webhook`, {
         method: "POST",
         headers: { "content-type": "application/json", "x-telegram-bot-api-secret-token": webhookSecret },
@@ -296,16 +289,11 @@ export async function runSocialCommerceTests() {
         }),
       }), { params: Promise.resolve({ id: connector.id }) });
       assert.strictEqual((await secondResponse.json()).messagesProcessed, 1);
-    } finally {
-      if (previousN8nModeForSecondChat === undefined) delete process.env.SOCIAL_N8N_MODE;
-      else process.env.SOCIAL_N8N_MODE = previousN8nModeForSecondChat;
     }
     assert.strictEqual(adapter.normalizeIncomingEvent({ ...update, message: { ...update.message, chat: { id: 503, type: "group" } } }, channel.id).length, 0);
     assert.strictEqual(adapter.normalizeIncomingEvent({ ...update, message: { ...update.message, from: { id: 501, is_bot: true } } }, channel.id).length, 0);
     assert.strictEqual(adapter.normalizeIncomingEvent({ update_id: "bad", message: update.message }, channel.id).length, 0);
 
-    const previousN8nMode = process.env.SOCIAL_N8N_MODE;
-    process.env.SOCIAL_N8N_MODE = "off";
     let requestUrl = "";
     let requestBody: Record<string, unknown> = {};
     setOutboundTransportForTesting(async (url, options) => {
@@ -348,8 +336,6 @@ export async function runSocialCommerceTests() {
       assert.strictEqual(timeoutCalls, 1, "reusing an idempotency key cannot send a duplicate");
     } finally {
       setOutboundTransportForTesting(null);
-      if (previousN8nMode === undefined) delete process.env.SOCIAL_N8N_MODE;
-      else process.env.SOCIAL_N8N_MODE = previousN8nMode;
     }
   });
 
@@ -781,12 +767,12 @@ export async function runSocialCommerceTests() {
   });
 
   // -------------------------------------------------------------
-  // SUITE 12: EVENT OUTBOX & n8n HMAC WEBHOOK DELIVERY
+  // SUITE 12: EVENT OUTBOX & HMAC WEBHOOK DELIVERY
   // -------------------------------------------------------------
-  console.log(`\n${ANSI_BOLD}[12] Event Outbox & n8n HMAC Webhook Delivery${ANSI_RESET}`);
+  console.log(`\n${ANSI_BOLD}[12] Event Outbox & HMAC Webhook Delivery${ANSI_RESET}`);
 
-  await runTest("Emit domain events and generate secure HMAC SHA-256 webhook signatures for n8n fanout", async () => {
-    const signingSecret = "n8n_webhook_signing_secret_bangladesh";
+  await runTest("Emit domain events and generate secure HMAC SHA-256 webhook signatures for webhook fanout", async () => {
+    const signingSecret = "webhook_signing_secret_bangladesh";
 
     const event = SocialEventService.emit({
       tenantId: contextA.tenant.id,
@@ -818,7 +804,7 @@ export async function runSocialCommerceTests() {
     assert.strictEqual(
       crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(computed)),
       true,
-      "Webhook HMAC signature must match for n8n automation"
+      "Webhook HMAC signature must match for the subscriber"
     );
   });
 

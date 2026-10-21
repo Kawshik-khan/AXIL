@@ -6,7 +6,7 @@ import os from "os";
 import { AsyncLocalStorage } from "async_hooks";
 import { logger } from "@/lib/logger";
 import { envNumber } from "@/lib/env-number";
-import { AppError, NotFoundError } from "@/lib/errors";
+import { AppError, ConflictError, NotFoundError } from "@/lib/errors";
 import { mergeComputedRow } from "@/lib/computed-rows";
 import { channelOfOrder, SALES_CHANNEL_NAMES } from "@/lib/sales-channel";
 import type { SalesChannel as OrderSalesChannel } from "@/types/analytics";
@@ -15,7 +15,7 @@ import { RoleName, type Permission } from "@/lib/permissions";
 import { DISABLED_PASSWORD_HASH, encryptCredential } from "@/lib/security";
 import { PgStorePersistence, StoreConflictError, logUnwritable, type QueuedRow, type RejectedRow } from "@/infrastructure/store/pg-store";
 import { createNeonSqlClient, isDataRejected, pgErrorFields, storeConnectionString, type SqlClient } from "@/infrastructure/store/sql-client";
-import { ConnectorConfigRecord } from "@/types/connector";
+import { ConnectorConfigRecord, ConnectionResource, EXCLUSIVE_RESOURCE_KINDS, type ConnectionResourceKind } from "@/types/connector";
 import type { NotificationSettingsRecord } from "@/types/notifications";
 import {
   NetworkDeliveryReputationRecord,
@@ -125,7 +125,7 @@ export interface UserRecord {
   updated_at: string;
 }
 
-/** Machine credential for automation callers such as n8n (FX-18). Only a SHA-256 hash of the token is stored. */
+/** Machine credential (FX-18), kept for stored rows: nothing issues or accepts service tokens since the automation hub was removed. */
 export interface ServiceTokenRecord {
   id: string;
   tenant_id: string;
@@ -186,18 +186,6 @@ export interface AutomationKillSwitchRecord {
   changed_by: string;
   updated_at: string;
 }
-
-/**
- * Recorded event types automations react to, and the name they're delivered under (FX-99 Part B). `payment.claim_submitted`
- * joins when FX-90 records it.
- */
-export const OUTBOX_EVENT_TYPES: Readonly<Record<string, string>> = {
-  "order.created": "order.placed",
-  "order.delivered": "order.delivered",
-  "shipment.updated": "shipment.status_changed",
-  "inventory.low_stock": "inventory.low_stock",
-  "payment.claim_submitted": "payment.claim_submitted",
-};
 
 export interface AuditLogRecord {
   id: string;
@@ -408,7 +396,6 @@ import {
   AutomationRecord,
   AutomationWorkflow,
   AutomationWorkflowVersion,
-  N8nInstance,
   AutomationTrigger,
   AutomationExecution,
   AutomationExecutionStep,
@@ -628,7 +615,6 @@ export interface DatabaseSchema {
   automations: AutomationRecord[];
   automation_workflows: AutomationWorkflow[];
   automation_workflow_versions: AutomationWorkflowVersion[];
-  n8n_instances: N8nInstance[];
   automation_triggers: AutomationTrigger[];
   automation_executions: AutomationExecution[];
   automation_execution_steps: AutomationExecutionStep[];
@@ -676,6 +662,8 @@ export interface DatabaseSchema {
   // Comment-to-inbox triggers (Engagement page)
   comment_trigger_rules: CommentTriggerRule[];
   comment_trigger_events: CommentTriggerEvent[];
+  // Connection platform (ADR-119): what each connector connection reaches at the provider
+  connection_resources: ConnectionResource[];
 }
 
 /**
@@ -1568,7 +1556,6 @@ export class CommerceDatabase {
       automations: parsed.automations || [],
       automation_workflows: parsed.automation_workflows || [],
       automation_workflow_versions: parsed.automation_workflow_versions || [],
-      n8n_instances: parsed.n8n_instances || [],
       automation_triggers: parsed.automation_triggers || [],
       automation_executions: parsed.automation_executions || [],
       automation_execution_steps: parsed.automation_execution_steps || [],
@@ -1868,7 +1855,6 @@ export class CommerceDatabase {
       automations: [],
       automation_workflows: [],
       automation_workflow_versions: [],
-      n8n_instances: [],
       automation_triggers: [],
       automation_executions: [],
       automation_execution_steps: [],
@@ -1912,6 +1898,7 @@ export class CommerceDatabase {
       tenant_ai_guard_settings: [],
       comment_trigger_rules: [],
       comment_trigger_events: [],
+      connection_resources: [],
     };
   }
 
@@ -4960,7 +4947,7 @@ export class CommerceDatabase {
       const canonicalPlans: PlanRecord[] = [
         { id: "FREE", name: "Free Tier", description: "Bootstrap tier for new social sellers", is_active: true, created_at: now, updated_at: now },
         { id: "STARTER", name: "Starter", description: "Growing single-brand stores with order automation", is_active: true, created_at: now, updated_at: now },
-        { id: "GROWTH", name: "Growth", description: "Omnichannel brand scaling with n8n workflow automations", is_active: true, created_at: now, updated_at: now },
+        { id: "GROWTH", name: "Growth", description: "Omnichannel brand scaling", is_active: true, created_at: now, updated_at: now },
         { id: "PRO", name: "Pro", description: "High-volume D2C operations with AI agents and dedicated workers", is_active: true, created_at: now, updated_at: now },
         { id: "ENTERPRISE", name: "Enterprise", description: "Custom multi-warehouse multi-channel retail infrastructure with dedicated SLA", is_active: true, created_at: now, updated_at: now },
       ];
@@ -4983,11 +4970,8 @@ export class CommerceDatabase {
         { id: "max_users", name: "Max Staff Users", value_type: "NUMERIC", default_value: 5, created_at: now },
         { id: "max_products", name: "Max Catalog Products", value_type: "NUMERIC", default_value: 500, created_at: now },
         { id: "max_orders_per_month", name: "Monthly Order Quota", value_type: "NUMERIC", default_value: 1000, created_at: now },
-        { id: "max_automations", name: "Active Automations Limit", value_type: "NUMERIC", default_value: 10, created_at: now },
-        { id: "max_n8n_executions", name: "Monthly n8n Executions", value_type: "NUMERIC", default_value: 5000, created_at: now },
         { id: "max_channels", name: "Connected Channels", value_type: "NUMERIC", default_value: 3, created_at: now },
         { id: "max_storage_gb", name: "Storage Allowance (GB)", value_type: "NUMERIC", default_value: 10, created_at: now },
-        { id: "automation.n8n", name: "n8n Workflow Engine Access", value_type: "BOOLEAN", default_value: true, created_at: now },
         { id: "ai.agentic_workflows", name: "Autonomous AI Agents Access", value_type: "BOOLEAN", default_value: true, created_at: now },
         { id: "support.priority", name: "Dedicated 24/7 SLA Support", value_type: "BOOLEAN", default_value: false, created_at: now },
       ];
@@ -5008,30 +4992,6 @@ export class CommerceDatabase {
           current_period_start: now,
           current_period_end: nextMonth,
           cancel_at_period_end: false,
-          created_at: now,
-          updated_at: now,
-        },
-      ];
-    }
-
-    // Seed Phase 12: Default n8n Instance if missing
-    if (!this.data.n8n_instances || this.data.n8n_instances.length === 0) {
-      const now = new Date().toISOString();
-      this.data.n8n_instances = [
-        {
-          id: "n8n_inst_primary_01",
-          tenant_id: tenantId,
-          name: "CommerceOS Primary Worker Cluster",
-          environment: "PRODUCTION",
-          base_url: "https://n8n.internal.commerceos.io",
-          status: "ACTIVE",
-          health_status: "HEALTHY",
-          credential_reference: "cred_ref_vault_n8n_cluster",
-          workflow_namespace: "commerceos-prod",
-          latency_ms: 18,
-          last_health_check_at: now,
-          workflow_count: 14,
-          failure_rate: 0.01,
           created_at: now,
           updated_at: now,
         },
@@ -5122,14 +5082,6 @@ export class CommerceDatabase {
           value: 3600,
           category: "SECURITY",
           description: "Maximum validity duration for privileged platform session tokens (seconds)",
-          is_sensitive: false,
-          updated_at: now,
-        },
-        {
-          key: "automation.max_concurrency_global",
-          value: 100,
-          category: "N8N_CLUSTER",
-          description: "Global threshold for concurrent automation workflow executions across all tenants",
           is_sensitive: false,
           updated_at: now,
         },
@@ -6454,59 +6406,8 @@ export class CommerceDatabase {
   // ==================== COMMERCE EVENTS ====================
   public recordEvent(event: CommerceEvent): CommerceEvent {
     this.data.events.push(event);
-    // FX-99 Part B: events automations react to also get an outbox row, in the same unit of work as the change
-    const outboxType = OUTBOX_EVENT_TYPES[event.type];
-    if (outboxType && !this.data.domain_events.some((e) => e.id === event.id)) {
-      const now = new Date().toISOString();
-      this.data.domain_events.push({
-        id: event.id, tenant_id: event.tenant_id, type: outboxType, source_type: event.type, aggregate_type: event.aggregate_type,
-        aggregate_id: event.aggregate_id, actor_id: event.actor_id, correlation_id: event.correlation_id, occurred_at: event.timestamp,
-        // Phone numbers masked (FX-83): an automation resolves the recipient from the order id in CommerceOS
-        payload: redactToolPayload(event.payload as Record<string, unknown>), status: "PENDING", attempts: 0, next_attempt_at: now, created_at: now, updated_at: now,
-      });
-      this.persist(["events", "domain_events"]);
-    } else {
-      this.persist(["events"]);
-    }
+    this.persist(["events"]);
     return event;
-  }
-
-  // ---- Domain-event outbox (FX-99 Part B)
-  /**
-   * Outbox rows ready to deliver: per aggregate only the oldest undelivered one (so events for one order arrive in
-   * order), PENDING and due, or DISPATCHING with a claim older than `staleClaimBeforeIso`. A DEAD row blocks its
-   * aggregate until someone resolves it (the monitoring job reports it): later events never overtake it.
-   */
-  public getDueDomainEvents(nowIso: string, staleClaimBeforeIso: string, limit = 20): DomainEventOutboxRecord[] {
-    const head = new Map<string, DomainEventOutboxRecord>();
-    for (const e of this.data.domain_events) {
-      if (e.status === "DISPATCHED") continue;
-      const key = `${e.tenant_id}|${e.aggregate_type}|${e.aggregate_id}`;
-      const current = head.get(key);
-      if (!current || e.occurred_at < current.occurred_at || (e.occurred_at === current.occurred_at && e.created_at < current.created_at)) head.set(key, e);
-    }
-    return [...head.values()]
-      .filter((e) => (e.status === "PENDING" && e.next_attempt_at <= nowIso) || (e.status === "DISPATCHING" && (e.claimed_at ?? "") < staleClaimBeforeIso))
-      .sort((a, b) => a.occurred_at.localeCompare(b.occurred_at))
-      .slice(0, limit);
-  }
-
-  public findDomainEvent(tenantId: string, id: string): DomainEventOutboxRecord | undefined {
-    return this.data.domain_events.find((e) => e.tenant_id === tenantId && e.id === id);
-  }
-
-  public saveDomainEvent(record: DomainEventOutboxRecord): DomainEventOutboxRecord {
-    const idx = this.data.domain_events.findIndex((e) => e.tenant_id === record.tenant_id && e.id === record.id);
-    const saved = { ...record, updated_at: new Date().toISOString() };
-    if (idx === -1) this.data.domain_events.push(saved);
-    else this.data.domain_events[idx] = saved;
-    this.persist(["domain_events"]);
-    return saved;
-  }
-
-  /** Every workspace's outbox rows (platform monitoring). */
-  public getAllDomainEvents(): readonly DomainEventOutboxRecord[] {
-    return this.data.domain_events;
   }
 
   // ---- Content-Security-Policy reports (FX-86), platform scope
@@ -6883,12 +6784,22 @@ export class CommerceDatabase {
   }
 
   public deleteConnectedChannel(tenantId: string, id: string): boolean {
+    const channel = this.data.connected_channels.find((c) => c.tenant_id === tenantId && c.id === id);
     const initialLen = this.data.connected_channels.length;
     this.data.connected_channels = this.data.connected_channels.filter(
       (c) => !(c.tenant_id === tenantId && c.id === id)
     );
     const deleted = this.data.connected_channels.length < initialLen;
     if (deleted) this.persist(["connected_channels"]);
+    // Its resource is detached unless another of the workspace's channels still serves it (ADR-119)
+    const resourceId = channel?.resource_id;
+    if (deleted && resourceId && !this.data.connected_channels.some((c) => c.tenant_id === tenantId && c.resource_id === resourceId)) {
+      const resource = this.findConnectionResource(tenantId, resourceId);
+      if (resource && resource.status !== "DETACHED") {
+        // Its token goes too: a detached Page keeps nothing it could be used with
+        this.updateConnectionResource(tenantId, resourceId, { status: "DETACHED", token_encrypted: undefined, activated_at: undefined });
+      }
+    }
     return deleted;
   }
 
@@ -7109,14 +7020,6 @@ export class CommerceDatabase {
 
   public findMessageById(tenantId: string, id: string): Message | undefined {
     return this.data.messages.find((m) => m.tenant_id === tenantId && m.id === id);
-  }
-
-  /**
-   * For the n8n dispatch callback, which names a stored message by id. The caller must have authenticated the
-   * callback; the row's tenant_id is authoritative and no tenant comes from the request.
-   */
-  public findMessageForDispatch(id: string): Message | undefined {
-    return this.data.messages.find((m) => m.id === id);
   }
 
   public findMessageByExternalId(tenantId: string, channelId: string, externalMessageId: string): Message | undefined {
@@ -9928,7 +9831,6 @@ export class CommerceDatabase {
       automations: [],
       automation_workflows: [],
       automation_workflow_versions: [],
-      n8n_instances: [],
       automation_triggers: [],
       automation_executions: [],
       automation_execution_steps: [],
@@ -9972,6 +9874,7 @@ export class CommerceDatabase {
       tenant_ai_guard_settings: [],
       comment_trigger_rules: [],
       comment_trigger_events: [],
+      connection_resources: [],
     };
     this.ensureDefaultSeed();
   }
@@ -10431,7 +10334,7 @@ export class CommerceDatabase {
   }
 
   // ============================================================
-  // PHASE 6: AUTOMATIONS & N8N HUB REPOSITORY METHODS
+  // PHASE 6: AUTOMATIONS REPOSITORY METHODS (the hub is removed; these read and write its stored rows)
   // ============================================================
 
   public getAutomations(tenantId: string): AutomationRecord[] {
@@ -10509,34 +10412,6 @@ export class CommerceDatabase {
     this.data.automation_workflow_versions.push(v);
     this.persist(["automation_workflow_versions"]);
     return v;
-  }
-
-  public getN8nInstances(tenantId: string): N8nInstance[] {
-    return (this.data.n8n_instances || []).filter((i) => i.tenant_id === tenantId);
-  }
-
-  public findN8nInstanceById(tenantId: string, id: string): N8nInstance | undefined {
-    return (this.data.n8n_instances || []).find((i) => i.tenant_id === tenantId && i.id === id);
-  }
-
-  public createN8nInstance(inst: N8nInstance): N8nInstance {
-    if (!this.data.n8n_instances) this.data.n8n_instances = [];
-    this.data.n8n_instances.push(inst);
-    this.persist();
-    return inst;
-  }
-
-  public updateN8nInstance(tenantId: string, id: string, updates: Partial<N8nInstance>): N8nInstance {
-    if (!this.data.n8n_instances) this.data.n8n_instances = [];
-    const idx = this.data.n8n_instances.findIndex((i) => i.tenant_id === tenantId && i.id === id);
-    if (idx === -1) throw new Error(`n8n Instance not found: ${id}`);
-    this.data.n8n_instances[idx] = {
-      ...this.data.n8n_instances[idx],
-      ...safePatch(updates),
-      updated_at: new Date().toISOString(),
-    };
-    this.persist();
-    return this.data.n8n_instances[idx];
   }
 
   public getAutomationExecutions(
@@ -10783,18 +10658,22 @@ export class CommerceDatabase {
   }
 
   /**
-   * Server-side lookup for provider and n8n traffic that names a connector by its public id. The caller must still
-   * authenticate the request (provider secret token, or the n8n callback token); the row's tenant_id is authoritative.
+   * Server-side lookup for provider traffic that names a connector by its public id. The caller must still
+   * authenticate the request (provider secret token); the row's tenant_id is authoritative.
    */
   public findConnectorForIngress(id: string): ConnectorConfigRecord | undefined {
     if (!this.data.connector_configurations) this.data.connector_configurations = [];
     return this.data.connector_configurations.find((c) => c.id === id);
   }
 
+  /**
+   * The workspace's hub connector for a provider (credentials entered in Connector Hub). Never a sign-in connection
+   * (`auth_method: "oauth2"`, ADR-119): those hold a user token and are reached through their own flows.
+   */
   public findConnectorByProvider(tenantId: string, providerId: string): ConnectorConfigRecord | undefined {
     if (!this.data.connector_configurations) this.data.connector_configurations = [];
     return this.data.connector_configurations.find(
-      (c) => c.tenant_id === tenantId && c.provider_id === providerId
+      (c) => c.tenant_id === tenantId && c.provider_id === providerId && c.auth_method !== "oauth2"
     );
   }
 
@@ -10821,6 +10700,8 @@ export class CommerceDatabase {
     const changed = this.data.connector_configurations.length < initialLen;
     if (changed) {
       this.persist(["connector_configurations"]);
+      // A connection's resources go with it (ADR-119); nothing may route to a deleted connection
+      this.deleteConnectionResources(tenantId, id);
     }
     return changed;
   }
@@ -11334,6 +11215,81 @@ export class CommerceDatabase {
     }
     this.persist(["courier_disputes"]);
     return dispute;
+  }
+
+  // ==================== CONNECTION RESOURCES (ADR-119) ====================
+
+  /** A tenant's resources, optionally for one connection. */
+  public getConnectionResources(tenantId: string, connectionId?: string): ConnectionResource[] {
+    return (this.data.connection_resources || []).filter(
+      (r) => r.tenant_id === tenantId && (connectionId === undefined || r.connection_id === connectionId)
+    );
+  }
+
+  public findConnectionResource(tenantId: string, id: string): ConnectionResource | undefined {
+    return (this.data.connection_resources || []).find((r) => r.tenant_id === tenantId && r.id === id);
+  }
+
+  /**
+   * Live (not DETACHED) resources with this provider id, in every tenant. Platform use only: webhook routing and the
+   * one-workspace check (audit H5). Callers acting for a tenant must not return other tenants' rows.
+   */
+  public findLiveConnectionResourcesByExternalId(kind: ConnectionResourceKind, externalId: string): ConnectionResource[] {
+    return (this.data.connection_resources || []).filter(
+      (r) => r.kind === kind && r.external_id === externalId && r.status !== "DETACHED"
+    );
+  }
+
+  /**
+   * Refuses a second live resource with the same (kind, external_id): across workspaces for exclusive kinds (a Page
+   * routes inbound messages to one workspace), within the workspace for every kind (no duplicate pickers).
+   */
+  private assertConnectionResourceFree(resource: ConnectionResource): void {
+    if (resource.status === "DETACHED") return;
+    const clash = this.findLiveConnectionResourcesByExternalId(resource.kind, resource.external_id).find(
+      (r) => r.id !== resource.id && (r.tenant_id === resource.tenant_id || EXCLUSIVE_RESOURCE_KINDS.has(resource.kind))
+    );
+    if (!clash) return;
+    throw clash.tenant_id === resource.tenant_id
+      ? new ConflictError(`This ${resource.kind} is already connected in this workspace.`)
+      : new ConflictError(`This ${resource.kind} is connected to another CommerceOS workspace.`);
+  }
+
+  /** Creates a resource. The id is the caller's; an existing id in any tenant is refused. */
+  public createConnectionResource(resource: ConnectionResource): ConnectionResource {
+    if (!this.data.connection_resources) this.data.connection_resources = [];
+    if (this.data.connection_resources.some((r) => r.id === resource.id)) {
+      throw new ConflictError("A connection resource with this id already exists.");
+    }
+    this.assertConnectionResourceFree(resource);
+    this.data.connection_resources.push(resource);
+    this.persist(["connection_resources"]);
+    return resource;
+  }
+
+  /** Updates a tenant's resource. Its identity (tenant, connection, kind, provider id) can't change. */
+  public updateConnectionResource(tenantId: string, id: string, patch: Partial<ConnectionResource>): ConnectionResource {
+    const list = this.data.connection_resources || [];
+    const idx = list.findIndex((r) => r.tenant_id === tenantId && r.id === id);
+    if (idx < 0) throw new NotFoundError("Connection resource");
+    const { connection_id: _c, kind: _k, external_id: _e, ...rest } = safePatch(patch);
+    const next: ConnectionResource = { ...list[idx], ...rest, updated_at: new Date().toISOString() };
+    this.assertConnectionResourceFree(next);
+    list[idx] = next;
+    this.persist(["connection_resources"]);
+    return next;
+  }
+
+  /** Deletes every resource of one connection (disconnect). Returns how many were removed. */
+  public deleteConnectionResources(tenantId: string, connectionId: string): number {
+    const list = this.data.connection_resources || [];
+    const remaining = list.filter((r) => !(r.tenant_id === tenantId && r.connection_id === connectionId));
+    const removed = list.length - remaining.length;
+    if (removed > 0) {
+      this.data.connection_resources = remaining;
+      this.persist(["connection_resources"]);
+    }
+    return removed;
   }
 
   // ==================== COMMENT-TO-INBOX TRIGGERS ====================

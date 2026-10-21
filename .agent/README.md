@@ -16,6 +16,7 @@ Entry point for agents is the repo root [`AGENTS.md`](../AGENTS.md). This file i
 | `workflows/` | Step-by-step **development** procedures (feature, bug fix, DB change, release, …). | Coding agents; invocable as slash commands |
 | `runtime-agents/` | Behaviour specs for CommerceOS's own **product** agents (sales, support, order, payment, …). | Implementing/tuning `src/domains/ai/agents/*` |
 | `specs/platform/` | Product procedures the software must implement (tenant suspension, impersonation, kill switch, …). | Implementing platform features |
+| `specs/customer-agent/` | Feature specs for the customer-facing chat agent (e.g. image product search). | Implementing customer-agent features |
 | `templates/` | ADR, feature spec, agent spec, API spec, test plan, workflow spec, incident report. | Writing new specs |
 
 ## Skills (coding)
@@ -28,7 +29,6 @@ Entry point for agents is the repo root [`AGENTS.md`](../AGENTS.md). This file i
 | `platform-control-plane` | Super-admin: RBAC, lifecycle, billing, flags, kill switches, impersonation, audit |
 | `commerce-domain` | Bangladesh order/payment/courier/fee knowledge |
 | `rag-engineering` | Retrieval pipeline |
-| `n8n-automation` | n8n workflows and automation backend |
 | `observability` | Logging, audit, health, AI telemetry |
 | `testing` | Test harness, negative tests, evals |
 
@@ -36,7 +36,7 @@ Third-party skills installed by `npx skills` live in `../.agents/skills/` (`neon
 
 ## Reference docs (mostly TARGET design — each carries a status banner)
 `ARCHITECTURE.md` · `SYSTEM_DESIGN.md` · `AI_ARCHITECTURE.md` · `RAG_ARCHITECTURE.md` · `EVENT_ARCHITECTURE.md` ·
-`N8N_ARCHITECTURE.md` · `DATA_MODEL.md` · `API_CONTRACTS.md` · `SECURITY.md` · `INTEGRATIONS.md` · `OBSERVABILITY.md` ·
+`DATA_MODEL.md` · `API_CONTRACTS.md` · `SECURITY.md` · `INTEGRATIONS.md` · `OBSERVABILITY.md` ·
 `MLOPS.md` · `DEVOPS.md` · `TESTING.md` · `EVALUATION.md` · `DESIGN_SYSTEM.md` · `UX_RULES.md` · `CODING_STANDARDS.md` ·
 `PRODUCT.md` · `BANGLADESH_COMMERCE.md` · `ROADMAP.md` · `CHANGELOG.md` · `DECISIONS.md` (ADR index at top)
 

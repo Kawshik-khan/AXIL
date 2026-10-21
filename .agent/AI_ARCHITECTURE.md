@@ -62,7 +62,7 @@ CommerceOS implements a deterministic, multi-agent orchestrator that decomposes 
 | **11. Analytics Agent**| GMV, AOV, RTO rate, and cohort calculation summaries. | `analytics.get_kpis`, `analytics.run_cohort` | Direct SQL generation |
 | **12. Social Commerce Agent**| Multi-channel comment-to-lead routing, social greeting. | `conversation.route`, `message.send_reply` | Public pricing fabrication |
 | **13. Knowledge Agent**| Semantic search retrieval over uploaded PDFs and policies. | `rag.retrieve_chunks`, `rag.get_citations` | Data insertion |
-| **14. Automation Agent**| Triggers n8n workflows based on approved operational events. | `workflow.trigger`, `workflow.get_status` | Direct workflow modification |
+| **14. Automation Agent**| Proposes operational follow-ups from approved events (no workflow engine is connected). | `workflow.trigger`, `workflow.get_status` | Direct workflow modification |
 
 ---
 

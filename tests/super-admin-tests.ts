@@ -212,7 +212,7 @@ async function runSuperAdminTests() {
   assert(Boolean(growthPlan?.current_version), "Plan includes active published version metadata");
 
   // Entitlement Evaluator (Centralized can check)
-  const canUseAutomation = await PlatformEntitlementService.can("ten_default_dhaka", "automation.n8n");
+  const canUseAutomation = await PlatformEntitlementService.can("ten_default_dhaka", "ai.agentic_workflows");
   assert(canUseAutomation === true, "EntitlementService.can correctly resolves enabled features from plan");
 
   // Entitlement Override
@@ -381,7 +381,7 @@ async function runSuperAdminTests() {
   const overview = PlatformAnalyticsService.getPlatformOverview(superAdminContext);
   assert(overview.tenants.total >= 1, "Reports real total tenant count");
   assert(overview.financials.currency === "BDT", "Reports platform revenue in BDT");
-  assert(typeof overview.automation_health.failure_rate_percent === "number", "Calculates real failure rate percentage");
+  assert(!("automation_health" in overview), "No automation telemetry after the automation hub was removed");
 
   // ============================================================
   // FINAL RESULTS

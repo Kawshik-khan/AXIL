@@ -252,7 +252,7 @@ async function main() {
   await runTest("plans: drafts refuse unknown keys, unenforced limits and out-of-range values; publishing needs a price", async () => {
     const base = { monthly_price_bdt: null, annual_price_bdt: null, trial_days: null, setup_fee_bdt: null };
     assert.strictEqual(await codeOf(() => PlatformPlanService.saveDraft(opA, planId, { ...base, features: { max_orders: 100 } })), "PLAN_DRAFT_INVALID");
-    assert.strictEqual(await codeOf(() => PlatformPlanService.saveDraft(opA, planId, { ...base, features: { max_automations: 5 } })), "PLAN_DRAFT_INVALID");
+    assert.strictEqual(await codeOf(() => PlatformPlanService.saveDraft(opA, planId, { ...base, features: { max_storage_gb: 5 } })), "PLAN_DRAFT_INVALID");
     assert.strictEqual(await codeOf(() => PlatformPlanService.saveDraft(opA, planId, { ...base, features: { max_users: -1 } })), "PLAN_DRAFT_INVALID");
     const draft = PlatformPlanService.saveDraft(opA, planId, { ...base, features: { max_users: 3 } });
     assert.strictEqual(await codeOf(() => PlatformPlanService.publishVersion(opA, draft.id, "publishing without a price")), "PRICE_REQUIRED");
@@ -308,7 +308,7 @@ async function main() {
   });
 
   await runTest("overrides: refused for unenforced limits, need step-up and a reason; an expired one stops applying without a write", async () => {
-    assert.strictEqual(await codeOf(() => PlatformEntitlementService.setTenantOverride(tenantId, "max_automations", 9, "unenforced limit override", opA)), "ENTITLEMENT_REJECTED");
+    assert.strictEqual(await codeOf(() => PlatformEntitlementService.setTenantOverride(tenantId, "max_storage_gb", 9, "unenforced limit override", opA)), "ENTITLEMENT_REJECTED");
     assert.strictEqual(await codeOf(() => PlatformEntitlementService.setTenantOverride(tenantId, "max_users", 9, "needs step-up first", noStepUp, { ticketRef: "D-1" })), "STEP_UP_REQUIRED");
     assert.strictEqual(await codeOf(() => PlatformEntitlementService.setTenantOverride(tenantId, "max_users", 9, "short", opA, { ticketRef: "D-1" })), "REASON_REQUIRED");
     assert.strictEqual(await codeOf(() => PlatformEntitlementService.setTenantOverride(tenantId, "max_users", 9, "console suite: temporary deal", opA)), "TICKET_REQUIRED");

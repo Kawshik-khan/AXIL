@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import {
   PlugZap,
   Sparkles,
@@ -36,7 +37,49 @@ import {
 } from "@/types/connector";
 import { LoadingSkeleton, ErrorState, EmptyState } from "@/components/ui/States/States";
 import { Modal } from "@/components/ui/Modal/Modal";
+import { isMetaPopupMessage, pickerUrlOf, startMetaLoginPopup, type SignInProvider } from "@/components/social/meta-login-popup";
+import { ConnectionDrawer } from "@/components/connectors/ConnectionDrawer";
+import type { ConnectionView, ProviderSummary } from "@/domains/connectors/connections.service";
+import type { ConnectorGoal } from "@/types/connector";
 import styles from "./connector.module.css";
+
+/** The merchant view groups connectors by what they're for (ADR-119 P6). */
+const GOAL_LABEL: Record<ConnectorGoal, string> = {
+  SELL_CHAT: "Sell & chat",
+  DELIVER: "Deliver",
+  GET_PAID: "Get paid",
+  ADS: "Ads & growth",
+  SELL_MORE: "Sell more",
+  PLATFORM: "Platform",
+};
+const STORE_GOALS: ConnectorGoal[] = ["SELL_CHAT", "DELIVER", "GET_PAID", "ADS"];
+
+function relativeTime(iso: string): string {
+  const minutes = Math.round((Date.now() - Date.parse(iso)) / 60_000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours} h ago`;
+  return `${Math.round(hours / 24)} days ago`;
+}
+
+/** The card's status line from the connection summary (what the health job and flows recorded), never from a save alone. */
+function summaryStatus(summary: ProviderSummary | undefined): { label: string; tone: "ok" | "warn" | "none" } | null {
+  if (!summary || summary.state === "NONE") return null;
+  if (summary.state === "REAUTH") return { label: "Reconnect needed", tone: "warn" };
+  if (summary.state === "ATTENTION") return { label: "Needs attention", tone: "warn" };
+  if (summary.expires_at) {
+    const days = Math.ceil((Date.parse(summary.expires_at) - Date.now()) / 86_400_000);
+    if (days <= 7) return { label: `Expires in ${Math.max(days, 0)} day${days === 1 ? "" : "s"}`, tone: "warn" };
+  }
+  return { label: summary.last_event_at ? `Active · last message ${relativeTime(summary.last_event_at)}` : "Active", tone: "ok" };
+}
+
+/** Providers connected by signing in (ADR-119): their card opens the provider's popup, never a credentials form. */
+const SIGN_IN_CARDS: Record<string, { provider: SignInProvider; label: string }> = {
+  meta_graph: { provider: "meta", label: "Connect with Facebook" },
+  whatsapp_cloud: { provider: "whatsapp", label: "Connect WhatsApp" },
+};
 
 export default function ConnectorPage() {
   const [providers, setProviders] = useState<ConnectorProviderDefinition[]>([]);
@@ -57,6 +100,36 @@ export default function ConnectorPage() {
     session?.role === "OWNER" ||
     session?.role === "DEV";
 
+  const router = useRouter();
+  /** The sign-in card whose popup is opening, if any. */
+  const [metaBusy, setMetaBusy] = useState<string | null>(null);
+  const [metaError, setMetaError] = useState<string | null>(null);
+
+  // A sign-in popup reports back here; then the merchant picks what to connect on that provider's page
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      if (!isMetaPopupMessage(event)) return;
+      setMetaBusy(null);
+      router.push(pickerUrlOf(event.data));
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [router]);
+
+  const connectBySignIn = async (providerId: string) => {
+    const card = SIGN_IN_CARDS[providerId];
+    if (!card) return;
+    setMetaBusy(providerId);
+    setMetaError(null);
+    try {
+      await startMetaLoginPopup([], card.provider);
+    } catch (err) {
+      setMetaError(err instanceof Error ? err.message : "Could not start the sign-in.");
+    } finally {
+      setMetaBusy(null);
+    }
+  };
+
   // Modal Configuration State
   const [selectedProvider, setSelectedProvider] = useState<ConnectorProviderDefinition | null>(null);
   const [modalFormData, setModalFormData] = useState<Record<string, any>>({});
@@ -71,6 +144,14 @@ export default function ConnectorPage() {
   const [telegramActionBusy, setTelegramActionBusy] = useState(false);
   const [telegramWebhookResult, setTelegramWebhookResult] = useState<{ success: boolean; message: string } | null>(null);
 
+  // Connections (ADR-119): real status per provider and the detail drawer
+  const [connectionsData, setConnectionsData] = useState<{ connections: ConnectionView[]; summaries: ProviderSummary[] }>({
+    connections: [],
+    summaries: [],
+  });
+  const [manageProvider, setManageProvider] = useState<ConnectorProviderDefinition | null>(null);
+  const [drawerBusy, setDrawerBusy] = useState(false);
+
   // Guidance Drawer State
   const [drawerProvider, setDrawerProvider] = useState<ConnectorProviderDefinition | null>(null);
 
@@ -81,10 +162,15 @@ export default function ConnectorPage() {
     setIsLoading(true);
     setErrorMessage(null);
     try {
-      const [res, sessRes] = await Promise.all([
+      const [res, sessRes, connRes] = await Promise.all([
         fetch("/api/v1/connectors"),
         fetch("/api/v1/auth/session"),
+        fetch("/api/v1/connections").catch(() => null),
       ]);
+      if (connRes?.ok) {
+        const cJson = await connRes.json().catch(() => null);
+        if (cJson?.data) setConnectionsData({ connections: cJson.data.connections ?? [], summaries: cJson.data.summaries ?? [] });
+      }
 
       if (sessRes.ok) {
         const sJson = await sessRes.json();
@@ -143,19 +229,21 @@ export default function ConnectorPage() {
   // Filtered providers
   const filteredProviders = useMemo(() => {
     return providers.filter((p) => {
-      // For regular store users (or STORE view scope): Only Parcel Delivery, Social Media, and Google Ads connect
-      if (!isAdmin || viewScope === "STORE") {
-        if (p.category !== "LOGISTICS" && p.category !== "SOCIAL_ADS") {
-          return false;
-        }
+      // The store view shows what a shop connects, grouped by goal; infrastructure is the platform view's
+      const storeView = !isAdmin || viewScope === "STORE";
+      if (storeView) {
+        if (!STORE_GOALS.includes(p.goal)) return false;
       } else if (viewScope === "INFRA") {
-        if (p.category === "LOGISTICS" || p.category === "SOCIAL_ADS") {
-          return false;
-        }
+        if (STORE_GOALS.includes(p.goal)) return false;
       }
 
       let matchCategory = true;
-      if (activeCategory === "GOOGLE_ADS") {
+      if (storeView) {
+        // Store tabs filter by goal: SOCIAL_ADS = Sell & chat, LOGISTICS = Deliver, GOOGLE_ADS = Ads & growth
+        if (activeCategory === "SOCIAL_ADS") matchCategory = p.goal === "SELL_CHAT";
+        else if (activeCategory === "LOGISTICS") matchCategory = p.goal === "DELIVER";
+        else if (activeCategory === "GOOGLE_ADS") matchCategory = p.goal === "ADS";
+      } else if (activeCategory === "GOOGLE_ADS") {
         matchCategory = p.id === "google_ads";
       } else if (activeCategory !== "ALL") {
         matchCategory = p.category === activeCategory;
@@ -180,8 +268,31 @@ export default function ConnectorPage() {
     return map;
   }, [configurations]);
 
+  const summaryMap = useMemo(() => new Map(connectionsData.summaries.map((sm) => [sm.provider_id, sm])), [connectionsData]);
+
+  /** A provider with connections opens its detail drawer; otherwise the card connects. */
+  const hasConnections = (providerId: string) => (summaryMap.get(providerId)?.connections ?? 0) > 0;
+
+  const disconnectConnection = async (connectionId: string) => {
+    setDrawerBusy(true);
+    try {
+      const res = await fetch(`/api/v1/connectors/${encodeURIComponent(connectionId)}`, { method: "DELETE" });
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        throw new Error(json?.error?.message ?? "Could not disconnect.");
+      }
+      await loadConnectors();
+    } finally {
+      setDrawerBusy(false);
+    }
+  };
+
   // Open Configure Modal
   const handleOpenConfigure = (provider: ConnectorProviderDefinition) => {
+    if (SIGN_IN_CARDS[provider.id]) {
+      void connectBySignIn(provider.id);
+      return;
+    }
     setSelectedProvider(provider);
     setTestResult(null);
     setTestError(null);
@@ -478,6 +589,12 @@ export default function ConnectorPage() {
         </div>
       </div>
 
+      {metaError && (
+        <p role="alert" className={styles.metaAlert}>
+          {metaError}
+        </p>
+      )}
+
       {/* Admin Scope Switcher */}
       {isAdmin && (
         <div className={styles.scopeBar} role="group" aria-label="Connector view mode">
@@ -615,9 +732,9 @@ export default function ConnectorPage() {
                 className={`${styles.tabButton} ${activeCategory === "ALL" ? styles.activeTab : ""}`}
                 onClick={() => setActiveCategory("ALL")}
               >
-                All Store Channels
+                All
                 <span className={styles.tabBadge}>
-                  {providers.filter((p) => p.category === "LOGISTICS" || p.category === "SOCIAL_ADS").length}
+                  {providers.filter((p) => STORE_GOALS.includes(p.goal)).length}
                 </span>
               </button>
               <button
@@ -625,9 +742,9 @@ export default function ConnectorPage() {
                 className={`${styles.tabButton} ${activeCategory === "LOGISTICS" ? styles.activeTab : ""}`}
                 onClick={() => setActiveCategory("LOGISTICS")}
               >
-                Parcel Delivery (Couriers)
+                {GOAL_LABEL.DELIVER}
                 <span className={styles.tabBadge}>
-                  {providers.filter((p) => p.category === "LOGISTICS").length}
+                  {providers.filter((p) => p.goal === "DELIVER").length}
                 </span>
               </button>
               <button
@@ -635,9 +752,9 @@ export default function ConnectorPage() {
                 className={`${styles.tabButton} ${activeCategory === "SOCIAL_ADS" ? styles.activeTab : ""}`}
                 onClick={() => setActiveCategory("SOCIAL_ADS")}
               >
-                Social Channels & Chats
+                {GOAL_LABEL.SELL_CHAT}
                 <span className={styles.tabBadge}>
-                  {providers.filter((p) => p.category === "SOCIAL_ADS" && p.id !== "google_ads").length}
+                  {providers.filter((p) => p.goal === "SELL_CHAT").length}
                 </span>
               </button>
               <button
@@ -645,8 +762,8 @@ export default function ConnectorPage() {
                 className={`${styles.tabButton} ${activeCategory === "GOOGLE_ADS" ? styles.activeTab : ""}`}
                 onClick={() => setActiveCategory("GOOGLE_ADS")}
               >
-                Google Ads Connect
-                <span className={styles.tabBadge}>1</span>
+                {GOAL_LABEL.ADS}
+                <span className={styles.tabBadge}>{providers.filter((p) => p.goal === "ADS").length}</span>
               </button>
             </>
           ) : viewScope === "INFRA" ? (
@@ -794,7 +911,9 @@ export default function ConnectorPage() {
         ) : (
           filteredProviders.map((provider) => {
             const config = configMap.get(provider.id);
-            const isConnected = config?.status === "ACTIVE";
+            const summary = summaryMap.get(provider.id);
+            const live = summaryStatus(summary);
+            const isConnected = live ? live.tone === "ok" : config?.status === "ACTIVE";
 
             return (
               <div
@@ -815,7 +934,7 @@ export default function ConnectorPage() {
                         )}
                       </div>
                       <span className={styles.categoryTag}>
-                        {provider.category.replace("_", " ")}
+                        {!isAdmin || viewScope === "STORE" ? GOAL_LABEL[provider.goal] : provider.category.replace("_", " ")}
                       </span>
                     </div>
                   </div>
@@ -823,11 +942,17 @@ export default function ConnectorPage() {
                   {/* Status Pill */}
                   <span
                     className={`${styles.cardStatusPill} ${
-                      isConnected ? styles.statusActive : styles.statusNotConfigured
+                      live?.tone === "warn" ? styles.statusAttention : isConnected ? styles.statusActive : styles.statusNotConfigured
                     }`}
                   >
                     <span className={styles.statusDot} />
-                    {isConnected ? "Active" : provider.status === "COMING_SOON" ? "Coming soon" : "Not Configured"}
+                    {live
+                      ? live.label
+                      : isConnected
+                        ? "Active"
+                        : provider.status === "COMING_SOON"
+                          ? "Coming soon"
+                          : "Not connected"}
                   </span>
                 </div>
 
@@ -880,7 +1005,7 @@ export default function ConnectorPage() {
                     >
                       <BookOpen size={13} /> Guide
                     </button>
-                    {isConnected && (
+                    {isConnected && !SIGN_IN_CARDS[provider.id] && (
                       <button
                         type="button"
                         className={styles.testPingButton}
@@ -897,11 +1022,21 @@ export default function ConnectorPage() {
                     className={`${styles.connectButton} ${
                       isConnected ? styles.connectButtonActive : styles.connectButtonPrimary
                     }`}
-                    onClick={() => handleOpenConfigure(provider)}
-                    disabled={provider.status === "COMING_SOON"}
+                    onClick={() => (hasConnections(provider.id) ? setManageProvider(provider) : handleOpenConfigure(provider))}
+                    disabled={provider.status === "COMING_SOON" || metaBusy === provider.id}
                     title={provider.status === "COMING_SOON" ? "Not available yet" : undefined}
                   >
-                    {provider.status === "COMING_SOON" ? "Coming soon" : isConnected ? "Configure" : "Connect"}
+                    {provider.status === "COMING_SOON"
+                      ? "Coming soon"
+                      : hasConnections(provider.id)
+                        ? "Manage"
+                        : SIGN_IN_CARDS[provider.id]
+                        ? metaBusy === provider.id
+                          ? "Opening…"
+                          : SIGN_IN_CARDS[provider.id].label
+                        : isConnected
+                          ? "Configure"
+                          : "Connect"}
                     <ArrowRight size={14} />
                   </button>
                 </div>
@@ -910,6 +1045,34 @@ export default function ConnectorPage() {
           })
         )}
       </div>
+
+      {/* Connection detail drawer (ADR-119 P6) */}
+      {manageProvider && (
+        <ConnectionDrawer
+          provider={manageProvider}
+          connections={connectionsData.connections.filter((c) => c.provider_id === manageProvider.id)}
+          onClose={() => setManageProvider(null)}
+          busy={drawerBusy || metaBusy === manageProvider.id}
+          signIn={Boolean(SIGN_IN_CARDS[manageProvider.id])}
+          onReconnect={
+            SIGN_IN_CARDS[manageProvider.id]
+              ? (features) => {
+                  const card = SIGN_IN_CARDS[manageProvider.id];
+                  setMetaError(null);
+                  void startMetaLoginPopup(features ?? [], card.provider).catch((err: unknown) =>
+                    setMetaError(err instanceof Error ? err.message : "Could not start the sign-in.")
+                  );
+                }
+              : () => {
+                  // Hub connectors are edited in their credentials form
+                  const p = manageProvider;
+                  setManageProvider(null);
+                  handleOpenConfigure(p);
+                }
+          }
+          onDisconnect={disconnectConnection}
+        />
+      )}
 
       {/* Interactive Configuration Modal */}
       {selectedProvider && (

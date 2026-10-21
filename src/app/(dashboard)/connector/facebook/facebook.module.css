@@ -183,3 +183,42 @@
   font-size: var(--font-size-body);
   color: var(--color-text-secondary);
 }
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  margin-top: var(--space-16);
+}
+
+.fieldLabel {
+  font-size: var(--font-size-body);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.select {
+  max-width: 420px;
+  padding: var(--space-8) var(--space-12);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-pure);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-body);
+}
+
+.linkButton {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-text-primary);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.linkButton:disabled {
+  cursor: default;
+  opacity: 0.6;
+}

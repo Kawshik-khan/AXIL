@@ -4,7 +4,7 @@
 
 ## 1. Structured Logging Specification
 
-Every operational event, API call, agent execution, and n8n trigger produces a structured JSON log entry:
+Every operational event, API call, agent execution, and scheduled job produces a structured JSON log entry:
 ```json
 {
   "timestamp": "2026-09-19T09:36:12.450Z",

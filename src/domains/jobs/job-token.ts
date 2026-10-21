@@ -1,6 +1,6 @@
 /**
  * The platform job token (FX-99 Part B): the only credential `POST /api/v1/jobs/{job}/run` accepts, and it does
- * nothing else (scope `jobs.run`). n8n holds the token; the server holds only its SHA-256 (JOBS_TOKEN_SHA256, hex), so
+ * nothing else (scope `jobs.run`). The scheduler holds the token; the server holds only its SHA-256 (JOBS_TOKEN_SHA256, hex), so
  * the environment never contains the secret itself. Unset: the job endpoints are off.
  */
 import crypto from "crypto";

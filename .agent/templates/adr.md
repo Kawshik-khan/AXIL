@@ -30,4 +30,4 @@
 ## 4. Consequences & Trade-Offs
 - **Positive Consequences**: [What improves?]
 - **Negative Consequences / Debt**: [What becomes harder or requires future attention?]
-- **Impact on Agents & Workflows**: [How does this alter agent boundaries or n8n interactions?]
+- **Impact on Agents & Workflows**: [How does this alter agent boundaries or scheduled jobs?]

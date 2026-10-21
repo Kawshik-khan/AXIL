@@ -28,6 +28,8 @@ export async function installPostgresTestStore(): Promise<void> {
   const verify = () =>
     (verified ??= (async () => {
       await db.flush();
+      // A suite that blocks the event loop (spawnSync) starves the 1 s sync loop; health would report a stale sync
+      await db.syncNow();
       const health = db.getPersistenceHealth();
       const reader = new PgStorePersistence(client);
       const loaded = await reader.load({ all: true });

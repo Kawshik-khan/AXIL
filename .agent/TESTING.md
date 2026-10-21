@@ -40,7 +40,7 @@
 ### 2.4 End-to-End (E2E) Workflows
 - **Critical Flow 1 (Social to Order)**: Customer message received via webhook $\rightarrow$ Agent replies with catalog recommendation $\rightarrow$ Customer confirms address & COD $\rightarrow$ Order created in DB $\rightarrow$ Inventory decremented $\rightarrow$ Consignment generated.
 - **Critical Flow 2 (Payment Webhook)**: bKash webhook received $\rightarrow$ Signature verified $\rightarrow$ Transaction matched to Order $\rightarrow$ Order marked `PAID`.
-- **Critical Flow 3 (Low Stock Alert)**: Stock drops below threshold $\rightarrow$ Event emitted $\rightarrow$ n8n notification triggered.
+- **Critical Flow 3 (Low Stock Alert)**: Stock drops below threshold $\rightarrow$ Event emitted $\rightarrow$ the low-stock job lists it for the merchant alert.
 
 ### 2.5 Platform Control Plane Test Suite Mandate
 - **Scope Isolation Tests**: Verify that tenant tokens (including `OWNER`) are immediately rejected (HTTP 403 `ForbiddenError`) on all `/api/v1/platform/*` endpoints.

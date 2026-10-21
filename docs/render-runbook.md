@@ -7,8 +7,8 @@ Blueprint: [`render.yaml`](../render.yaml). Audit and plan: [`production-readine
 Two always-on Node web services (`next start`), region **oregon**, database on Neon (AWS us-east-2): `commerceos`
 (production) and `commerceos-staging` (FX-86: same settings, its own Neon branch, Qdrant collection, Upstash database and
 LLM/Gemini keys). The app holds the whole dataset in memory and syncs it from Postgres, so it is not a serverless workload
-and each instance needs RAM for the data. Background work (customer-agent jobs, the domain-event outbox, health alerts)
-runs inside the web process (`CUSTOMER_AGENT_WORKER`); scheduled jobs are triggered by n8n (`/api/v1/jobs/{job}/run`).
+and each instance needs RAM for the data. Background work (customer-agent jobs, comment-trigger replies, health alerts)
+runs inside the web process (`CUSTOMER_AGENT_WORKER`); scheduled jobs are triggered by the GitHub Actions schedule (`.github/workflows/scheduled-jobs.yml`, `/api/v1/jobs/{job}/run`).
 
 **Staging setup (FX-86):**
 - Render: deploy the Blueprint; fill `commerceos-staging`'s `sync: false` variables with **staging** values only (a Neon
@@ -99,3 +99,20 @@ the Free plan only for staging; production is `starter` or larger. Neon also sca
 | A bad migration | Run the rollback SQL noted in the migration file; if there is none, restore from a Neon point-in-time branch. Ask before touching production data. |
 | This blueprint | Delete the service (or the blueprint file). Nothing else depends on it. |
 | A wrong setting | Change the variable in the dashboard; Render redeploys. |
+
+## Meta app settings (Connect with Facebook)
+
+One CommerceOS Meta app serves every workspace (ADR-119). Set `META_APP_ID`, `META_APP_SECRET`, `META_VERIFY_TOKEN` and an
+https `APP_URL` on the service, then in the Meta app:
+
+| Setting | Value |
+|---|---|
+| Facebook Login → Valid OAuth Redirect URIs | `${APP_URL}/api/v1/connections/meta/callback` and `${APP_URL}/api/v1/connections/whatsapp/callback` |
+| Facebook Login for Business → Configurations | a WhatsApp Embedded Signup configuration; its id goes in `META_WA_CONFIG_ID` |
+| Webhooks (WhatsApp Business Account) → Callback URL | `${APP_URL}/api/v1/social/webhooks/whatsapp`, verify token = `META_VERIFY_TOKEN` |
+| Webhooks (Page, Instagram) → Callback URL | `${APP_URL}/api/v1/social/webhooks/facebook` and `/instagram`, verify token = `META_VERIFY_TOKEN` |
+| Settings → Basic → Deauthorize Callback URL | `${APP_URL}/api/v1/connections/meta/deauthorize` |
+| Settings → Basic → Data Deletion Request URL | `${APP_URL}/api/v1/connections/meta/data-deletion` |
+
+The scheduled job `connection-health` (every 6 hours, `scripts/run-scheduled-jobs.mjs`) checks every sign-in token with Meta.
+Until App Review grants Advanced Access, only people with a role on the Meta app can connect.

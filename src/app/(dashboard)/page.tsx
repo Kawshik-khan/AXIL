@@ -914,11 +914,6 @@ export default function DashboardPage() {
               <p className={styles.panelSubtitle}>Recent AI agent runs</p>
             </div>
 
-            <Link href="/automations">
-              <Button variant="outline" size="sm" style={{ fontSize: "11px" }}>
-                Manage n8n Workflows
-              </Button>
-            </Link>
           </div>
 
           {/* Counts from the recent runs (were literal 14 Online / 2,840 / 99.8% / 2 Actions) */}

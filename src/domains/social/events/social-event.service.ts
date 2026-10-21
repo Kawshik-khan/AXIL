@@ -37,7 +37,7 @@ export class SocialEventService {
     // 1. Atomic DB outbox record
     db.recordEvent(event);
 
-    // 2. Dispatch to registered Webhook Subscriptions (n8n / external automations)
+    // 2. Dispatch to registered Webhook Subscriptions (external automations)
     this.dispatchToWebhooks(event).catch(() => {
       // Background fanout error handling
     });
@@ -46,7 +46,7 @@ export class SocialEventService {
   }
 
   /**
-   * Fan-out event to matching tenant webhook subscriptions (n8n integration)
+   * Fan-out event to matching tenant webhook subscriptions
    */
   private static async dispatchToWebhooks(event: CommerceEvent): Promise<void> {
     const subs = db.getWebhooks(event.tenant_id);

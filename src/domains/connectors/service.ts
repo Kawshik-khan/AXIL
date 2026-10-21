@@ -1,4 +1,9 @@
 import { db } from "@/infrastructure/db";
+import { OAuthBroker, hasOAuthAdapter } from "@/domains/connectors/auth/oauth-broker";
+import { metaGraph } from "@/domains/connectors/auth/meta.adapter";
+import { META_APP_PROVIDERS } from "@/domains/connectors/connection-lifecycle";
+import { syncHubConnectorResource } from "@/domains/connectors/resources";
+import { unsubscribeUnusedWabas, wabasOfConnection } from "@/domains/social/whatsapp/whatsapp-signup.service";
 import { RequestContext } from "@/lib/context";
 import { RbacService } from "@/domains/rbac/service";
 import { PERMISSIONS } from "@/lib/permissions";
@@ -19,7 +24,7 @@ import { runLiveCheck } from "./live-checks";
 import { PROVIDER_MANIFESTS } from "./manifests";
 import { ChannelService } from "@/domains/social/channels/channel.service";
 import { telegramCall } from "@/domains/social/channels/adapters/telegram.adapter";
-import { appBaseUrl } from "@/domains/social/n8n/bridge";
+import { appBaseUrl } from "@/lib/app-url";
 import { enforceRateLimit, MINUTE } from "@/lib/rate-limit";
 import crypto from "crypto";
 
@@ -239,6 +244,11 @@ export class ConnectorService {
 
     const provider = this.PROVIDERS.find((p) => p.id === parsed.provider_id);
     this.assertConnectable(provider, parsed.provider_id);
+    // Providers with a sign-in flow are connected through it (ADR-119); a pasted-token save could otherwise be paired
+    // with a stored sign-in token
+    if (hasOAuthAdapter(provider.id)) {
+      throw new BadRequestError(`${provider.name} is connected by signing in, not with pasted credentials (USE_SIGN_IN).`);
+    }
 
     const { credentials: resolvedCredentials, secretsChanged } = this.resolveSubmittedCredentials(
       context.tenant.id,
@@ -302,15 +312,23 @@ export class ConnectorService {
       last_test_latency_ms: keepHealth ? existing!.last_test_latency_ms ?? null : null,
       last_tested_at: keepHealth ? existing!.last_tested_at : undefined,
       verified_at: keepHealth ? existing!.verified_at : undefined,
+      auth_method: provider.auth_method,
+      owner_user_id: context.user.id,
+      connection_status: "ACTIVE",
       created_at: existing ? existing.created_at : now,
       updated_at: now,
     };
 
     const saved = db.saveConnector(record);
+    // The bot / store this connection reaches (ADR-119 P5); a Telegram bot held by another workspace is refused here too
+    const hubResource = syncHubConnectorResource(provider, saved, resolvedCredentials);
 
     // A messaging connector feeds a social channel (connector plan D3); the channel reads its credentials from here
     if (provider.id === "telegram") {
-      ChannelService.ensureChannelForTelegramConnector(context.tenant.id, saved);
+      const channel = ChannelService.ensureChannelForTelegramConnector(context.tenant.id, saved);
+      if (hubResource && channel && channel.resource_id !== hubResource.id) {
+        db.updateConnectedChannel(context.tenant.id, channel.id, { resource_id: hubResource.id });
+      }
     } else if (provider.id === "whatsapp_cloud") {
       const waChannel = db.getConnectedChannels(context.tenant.id).find((c) => c.type === "WHATSAPP");
       if (waChannel) {
@@ -643,6 +661,7 @@ export class ConnectorService {
     RbacService.assertCan(context, PERMISSIONS.SETTINGS_UPDATE);
     const connector = db.findConnectorById(context.tenant.id, connectorId);
     if (!connector) throw new NotFoundError(`Connector configuration '${connectorId}' not found.`);
+    if (connector.auth_method === "oauth2") throw new BadRequestError("A sign-in connection has no webhook secret.");
     const credentials = decryptCredential<Record<string, unknown>>(connector.credentials_encrypted);
     const newSecret = crypto.randomBytes(32).toString("base64url");
     const now = new Date().toISOString();
@@ -730,6 +749,14 @@ export class ConnectorService {
     if (!existing) {
       throw new NotFoundError(`Connector configuration '${id}' not found.`);
     }
+    // A sign-in connection is revoked at the provider too, unless the same login still powers another connection
+    // (another workspace): revoking removes the app for that person everywhere
+    let providerRevoked: boolean | undefined;
+    if (existing.auth_method === "oauth2" && existing.provider_id === "whatsapp_cloud") {
+      // Its numbers' accounts stop sending webhooks to the platform app when nothing else holds them
+      await unsubscribeUnusedWabas(wabasOfConnection(context.tenant.id, existing.id), OAuthBroker.storedToken(existing), existing.id);
+    }
+    if (existing.auth_method === "oauth2") providerRevoked = await revokeSignInAtProvider(existing);
 
     let telegramWebhookRemoved: boolean | undefined;
     if (existing.provider_id === "telegram") {
@@ -746,7 +773,12 @@ export class ConnectorService {
     return db.unit(async () => {
       // Remove the connector-owned channel route as well as the encrypted token. A stale Telegram channel reserves the
       // bot id globally and otherwise blocks reconnecting the same bot after disconnect.
-      const attachedChannels = db.getConnectedChannels(context.tenant.id).filter((channel) => channel.connector_id === id);
+      // Channels serving this connection's resources (Pages, Instagram accounts; ADR-119) go too, or they would keep
+      // receiving and answering messages with the Page token after the merchant disconnected
+      const resourceIds = new Set(db.getConnectionResources(context.tenant.id, id).map((r) => r.id));
+      const attachedChannels = db
+        .getConnectedChannels(context.tenant.id)
+        .filter((channel) => channel.connector_id === id || (channel.resource_id !== undefined && resourceIds.has(channel.resource_id)));
       for (const channel of attachedChannels) db.deleteConnectedChannel(context.tenant.id, channel.id);
 
       const removed = db.deleteConnector(context.tenant.id, id);
@@ -776,11 +808,39 @@ export class ConnectorService {
           provider_id: existing.provider_id,
           category: existing.category,
           ...(telegramWebhookRemoved === undefined ? {} : { telegram_webhook_removed: telegramWebhookRemoved }),
+          ...(providerRevoked === undefined ? {} : { provider_access_revoked: providerRevoked }),
         },
         created_at: new Date().toISOString(),
       });
 
       return true;
     }, (removed) => removed);
+  }
+}
+
+/**
+ * Best effort: removes CommerceOS's access at the provider for a sign-in connection being disconnected. Skipped (false)
+ * when the same login still powers another live connection, or the provider can't be reached; the local token is
+ * deleted either way.
+ */
+async function revokeSignInAtProvider(connection: ConnectorConfigRecord): Promise<boolean> {
+  if (!META_APP_PROVIDERS.has(connection.provider_id) || !connection.external_account_id) return false;
+  // Shared: another live connection of the same login (Facebook or WhatsApp: one Meta grant), or one whose login isn't
+  // known yet (it might be the same)
+  const shared = (db.data.connector_configurations || []).some(
+    (c) =>
+      c.id !== connection.id &&
+      c.auth_method === "oauth2" &&
+      META_APP_PROVIDERS.has(c.provider_id) &&
+      c.connection_status !== "DISCONNECTED" &&
+      (c.external_account_id === connection.external_account_id || (!c.external_account_id && OAuthBroker.storedToken(c) !== ""))
+  );
+  const token = OAuthBroker.storedToken(connection);
+  if (shared || !token) return false;
+  try {
+    const res = await metaGraph("DELETE", "/me/permissions", {}, token);
+    return res.success === true;
+  } catch {
+    return false;
   }
 }

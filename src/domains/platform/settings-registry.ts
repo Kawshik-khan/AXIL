@@ -14,7 +14,6 @@ export type SettingCategory =
   | "RATE_LIMITS"
   | "NOTIFICATIONS"
   | "OPERATIONS"
-  | "N8N_CLUSTER"
   | "STORAGE"
   | "FINANCE";
 
@@ -155,17 +154,6 @@ export const SETTINGS_REGISTRY: readonly SettingSpec[] = [
     default: 3600,
     unit: "seconds",
     risk: "CRITICAL",
-    sensitive: false,
-    readBy: null,
-  },
-  {
-    key: "automation.max_concurrency_global",
-    label: "Global automation concurrency",
-    description: "Not read by the automation worker yet.",
-    category: "N8N_CLUSTER",
-    schema: int(1, 10_000),
-    default: 100,
-    risk: "HIGH",
     sensitive: false,
     readBy: null,
   },

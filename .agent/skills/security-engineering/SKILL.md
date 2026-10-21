@@ -15,7 +15,6 @@ Rules: `.agent/rules/security.md`, `.agent/rules/tenant-isolation.md`. Fix recip
 | `src/app/api/v1/platform/auth/**` | platform login, step-up | C8, H10 |
 | `src/domains/automation/services/webhook-gateway.service.ts`, `src/app/api/v1/automation/webhooks/[provider]/route.ts` | courier/payment webhook auth | C4 |
 | `src/domains/social/webhooks/**`, `src/domains/social/channels/adapters/*.ts` | social webhook auth, tenant routing | H5 |
-| `src/domains/automation/services/n8n-provider.service.ts` | outbound URL (SSRF) | M17 |
 
 ## Patterns
 **Webhook verification**

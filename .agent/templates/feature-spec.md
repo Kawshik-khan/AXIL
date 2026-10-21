@@ -28,7 +28,7 @@
 - **Database Schema Changes**: [Tables, columns, indexes, foreign keys]
 - **API Contracts**: [Endpoints, request/response schemas, error codes]
 - **UI & Bento Grid Impact**: [Cards modified, floating dock items, mobile viewports]
-- **AI Agent / n8n Interaction**: [Tools added, webhooks triggered]
+- **AI Agent / Webhook Interaction**: [Tools added, webhooks triggered]
 
 ---
 

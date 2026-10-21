@@ -1,5 +1,6 @@
 /**
- * CommerceOS Phase 6: Automations & n8n Hub Domain Types
+ * CommerceOS Phase 6: Automation domain types. The automation hub is removed; these describe its stored rows and the
+ * courier / payment webhook ingress that remains.
  * Comprehensive Domain Types, Protocol Contracts, State Models, and Entities
  */
 
@@ -81,12 +82,6 @@ export type RetryStatus = "PENDING" | "PROCESSING" | "EXHAUSTED" | "RESOLVED";
 
 export type DeadLetterStatus = "UNRESOLVED" | "RETRIED" | "CANCELLED" | "RESOLVED";
 
-export type N8nEnvironment = "DEVELOPMENT" | "STAGING" | "PRODUCTION";
-
-export type N8nInstanceStatus = "ACTIVE" | "PAUSED" | "UNAVAILABLE" | "DECOMMISSIONED";
-
-export type N8nHealthStatus = "HEALTHY" | "DEGRADED" | "FAILING" | "UNKNOWN";
-
 // ============================================================
 // 1. CORE AUTOMATION ENTITIES
 // ============================================================
@@ -101,7 +96,6 @@ export interface AutomationRecord {
   trigger_type: TriggerType;
   workflow_id: string;
   workflow_version_id: string;
-  n8n_instance_id?: string;
   enabled: boolean;
   execution_mode: ExecutionMode;
   configuration: Record<string, unknown>;
@@ -120,8 +114,6 @@ export interface AutomationWorkflow {
   trigger: string;
   version: number;
   status: WorkflowLifecycleStatus;
-  n8n_workflow_id?: string;
-  n8n_instance_id?: string;
   configuration: Record<string, unknown>;
   risk_level: RiskLevel;
   approval_requirement: ApprovalRequirement;
@@ -139,24 +131,6 @@ export interface AutomationWorkflowVersion {
   changelog?: string;
   created_at: string;
   activated_at?: string;
-}
-
-export interface N8nInstance {
-  id: string;
-  tenant_id: string;
-  name: string;
-  base_url: string;
-  environment: N8nEnvironment;
-  status: N8nInstanceStatus;
-  health_status: N8nHealthStatus;
-  credential_reference: string;
-  workflow_namespace: string;
-  latency_ms?: number;
-  last_health_check_at?: string;
-  workflow_count?: number;
-  failure_rate?: number;
-  created_at: string;
-  updated_at: string;
 }
 
 export interface AutomationTrigger {
@@ -177,7 +151,6 @@ export interface AutomationExecution {
   automation_id: string;
   workflow_version_id: string;
   trigger_event_id?: string;
-  n8n_execution_id?: string;
   status: AutomationExecutionStatus;
   execution_mode: ExecutionMode;
   started_at: string;
@@ -297,63 +270,8 @@ export interface AutomationAuditRecord {
   timestamp: string;
 }
 
-export interface AutomationHealth {
-  tenant_id: string;
-  overall_status: "HEALTHY" | "DEGRADED" | "FAILING" | "PAUSED" | "UNKNOWN";
-  active_automations_count: number;
-  executions_today: number;
-  /** null until a real (non-dry-run) execution has finished. */
-  success_rate: number | null;
-  failure_rate: number;
-  retry_count: number;
-  dead_letter_count: number;
-  average_duration_ms: number;
-  queue_depth: number;
-  /** Only providers with circuit-breaker history; untracked couriers and gateways are absent, not HEALTHY (FX-31). */
-  provider_health: Record<string, "HEALTHY" | "DEGRADED" | "UNAVAILABLE">;
-  /** NOT_CONFIGURED without an n8n instance or N8N_HOST; UNKNOWN when configured but never called. */
-  n8n_health: "HEALTHY" | "DEGRADED" | "UNAVAILABLE" | "UNKNOWN" | "NOT_CONFIGURED";
-  webhook_success_rate: number;
-  last_successful_execution_at?: string;
-  last_failed_execution_at?: string;
-  kill_switch_active: boolean;
-  kill_switch_reason?: string;
-}
-
 // ============================================================
-// 2. 39 STANDARD WORKFLOW TEMPLATE SPECIFICATION
-// ============================================================
-
-export interface StandardWorkflowTemplate {
-  id: string;
-  code: string;
-  name: string;
-  category: AutomationCategory;
-  description: string;
-  trigger_type: TriggerType;
-  trigger_event?: string;
-  cron_schedule?: string;
-  required_permissions: string[];
-  required_integrations: string[];
-  configuration_schema: Record<string, unknown>;
-  risk_level: RiskLevel;
-  approval_requirement: ApprovalRequirement;
-  supported_channels: string[];
-  retry_policy: {
-    max_attempts: number;
-    initial_delay_ms: number;
-    backoff_multiplier: number;
-  };
-  failure_policy: {
-    alert_channels: string[];
-    fallback_action?: string;
-  };
-  n8n_workflow_file: string;
-  version: string;
-}
-
-// ============================================================
-// 3. CANONICAL COURIER DOMAIN INTERFACES
+// 2. CANONICAL COURIER DOMAIN INTERFACES
 // ============================================================
 
 export interface CourierTrackingResult {

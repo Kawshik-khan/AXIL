@@ -1,5 +1,6 @@
 import { randomSuffix } from "@/lib/ids";
 import { db } from "@/infrastructure/db";
+import { resourceAccessToken } from "@/domains/connectors/resources";
 import { ConnectedChannel, ChannelType, ChannelStatus } from "@/types/social";
 import { RequestContext } from "@/lib/context";
 import { RbacService } from "@/domains/rbac/service";
@@ -97,7 +98,12 @@ export class ChannelService {
 
     // Meta webhooks are routed by provider account id, so one account can belong to only one channel; otherwise a
     // workspace could claim another's Page / phone number and receive its customers' messages (audit H5).
-    if (PROVIDER_ROUTED_TYPES.has(payload.type) && db.findConnectedChannelsByProviderId(payload.type, payload.provider_account_id).length > 0) {
+    const resourceKind =
+      payload.type === "FACEBOOK_MESSENGER" ? "FB_PAGE" : payload.type === "INSTAGRAM" ? "IG_ACCOUNT" : payload.type === "WHATSAPP" ? "WA_NUMBER" : undefined;
+    const heldAsResource = resourceKind
+      ? db.findLiveConnectionResourcesByExternalId(resourceKind, payload.provider_account_id).some((r) => r.tenant_id !== context.tenant.id)
+      : false;
+    if (PROVIDER_ROUTED_TYPES.has(payload.type) && (heldAsResource || db.findConnectedChannelsByProviderId(payload.type, payload.provider_account_id).length > 0)) {
       throw new ConflictError("This account is already connected to a CommerceOS workspace.");
     }
 
@@ -269,9 +275,21 @@ export class ChannelService {
       }
 
       const raw = decryptCredential<Record<string, unknown>>(channel.credentials_encrypted);
+      // A channel serving a connection resource uses the resource's token (ADR-119); the channel's own copy is the fallback
+      // kept for one release
+      const resource = channel.resource_id ? db.findConnectionResource(channel.tenant_id, channel.resource_id) : undefined;
+      if (channel.resource_id && (!resource || resource.status === "DETACHED")) {
+        // Disconnected or taken over: never fall back to the channel's own copy of the token
+        throw new AppError(
+          "CHANNEL_CREDENTIALS_INVALID",
+          "This channel's connection was disconnected. Connect it again.",
+          424
+        );
+      }
+      const fromResource = resource ? resourceAccessToken(resource) : "";
       return {
         ...raw,
-        accessToken: String(raw.accessToken || raw.access_token || raw.page_access_token || raw.permanent_access_token || ""),
+        accessToken: fromResource || String(raw.accessToken || raw.access_token || raw.page_access_token || raw.permanent_access_token || ""),
         phoneNumberId: String(raw.phoneNumberId || raw.phone_number_id || ""),
         pageId: String(raw.pageId || raw.page_id || ""),
         appSecret: String(raw.appSecret || raw.app_secret || ""),

@@ -8,12 +8,12 @@
  *   - refused: loopback, private, link-local (incl. cloud metadata 169.254.169.254), CGNAT, "this network", multicast,
  *     reserved and documentation ranges, IPv6 unique-local / link-local, and IPv4 embedded in IPv6;
  *   - redirects are never followed (a 3xx is returned as the response);
- *   - OUTBOUND_ALLOWED_PRIVATE_HOSTS (platform env, comma-separated host:port, e.g. "localhost:5678" for a local n8n)
- *     lets platform-owned records (a stored n8n instance) reach a private address;
+ *   - OUTBOUND_ALLOWED_PRIVATE_HOSTS (platform env, comma-separated host:port, e.g. "10.0.0.5:8080")
+ *     lets platform-owned records reach a private address;
  *   - `tenantSupplied: true` is for URLs a tenant chose (webhook targets, connector endpoints): the allow-list never
  *     applies to them, and only ports 443, 8443 and 6333 (Qdrant Cloud) are allowed, so a tenant can't reach the
  *     platform's own private services or probe arbitrary ports;
- *   - `platformConfigured: true` is for URLs read from the platform's own environment (LLM_BASE_URL, N8N_HOST, …),
+ *   - `platformConfigured: true` is for URLs read from the platform's own environment (LLM_BASE_URL, …),
  *     which may point at a local server: it skips the https and private-address rules, nothing else. Never set it for
  *     a URL that came from a request, a tenant setting or a stored record.
  * Limits: a deadline for the whole request (default 5 s) and a response size cap (default 1 MB, truncated).

@@ -150,35 +150,13 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose,
       },
     },
     {
-      id: "nav-automations",
-      title: "Go to Automations & n8n Hub",
-      category: "Automation",
-      icon: <Workflow size={18} />,
-      href: "/automations",
+      id: "nav-knowledge",
+      title: "Go to Store Knowledge Base",
+      category: "AI",
+      icon: <Layers size={18} />,
+      href: "/knowledge",
       action: () => {
-        router.push("/automations");
-        onClose();
-      },
-    },
-    {
-      id: "nav-automation-catalog",
-      title: "Browse 39 Workflow Templates Catalog",
-      category: "Automation",
-      icon: <Workflow size={18} />,
-      href: "/automations",
-      action: () => {
-        router.push("/automations");
-        onClose();
-      },
-    },
-    {
-      id: "nav-automation-dlq",
-      title: "Inspect Dead Letter Queue (DLQ)",
-      category: "Automation",
-      icon: <Workflow size={18} />,
-      href: "/automations",
-      action: () => {
-        router.push("/automations");
+        router.push("/knowledge");
         onClose();
       },
     },

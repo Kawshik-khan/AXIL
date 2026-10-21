@@ -1,5 +1,5 @@
 /**
- * Signatures on requests CommerceOS sends (enterprise webhooks, n8n calls; FX-54/FX-55, ADR-110). The same scheme as
+ * Signatures on requests CommerceOS sends (enterprise webhooks; FX-54, ADR-110). The same scheme as
  * the inbound check of FX-06, so receivers can reuse it:
  *
  *   X-CommerceOS-Timestamp: <unix seconds>

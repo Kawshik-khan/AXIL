@@ -1,33 +1,10 @@
 ---
 trigger: glob
-description: n8n fleet, kill switches, authorization vs entitlement vs flag
+description: kill switches, authorization vs entitlement vs flag
 globs: src/domains/platform/**/*, src/domains/automation/**/*
 ---
 
 # Platform Operations, Automation Fleet & Emergency Controls Rules
-
-## 1. Governance of n8n Clusters & Workflow Automation
-CommerceOS maintains clear architectural sovereignty between the application core and external automation engines:
-
-```
-┌────────────────────────────────────────────────────────┐
-│                   SOVEREIGNTY INVARIANT                │
-├──────────────────────────┬─────────────────────────────┤
-│  COMMERCEOS PLATFORM     │   n8n ORCHESTRATION ENGINE  │
-├──────────────────────────┼─────────────────────────────┤
-│ - Immutable Source of Truth│ - Workflow Execution Graph │
-│ - Cryptographic Auth     │ - Timed Cron Scheduling     │
-│ - Policy Engine Checks   │ - External API Connectors   │
-│ - Financial Transactions │ - Retry Backoff Runner      │
-│ - Authoritative State    │ - Notification Fan-Out      │
-└──────────────────────────┴─────────────────────────────┘
-```
-
-- **NEVER** allow n8n to become the primary transactional database or business logic layer.
-- Super Admin controls n8n instances, health, workflow versioning, DLQ replays, and safety circuits via `PlatformAutomationService`.
-- All n8n actions that mutate platform or tenant state must authenticate against CommerceOS REST APIs (`/api/v1/*`), passing through the Policy Engine.
-
----
 
 ## 2. Emergency Kill Switch Architecture
 The emergency kill switch protects platform infrastructure during runaway execution loops, provider outages, or security anomalies:

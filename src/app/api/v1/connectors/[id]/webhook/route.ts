@@ -2,12 +2,11 @@ import { NextResponse } from "next/server";
 import { db } from "@/infrastructure/db";
 import { decryptCredential } from "@/lib/security";
 import { ChannelService } from "@/domains/social/channels/channel.service";
-import { WebhookIngressService, rawEventId } from "@/domains/social/webhooks/webhook-ingress.service";
+import { WebhookIngressService } from "@/domains/social/webhooks/webhook-ingress.service";
 import { TelegramAdapter, TELEGRAM_SECRET_HEADER } from "@/domains/social/channels/adapters/telegram.adapter";
 import { BadRequestError, AuthenticationError, NotFoundError } from "@/lib/errors";
 import { logger } from "@/lib/logger";
 import { withStore } from "@/lib/store-unit";
-import { forwardRawToN8n, isSocialChannel, socialN8nEnabled } from "@/domains/social/n8n/bridge";
 import crypto from "crypto";
 
 /**
@@ -81,18 +80,7 @@ async function handlePOST(
     throw new BadRequestError("Webhook payload is not valid JSON.");
   }
 
-  // 5. n8n is the preferred normalizer for social channels (connector plan C3). If it can't take the event,
-  //    CommerceOS normalizes it itself so a customer's message is never lost.
-  if (socialN8nEnabled() && isSocialChannel(channel.type)) {
-    try {
-      await forwardRawToN8n(channel, rawEventId(channel.id, payload), payload);
-      return NextResponse.json({ status: "EVENT_RECEIVED", forwarded_to_n8n: true });
-    } catch (err) {
-      logger.warn("connector_webhook.n8n_fallback", { connector_id: id, error: err instanceof Error ? err.name : "Error" });
-    }
-  }
-
-  // Direct normalization fallback
+  // 5. Normalize the event
   const normalizedMessages = adapter.normalizeIncomingEvent(payload, channel.id);
   const receipts = adapter.parseDeliveryReceipts(payload);
 
@@ -105,5 +93,5 @@ async function handlePOST(
 }
 
 export const GET = withStore("GET", handleGET);
-// n8n forwarding is an external call; direct ingestion and its messages/events commit in a short unit afterward.
+// Ingestion and its messages/events commit in their own short unit.
 export const POST = withStore("POST", handlePOST, { unit: false });

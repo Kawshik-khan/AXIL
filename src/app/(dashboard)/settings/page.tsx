@@ -10,12 +10,11 @@ import { Badge } from "@/components/ui/Badge/Badge";
 import { Modal } from "@/components/ui/Modal/Modal";
 import { LoadingSkeleton, PermissionDenied } from "@/components/ui/States/States";
 import styles from "./settings.module.css";
-import { ServiceTokensPanel } from "@/components/settings/ServiceTokensPanel";
 import { NotificationsPanel } from "@/components/settings/NotificationsPanel";
 import dashStyles from "../dashboard.module.css";
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<"workspace" | "users" | "notifications" | "security" | "service-tokens">("workspace");
+  const [activeTab, setActiveTab] = useState<"workspace" | "users" | "notifications" | "security">("workspace");
   const [session, setSession] = useState<any>(null);
   const [tenant, setTenant] = useState<any>(null);
   const [users, setUsers] = useState<any[]>([]);
@@ -210,7 +209,6 @@ export default function SettingsPage() {
   const canReadUsers = permissions.includes("user.read");
   const canInviteUsers = permissions.includes("user.invite");
   const canReadAudit = permissions.includes("audit.read");
-  const canManageServiceTokens = permissions.includes("service_tokens.manage");
 
   const handleSignOutEverywhere = async () => {
     if (!confirm("Sign out of every browser and device, including this one?")) return;
@@ -260,14 +258,6 @@ export default function SettingsPage() {
         >
           Security &amp; Audit Logs ({auditLogs.length})
         </button>
-        {canManageServiceTokens && (
-          <button
-            className={`${dashStyles.tabButton} ${activeTab === "service-tokens" ? dashStyles.tabActive : ""}`}
-            onClick={() => setActiveTab("service-tokens")}
-          >
-            Service Tokens
-          </button>
-        )}
       </div>
 
       {/* Tab 1: Workspace Settings */}
@@ -562,8 +552,6 @@ export default function SettingsPage() {
       {/* Owner alerts on Telegram, delivered by the scheduled jobs */}
       {activeTab === "notifications" && <NotificationsPanel />}
 
-      {/* Tab 4: Service tokens for automations (FX-18) */}
-      {activeTab === "service-tokens" && canManageServiceTokens && <ServiceTokensPanel />}
 
       {/* Tab 3: Security & Audit Logs */}
       {activeTab === "security" && (

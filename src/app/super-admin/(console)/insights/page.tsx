@@ -8,6 +8,10 @@ import { Button } from "@/components/ui/Button/Button";
 import { PLATFORM_PERMISSIONS } from "@/lib/permissions";
 import type { ActivationFunnel, PlatformOverviewMetrics } from "@/domains/platform/services/platform-analytics.service";
 import type { FraudRadarTelemetry } from "@/domains/rto/rto-scoring.service";
+import type { ConnectionsService } from "@/domains/connectors/connections.service";
+
+type ConnectionHealth = ReturnType<typeof ConnectionsService.platformHealth>;
+const PROVIDER_NAME: Record<string, string> = { meta_graph: "Facebook & Instagram", whatsapp_cloud: "WhatsApp" };
 import { usePlatformResource } from "../../_lib/use-platform-resource";
 import { usePlatformSession } from "../../_lib/platform-session";
 import { formatCount, formatMoney, formatPercent, isPresent, NO_DATA } from "../../_lib/format";
@@ -38,6 +42,9 @@ export default function InsightsPage() {
   const overview = usePlatformResource<PlatformOverviewMetrics>(can(PLATFORM_PERMISSIONS.PLATFORM_READ) ? "/api/v1/platform/overview" : null);
   const funnel = usePlatformResource<ActivationFunnel>("/api/v1/platform/analytics/funnel", { isEmpty: (f) => f.workspaces === 0 });
   const rto = usePlatformResource<FraudRadarTelemetry>("/api/v1/platform/rto/radar", { isEmpty: (r) => r.screened_orders_count === 0 });
+  const connections = usePlatformResource<ConnectionHealth>(
+    can(PLATFORM_PERMISSIONS.INTEGRATION_READ) ? "/api/v1/platform/connections/health" : null
+  );
 
   return (
     <>
@@ -46,7 +53,7 @@ export default function InsightsPage() {
         description="Commerce across the platform, the activation funnel and the cross-tenant RTO network. Every figure is computed from stored records on read."
         fetchedAt={funnel.state.kind === "ready" ? funnel.state.fetchedAt : undefined}
         actions={
-          <Button variant="outline" size="sm" icon={<RefreshCw size={14} />} onClick={() => { overview.reload(); funnel.reload(); rto.reload(); }}>
+          <Button variant="outline" size="sm" icon={<RefreshCw size={14} />} onClick={() => { overview.reload(); funnel.reload(); rto.reload(); connections.reload(); }}>
             Refresh
           </Button>
         }
@@ -167,6 +174,57 @@ export default function InsightsPage() {
                               <StatusPill status={d.risk_level} tone={d.risk_level === "ELEVATED" ? "bad" : d.risk_level === "MODERATE" ? "warn" : "ok"} />
                             </td>
                             <td className={styles.numeric}>{formatCount(d.sample_count)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+          />
+        </BentoCard>
+
+        <BentoCard span={12} title="Sign-in connections" subtitle="Facebook, Instagram and WhatsApp connections across workspaces: counts only, from the 6-hourly health check">
+          <ResourceView
+            state={connections.state}
+            onRetry={connections.reload}
+            resource="connection health"
+            emptyFigure="network-empty"
+            emptyTitle="No sign-in connections yet"
+            emptyDescription="Workspaces appear here once they connect Facebook or WhatsApp."
+            renderReady={(h) => (
+              <div className={styles.sectionGap}>
+                <dl className={styles.definition}>
+                  <dt>Meta app configured</dt>
+                  <dd><StatusPill status={h.app.meta_app_configured ? "YES" : "NO"} tone={h.app.meta_app_configured ? "ok" : "bad"} /></dd>
+                  <dt>WhatsApp sign-up configured</dt>
+                  <dd><StatusPill status={h.app.whatsapp_signup_configured ? "YES" : "NO"} tone={h.app.whatsapp_signup_configured ? "ok" : "warn"} /></dd>
+                  <dt>APP_URL is https</dt>
+                  <dd><StatusPill status={h.app.app_url_https ? "YES" : "NO"} tone={h.app.app_url_https ? "ok" : "bad"} /></dd>
+                  <dt>Workspaces needing reconnect</dt>
+                  <dd>{formatCount(h.workspaces_needing_reauth)}</dd>
+                  <dt>Expiring within 7 days</dt>
+                  <dd>{formatCount(h.expiring_within_7_days)}</dd>
+                </dl>
+                {h.by_provider.length > 0 && (
+                  <div className={styles.tableWrap}>
+                    <table className={styles.table}>
+                      <thead>
+                        <tr>
+                          <th>Provider</th>
+                          <th className={styles.numeric}>Connections</th>
+                          <th>By status</th>
+                          <th>Health codes</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {h.by_provider.map((p) => (
+                          <tr key={p.provider_id}>
+                            <td>{PROVIDER_NAME[p.provider_id] ?? p.provider_id}</td>
+                            <td className={styles.numeric}>{formatCount(p.total)}</td>
+                            <td>{Object.entries(p.by_status).map(([k, v]) => `${k} ${v}`).join(" · ") || NO_DATA}</td>
+                            <td>{Object.entries(p.by_health_code).map(([k, v]) => `${k} ${v}`).join(" · ") || NO_DATA}</td>
                           </tr>
                         ))}
                       </tbody>

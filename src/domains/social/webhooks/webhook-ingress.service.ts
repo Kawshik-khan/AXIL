@@ -10,21 +10,13 @@ import { MessageService } from "../messages/message.service";
 import { AssignmentService } from "../assignments/assignment.service";
 import { SocialEventService } from "../events/social-event.service";
 import { BadRequestError, AuthenticationError } from "@/lib/errors";
-import crypto from "crypto";
-import { forwardRawToN8n, isSocialChannel, socialN8nEnabled } from "../n8n/bridge";
 import { enqueueCustomerTurn } from "@/domains/ai/customer-agent/jobs";
 import { CommentTriggerService } from "../comment-triggers/comment-trigger.service";
-
-/** A stable id for a provider event, so n8n and CommerceOS can recognize a redelivery. */
-export function rawEventId(channelId: string, payload: Record<string, unknown>): string {
-  return `${channelId}:${crypto.createHash("sha256").update(JSON.stringify(payload)).digest("hex").slice(0, 24)}`;
-}
 
 export interface WebhookIngressResult {
   success: boolean;
   messagesProcessed: number;
   receiptsProcessed: number;
-  forwardedToN8n?: number;
   /** Post comments that matched a comment-to-inbox trigger and were queued for a reply. */
   commentTriggersQueued?: number;
   channelId?: string;
@@ -105,6 +97,14 @@ export class WebhookIngressService {
         verified.push(target); // the widget route has its own limits
         continue;
       }
+      // A channel whose connection resource was disconnected (deauthorized, taken over) receives nothing (ADR-119)
+      if (channel.resource_id) {
+        const resource = db.findConnectionResource(channel.tenant_id, channel.resource_id);
+        if (!resource || resource.status === "DETACHED") {
+          logger.warn("social_webhook.channel_disconnected", { tenant_id: channel.tenant_id, channel_id: channel.id });
+          continue;
+        }
+      }
       let credentials: ChannelCredentials = {};
       try {
         credentials = ChannelService.getDecryptedCredentials(channel);
@@ -112,6 +112,13 @@ export class WebhookIngressService {
         // Unreadable per-channel credentials: the adapter can still use a platform-level secret or reject; it never
         // falls back to a built-in default.
         logger.warn("social_webhook.channel_credentials_unreadable", { tenant_id: channel.tenant_id, channel_id: channel.id });
+      }
+      // Meta signs every number subscribed to the platform app with META_APP_SECRET: that secret proves a WhatsApp
+      // event belongs to a channel only when the channel came from the platform app's sign-up (a live resource) or an
+      // older Connector Hub connection. A channel without either must verify with its own app secret.
+      if (channelType === "WHATSAPP" && !channel.resource_id && !channel.connector_id && !credentials.appSecret) {
+        logger.warn("social_webhook.signature_rejected", { tenant_id: channel.tenant_id, channel_id: channel.id, reason: "no_channel_secret" });
+        continue;
       }
       const ok = adapter.verifyWebhook(rawBody, signature, headers, credentials);
       if (!ok) {
@@ -126,25 +133,13 @@ export class WebhookIngressService {
 
     let messagesProcessed = 0;
     let receiptsProcessed = 0;
-    let forwardedToN8n = 0;
     let commentTriggersQueued = 0;
     for (const { channel, payload } of verified) {
-      // Post comments aren't messages (n8n and the adapters ignore them): keyword triggers are checked here either way.
+      // Post comments aren't messages (the adapters ignore them): keyword triggers are checked here either way.
       try {
         commentTriggersQueued += CommentTriggerService.recordFromWebhook(channel, payload);
       } catch (err) {
         logger.warn("comment_trigger.record_failed", { channel_id: channel.id, error: err instanceof Error ? err.message : "error" });
-      }
-      // n8n is the preferred normalizer (connector plan C3). If it can't take the event, CommerceOS normalizes it itself:
-      // a provider's retry is not something to count on, so an n8n outage must not lose a customer's message.
-      if (socialN8nEnabled() && isSocialChannel(channel.type)) {
-        try {
-          await forwardRawToN8n(channel, rawEventId(channel.id, payload), payload);
-          forwardedToN8n++;
-          continue;
-        } catch (err) {
-          logger.warn("social.n8n_inbound_fallback", { channel_id: channel.id, code: err instanceof Error ? err.name : "Error" });
-        }
       }
       const result = await this.processForChannel(adapter, channelType, channel, payload);
       messagesProcessed += result.messagesProcessed;
@@ -156,7 +151,6 @@ export class WebhookIngressService {
       success: true,
       messagesProcessed,
       receiptsProcessed,
-      forwardedToN8n,
       commentTriggersQueued,
       channelId: single?.id,
       tenantId: single?.tenant_id,
@@ -199,8 +193,7 @@ export class WebhookIngressService {
   }
 
   /**
-   * Processes messages and delivery receipts that are already normalized: from a provider adapter (direct path) or from
-   * the n8n normalizer (POST /api/v1/social/ingest). The channel row is authoritative for the tenant.
+   * Processes messages and delivery receipts that are already normalized: from a provider adapter. The channel row is authoritative for the tenant.
    */
   public static async ingestNormalized(
     channel: ConnectedChannel,

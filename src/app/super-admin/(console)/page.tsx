@@ -126,10 +126,6 @@ export default function ControlTowerPage() {
                   <span className={styles.stripLabel}>Operators with MFA</span>
                   <span className={styles.stripValue}>{formatPercent(o.security.mfa_enforced_percent, 0)}</span>
                 </div>
-                <div className={styles.stripItem}>
-                  <span className={styles.stripLabel}>Dead letters</span>
-                  <span className={styles.stripValue}>{formatCount(o.automation_health.dlq_items_count)}</span>
-                </div>
               </div>
             </BentoCard>
 
@@ -221,36 +217,6 @@ export default function ControlTowerPage() {
             {/* Subsystem health */}
             <BentoCard span={4} title="Subsystems" subtitle="As reported by the platform; SIMULATED means no live adapter">
               <ul className={styles.list}>
-                <li className={styles.listRow}>
-                  <span className={styles.rowMain}>
-                    <span className={styles.rowTitle}>n8n instances</span>
-                    <span className={styles.rowMeta}>
-                      {o.infrastructure.n8n_instances_count > 0
-                        ? `${formatCount(o.infrastructure.healthy_n8n_instances)} of ${formatCount(o.infrastructure.n8n_instances_count)} healthy`
-                        : "None registered"}
-                    </span>
-                  </span>
-                  <StatusPill
-                    status={
-                      o.infrastructure.n8n_instances_count === 0
-                        ? "NOT_VERIFIED"
-                        : o.infrastructure.healthy_n8n_instances === o.infrastructure.n8n_instances_count
-                          ? "HEALTHY"
-                          : "DEGRADED"
-                    }
-                    label={o.infrastructure.n8n_instances_count === 0 ? "Not registered" : undefined}
-                  />
-                </li>
-                <li className={styles.listRow}>
-                  <span className={styles.rowMain}>
-                    <span className={styles.rowTitle}>Automation executions</span>
-                    <span className={styles.rowMeta}>
-                      {formatCount(o.automation_health.total_executions)} total ·{" "}
-                      {formatCount(o.automation_health.failed_executions)} failed
-                    </span>
-                  </span>
-                  <span className={styles.mono}>{formatPercent(o.automation_health.success_rate_percent)}</span>
-                </li>
                 {(Object.keys(PROVIDER_LABELS) as Array<keyof typeof PROVIDER_LABELS>).map((key) => {
                   const status: ProviderRailStatus = o.provider_health[key];
                   return (

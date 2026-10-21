@@ -7,7 +7,7 @@ description: Make an architectural change (schema overhaul, auth model, agent bo
 Foundational architecture changes in CommerceOS (e.g. database schema overhauls, authentication model changes, agent boundary shifts) must follow this protocol:
 
 1. **Assess Impact & Risks**:
-   - Evaluate consequences on multi-tenancy, transactional consistency, API contracts, n8n workflows, and security.
+   - Evaluate consequences on multi-tenancy, transactional consistency, API contracts, scheduled jobs, and security.
 
 2. **Draft Architectural Decision Record (ADR)**:
    - Create a new entry in `.agent/DECISIONS.md` using the ADR template.

@@ -9,7 +9,7 @@ import { withStore } from "@/lib/store-unit";
 const JobName = z.enum(Object.keys(JOBS) as [string, ...string[]]);
 
 /**
- * Runs one scheduled job for the current time bucket (FX-99 Part B). Called by n8n schedules with the platform job
+ * Runs one scheduled job for the current time bucket (FX-99 Part B). Called by the scheduler with the platform job
  * token; `Idempotency-Key: <job>:<anything>` is required. Workspaces and recipients come from CommerceOS, never from
  * the caller: the body is ignored.
  */

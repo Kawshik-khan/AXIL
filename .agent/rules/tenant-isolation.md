@@ -1,6 +1,6 @@
 ---
 trigger: always_on
-description: Tenant data boundary across storage, cache, queues, RAG, n8n
+description: Tenant data boundary across storage, cache, queues, RAG, webhooks
 ---
 
 # Tenant Isolation & Data Boundary Rules
@@ -17,7 +17,7 @@ Multi-tenant isolation is absolute and non-negotiable. Tenant data is isolated b
 │ 3. Cache: Redis keys prefixed: tenant:{tenant_id}:*    │
 │ 4. Queues: Every job message carries tenant_id claim   │
 │ 5. AI/RAG: Vectors filtered by tenant_id in pgvector   │
-│ 6. n8n: Outbound payloads cryptographically scoped    │
+│ 6. Webhooks: outbound payloads signed, tenant-scoped  │
 └────────────────────────────────────────────────────────┘
 ```
 

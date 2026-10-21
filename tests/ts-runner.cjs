@@ -49,13 +49,12 @@ if (process.env.NODE_ENV === "test") {
   delete process.env.DATA_BACKEND;
 }
 
-// Nor do they reach any other live service from .env.local (testing rule 4): Neon, Qdrant, Upstash, Pinecone and n8n
+// Nor do they reach any other live service from .env.local (testing rule 4): Neon, Qdrant, Upstash and Pinecone
 // are blanked (empty, so child processes keep them empty too). Only the `npm run test:db` suites keep them; a live
 // model run (TEST_LLM_LIVE=1) doesn't bring the databases back.
 const LIVE_SERVICE_VARS = [
   "DATABASE_URL", "DATABASE_URL_POOLED", "QDRANT_URL", "QDRANT_API_KEY", "UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN",
-  "PINECONE_API_KEY", "N8N_HOST", "COMMERCEOS_N8N_BASE_URL", "COMMERCEOS_N8N_WEBHOOK_TOKEN", "COMMERCEOS_N8N_WEBHOOK_SECRET",
-  "COMMERCEOS_N8N_CALLBACK_TOKEN",
+  "PINECONE_API_KEY",
 ];
 const liveSuites = (require(path.join(ROOT, "package.json")).scripts["test:db"] || "").match(/tests\/[\w.-]+\.ts/g) || [];
 const suiteArg = (process.argv[2] || "").replace(/\\/g, "/");

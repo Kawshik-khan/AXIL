@@ -1093,53 +1093,6 @@ export interface AutonomousWorkflowRun {
 }
 
 // ============================================================
-// 16. n8n WEBHOOK EVENT TYPES (§61)
-// ============================================================
-
-export type N8nAutonomousEventType =
-  | "autonomous.objective.created"
-  | "autonomous.objective.completed"
-  | "autonomous.objective.at_risk"
-  | "autonomous.decision.pending_approval"
-  | "autonomous.decision.approved"
-  | "autonomous.decision.rejected"
-  | "autonomous.decision.executed"
-  | "autonomous.strategy.activated"
-  | "autonomous.strategy.completed"
-  | "autonomous.workflow.started"
-  | "autonomous.workflow.completed"
-  | "autonomous.workflow.failed"
-  | "autonomous.learning.candidate_identified"
-  | "autonomous.learning.deployed"
-  | "autonomous.learning.rolled_back"
-  | "autonomous.health.degraded"
-  | "autonomous.health.critical"
-  | "autonomous.incident.detected"
-  | "autonomous.incident.resolved"
-  | "autonomous.budget.warning"
-  | "autonomous.budget.exceeded"
-  | "autonomous.safety.boundary_triggered"
-  | "autonomous.cycle.daily_completed"
-  | "autonomous.cycle.weekly_completed"
-  | "autonomous.cycle.monthly_completed";
-
-export interface N8nAutonomousWebhookPayload {
-  event_type: N8nAutonomousEventType;
-  event_id: string;
-  tenant_id: string;
-  organization_id?: string;
-  timestamp: string;
-  correlation_id: string;
-  payload: Record<string, unknown>;
-  metadata: {
-    source_agent?: AgentType;
-    source_workflow?: string;
-    source_decision?: string;
-    severity: "INFO" | "WARNING" | "CRITICAL";
-  };
-}
-
-// ============================================================
 // 17. CHAOS & LOAD TESTING (§54–§55)
 // ============================================================
 

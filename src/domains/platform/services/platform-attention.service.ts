@@ -69,23 +69,6 @@ export class PlatformAttentionService {
       });
     }
 
-    // Unresolved dead letters
-    const deadLetters = (db.data.automation_dead_letters || []).filter((d) => d.status === "UNRESOLVED");
-    if (deadLetters.length > 0) {
-      const oldest = deadLetters.reduce((a, b) => (a.timestamp < b.timestamp ? a : b));
-      const tenants = new Set(deadLetters.map((d) => d.tenant_id)).size;
-      items.push({
-        id: "dead_letters:unresolved",
-        severity: "MEDIUM",
-        category: "DEAD_LETTER",
-        title: `${deadLetters.length} unresolved dead letter${deadLetters.length === 1 ? "" : "s"}`,
-        detail: `Across ${tenants} tenant${tenants === 1 ? "" : "s"}; oldest failed ${oldest.timestamp}`,
-        count: deadLetters.length,
-        href: `${CONSOLE}/automations?tab=dlq`,
-        observed_at: oldest.timestamp,
-      });
-    }
-
     // HITL escalations past their SLA
     const breached = (db.data.agent_hitl_escalations || []).filter(
       (e) => e.status === "PENDING_REVIEW" && Date.parse(e.sla_due_at) < now

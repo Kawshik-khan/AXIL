@@ -31,7 +31,7 @@ lets AI agents do the repetitive work, with the AI never allowed to invent a pri
 | **Social inbox** | Unified conversations for Facebook Messenger, Instagram, WhatsApp and a website widget, with signed webhook ingestion per channel |
 | **Agentic AI** | A deterministic router over specialised agents (sales, support, orders, inventory, payments, delivery, marketing and more), a tool registry, a policy engine with human approval for risky actions, RAG over the shop's knowledge base |
 | **Bangladesh specifics** | COD flows, bKash / Nagad payment records, Steadfast / Pathao courier handling, delivery-zone fees from tenant settings, district geography and RTO analytics |
-| **Automation** | n8n workflows (order notifications, low-stock alerts, cart recovery, courier sync, payment verification) called with authenticated requests |
+| **Scheduled jobs** | Daily report, low-stock, courier poll, RTO follow-up, COD reconciliation, monitoring, retention purge and knowledge re-index, run by a GitHub Actions schedule through `POST /api/v1/jobs/{job}/run` |
 | **Intelligence and growth** | Analytics that read every row, stored snapshots, forecasts, campaigns, audiences and experiments |
 | **Enterprise** | Organizations, hierarchies, governance, data lineage, integrations hub |
 | **Platform control plane** | A super-admin console: tenant lifecycle, plans and limits, feature flags, kill switches that are enforced, support sessions that are read-only and audited, operator MFA |
@@ -47,8 +47,7 @@ Browser ──> Next.js 16 app (UI + REST API, one service)
               ├─ In-memory store  <──sync──>  Postgres (Neon): system of record, row-versioned, change log
               ├─ Qdrant           : tenant-filtered vectors for RAG (+ in-process BM25)
               ├─ OpenAI-compatible LLM provider (Groq, OpenAI, OpenRouter, Ollama, ...) + optional fallback
-              ├─ Upstash Redis
-              └─ n8n Cloud        : authenticated calls out, signed or token-authenticated webhooks in
+              └─ Upstash Redis
 ```
 
 - **Multi-tenant by construction.** The tenant comes from the session, never from a request body; every lookup by id filters by tenant; every mutation calls `assertCan`.
@@ -59,7 +58,7 @@ Browser ──> Next.js 16 app (UI + REST API, one service)
 
 ## Tech stack
 
-Next.js 16 (App Router) · React 18 · TypeScript (strict) · Zod · jose + bcryptjs · Postgres on Neon (PGlite in tests) · Qdrant · Upstash Redis · n8n · GitHub Actions · Render.
+Next.js 16 (App Router) · React 18 · TypeScript (strict) · Zod · jose + bcryptjs · Postgres on Neon (PGlite in tests) · Qdrant · Upstash Redis · GitHub Actions · Render.
 
 ## Quick start
 
@@ -107,7 +106,7 @@ src/app/(dashboard)/**       merchant UI                 src/app/super-admin/** 
 src/app/api/v1/**            REST API                    src/domains/<domain>/    business logic
 src/domains/ai/              agents, tools, policy, RAG  src/infrastructure/      store, Postgres, Qdrant, Redis
 src/lib/                     auth, rate limits, SSRF guard, safety gate
-n8n/workflows/               exported n8n workflows      tests/                   test suites
+tests/                       test suites
 .agent/                      design docs, rules, ADRs, STATUS.md (start here to contribute)
 ```
 

@@ -421,10 +421,6 @@ async function main() {
     }
   });
 
-  // ------------------------------------------------------------------ FX-99 Part A
-  console.log(`\n${BOLD}[FX-99 Part A] Automation events and notifications${RESET}`);
-
-  type Handler = (request: Request) => Promise<Response>;
   const BASE = "http://localhost:3000/api/v1";
   const member = async (tenant: string, role: "MANAGER" | "ADMIN") => {
     const id = `usr_s0_${role.toLowerCase()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -434,88 +430,7 @@ async function main() {
     db.createMembership({ id: `mem_${id}`, tenant_id: tenant, user_id: id, role, created_at: ts, updated_at: ts });
     return { id, token: await signSessionToken({ userId: id, tenantId: tenant, role, email, name: `S0 ${role}` }) };
   };
-  const post = (handler: Handler, path: string, token: string, body: unknown, headers: Record<string, string> = {}) =>
-    handler(new Request(`${BASE}/${path}`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${token}`, "content-type": "application/json", ...headers },
-      body: JSON.stringify(body),
-    }));
-
-  // A second workspace with an active automation on order.created (the victim in F32)
-  const victim = await AuthService.registerTenantWithOwner({
-    workspaceName: `Stage0 Victim ${now}`,
-    name: "Victim Owner",
-    email: `stage0-victim-${now}@example.com`,
-    password: "SecurePassword2026!",
-    currency: "BDT",
-  });
-  const victimId = victim.tenant.id;
-  const ts = new Date().toISOString();
-  const automationFor = (tenant: string, trigger: string, suffix: string) => {
-    db.createAutomationWorkflow({
-      id: `awf_s0_${suffix}`, tenant_id: tenant, name: `S0 ${trigger}`, description: "stage0", category: "ORDERS" as never,
-      trigger, version: 1, status: "ACTIVE", configuration: {}, risk_level: "LOW", approval_requirement: "NONE", created_at: ts, updated_at: ts,
-    });
-    db.createAutomation({
-      id: `auto_s0_${suffix}`, tenant_id: tenant, name: `S0 ${trigger}`, description: "stage0", status: "ACTIVE", category: "ORDERS" as never,
-      trigger_type: "EVENT", workflow_id: `awf_s0_${suffix}`, workflow_version_id: `awv_s0_${suffix}`, enabled: true, execution_mode: "PRODUCTION",
-      configuration: {}, created_by: "usr_s0", updated_by: "usr_s0", created_at: ts, updated_at: ts,
-    });
-    return `auto_s0_${suffix}`;
-  };
-  automationFor(victimId, "order.created", "victim");
-  const ownOrderAutomation = automationFor(tenantId, "order.created", "own_order");
-  automationFor(tenantId, "payment.received", "own_payment");
-  const manager = await member(tenantId, "MANAGER");
-  const events = (await import("@/app/api/v1/automation/events/route")) as { POST: Handler };
-  const savedHost = { a: process.env.N8N_HOST, b: process.env.COMMERCEOS_N8N_BASE_URL };
-  delete process.env.N8N_HOST; // no n8n: an execution is recorded as FAILED, nothing is called
-  delete process.env.COMMERCEOS_N8N_BASE_URL;
-
-  await runTest("a body naming another workspace's tenant_id is refused; that workspace's automations never run (F32)", async () => {
-    const before = db.getAutomationExecutions(victimId).length;
-    const res = await post(events.POST, "automation/events", manager.token, {
-      type: "order.created", aggregate_type: "order", aggregate_id: "ord_x", tenant_id: victimId, payload: { customer_phone: "01700000000" },
-    });
-    assert.strictEqual(res.status, 400);
-    assert.strictEqual(db.getAutomationExecutions(victimId).length, before, "no execution in the other workspace");
-  });
-
-  await runTest("an event fires only this workspace's automations for exactly that event type", async () => {
-    const res = await post(events.POST, "automation/events", manager.token, { type: "order.created", aggregate_type: "order", aggregate_id: "ord_y", payload: {} });
-    assert.strictEqual(res.status, 200);
-    const routed = ((await res.json()) as { data: { routed: Array<{ automationId: string }> } }).data.routed.map((r) => r.automationId);
-    assert.deepStrictEqual(routed, [ownOrderAutomation], "not the payment.received automation, not the other workspace's");
-  });
-
-  await runTest("the actor comes from the session: a body carrying actor_id is refused", async () => {
-    const res = await post(events.POST, "automation/events", manager.token, { type: "order.created", aggregate_type: "order", aggregate_id: "ord_z", actor_id: "someone_else" });
-    assert.strictEqual(res.status, 400);
-  });
-
-  if (savedHost.a !== undefined) process.env.N8N_HOST = savedHost.a;
-  if (savedHost.b !== undefined) process.env.COMMERCEOS_N8N_BASE_URL = savedHost.b;
-
   const admin = await member(tenantId, "ADMIN");
-  const notify = (await import("@/app/api/v1/automation/actions/notifications/send/route")) as { POST: Handler };
-  const notifyHeaders = () => ({ "idempotency-key": `idem_s0_${Math.random().toString(36).slice(2, 10)}` });
-
-  await runTest("the notification action never claims DELIVERED: nothing is wired, so it says nothing was sent (F33)", async () => {
-    const res = await post(notify.POST, "automation/actions/notifications/send", admin.token, { channel: "WHATSAPP", user_id: admin.id, message: "probe" }, notifyHeaders());
-    assert.strictEqual(res.status, 424);
-    const text = await res.text();
-    assert.ok(text.includes("INTEGRATION_NOT_CONFIGURED") && text.includes("Nothing was sent"), text);
-    assert.ok(!text.includes("DELIVERED"));
-  });
-
-  await runTest("a recipient phone number in the body is refused; recipients come from this workspace's records", async () => {
-    const raw = await post(notify.POST, "automation/actions/notifications/send", admin.token, { channel: "SMS", recipient: "01700000000", message: "x" }, notifyHeaders());
-    assert.strictEqual(raw.status, 400);
-    const foreignOrder = await post(notify.POST, "automation/actions/notifications/send", admin.token, { channel: "SMS", order_id: "ord_not_here", message: "x" }, notifyHeaders());
-    assert.strictEqual(foreignOrder.status, 404);
-    const foreignUser = await post(notify.POST, "automation/actions/notifications/send", admin.token, { channel: "SMS", user_id: victim.user.id, message: "x" }, notifyHeaders());
-    assert.strictEqual(foreignUser.status, 404, "a staff member of another workspace isn't a recipient here");
-  });
 
   // ------------------------------------------------------------------ security review follow-ups
   console.log(`\n${BOLD}[Review follow-ups] Price-change approvals and the test harness${RESET}`);
@@ -551,7 +466,7 @@ async function main() {
   // `fresh`: start like a developer's shell, with the live settings unset, so the runner itself must blank whatever
   // .env.local would refill. Otherwise the child inherits this test process's environment, as a spawned worker does.
   const LIVE_KEYS = ["DATABASE_URL", "DATABASE_URL_POOLED", "QDRANT_URL", "QDRANT_API_KEY", "UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN",
-    "N8N_HOST", "LLM_BASE_URL", "LLM_FALLBACK_BASE_URL", "TYPESAFE_API_KEY", "DATA_BACKEND"];
+    "LLM_BASE_URL", "LLM_FALLBACK_BASE_URL", "TYPESAFE_API_KEY", "DATA_BACKEND"];
   const probeEnv = (extra: Record<string, string>, fresh = true) => {
     const env: NodeJS.ProcessEnv = { ...process.env, NODE_ENV: "test", ...extra };
     if (fresh) for (const key of LIVE_KEYS) delete env[key];
@@ -566,14 +481,14 @@ async function main() {
     return JSON.parse(line.slice(7)) as Record<string, boolean>;
   };
 
-  await runTest("a test process sees no live database, vector store, cache, n8n or model", () => {
+  await runTest("a test process sees no live database, vector store, cache or model", () => {
     const seen = probeEnv({});
     assert.deepStrictEqual(Object.entries(seen).filter(([, set]) => set).map(([k]) => k), []);
   });
 
-  await runTest("TEST_LLM_LIVE=1 brings back only the model, never the databases or n8n", () => {
+  await runTest("TEST_LLM_LIVE=1 brings back only the model, never the databases", () => {
     const seen = probeEnv({ TEST_LLM_LIVE: "1" });
-    for (const key of ["DATABASE_URL", "QDRANT_URL", "UPSTASH_REDIS_REST_URL", "N8N_HOST"]) assert.strictEqual(seen[key], false, key);
+    for (const key of ["DATABASE_URL", "QDRANT_URL", "UPSTASH_REDIS_REST_URL"]) assert.strictEqual(seen[key], false, key);
   });
 
   await runTest("a development-mode child of a test process doesn't get the live model or database back", () => {

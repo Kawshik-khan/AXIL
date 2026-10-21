@@ -117,7 +117,7 @@ async function runRtoTests() {
     shipping_total: 120,
     grand_total: 1920,
     payment_method: "COD",
-    items: [{ id: "item_01", order_id: "ord_rto_test_01", product_variant_id: "v_1", quantity: 1, unit_price: 1800, total_price: 1800 } as any],
+    items: [{ id: "item_01", tenant_id: testTenantId, order_id: "ord_rto_test_01", product_variant_id: "v_1", quantity: 1, unit_price: 1800, total_price: 1800 } as any],
     shipping_address_snapshot: {
       address_line_1: "House 12, Road 4",
       district: "Dhaka",
@@ -170,6 +170,8 @@ async function runRtoTests() {
     ...mockCodOrder,
     id: "ord_rto_test_03",
     order_number: "ORD-RTO-1003",
+    // Its own item row: a repeated item id or another order's id is refused by Postgres, with the rest of the batch
+    items: [{ ...mockCodOrder.items[0], id: "item_03", order_id: "ord_rto_test_03" }],
   };
   db.createOrder(lifecycleOrder, lifecycleOrder.items);
 

@@ -456,7 +456,7 @@ export function engagementSuggestions(report: Omit<EngagementReport, "suggestion
       severity: "info",
       title: "Instagram is not included",
       detail: "Only Facebook posts are analysed. Link an Instagram Professional account to your Page to compare both.",
-      action: "Connect Instagram to the Page, or add its account ID to the Meta Graph connector.",
+      action: "Link Instagram to the Page in Meta, then Connect with Facebook again.",
       evidence: "Instagram: not connected",
     });
   }
@@ -485,7 +485,7 @@ export class EngagementAnalysisService {
     const posts: ContentPost[] = [];
 
     if (!creds || !creds.pageToken) {
-      const message = "Connect the Meta Graph connector (or a Facebook channel) to see your content performance.";
+      const message = "Connect with Facebook (Connectors) to see your content performance.";
       sources.push({ platform: "FACEBOOK", status: "NOT_CONNECTED", account_name: null, followers: null, message, totals: null });
       sources.push({ platform: "INSTAGRAM", status: "NOT_CONNECTED", account_name: null, followers: null, message, totals: null });
     } else {
