@@ -820,7 +820,7 @@
 
 .customSelectTriggerOpen {
   border-color: #242529;
-  background: #FFFFFF;
+  background: var(--color-surface-pure);
   box-shadow: 0 0 0 3px rgba(199, 249, 0, 0.4);
 }
 

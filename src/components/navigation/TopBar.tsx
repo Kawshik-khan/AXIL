@@ -3,8 +3,9 @@
 import React, { useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Search, Bell, LogOut, Settings, UserCheck, Shield } from "lucide-react";
+import { Search, Bell, LogOut, Settings, UserCheck, Shield, Sun, Moon } from "lucide-react";
 import { Badge } from "../ui/Badge/Badge";
+import { useMerchantTheme } from "./merchant-theme";
 import styles from "./TopBar.module.css";
 
 export interface TopBarProps {
@@ -23,6 +24,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
+  const { theme, toggle: toggleTheme } = useMerchantTheme();
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -76,6 +78,16 @@ export const TopBar: React.FC<TopBarProps> = ({
       </div>
 
       <div className={styles.rightSection}>
+        <button
+          type="button"
+          className={styles.iconButton}
+          onClick={toggleTheme}
+          aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+          title={theme === "dark" ? "Light theme" : "Dark theme"}
+        >
+          {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
+        </button>
+
         <button className={styles.iconButton} aria-label="Notifications" title="System Alerts">
           <Bell size={18} />
           <span className={styles.notificationBadge} />

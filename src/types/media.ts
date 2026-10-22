@@ -3,7 +3,7 @@
 import type { ImageMime } from "@/domains/media/image-bytes";
 
 export type MediaPurpose = "PRODUCT_IMAGE";
-export type MediaStorageKind = "r2" | "local";
+export type MediaStorageKind = "s3" | "r2" | "local";
 
 export interface MediaAsset {
   id: string;
