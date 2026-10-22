@@ -1,4 +1,10 @@
 {
-  "_comment": "Accepted npm audit advisories. Each needs a reason and an expiry (YYYY-MM-DD); the gate fails once one expires. Empty since the Next 16.3.7 upgrade.",
-  "exceptions": []
+  "_comment": "Accepted npm audit advisories. Each needs a reason and an expiry (YYYY-MM-DD); the gate fails once one expires.",
+  "exceptions": [
+    {
+      "id": "GHSA-cjq9-62q9-8jv4",
+      "reason": "Waiting for Next.js 16.4.0 official verification before upgrading; acceptable risk on SSR image bounds for now.",
+      "expires": "2026-10-25"
+    }
+  ]
 }
