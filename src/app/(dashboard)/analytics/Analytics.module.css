@@ -161,7 +161,7 @@
 }
 
 .kpiCard {
-  background: #FFFFFF;
+  background: var(--color-surface-pure);
   border: 1px solid var(--color-border-subtle, rgba(30, 32, 30, 0.08));
   border-radius: 16px;
   padding: 20px;
@@ -269,7 +269,7 @@
 }
 
 .bentoCard {
-  background: #FFFFFF;
+  background: var(--color-surface-pure);
   border: 1px solid var(--color-border-subtle, rgba(30, 32, 30, 0.08));
   border-radius: 16px;
   padding: 24px;
@@ -434,7 +434,7 @@
 }
 
 .divisionCard:hover, .divisionCardSelected {
-  background: #FFFFFF;
+  background: var(--color-surface-pure);
   border-color: #C7F900;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
   transform: translateY(-2px);
@@ -478,7 +478,7 @@
   border: 1px solid var(--color-border-subtle, rgba(30, 32, 30, 0.12));
   border-radius: 10px;
   outline: none;
-  background: #FFFFFF;
+  background: var(--color-surface-pure);
   transition: border-color 0.15s ease;
 }
 
@@ -492,7 +492,7 @@
   border: 1px solid var(--color-border-subtle, rgba(30, 32, 30, 0.12));
   border-radius: 10px;
   outline: none;
-  background: #FFFFFF;
+  background: var(--color-surface-pure);
   cursor: pointer;
 }
 
@@ -613,7 +613,7 @@
 }
 
 .channelCard {
-  background: #FFFFFF;
+  background: var(--color-surface-pure);
   border: 1px solid var(--color-border-subtle, rgba(30, 32, 30, 0.08));
   border-radius: 16px;
   padding: 20px;
@@ -660,7 +660,7 @@
 }
 
 .digestCard {
-  background: #FFFFFF;
+  background: var(--color-surface-pure);
   border: 1px solid var(--color-border-subtle, rgba(30, 32, 30, 0.08));
   border-radius: 16px;
   padding: 22px;
@@ -745,7 +745,7 @@
   align-items: center;
   gap: 8px;
   padding: 8px 16px;
-  background: #FFFFFF;
+  background: var(--color-surface-pure);
   color: var(--color-text-primary, #202124);
   border: 1px solid var(--color-border-subtle, rgba(30, 32, 30, 0.12));
   border-radius: 10px;
@@ -774,7 +774,7 @@
 }
 
 .modalContent {
-  background: #FFFFFF;
+  background: var(--color-surface-pure);
   border-radius: 20px;
   width: 100%;
   max-width: 680px;
@@ -806,7 +806,7 @@
 .stateBox {
   padding: 48px 24px;
   text-align: center;
-  background: #FFFFFF;
+  background: var(--color-surface-pure);
   border-radius: 16px;
   border: 1px dashed rgba(30, 32, 30, 0.15);
   display: flex;

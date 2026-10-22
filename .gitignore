@@ -51,3 +51,6 @@ tests/agent-evals/results/
 # Image search bake-off (docs/image-bakeoff.md): datasets hold customer photos, reports are local
 eval-data/
 eval-out/
+
+# Motion/video project (renders, node_modules, outputs): local only, never pushed
+video/

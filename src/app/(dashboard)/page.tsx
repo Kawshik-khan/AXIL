@@ -38,6 +38,7 @@ import {
 import { Badge } from "@/components/ui/Badge/Badge";
 import { Button } from "@/components/ui/Button/Button";
 import { LoadingState } from "@/components/ui/States/States";
+import { RevenueSparkline } from "@/components/dashboard/RevenueSparkline";
 import styles from "./dashboard.module.css";
 import type { db } from "@/infrastructure/db";
 import type { FinancialMetrics } from "@/types/analytics";
@@ -102,6 +103,13 @@ export default function DashboardPage() {
   const [intelligence, setIntelligence] = useState<IntelligenceOverview | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
+  // Net Revenue card: its own date range, read from the same financials endpoint as the widgets below
+  const REVENUE_RANGES = ["7D", "30D", "90D"] as const;
+  type RevenueRange = (typeof REVENUE_RANGES)[number];
+  const [revenueRange, setRevenueRange] = useState<RevenueRange>("30D");
+  const [revenueFin, setRevenueFin] = useState<FinancialMetrics | null>(null);
+  const [revenueLoading, setRevenueLoading] = useState(false);
+
   // Currency state (Bangladesh-first default BDT ৳)
   const [selectedCurrency, setSelectedCurrency] = useState<CurrencyCode>("BDT");
 
@@ -144,10 +152,25 @@ export default function DashboardPage() {
     loadData();
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    setRevenueLoading(true);
+    fetch(`/api/v1/analytics/financials?preset=${revenueRange}`)
+      .then(async (res) => (res.ok ? (await res.json()).data?.financials ?? null : null))
+      .catch(() => null)
+      .then((fin) => {
+        if (cancelled) return;
+        setRevenueFin(fin);
+        setRevenueLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [revenueRange]);
+
   const cur = CURRENCIES[selectedCurrency];
 
   // Real values only: no fallbacks when a value is 0 or missing (FX-39: these used to be ৳184,500 / 1,420 / ৳1,299 / 24.8%)
-  const netRevenueBDT: number = metrics?.totalRevenue ?? 0;
   const totalOrders: number = metrics?.totalOrders ?? 0;
   const activeCustomers: number = metrics?.activeCustomers ?? 0;
   const aovBDT: number = metrics?.averageOrderValue ?? 0;
@@ -231,7 +254,7 @@ export default function DashboardPage() {
         <span className={styles.trendMutedText}>{label}</span>
       </>
     ) : (
-      <span className={styles.trendMutedText}>No prior 30 days to compare</span>
+      <span className={styles.trendMutedText}>No prior period to compare</span>
     );
 
   if (isLoading) {
@@ -349,10 +372,33 @@ export default function DashboardPage() {
             </div>
 
             <div className={styles.kpiMidLabel}>Net Revenue ({cur.symbol})</div>
-            <div className={styles.kpiBigNumber}>{cur.format(netRevenueBDT)}</div>
+            <div className={styles.revenueBody}>
+              <div className={styles.kpiBigNumber}>{cur.format(revenueFin?.nmv_bdt ?? 0)}</div>
+              <div className={styles.revenueSpark}>
+                <RevenueSparkline
+                  values={(revenueFin?.time_series ?? []).map((p) => p.gmv_bdt)}
+                  label={`Revenue per day, last ${revenueRange.replace("D", "")} days`}
+                />
+              </div>
+            </div>
           </div>
 
-          <div className={styles.kpiBottomRow}>{trendPill(comparison?.revenue_change_pct, "last 30 days vs previous")}</div>
+          <div className={styles.kpiBottomRow}>
+            <div className={styles.rangePills} role="group" aria-label="Revenue date range" aria-busy={revenueLoading}>
+              {REVENUE_RANGES.map((r) => (
+                <button
+                  key={r}
+                  type="button"
+                  className={r === revenueRange ? styles.rangePillActive : styles.rangePill}
+                  aria-pressed={r === revenueRange}
+                  onClick={() => setRevenueRange(r)}
+                >
+                  {r}
+                </button>
+              ))}
+            </div>
+            {trendPill(revenueFin?.period_change_pct, `vs previous ${revenueRange.replace("D", "")} days`)}
+          </div>
         </div>
 
         {/* KPI 2: Total Orders */}

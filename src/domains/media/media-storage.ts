@@ -1,7 +1,8 @@
 /**
  * Where uploaded media is stored (ADR-120). Chosen by `MEDIA_STORAGE`:
- *   - `r2`: a Cloudflare R2 bucket (S3 API, SigV4-signed PUT through outboundRequest). Files are served from the
- *     bucket's public URL (`MEDIA_PUBLIC_BASE_URL`, an r2.dev or custom domain), never through the app.
+ *   - `s3`: any S3-compatible bucket (Supabase Storage, Backblaze B2, Cloudflare R2, AWS S3, MinIO; SigV4-signed PUT
+ *     through outboundRequest). Files are served from the bucket's public URL (`MEDIA_PUBLIC_BASE_URL`), never through
+ *     the app. Settings are `S3_*`; the older `R2_*` names and `MEDIA_STORAGE=r2` still work.
  *   - `local`: files under `MEDIA_LOCAL_DIR` (default `.data/media`), served by the authenticated
  *     `/api/v1/media/files/...` route. Development only: refused when NODE_ENV is production (Render's disk is
  *     ephemeral and there is no shared disk between servers).
@@ -29,16 +30,19 @@ export function assertValidMediaKey(key: string): void {
   if (!KEY_PATTERN.test(key)) throw new AppError("MEDIA_KEY_INVALID", "Invalid media key.", 400);
 }
 
-// ---- Cloudflare R2 ---------------------------------------------------------------------------------------------------
+// ---- S3-compatible bucket ---------------------------------------------------------------------------------------------------
 
-interface R2Config {
+interface S3Config {
+  /** Only used to build the default Cloudflare R2 endpoint. */
   accountId: string;
   accessKeyId: string;
   secretAccessKey: string;
   bucket: string;
   publicBaseUrl: string;
-  /** Normally https://<account>.r2.cloudflarestorage.com; overridable for an S3-compatible test endpoint. */
+  /** The S3 API endpoint, e.g. https://<ref>.storage.supabase.co/storage/v1/s3 or https://<account>.r2.cloudflarestorage.com. */
   endpoint: string;
+  /** SigV4 region: "auto" for R2 (the default); another S3-compatible store needs its own (a Supabase project's region). */
+  region?: string;
 }
 
 const UNSIGNED_SEGMENT = /[^A-Za-z0-9\-._~]/g;
@@ -46,9 +50,9 @@ const encodeSegment = (s: string) => s.replace(UNSIGNED_SEGMENT, (c) => `%${c.ch
 const sha256Hex = (data: string | Buffer) => crypto.createHash("sha256").update(data).digest("hex");
 const hmac = (key: Buffer | string, data: string) => crypto.createHmac("sha256", key).update(data).digest();
 
-class R2Storage implements MediaStorage {
-  readonly kind = "r2" as const;
-  constructor(private readonly config: R2Config) {}
+class S3Storage implements MediaStorage {
+  readonly kind = "s3" as const;
+  constructor(private readonly config: S3Config) {}
 
   async put(key: string, bytes: Buffer, contentType: string): Promise<void> {
     assertValidMediaKey(key);
@@ -78,7 +82,7 @@ class R2Storage implements MediaStorage {
   }
 
   private sign(method: string, url: URL, body: Buffer, extra: Record<string, string>): Record<string, string> {
-    return signS3Request({ method, url, body, headers: extra, accessKeyId: this.config.accessKeyId, secretAccessKey: this.config.secretAccessKey, region: "auto" });
+    return signS3Request({ method, url, body, headers: extra, accessKeyId: this.config.accessKeyId, secretAccessKey: this.config.secretAccessKey, region: this.config.region ?? "auto" });
   }
 }
 
@@ -163,23 +167,34 @@ export function getMediaStorage(): MediaStorage {
   if (storageForTesting) return storageForTesting;
   const env = process.env;
   const kind = (env.MEDIA_STORAGE || "").trim().toLowerCase();
-  if (kind === "r2") {
-    const missing = ["R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET", "MEDIA_PUBLIC_BASE_URL"].filter((k) => !env[k]?.trim());
+  if (kind === "s3" || kind === "r2") {
+    // S3_* names, falling back to the older R2_* ones
+    const setting = (name: string): string => (env[`S3_${name}`] ?? env[`R2_${name}`] ?? "").trim();
+    // The account id only builds the default R2 endpoint, so another S3-compatible store (an endpoint) does not need it
+    const required: Array<[string, string]> = [
+      ["S3_ACCESS_KEY_ID", setting("ACCESS_KEY_ID")],
+      ["S3_SECRET_ACCESS_KEY", setting("SECRET_ACCESS_KEY")],
+      ["S3_BUCKET", setting("BUCKET")],
+      ["MEDIA_PUBLIC_BASE_URL", (env.MEDIA_PUBLIC_BASE_URL ?? "").trim()],
+      ...(setting("ENDPOINT") ? [] : ([["S3_ENDPOINT (or S3_ACCOUNT_ID for Cloudflare R2)", setting("ACCOUNT_ID")]] as Array<[string, string]>)),
+    ];
+    const missing = required.filter(([, value]) => !value).map(([name]) => name);
     if (missing.length) throw new IntegrationNotConfiguredError("Image storage", `missing ${missing.join(", ")}`);
     const publicBaseUrl = env.MEDIA_PUBLIC_BASE_URL!.trim().replace(/\/+$/, "");
     if (!/^https:\/\//.test(publicBaseUrl)) throw new IntegrationNotConfiguredError("Image storage", "MEDIA_PUBLIC_BASE_URL must be https");
-    const accountId = env.R2_ACCOUNT_ID!.trim();
+    const endpoint = setting("ENDPOINT") || `https://${setting("ACCOUNT_ID")}.r2.cloudflarestorage.com`;
     // Signed PUTs carry the image and the request signature: never in cleartext outside development
-    if (env.R2_ENDPOINT?.trim() && !/^https:\/\//.test(env.R2_ENDPOINT.trim()) && env.NODE_ENV === "production") {
-      throw new IntegrationNotConfiguredError("Image storage", "R2_ENDPOINT must be https");
+    if (!/^https:\/\//.test(endpoint) && env.NODE_ENV === "production") {
+      throw new IntegrationNotConfiguredError("Image storage", "S3_ENDPOINT must be https");
     }
-    return new R2Storage({
-      accountId,
-      accessKeyId: env.R2_ACCESS_KEY_ID!.trim(),
-      secretAccessKey: env.R2_SECRET_ACCESS_KEY!.trim(),
-      bucket: env.R2_BUCKET!.trim(),
+    return new S3Storage({
+      accountId: setting("ACCOUNT_ID"),
+      accessKeyId: setting("ACCESS_KEY_ID"),
+      secretAccessKey: setting("SECRET_ACCESS_KEY"),
+      bucket: setting("BUCKET"),
       publicBaseUrl,
-      endpoint: (env.R2_ENDPOINT?.trim() || `https://${accountId}.r2.cloudflarestorage.com`).replace(/\/+$/, ""),
+      endpoint: endpoint.replace(/\/+$/, ""),
+      region: setting("REGION") || undefined,
     });
   }
   if (kind === "local") {
@@ -206,6 +221,7 @@ export function setMediaStorageForTesting(storage: MediaStorage | null): void {
 
 /** Tests only: build the real drivers with explicit settings. */
 export const createMediaStorageForTesting = {
-  r2: (config: R2Config): MediaStorage => new R2Storage(config),
+  s3: (config: S3Config): MediaStorage => new S3Storage(config),
+  r2: (config: S3Config): MediaStorage => new S3Storage(config),
   local: (root: string): LocalStorage => new LocalStorage(root),
 };

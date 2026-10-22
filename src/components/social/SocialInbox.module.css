@@ -143,7 +143,7 @@
 }
 
 .searchBox:focus-within {
-  background: #FFFFFF;
+  background: var(--color-surface-pure);
   border-color: var(--color-primary, #C7F900);
   box-shadow: 0 0 0 3px rgba(199, 249, 0, 0.18);
 }
@@ -190,7 +190,7 @@
 }
 
 .filterBadge:hover {
-  background: #FFFFFF;
+  background: var(--color-surface-pure);
   border-color: rgba(30, 32, 30, 0.20);
   color: #1F2937;
 }
@@ -281,7 +281,7 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background: #ffffff;
+  background: var(--color-surface-pure);
   flex-shrink: 0;
 }
 
@@ -355,13 +355,13 @@
 }
 
 .dropdownTrigger:hover {
-  background: #FFFFFF;
+  background: var(--color-surface-pure);
   border-color: var(--color-primary, #C7F900);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
 }
 
 .dropdownTriggerActive {
-  background: #FFFFFF;
+  background: var(--color-surface-pure);
   border-color: var(--color-primary, #C7F900);
   box-shadow: 0 0 0 3px rgba(199, 249, 0, 0.20);
 }
@@ -387,7 +387,7 @@
   top: calc(100% + 6px);
   right: 0;
   min-width: 190px;
-  background: #FFFFFF;
+  background: var(--color-surface-pure);
   border: 1px solid rgba(0, 0, 0, 0.08);
   border-radius: 14px;
   padding: 6px;
@@ -510,7 +510,7 @@
 
 /* Customer Inbound Bubble: Pristine White Card on Soft Bento Background */
 .inboundBubble {
-  background: #FFFFFF;
+  background: var(--color-surface-pure);
   border: 1px solid rgba(0, 0, 0, 0.08);
   color: #1F2937;
   border-radius: 18px 18px 18px 4px;
@@ -569,7 +569,7 @@
 .composerArea {
   padding: 14px 20px;
   border-top: 1px solid var(--color-border, rgba(30, 32, 30, 0.08));
-  background: #FFFFFF;
+  background: var(--color-surface-pure);
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -612,7 +612,7 @@
 }
 
 .composerTextarea:focus {
-  background: #FFFFFF;
+  background: var(--color-surface-pure);
   border-color: #C7F900;
   box-shadow: 0 0 0 3px rgba(199, 249, 0, 0.20);
 }
@@ -662,7 +662,7 @@
   overflow-y: auto;
   height: 100%;
   min-height: 0;
-  background: #FFFFFF;
+  background: var(--color-surface-pure);
   border: 1px solid var(--color-border, rgba(30, 32, 30, 0.08));
   border-radius: var(--radius-card, 18px);
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.03);
@@ -698,7 +698,7 @@
 }
 
 .metricBox {
-  background: #FFFFFF;
+  background: var(--color-surface-pure);
   border: 1px solid rgba(30, 32, 30, 0.08);
   border-radius: 10px;
   padding: 10px;
@@ -722,7 +722,7 @@
   justify-content: space-between;
   align-items: center;
   padding: 10px 12px;
-  background: #FFFFFF;
+  background: var(--color-surface-pure);
   border: 1px solid rgba(30, 32, 30, 0.06);
   border-radius: 10px;
   font-size: 0.75rem;
@@ -1077,7 +1077,7 @@
 
 /* AI Message Bubble: Clean White Card with Signature Lime Border & Crystal Clear Typography */
 .aiBubble {
-  background: #FFFFFF;
+  background: var(--color-surface-pure);
   border: 1.5px solid #C7F900;
   color: #1F2937;
   border-radius: 18px 18px 4px 18px;

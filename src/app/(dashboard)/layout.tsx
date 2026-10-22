@@ -8,13 +8,18 @@ import { CommandPalette } from "@/components/navigation/CommandPalette";
 import { ProgressiveBlur } from "@/components/navigation/ProgressiveBlur";
 import { PlatformNotices } from "@/components/navigation/PlatformNotices";
 import { LoadingSkeleton } from "@/components/ui/States/States";
+import { MerchantThemeProvider } from "@/components/navigation/merchant-theme";
 import styles from "@/components/navigation/Shell.module.css";
 
-export default function DashboardLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function DashboardLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <MerchantThemeProvider>
+      <DashboardShell>{children}</DashboardShell>
+    </MerchantThemeProvider>
+  );
+}
+
+function DashboardShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [session, setSession] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
