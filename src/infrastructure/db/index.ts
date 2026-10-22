@@ -6121,7 +6121,7 @@ export class CommerceDatabase {
 
   private customersById(tenantId: string): Map<string, Customer> {
     const map = new Map<string, Customer>();
-    for (const c of this.rowsOf("customers", tenantId)) if (c.tenant_id === tenantId) map.set(c.id, c);
+    for (const c of this.rowsOf("customers", tenantId, "loaded")) if (c.tenant_id === tenantId) map.set(c.id, c);
     return map;
   }
 
