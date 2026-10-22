@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
   Search,
@@ -49,7 +49,8 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose,
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const commands: Command[] = [
+  // ⚡ Bolt: Memoized the static commands array to prevent re-creating 25+ objects on every render
+  const commands: Command[] = useMemo(() => [
     {
       id: "nav-overview",
       title: "Go to Dashboard Overview",
@@ -381,13 +382,18 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose,
         onClose();
       },
     },
-  ];
+  ], [router, onClose]);
 
-  const filtered = commands.filter(
-    (cmd) =>
-      (!cmd.href || canAccessPath(cmd.href, permissions)) &&
-      (cmd.title.toLowerCase().includes(query.toLowerCase()) || cmd.category.toLowerCase().includes(query.toLowerCase()))
-  );
+  // ⚡ Bolt: Memoized the filtered results and extracted query.toLowerCase()
+  // to avoid recalculating string matching 50+ times per keystroke or when navigating the list
+  const filtered = useMemo(() => {
+    const q = query.toLowerCase();
+    return commands.filter(
+      (cmd) =>
+        (!cmd.href || canAccessPath(cmd.href, permissions)) &&
+        (cmd.title.toLowerCase().includes(q) || cmd.category.toLowerCase().includes(q))
+    );
+  }, [commands, query, permissions]);
 
   useEffect(() => {
     if (isOpen) {
