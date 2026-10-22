@@ -23,7 +23,7 @@ Create two dedicated, standalone operational command pages in the Super Admin pl
 - **100% Functional & Dynamic:** Every metric, queue item, trace, and session is loaded from real database collections and live domain services.
 - **Strictly No Demo / Hardcoded Data:** Zero fake numbers, synthetic fallback strings, or `Math.random()`. If no data exists, the UI renders clean, truthful empty states (`"—"`, `"No active sessions"`, or `"No pending escalations"`).
 - **Absolute Tenant Isolation:** The platform control plane inspects aggregate telemetry and masked buyer references (`018****92`). Cross-tenant queries never leak customer PII across workspace boundaries.
-- **Privileged Step-Up Protection:** Destructive or high-risk actions (updating tenant token budgets, launching/revoking JIT impersonations, exporting compliance manifests, or cryptographic wiping) require Step-Up MFA elevation.
+- **Privileged Step-Up Protection:** Destructive or high-risk actions (updating tenant AI usage budgets, launching/revoking JIT impersonations, exporting compliance manifests, or cryptographic wiping) require Step-Up MFA elevation.
 
 ---
 
