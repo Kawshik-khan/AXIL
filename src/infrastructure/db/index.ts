@@ -6121,7 +6121,7 @@ export class CommerceDatabase {
 
   private customersById(tenantId: string): Map<string, Customer> {
     const map = new Map<string, Customer>();
-    for (const c of this.rowsOf("customers", tenantId)) if (c.tenant_id === tenantId) map.set(c.id, c);
+    for (const c of this.rowsOf("customers", tenantId, "loaded")) if (c.tenant_id === tenantId) map.set(c.id, c);
     return map;
   }
 
@@ -6900,10 +6900,14 @@ export class CommerceDatabase {
     if (options?.tag) {
       list = list.filter((c) => c.tags.includes(options.tag!));
     }
+    // Bolt Optimization: Replace O(N) array search in filter loop with O(1) hash map lookup.
+    // Fetch customer map once (O(N) initial pass) and reuse for subsequent filter and map loops.
+    // This reduces the overall search complexity from O(Conversations * Customers) to O(Conversations + Customers).
+    const customersById = options?.search ? this.customersById(tenantId) : undefined;
     if (options?.search) {
       const q = options.search.toLowerCase();
       list = list.filter((c) => {
-        const customer = this.findCustomerById(tenantId, c.customer_id);
+        const customer = customersById?.get(c.customer_id);
         const nameMatch = customer ? `${customer.first_name} ${customer.last_name}`.toLowerCase().includes(q) : false;
         const phoneMatch = customer?.phone?.toLowerCase().includes(q) || false;
         const subjectMatch = c.subject?.toLowerCase().includes(q) || false;
@@ -6920,8 +6924,10 @@ export class CommerceDatabase {
     const limit = options?.limit || 50;
     const paged = list.slice(offset, offset + limit);
 
+    // Bolt Optimization: Reuse customer map if already built, otherwise fetch now for pagination mapping.
+    const _customersById = customersById || this.customersById(tenantId);
     const enriched = paged.map((c) => {
-      const customer = this.findCustomerById(tenantId, c.customer_id);
+      const customer = _customersById.get(c.customer_id);
       const channel = this.findConnectedChannelById(tenantId, c.channel_id);
       return {
         ...c,
