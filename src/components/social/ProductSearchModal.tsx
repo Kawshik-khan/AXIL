@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { Search, X, Package, Check, Copy } from "lucide-react";
 import { Button } from "@/components/ui/Button/Button";
+import { useDebounce } from "@/hooks/useDebounce";
 import styles from "./SocialInbox.module.css";
 
 interface ProductSearchModalProps {
@@ -17,13 +18,15 @@ export const ProductSearchModal: React.FC<ProductSearchModalProps> = ({
   onSelectProduct,
 }) => {
   const [query, setQuery] = useState("");
+  const debouncedQuery = useDebounce(query, 300);
   const [products, setProducts] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
     if (!isOpen) return;
     setIsLoading(true);
-    fetch(`/api/v1/products?search=${encodeURIComponent(query)}&limit=8`)
+    // Use debouncedQuery to reduce API calls on every keystroke
+    fetch(`/api/v1/products?search=${encodeURIComponent(debouncedQuery)}&limit=8`)
       .then((res) => res.json())
       .then((data) => {
         if (data.data) {
@@ -32,7 +35,7 @@ export const ProductSearchModal: React.FC<ProductSearchModalProps> = ({
       })
       .catch(() => {})
       .finally(() => setIsLoading(false));
-  }, [isOpen, query]);
+  }, [isOpen, debouncedQuery]);
 
   if (!isOpen) return null;
 
