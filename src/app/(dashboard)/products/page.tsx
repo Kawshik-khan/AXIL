@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import {
   Package,
   Plus,
@@ -24,11 +24,14 @@ import { BulkImportModal } from "@/components/catalog/BulkImportModal";
 import { ProductImageUploader } from "@/components/catalog/ProductImageUploader";
 import { ProductPhotosModal } from "@/components/catalog/ProductPhotosModal";
 import { Product } from "@/types/commerce";
+import { useDebounce } from "@/hooks/useDebounce";
 
 export default function ProductsPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
+  // ⚡ Bolt: Debounce search query to reduce re-renders and filter calculations while typing
+  const debouncedSearchQuery = useDebounce(searchQuery, 300);
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isBulkImportModalOpen, setIsBulkImportModalOpen] = useState(false);
@@ -136,13 +139,15 @@ export default function ProductsPage() {
     }
   };
 
-  const filteredProducts = products.filter((p) => {
-    const matchesSearch =
-      p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      p.sku.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesStatus = statusFilter === "ALL" || p.status === statusFilter;
-    return matchesSearch && matchesStatus;
-  });
+  const filteredProducts = useMemo(() => {
+    return products.filter((p) => {
+      const matchesSearch =
+        p.name.toLowerCase().includes(debouncedSearchQuery.toLowerCase()) ||
+        p.sku.toLowerCase().includes(debouncedSearchQuery.toLowerCase());
+      const matchesStatus = statusFilter === "ALL" || p.status === statusFilter;
+      return matchesSearch && matchesStatus;
+    });
+  }, [products, debouncedSearchQuery, statusFilter]);
 
   return (
     <>
