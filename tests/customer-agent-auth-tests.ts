@@ -263,6 +263,18 @@ async function main() {
     assert.strictEqual(((await run(prA, "search_products", { query: "iphone" })).results as R[]).length, 0);
   });
 
+  await runTest("a question about the whole shop shows featured products, not 'out of stock' (2026-10-25 smoke)", async () => {
+    for (const q of ["What products do you sell?", "popular products", "available items", "best sellers", "anything", "ki ki product ache"]) {
+      const r = await run(prA, "search_products", { query: q });
+      assert.ok((r.results as R[]).length > 0, q);
+      assert.strictEqual(r.note, "Showing featured products available in the shop.", q);
+    }
+    // A product name still wins over the general words, and only this workspace's products are shown
+    const named = (await run(prA, "search_products", { query: "black t-shirt products" })).results as R[];
+    assert.ok(named.length > 0 && named.every((p) => p.name === "Black Cotton T-Shirt"));
+    assert.ok(!((await run(prA, "search_products", { query: "all products" })).results as R[]).some((p) => p.name === "Apex Runner Sneaker"));
+  });
+
   await runTest("the saving is computed by the tool (you_save_bdt)", async () => {
     const pj = (await run(prA, "search_products", { query: "panjabi" })).results[0];
     assert.strictEqual(pj.you_save_bdt, 500);

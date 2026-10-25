@@ -154,6 +154,10 @@ const HandoffArgs = z
 // ---------------------------------------------------------------------------------------------------------------------
 // Tools
 // ---------------------------------------------------------------------------------------------------------------------
+/** Words of a question about the whole shop, anywhere in the query. Used only when no product name matched. */
+const GENERAL_CATALOG_WORDS =
+  /\b(?:all|any|anything|catalog|catalogue|collection|collections|product|products|item|items|shop|sell|selling|available|popular|best)\b|ki ki|সব|প্রোডাক্ট|কালেকশন/i;
+
 async function searchProducts(pr: CustomerAgentPrincipal, a: z.infer<typeof SearchArgs>): Promise<ToolResult> {
   const isGeneralCatalogQuery =
     !a.query ||
@@ -184,9 +188,14 @@ async function searchProducts(pr: CustomerAgentPrincipal, a: z.infer<typeof Sear
     .filter((x) => x.hits > 0 && (!a.max_price_bdt || x.p.base_price <= a.max_price_bdt));
   const best = Math.max(0, ...scored.map((x) => x.hits));
   const results = scored.filter((x) => x.hits === best).slice(0, 5).map((x) => productView(pr.tenantId, x.p));
-  return results.length
-    ? { results }
-    : { results: [], note: "No product in this shop matches the search. Tell the customer politely that this specific item is not currently in stock; do NOT hand off to human. You may ask what other item they are looking for." };
+  if (results.length) return { results };
+
+  // "What products do you sell?" names no product: show the shop instead of saying it's out of stock (2026-10-25 smoke)
+  const featured = allActive.filter((p) => !a.max_price_bdt || p.base_price <= a.max_price_bdt);
+  if (GENERAL_CATALOG_WORDS.test(a.query) && featured.length > 0) {
+    return { results: featured.slice(0, 5).map((p) => productView(pr.tenantId, p)), note: "Showing featured products available in the shop." };
+  }
+  return { results: [], note: "No product in this shop matches the search. Tell the customer politely that this specific item is not currently in stock; do NOT hand off to human. You may ask what other item they are looking for." };
 }
 
 async function getProduct(pr: CustomerAgentPrincipal, a: z.infer<typeof ProductArgs>): Promise<ToolResult> {
