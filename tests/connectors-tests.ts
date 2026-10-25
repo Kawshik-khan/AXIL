@@ -322,6 +322,32 @@ async function main() {
     assert.strictEqual(tgChannel.provider_account_id, "123456789");
   });
 
+  await runTest("Connecting Telegram lets the AI reply there: TELEGRAM joins the AI policy, once (2026-10-25)", async () => {
+    // A workspace whose stored policy predates Telegram (production's did), so the agent never answered there
+    const oldChannels = ["FACEBOOK_MESSENGER", "INSTAGRAM", "WHATSAPP", "WEBSITE_CHAT"];
+    const tenantId = "tenant_delta_04";
+    db.setAIPolicy({ ...db.getAIPolicy(tenantId), allowed_channel_types: [...oldChannels] });
+    const owner = createMockContext(tenantId);
+    const input = { provider_id: "telegram", credentials: { bot_token: "223456789:ABCdefGhIJKlmNoPQRsTUVwxyZ_012345", bot_username: "@DeltaBot" } };
+    const saved = await ConnectorService.saveConnector(owner, input);
+    assert.ok(db.getAIPolicy(tenantId).allowed_channel_types.includes("TELEGRAM"));
+    const audit = db.getAuditLogsByTenant(tenantId).logs.find((a) => a.resource_id === saved.id && a.action === "CONNECTOR_CREATED");
+    assert.strictEqual(audit?.metadata?.ai_policy_channel_added, "TELEGRAM", "the policy change is in the audit log");
+
+    // The owner turns Telegram off again: re-saving the connector keeps that choice
+    db.setAIPolicy({ ...db.getAIPolicy(tenantId), allowed_channel_types: [...oldChannels] });
+    await ConnectorService.saveConnector(owner, input);
+    assert.ok(!db.getAIPolicy(tenantId).allowed_channel_types.includes("TELEGRAM"));
+
+    // A caller who may save connectors but not configure AI doesn't widen the policy
+    const otherTenant = "tenant_epsilon_05";
+    db.setAIPolicy({ ...db.getAIPolicy(otherTenant), allowed_channel_types: [...oldChannels] });
+    const noAi = { ...createMockContext(otherTenant), permissions: ROLE_PERMISSIONS.OWNER.filter((p) => p !== "ai.configure") };
+    await ConnectorService.saveConnector(noAi, { provider_id: "telegram", credentials: { bot_token: "323456789:ABCdefGhIJKlmNoPQRsTUVwxyZ_012345" } });
+    assert.ok(db.getConnectedChannels(otherTenant).some((c) => c.type === "TELEGRAM"));
+    assert.ok(!db.getAIPolicy(otherTenant).allowed_channel_types.includes("TELEGRAM"));
+  });
+
   // -------------------------------------------------------------
   // SUITE 5: REAL-TIME TEST CONNECTION HANDSHAKE
   // -------------------------------------------------------------

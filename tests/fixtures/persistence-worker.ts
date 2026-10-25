@@ -67,7 +67,9 @@ async function main() {
 
   if (scenario === "hold-lock") {
     out({ lock_held: db.getPersistenceHealth().lock.held, pid: process.pid, refused_exit: refusedExit });
-    await new Promise((r) => setTimeout(r, 15_000)); // keep the lock while the test runs a second writer
+    // Keep the lock while the test runs its other processes; the test kills this one when done. The limit only stops an
+    // orphan: 15 s was shorter than four ts-runner start-ups on a slow CI runner, so the lock was gone too early.
+    await new Promise((r) => setTimeout(r, 120_000));
     return;
   }
 
