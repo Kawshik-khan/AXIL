@@ -557,28 +557,48 @@ export async function runSocialCommerceTests() {
   await runTest("Outbound message delivery sets automation_paused = true and enforces idempotency", async () => {
     const idempotencyKey = `idem_key_${Date.now()}`;
 
-    // First send
-    const sentMsg1 = await OutboundMessageService.sendMessage(contextA, activeConvA.id, {
-      text: "Assalamu Alaikum, apnar order ti ready hoyeche.",
-      idempotency_key: idempotencyKey,
+    // Meta answers the test token with its invalid-token error. Stubbed: a real call made this test depend on Facebook
+    // being reachable from CI, and a timeout there is retryable (3 attempts), which failed it (FX-53, no network in tests)
+    let graphCalls = 0;
+    setOutboundTransportForTesting(async (url) => {
+      graphCalls++;
+      assert.ok(url.toString().startsWith("https://graph.facebook.com/"), url.toString());
+      return {
+        status: 400,
+        headers: {},
+        body: JSON.stringify({ error: { message: "Invalid OAuth access token.", type: "OAuthException", code: 190 } }),
+        truncated: false,
+        durationMs: 3,
+      };
     });
+    try {
+      // First send
+      const sentMsg1 = await OutboundMessageService.sendMessage(contextA, activeConvA.id, {
+        text: "Assalamu Alaikum, apnar order ti ready hoyeche.",
+        idempotency_key: idempotencyKey,
+      });
 
-    // Meta sending fails with a token error: the message is recorded as FAILED with the reason, never as SENT (FX-31)
-    assert.strictEqual(sentMsg1.status, "FAILED");
-    assert.ok(/token|expired|not connected|Nothing was sent/.test(sentMsg1.failure_reason ?? ""), sentMsg1.failure_reason);
-    assert.strictEqual(sentMsg1.retry_count, 1, "a non-retryable error isn't retried");
+      // Meta sending fails with a token error: the message is recorded as FAILED with the reason, never as SENT (FX-31)
+      assert.strictEqual(sentMsg1.status, "FAILED");
+      assert.ok(/token|expired|not connected|Nothing was sent/.test(sentMsg1.failure_reason ?? ""), sentMsg1.failure_reason);
+      assert.strictEqual(sentMsg1.retry_count, 1, "a non-retryable error isn't retried");
+      assert.strictEqual(graphCalls, 1, "one request to Meta");
 
-    // Verify conversation automation_paused was locked to true because a human responded
-    const updatedConv = db.findConversationById(contextA.tenant.id, activeConvA.id);
-    assert.strictEqual(updatedConv?.automation_paused, true, "Human message must pause AI automation lock");
+      // Verify conversation automation_paused was locked to true because a human responded
+      const updatedConv = db.findConversationById(contextA.tenant.id, activeConvA.id);
+      assert.strictEqual(updatedConv?.automation_paused, true, "Human message must pause AI automation lock");
 
-    // Send again with same idempotencyKey -> must return identical message without re-executing
-    const sentMsg2 = await OutboundMessageService.sendMessage(contextA, activeConvA.id, {
-      text: "Assalamu Alaikum, apnar order ti ready hoyeche.",
-      idempotency_key: idempotencyKey,
-    });
+      // Send again with same idempotencyKey -> must return identical message without re-executing
+      const sentMsg2 = await OutboundMessageService.sendMessage(contextA, activeConvA.id, {
+        text: "Assalamu Alaikum, apnar order ti ready hoyeche.",
+        idempotency_key: idempotencyKey,
+      });
 
-    assert.strictEqual(sentMsg2.id, sentMsg1.id, "Idempotent duplicate send must return existing message");
+      assert.strictEqual(sentMsg2.id, sentMsg1.id, "Idempotent duplicate send must return existing message");
+      assert.strictEqual(graphCalls, 1, "the duplicate send makes no new request");
+    } finally {
+      setOutboundTransportForTesting(null);
+    }
   });
 
   // -------------------------------------------------------------
