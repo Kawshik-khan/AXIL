@@ -263,6 +263,21 @@ async function main() {
     assert.strictEqual(((await run(prA, "search_products", { query: "iphone" })).results as R[]).length, 0);
   });
 
+  await runTest("a search that matches nothing offers the shop's own products as suggestions, never as results (2026-10-26 smoke)", async () => {
+    // The model searched a guessed word ("apparel") for "What products do you sell?" and told the visitor nothing matched
+    for (const q of ["apparel", "iphone", "Apex Runner Sneaker"]) {
+      const r = await run(prA, "search_products", { query: q });
+      assert.strictEqual((r.results as R[]).length, 0, `${q}: the asked-for item is never claimed`);
+      const suggestions = r.suggestions as R[];
+      assert.ok(suggestions.length > 0 && suggestions.length <= 5, q);
+      assert.ok(!suggestions.some((p) => p.name === "Apex Runner Sneaker"), `${q}: only this workspace's products`);
+      assert.ok(/don't say it is available/.test(String(r.note)), q);
+    }
+    // A price ceiling applies to the suggestions too
+    const cheap = (await run(prA, "search_products", { query: "apparel", max_price_bdt: 1 })) as R;
+    assert.ok(!Array.isArray(cheap.suggestions), "no product under 1 taka: no suggestions");
+  });
+
   await runTest("a question about the whole shop shows featured products, not 'out of stock' (2026-10-25 smoke)", async () => {
     for (const q of ["What products do you sell?", "popular products", "available items", "best sellers", "anything", "ki ki product ache"]) {
       const r = await run(prA, "search_products", { query: q });
@@ -603,6 +618,16 @@ async function main() {
   await runTest("returns null when tool results are empty or unusable", () => {
     assert.strictEqual(synthesizeGroundedResponse([], "latin"), null);
     assert.strictEqual(synthesizeGroundedResponse([{ error: "SOME_ERROR" }], "latin"), null);
+  });
+
+  await runTest("a no-match search with suggestions offers them instead of a dead end, in both scripts", () => {
+    const noMatch = { results: [], suggestions: [{ name: "Black Cotton T-Shirt", variants: [{ price_bdt: 650 }] }, { name: "Classic Panjabi", base_price: 2500 }] };
+    const latin = synthesizeGroundedResponse([noMatch], "latin")!;
+    assert.ok(/nei/.test(latin) && latin.includes("Black Cotton T-Shirt (৳650)") && latin.includes("Classic Panjabi (৳2,500)"), latin);
+    const bangla = synthesizeGroundedResponse([noMatch], "bangla")!;
+    assert.ok(bangla.includes("নেই") && bangla.includes("Black Cotton T-Shirt (৳650)"), bangla);
+    // Without suggestions the reply is unchanged
+    assert.ok(/stock e nei/.test(synthesizeGroundedResponse([{ results: [] }], "latin")!));
   });
 
   console.log(`\n  Tests Passed: ${passed} | Tests Failed: ${failed}\n`);
