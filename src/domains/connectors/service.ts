@@ -324,10 +324,20 @@ export class ConnectorService {
     const hubResource = syncHubConnectorResource(provider, saved, resolvedCredentials);
 
     // A messaging connector feeds a social channel (connector plan D3); the channel reads its credentials from here
+    let aiPolicyChannelAdded: "TELEGRAM" | undefined;
     if (provider.id === "telegram") {
+      const isNewChannel = !db.getConnectedChannels(context.tenant.id).some((c) => c.connector_id === saved.id);
       const channel = ChannelService.ensureChannelForTelegramConnector(context.tenant.id, saved);
       if (hubResource && channel && channel.resource_id !== hubResource.id) {
         db.updateConnectedChannel(context.tenant.id, channel.id, { resource_id: hubResource.id });
+      }
+      // The new channel has automatic replies on, but the agent answers only on channels the AI policy allows: allow
+      // Telegram too. Only for a new channel (a re-save keeps an owner's later choice), and only for a caller who may
+      // configure AI (today the same OWNER/ADMIN roles that may save a connector).
+      const policy = db.getAIPolicy(context.tenant.id);
+      if (isNewChannel && !policy.allowed_channel_types.includes("TELEGRAM") && RbacService.can(context, PERMISSIONS.AI_CONFIGURE)) {
+        db.setAIPolicy({ ...policy, allowed_channel_types: [...policy.allowed_channel_types, "TELEGRAM"], updated_at: now });
+        aiPolicyChannelAdded = "TELEGRAM";
       }
     } else if (provider.id === "whatsapp_cloud") {
       const waChannel = db.getConnectedChannels(context.tenant.id).find((c) => c.type === "WHATSAPP");
@@ -416,6 +426,8 @@ export class ConnectorService {
         provider_id: provider.id,
         category: provider.category,
         model: record.default_model,
+        // The AI policy change this save made, so the log shows why the agent started answering on the channel
+        ...(aiPolicyChannelAdded ? { ai_policy_channel_added: aiPolicyChannelAdded } : {}),
       },
       created_at: now,
     });
