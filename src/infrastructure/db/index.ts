@@ -7084,6 +7084,13 @@ export class CommerceDatabase {
     return updated;
   }
 
+  /** Every workspace's outbound messages not yet delivered or given up on (ADR-122 delivery pass), oldest first. */
+  public getUndeliveredOutboundMessages(): Message[] {
+    return this.data.messages
+      .filter((m) => m.direction === "OUTBOUND" && (m.status === "QUEUED" || m.status === "SENDING"))
+      .sort((a, b) => a.created_at.localeCompare(b.created_at));
+  }
+
   // ==================== SOCIAL COMMERCE: ASSIGNMENTS & TAGS ====================
   public createAssignment(assignment: ConversationAssignment): ConversationAssignment {
     this.data.conversation_assignments.push(assignment);

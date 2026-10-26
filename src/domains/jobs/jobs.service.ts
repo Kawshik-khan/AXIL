@@ -28,6 +28,7 @@ import { runConnectionHealth } from "@/domains/connectors/connection-lifecycle";
 import { findSilentDrops } from "@/domains/ai/customer-agent/silent-drops";
 import { reconcileTelegramWebhooks } from "@/domains/connectors/telegram-webhook-reconciler";
 import { runWebhookCanary } from "@/domains/connectors/webhook-canary";
+import { runDeliveriesOnce } from "@/domains/social/outbound/outbound-delivery";
 
 export { localHour };
 
@@ -221,6 +222,14 @@ export const JOBS: Record<string, JobDefinition> = {
       const report = await reconcileTelegramWebhooks(dueTenants(), now);
       if (report.degraded) logger.error("connector_webhook.reconcile_degraded", { degraded: report.degraded, items: report.items.filter((i) => i.result !== "HEALTHY" && i.result !== "REREGISTERED") });
       return { ...report, healthy: report.degraded === 0 };
+    },
+  },
+
+  /** Every 10 minutes: outbound messages the requests and worker loop didn't finish (an instance that slept; ADR-122). */
+  "outbound-redeliver": {
+    cadenceMs: 10 * MINUTE,
+    async run(now) {
+      return { ...(await runDeliveriesOnce(now)) };
     },
   },
 

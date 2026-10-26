@@ -32,6 +32,8 @@ import { findSilentDrops } from "@/domains/ai/customer-agent/silent-drops";
 import { ConversationControlService, controlOf } from "@/domains/social/conversations/conversation-control.service";
 import { HitlEscalationService } from "@/domains/ai/hitl/hitl-escalation.service";
 import { ChannelRateLimiter } from "@/domains/social/outbound/rate-limiter";
+import { DELIVERY_LEASE_MS, MAX_DELIVERY_ATTEMPTS, deliverMessage, runDeliveriesOnce } from "@/domains/social/outbound/outbound-delivery";
+import { OutboundTimeoutError } from "@/lib/outbound-http";
 import { AgentRouter } from "@/domains/ai/router/agent-router";
 import fs from "fs";
 import path from "path";
@@ -60,10 +62,15 @@ type R = Record<string, any>; // eslint-disable-line @typescript-eslint/no-expli
 type Handler = (url: URL, body: R) => Promise<Partial<OutboundResponse>> | Partial<OutboundResponse>;
 let llmHandler: Handler = () => ({ status: 500, body: "{}" });
 const telegramSends: R[] = [];
+/** ADR-122 tests: what Telegram answers to sendMessage (null: success). A thrown error is a transport failure. */
+let telegramFailure: (() => Partial<OutboundResponse>) | null = null;
 setOutboundTransportForTesting(async (url, options) => {
   const body = options.body ? JSON.parse(String(options.body)) : {};
   let res: Partial<OutboundResponse>;
-  if (url.hostname === "api.telegram.org") {
+  if (url.hostname === "api.telegram.org" && url.pathname.endsWith("/sendMessage") && telegramFailure) {
+    telegramSends.push(body);
+    res = telegramFailure();
+  } else if (url.hostname === "api.telegram.org") {
     if (url.pathname.endsWith("/sendMessage")) telegramSends.push(body);
     res = { status: 200, body: JSON.stringify({ ok: true, result: { message_id: telegramSends.length + 100, date: 1, id: 1, is_bot: true, username: "shop_bot" } }) };
   } else {
@@ -981,6 +988,8 @@ async function main() {
     db.updateConversation(tenantId, waiting.id, { last_inbound_at: tenMinAgo, last_outbound_at: undefined, status: "OPEN", automation_paused: true });
     const answered = await inbound("rf_answered", "hello?");
     db.updateConversation(tenantId, answered.id, { last_inbound_at: tenMinAgo, last_outbound_at: new Date().toISOString(), status: "OPEN", automation_paused: false });
+    const t0 = new Date().toISOString();
+    db.createMessage({ id: `msg_ans_${stamp}`, tenant_id: tenantId, conversation_id: answered.id, direction: "OUTBOUND", sender_type: "BOT", message_type: "TEXT", text: "Ji", status: "SENT", retry_count: 0, metadata: {}, created_at: t0, updated_at: t0 } as Message);
     const after = await findSilentDrops([tenant]);
     assert.strictEqual(after.silent - before.silent, 1);
     assert.strictEqual(after.awaiting_human - before.awaiting_human, 1);
@@ -1046,6 +1055,262 @@ async function main() {
     assert.ok(!sent.text.includes("999"), `the ungrounded amount is gone: ${sent.text}`);
     assert.strictEqual(conv("rf_stripped").automation_paused, false, "the agent keeps the chat");
     assert.strictEqual(db.findAgentHitlEscalationByConversation(tenantId, convo.id), undefined);
+  });
+
+  // ================================================================ ADR-122 durable outbound delivery (MR5)
+  const sendAsStaff = (convoId: string, text: string) => OutboundMessageService.sendMessage(ownerCtx, convoId, { text });
+  const msg = (id: string) => db.findMessageById(tenantId, id)!;
+  const later = (ms: number) => Date.now() + ms;
+  // A chat for staff-send tests: no agent turn queued for it, so later tests' turns aren't held up
+  const quietInbound = async (chat: string, text: string) => {
+    const c = await inbound(chat, text);
+    const job = db.findAgentJob(tenantId, c.id);
+    if (job) db.saveAgentJob({ ...job, status: "DONE" });
+    return c;
+  };
+  // One job per workspace per pass, oldest first: only this chat's job is due
+  const onlyDueJob = (conversationId: string) => {
+    const far = new Date(Date.now() + 3_600_000).toISOString();
+    for (const j of db.data.agent_jobs) {
+      if (j.tenant_id === tenantId && j.conversation_id !== conversationId && j.status === "PENDING") db.saveAgentJob({ ...j, not_before: far });
+    }
+    makeDue(conversationId);
+  };
+  const refill = () => new Promise((r) => setTimeout(r, 1500)); // earlier tests empty the channel's burst bucket (5 a second)
+
+  await runTest("outbox: a Telegram 429 waits and is sent by the delivery pass; Telegram is asked once per attempt (ADR-122)", async () => {
+    await refill();
+    const convo = await quietInbound("rf_dl_429", "hello");
+    telegramFailure = () => ({ status: 429, body: JSON.stringify({ ok: false, error_code: 429, description: "Too Many Requests: retry after 1", parameters: { retry_after: 1 } }) });
+    try {
+      const first = await sendAsStaff(convo.id, "Ji bolun");
+      assert.deepStrictEqual([first.status, first.delivery?.attempts, first.delivery?.last_error_code], ["QUEUED", 1, "TELEGRAM_API_ERROR"]);
+      assert.ok(Date.parse(first.delivery!.next_attempt_at!) >= Date.now() + 900, "waits at least retry_after");
+    } finally {
+      telegramFailure = null;
+    }
+    const before = telegramSends.length;
+    const pass = await runDeliveriesOnce(later(60_000));
+    assert.ok(pass.sent >= 1, JSON.stringify({ pass, rows: db.getUndeliveredOutboundMessages().map((m) => [m.conversation_id === convo.id, m.text, m.status, m.delivery]) }));
+    const sent = db.getMessages(tenantId, convo.id, { limit: 10 }).messages.find((m) => m.text === "Ji bolun")!;
+    assert.deepStrictEqual([sent.status, sent.delivery?.attempts], ["SENT", 2]);
+    assert.strictEqual(telegramSends.length - before, 1, "one more try, not a burst");
+  });
+
+  await runTest("outbox: a message never attempted (the process stopped) is sent by the pass; an interrupted send is never repeated (ADR-122)", async () => {
+    await refill();
+    const convo = await quietInbound("rf_dl_crash", "hello");
+    const sent = await sendAsStaff(convo.id, "first");
+    // Never attempted: the process stopped right after storing it
+    db.updateMessage(tenantId, sent.id, { status: "QUEUED", delivery: { attempts: 0, next_attempt_at: new Date(Date.now() - 1000).toISOString() } });
+    const before = telegramSends.length;
+    await runDeliveriesOnce();
+    assert.strictEqual(msg(sent.id).status, "SENT");
+    assert.strictEqual(telegramSends.length - before, 1);
+    // Interrupted mid-send: the provider may have it. Uncertain, for a person; never resent
+    db.updateMessage(tenantId, sent.id, { status: "SENDING", delivery: { attempts: 1, lease_until: new Date(Date.now() - 1000).toISOString() } });
+    const stats = await runDeliveriesOnce();
+    assert.strictEqual(stats.uncertain, 1);
+    const after = msg(sent.id);
+    assert.deepStrictEqual([after.status, after.delivery?.last_error_code], ["FAILED", "DELIVERY_UNCERTAIN"]);
+    assert.ok(/check the chat before resending/i.test(after.failure_reason ?? ""));
+    assert.strictEqual(telegramSends.length - before, 1, "nothing resent");
+  });
+
+  await runTest("outbox: a timeout is uncertain and a refusal is final; neither is retried (ADR-122)", async () => {
+    await refill();
+    const convo = await quietInbound("rf_dl_final", "hello");
+    telegramFailure = () => {
+      throw new OutboundTimeoutError("api.telegram.org", 8_000);
+    };
+    let timedOut: Message;
+    try {
+      timedOut = await sendAsStaff(convo.id, "maybe");
+    } finally {
+      telegramFailure = null;
+    }
+    assert.deepStrictEqual([timedOut.status, timedOut.delivery?.last_error_code], ["FAILED", "DELIVERY_UNCERTAIN"]);
+    telegramFailure = () => ({ status: 403, body: JSON.stringify({ ok: false, error_code: 403, description: "Forbidden: bot was blocked by the user" }) });
+    let blocked: Message;
+    try {
+      blocked = await sendAsStaff(convo.id, "blocked");
+    } finally {
+      telegramFailure = null;
+    }
+    assert.deepStrictEqual([blocked.status, blocked.delivery?.attempts], ["FAILED", 1]);
+    const before = telegramSends.length;
+    await runDeliveriesOnce(later(3_600_000));
+    assert.strictEqual(telegramSends.length, before, "the pass resends neither");
+  });
+
+  await runTest("outbox: a message refused with a rate limit every time is dead-lettered after the last attempt (ADR-122)", async () => {
+    await refill();
+    const convo = await quietInbound("rf_dl_dead", "hello");
+    telegramFailure = () => ({ status: 429, body: JSON.stringify({ ok: false, error_code: 429, description: "Too Many Requests", parameters: { retry_after: 1 } }) });
+    try {
+      const first = await sendAsStaff(convo.id, "never");
+      let clock = Date.now();
+      for (let i = 0; i < MAX_DELIVERY_ATTEMPTS + 2 && msg(first.id).status === "QUEUED"; i++) {
+        clock = Date.parse(msg(first.id).delivery!.next_attempt_at!) + 1;
+        await runDeliveriesOnce(clock);
+      }
+      const dead = msg(first.id);
+      assert.deepStrictEqual([dead.status, dead.delivery?.attempts], ["FAILED", MAX_DELIVERY_ATTEMPTS]);
+      assert.ok(dead.delivery?.dead_lettered_at);
+    } finally {
+      telegramFailure = null;
+    }
+  });
+
+  await runTest("outbox: an agent reply over the burst limit waits and is sent once, without a second model call (ADR-122)", async () => {
+    setMode(true, false);
+    const convo = await inbound("rf_dl_burst", "hello");
+    onlyDueJob(convo.id);
+    while (ChannelRateLimiter.tryConsume(channel.id).allowed) { /* empty the burst bucket */ }
+    scripted.steps = [say("Ji bolun, ki lagbe?")];
+    const callsBefore = scripted.calls.length;
+    await runAgentJobsOnce();
+    scripted.steps = [];
+    const callsForTurn = scripted.calls.length - callsBefore;
+    const reply = outbound(convo.id).find((m) => m.sender_type === "BOT")!;
+    assert.strictEqual(reply.status, "QUEUED", "waits in the outbox");
+    assert.strictEqual(db.findAgentJob(tenantId, convo.id)!.status, "DONE", "the turn is not re-run");
+    await new Promise((r) => setTimeout(r, 1500)); // the bucket refills (5 a second)
+    await runDeliveriesOnce(later(5_000));
+    assert.strictEqual(msg(reply.id).status, "SENT");
+    assert.strictEqual(scripted.calls.length - callsBefore, callsForTurn, "no second model call");
+  });
+
+  await runTest("outbox: a queued message older than a day is given up, not sent late; a failed reply leaves the chat unanswered (ADR-122)", async () => {
+    await refill();
+    setMode(true, false);
+    const convo = await quietInbound("rf_dl_old", "hello");
+    const old = new Date(Date.now() - 25 * 60 * 60_000).toISOString();
+    const sent = await sendAsStaff(convo.id, "too late");
+    db.updateMessage(tenantId, sent.id, { status: "QUEUED", delivery: { attempts: 0, next_attempt_at: old } });
+    db.data.messages.find((m) => m.id === sent.id)!.created_at = old;
+    const before = telegramSends.length;
+    const stats = await runDeliveriesOnce();
+    assert.ok(stats.expired >= 1);
+    assert.deepStrictEqual([msg(sent.id).status, msg(sent.id).delivery?.last_error_code], ["FAILED", "EXPIRED"]);
+    assert.ok(!telegramSends.slice(before).some((b) => b.text === "too late"), "not sent late");
+
+    // The agent's chat whose only reply failed is a silent drop, not an answered chat
+    const failedChat = await quietInbound("rf_dl_silent", "hello?");
+    const tenMinAgo = new Date(Date.now() - 10 * 60_000).toISOString();
+    db.updateConversation(tenantId, failedChat.id, { last_inbound_at: tenMinAgo, last_outbound_at: new Date().toISOString(), status: "OPEN" });
+    const t0 = new Date().toISOString();
+    db.createMessage({ id: `msg_failed_reply_${stamp}`, tenant_id: tenantId, conversation_id: failedChat.id, direction: "OUTBOUND", sender_type: "BOT", message_type: "TEXT", text: "Ji", status: "FAILED", retry_count: 1, metadata: {}, created_at: t0, updated_at: t0 } as Message);
+    const drops = await findSilentDrops([db.findTenantById(tenantId)!]);
+    assert.ok(drops.silent >= 1, JSON.stringify(drops));
+  });
+
+  // A queued message, due now, for the review tests: it was stored, then the process stopped before sending
+  const queueStranded = async (chat: string, text: string, sender: "AGENT" | "BOT" = "AGENT") => {
+    await refill();
+    const convo = await quietInbound(chat, "hello");
+    const sent = await sendAsStaff(convo.id, text);
+    db.updateMessage(tenantId, sent.id, { status: "QUEUED", sender_type: sender, delivery: { attempts: 0, next_attempt_at: new Date(Date.now() - 1000).toISOString() } });
+    // A staff send takes the chat; give it back to the agent so only the check under test can stop the send
+    if (sender === "BOT") await ConversationService.setAutomationPaused(ownerCtx, convo.id, false);
+    return { convo, id: sent.id };
+  };
+  const sentText = (since: number, text: string) => telegramSends.slice(since).some((b) => b.text === text);
+
+  await runTest("review: a queued message isn't sent after a kill switch, a suspended workspace or an inactive channel (ADR-122)", async () => {
+    // Kill switch on the channel
+    const killed = await queueStranded("rf_rv_kill", "after kill");
+    db.savePlatformKillSwitch({ id: `ks_rv_${stamp}`, scope: "CHANNEL", target_id: channel.id, is_active: true, reason: "test", activated_by_user_id: "op", updated_at: new Date().toISOString() } as never);
+    let before = telegramSends.length;
+    try {
+      await runDeliveriesOnce();
+    } finally {
+      db.savePlatformKillSwitch({ ...db.findPlatformKillSwitch(`ks_rv_${stamp}`)!, is_active: false });
+    }
+    assert.deepStrictEqual([msg(killed.id).status, msg(killed.id).delivery?.last_error_code], ["FAILED", "KILL_SWITCH"]);
+    assert.ok(!sentText(before, "after kill"));
+
+    // Suspended workspace
+    const suspended = await queueStranded("rf_rv_suspended", "after suspend");
+    db.updateTenant(tenantId, { status: "SUSPENDED" } as never);
+    before = telegramSends.length;
+    try {
+      await runDeliveriesOnce();
+    } finally {
+      db.updateTenant(tenantId, { status: "ACTIVE" } as never);
+    }
+    assert.deepStrictEqual([msg(suspended.id).status, msg(suspended.id).delivery?.last_error_code], ["FAILED", "TENANT_INACTIVE"]);
+    assert.ok(!sentText(before, "after suspend"));
+
+    // Channel in error
+    const inactive = await queueStranded("rf_rv_channel", "after error");
+    db.updateConnectedChannel(tenantId, channel.id, { status: "ERROR" });
+    before = telegramSends.length;
+    try {
+      await runDeliveriesOnce();
+    } finally {
+      db.updateConnectedChannel(tenantId, channel.id, { status: "ACTIVE" });
+    }
+    assert.deepStrictEqual([msg(inactive.id).status, msg(inactive.id).delivery?.last_error_code], ["FAILED", "CHANNEL_INACTIVE"]);
+    assert.ok(!sentText(before, "after error"));
+  });
+
+  await runTest("review: a queued bot reply is cancelled, not sent, once a person replied in the chat (ADR-122)", async () => {
+    setMode(true, false);
+    const stranded = await queueStranded("rf_rv_superseded", "late bot reply", "BOT");
+    await refill();
+    await sendAsStaff(stranded.convo.id, "Ami Owner, bolun");
+    const before = telegramSends.length;
+    await runDeliveriesOnce(Date.now() + 60_000);
+    assert.deepStrictEqual([msg(stranded.id).status, msg(stranded.id).delivery?.last_error_code], ["CANCELLED", "AGENT_SUPERSEDED"]);
+    assert.ok(!sentText(before, "late bot reply"), "the stale bot reply never follows the staff reply");
+  });
+
+  await runTest("review: a send the provider took is never recorded as a plain failure when saving it fails (ADR-122)", async () => {
+    const stranded = await queueStranded("rf_rv_record", "taken");
+    const realUpdate = db.updateMessage.bind(db);
+    (db as unknown as { updateMessage: typeof db.updateMessage }).updateMessage = (tid, id, patch) => {
+      if (id === stranded.id && patch.status === "SENT") throw new Error("store write failed");
+      return realUpdate(tid, id, patch);
+    };
+    try {
+      await runDeliveriesOnce();
+    } finally {
+      (db as unknown as { updateMessage: typeof db.updateMessage }).updateMessage = realUpdate;
+    }
+    assert.strictEqual(msg(stranded.id).status, "SENDING", "left for the lease to mark uncertain, never FAILED");
+  });
+
+  await runTest("review: one message that errors doesn't stop the pass; a lease runs from the claim, not the pass start (ADR-122)", async () => {
+    const broken = await queueStranded("rf_rv_broken", "broken");
+    const fine = await queueStranded("rf_rv_fine", "fine");
+    const realFind = db.findMessageById.bind(db);
+    (db as unknown as { findMessageById: typeof db.findMessageById }).findMessageById = (tid, id) => {
+      if (id === broken.id) throw new Error("boom");
+      return realFind(tid, id);
+    };
+    let stats;
+    try {
+      stats = await runDeliveriesOnce();
+    } finally {
+      (db as unknown as { findMessageById: typeof db.findMessageById }).findMessageById = realFind;
+    }
+    assert.ok(stats.skipped >= 1, JSON.stringify(stats));
+    assert.strictEqual(msg(fine.id).status, "SENT", "the rest of the pass went on");
+
+    // A claim made with an old pass clock still gets a full lease
+    const late = await queueStranded("rf_rv_lease", "lease");
+    let leaseUntil = "";
+    telegramFailure = () => {
+      leaseUntil = msg(late.id).delivery?.lease_until ?? "";
+      return { status: 200, body: JSON.stringify({ ok: true, result: { message_id: 1 } }) };
+    };
+    try {
+      await deliverMessage(tenantId, late.id, { now: Date.now() + 60_000 });
+    } finally {
+      telegramFailure = null;
+    }
+    assert.ok(Date.parse(leaseUntil) >= Date.now() + DELIVERY_LEASE_MS - 5_000, leaseUntil);
   });
 
   await runTest("a channel the workspace's AI policy doesn't allow gets no turn", async () => {

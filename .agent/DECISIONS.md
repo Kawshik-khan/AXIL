@@ -1940,3 +1940,87 @@ nothing records who changed ownership or why.
   `SOCIAL_CONVERSATION_MANAGE`; platform takeover keeps its privileged-action rules; audit rows hold codes, not text.
 - **Rollback**: S1 is behaviour-neutral (revert the commit); S2 is the flag off; `control` is additive data that old
   code ignores.
+
+## ADR-122: Durable Outbound Delivery — the Message Row Is the Outbox
+
+**Date**: 2026-10-26 · **Status**: Accepted (approved by the owner 2026-10-26; built, worker service not yet) · **Plan**: `docs/messaging-reliability-plan.md` MR5 (FX-104) · **Builds on**: ADR-109 (multi-writer store), ADR-112 (agent jobs), ADR-121 (conversation control) · **Scope chosen by the owner**: durable queue now on the Free plan, separate worker service later
+
+### Context
+Inbound work is already durable: `agent_jobs` and `domain_events` are store collections persisted to Postgres, claimed
+with version-checked writes, safe with several servers (ADR-109, ADR-112). **Outbound delivery is not.**
+`OutboundMessageService.sendMessage` creates the message `QUEUED`, marks it `SENDING` and retries inside the same
+process (4 tries with backoff; none for Telegram, which has no idempotency key). If the process stops between those
+steps (a deploy, a restart, the Free instance sleeping), the message stays `QUEUED` or `SENDING` forever and nothing
+sends it. The agent worker counts `QUEUED` as delivered, so the chat looks answered and the silent-drop detector agrees.
+A reply over the channel burst limit re-runs the whole turn, with a new model call (ADR-121 review LOW 4). The Free plan
+has no background workers, so the worker stays in the web process for now.
+
+### Decision
+1. **The message row is the outbox.** An outbound message gets `delivery: { attempts, next_attempt_at, lease_until?,
+   last_error_code?, dead_lettered_at? }`. The request still sends immediately (the inline fast path keeps today's
+   latency). Anything it couldn't finish stays for a **delivery pass** to pick up.
+2. **Delivery pass** in the existing worker loop (every second, per server) and a scheduled job `outbound-redeliver`
+   (every 10 min, for an instance that slept): claim a due message with a version-checked write that sets
+   `lease_until`, send, record the result. One message per conversation per pass (10 in all), oldest first; the
+   channel burst limiter applies.
+3. **Retry only when the provider certainly didn't accept it.**
+   - `QUEUED` and never attempted, or refused before acceptance (our burst limit, provider 429 or 5xx with an error
+     body): retried with backoff (`retry_after` when given), at most 8 attempts within 24 h.
+   - `SENDING` with an expired lease (timeout or lost response: the provider may have accepted it): **never resent
+     automatically** (FX rule for Telegram, now for every channel). It becomes `FAILED` / `DELIVERY_UNCERTAIN` and
+     the inbox shows it for a person to check and resend.
+   - After the last attempt: `FAILED` with `delivery.dead_lettered_at`, logged `outbound.dead_lettered`.
+4. **An agent reply is only "delivered" when it is `SENT`** (or later). The worker stops counting `QUEUED` as
+   delivered for quote confirmation, and the silent-drop detector counts a chat whose latest outbound is not `SENT`
+   (or later) as unanswered.
+5. **A reply over the burst limit is queued, not regenerated.** The agent's send stores the message `QUEUED` with
+   `next_attempt_at` from the limiter and returns; the delivery pass sends it. No second model call (closes ADR-121
+   review LOW 4).
+6. **Migration 012** (forward-only, additive): generated columns `status`, `next_attempt_at` on `commerceos.messages` and
+   a partial index on undelivered outbound rows, so the scan stays cheap when `messages` is no longer hydrated.
+   Rehearsed on PGlite; applied to Neon only with the owner's go-ahead.
+7. **Worker topology unchanged for now.** The loop is process-agnostic: a later `scripts/worker.mjs` on a paid Render
+   worker runs the same passes, with `CUSTOMER_AGENT_WORKER=0` on the web service. No code here assumes one process.
+
+### Alternatives considered
+- **A generic `queue_items` table claimed with `FOR UPDATE SKIP LOCKED`** (the MR5 plan as first written): a second
+  persistence path beside the store's unit of work, its own consistency rules, and raw SQL the PGlite/JSON backends
+  don't share. The store already gives durable, version-checked claims; the missing piece is outbound only.
+- **QStash / an external queue**: another vendor and secret for a problem the database already solves.
+- **Resend `SENDING` messages too**: duplicates for the customer whenever a response was lost; a person decides.
+
+### Consequences
+- **Positive**: no reply is lost to a restart or deploy; burst-limited replies wait instead of costing a model call;
+  "delivered" means delivered; uncertain sends are visible instead of silent; ready for a separate worker later.
+- **Negative**: a delivery pass runs every second in each server (cheap: an indexed scan of undelivered rows); messages
+  carry a `delivery` object; an uncertain send now needs a person (rare, and honest); p95 latency stays bound to the
+  Free instance until the worker service exists.
+- **Security**: delivery claims are tenant-scoped like every store write; credentials are read at send time as today;
+  error codes, never provider text, go into `last_error_code` and logs.
+- **Rollback**: revert the code; `delivery` and the 012 columns are additive and ignored by old code (the index can be
+  dropped).
+
+### As built (2026-10-26)
+- `src/domains/social/outbound/outbound-delivery.ts`: `deliverMessage` (one claimed attempt) and `runDeliveriesOnce`
+  (the pass), used by the request, the worker loop and the `outbound-redeliver` job. A new message waits 30 s before
+  the pass may take it, so the request sends first.
+- *Narrower than decision 3:* only rate limits (ours, provider 429, Telegram 429 with `retry_after`) are retried, plus a
+  message never attempted. Provider 5xx and "no message id" responses are **uncertain**, not retried: the adapters'
+  error codes don't separate "refused" from "accepted, response lost". Meta sends used to retry any error 4 times in the
+  request; they now retry only a rate limit. Product cards are never retried, as before.
+- *Limitation:* a quote shown in a reply deferred by the burst limit becomes confirmable only with the next delivered
+  reply (quote confirmation runs in the turn, before the pass sends it).
+- The burst-limit wait-and-resend in the worker (ADR-121 S1) is gone: the agent's reply waits in the outbox instead.
+- *Silent drops (decision 4 as built):* a chat counts as answered by a reply that is `SENT`, or still `QUEUED`/`SENDING`
+  (on its way); a `FAILED` or `CANCELLED` reply answers nothing.
+- *Security review (FAIL, then fixed):* a send can happen long after its request, so every send now re-checks at that
+  moment the workspace is `ACTIVE`, no kill switch, `real_messaging`, the channel is `ACTIVE`, and for a bot reply that
+  the chat is still the agent's (the ADR-121 lease stored on the message, or the legacy staff-replied/paused rule).
+  What fails is `FAILED` (or `CANCELLED` / `AGENT_SUPERSEDED` for a superseded bot reply), never sent. Recording `SENT`
+  is separate from the provider call: if the write fails the row stays `SENDING` and later reads as uncertain, never as a
+  plain failure someone would resend. One message that throws no longer stops a pass; a claim conflict means another
+  server has it. The lease runs from the claim. Events carry the agent (`BOT`) or the member as actor; the interrupted-
+  send path emits `message.failed` too; uncertain reasons carry our codes, not provider or store text.
+- *Open:* an older queued staff message and a newer inline one in the same chat may go out of order (a bot reply is
+  cancelled instead, see above); `message.sent` still carries the text and recipient id, as before; migration 012 adds
+  stored generated columns, which rewrites `messages`: time it on a Neon branch before applying.

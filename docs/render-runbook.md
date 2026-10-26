@@ -117,6 +117,19 @@ https `APP_URL` on the service, then in the Meta app:
 The scheduled job `connection-health` (every 6 hours, `scripts/run-scheduled-jobs.mjs`) checks every sign-in token with Meta.
 Until App Review grants Advanced Access, only people with a role on the Meta app can connect.
 
+## Outbound delivery (messaging reliability MR5, ADR-122)
+
+Every outbound message is its own outbox entry. The request sends it right away; the worker loop (every second) and
+the scheduled job `outbound-redeliver` (every 10 minutes, for an instance that slept) finish what the request couldn't.
+
+- **Resent automatically:** only a message never attempted (the process stopped) or refused with a rate limit; up to 8
+  attempts within 24 hours, then `FAILED` with `delivery.dead_lettered_at` (log `outbound.dead_lettered`).
+- **Never resent:** a send that may have reached the customer (timeout, lost response, interrupted claim). It shows as
+  `FAILED` with "DELIVERY_UNCERTAIN ... Check the chat before resending" (log `outbound.delivery_uncertain`).
+- **Logs to watch:** `outbound.delivery_pass`, `outbound.requeued`, `outbound.dead_lettered`, `outbound.delivery_uncertain`.
+- **Migration 012** (`012_outbound_delivery.sql`) adds indexed columns for the pass; apply with `npm run db:migrate`
+  after deploy (the code works without it while messages are hydrated).
+
 ## Telegram webhooks (messaging reliability MR3)
 
 The scheduled job `webhook-reconcile` (every 10 minutes) asks Telegram where each connected bot posts. A bot pointing at
