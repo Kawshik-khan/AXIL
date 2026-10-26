@@ -1,4 +1,4 @@
-import { AppError, IntegrationNotConfiguredError, BadRequestError, NotFoundError, FeatureNotEntitledError } from "@/lib/errors";
+import { AppError, BadRequestError, NotFoundError, FeatureNotEntitledError } from "@/lib/errors";
 import { randomSuffix } from "@/lib/ids";
 import { db } from "@/infrastructure/db";
 import { Message, MessageType, ProductCard } from "@/types/social";
@@ -6,16 +6,13 @@ import { RequestContext } from "@/lib/context";
 import { RbacService } from "@/domains/rbac/service";
 import { PERMISSIONS } from "@/lib/permissions";
 import { ChannelService } from "../channels/channel.service";
-import { ChannelCredentials } from "../channels/channel-provider.interface";
 import { ChannelPolicyService } from "../channels/policy.service";
 import { ChannelRateLimiter } from "./rate-limiter";
-import { SocialEventService } from "../events/social-event.service";
 import { assertNotKilled, isFeatureEnabled } from "@/lib/safety-gate";
-import { TelegramApiError } from "../channels/adapters/telegram.adapter";
-import { loadCustomerRows } from "@/infrastructure/db/tenant-rows";
 import { ConversationControlService } from "../conversations/conversation-control.service";
 import { agentPaused, controlOf, legacyFields } from "../conversations/conversation-control.state";
 import { CONTROL_V2_FLAG, strictFlag } from "@/domains/ai/customer-agent/jobs";
+import { deliverMessage, INLINE_GRACE_MS } from "./outbound-delivery";
 
 export interface SendOutboundPayload {
   text: string;
@@ -32,8 +29,6 @@ export interface SendOutboundPayload {
 }
 
 export class OutboundMessageService {
-  private static readonly MAX_RETRIES = 4;
-
   /**
    * `asAgent` (the customer agent, FX-76): the message is the bot's (sender BOT). It never takes a chat back from people:
    * after a handoff (automation paused) the mode and status stay as the handoff left them, and when staff replied after
@@ -102,7 +97,9 @@ export class OutboundMessageService {
 
       ChannelPolicyService.assertCanSend(channel.type, conversation.last_inbound_at, payload.messageType || "TEXT", payload.text);
       const rateCheck = ChannelRateLimiter.tryConsume(channel.id);
-      if (!rateCheck.allowed) {
+      // The agent's reply waits in the outbox for the burst limit (ADR-122): no second model call, no 429 to the worker
+      const deferUntil = !rateCheck.allowed && options.asAgent ? new Date(Date.now() + Math.max(200, rateCheck.retryAfterMs ?? 0)).toISOString() : undefined;
+      if (!rateCheck.allowed && !deferUntil) {
         // 429 with its own code: a burst limit passes in milliseconds, so senders retry instead of giving up
         throw new AppError("CHANNEL_RATE_LIMITED", `Channel '${channel.name}' is temporarily rate-limited. Retry in ${rateCheck.retryAfterMs}ms.`, 429, {
           retry_after_ms: rateCheck.retryAfterMs ?? 0,
@@ -126,6 +123,16 @@ export class OutboundMessageService {
         status: "QUEUED",
         reply_to_message_id: payload.replyToMessageId,
         retry_count: 0,
+        // The request sends it first; the delivery pass takes over only after INLINE_GRACE_MS (or when deferred)
+        delivery: {
+          attempts: 0,
+          next_attempt_at: deferUntil ?? new Date(Date.now() + INLINE_GRACE_MS).toISOString(),
+          ...(deferUntil ? { last_error_code: "CHANNEL_RATE_LIMITED" } : {}),
+          ...(options.asAgent ? { agent: { lease: options.agentLease, handed_off: Boolean(options.agentHandedOff) } } : {}),
+          ...(payload.templateName || payload.mediaUrl || payload.replyToMessageId
+            ? { request: { templateName: payload.templateName, templateParameters: payload.templateParameters, mediaUrl: payload.mediaUrl, mediaType: payload.mediaType, replyToMessageId: payload.replyToMessageId } }
+            : {}),
+        },
         metadata: {
           agent_name: context.user.name,
           agent_email: context.user.email,
@@ -152,139 +159,13 @@ export class OutboundMessageService {
         last_message_at: now,
         ...(options.asAgent ? {} : { unread_count: 0 }), // staff haven't read it just because the bot answered
       });
-      return { channel, customerId: conversation.customer_id, externalConversationId: conversation.external_conversation_id, messageId: msgId };
+      return { messageId: msgId, deferred: Boolean(deferUntil) };
     }, (result) => Boolean(result));
 
     if ("existing" in prepared && prepared.existing) return prepared.existing;
-    return this.transmitWithRetry(context, prepared.channel, prepared.customerId, prepared.externalConversationId, prepared.messageId, payload);
-  }
-
-  private static async transmitWithRetry(
-    context: RequestContext,
-    channel: import("@/types/social").ConnectedChannel,
-    customerId: string,
-    externalConversationId: string,
-    messageId: string,
-    payload: SendOutboundPayload
-  ): Promise<Message> {
-    const adapter = ChannelService.getAdapter(channel.type);
-    let credentials: ChannelCredentials;
-    try {
-      credentials = ChannelService.getDecryptedCredentials(channel);
-    } catch (err) {
-      // No usable credentials: record the truth instead of attempting (or pretending) delivery (FX-03, rules/truthfulness.md).
-      return db.unit(async () => db.updateMessage(context.tenant.id, messageId, {
-        status: "FAILED", failed_at: new Date().toISOString(),
-        failure_reason: err instanceof Error ? err.message : "Channel credentials could not be read.",
-      }), () => true);
-    }
-
-    // Resolve external recipient ID (e.g. PSID, Phone, WhatsApp ID)
-    await loadCustomerRows(context.tenant.id, [customerId]); // zero-hydration: the customer and identities read here
-    const identity = db.getCustomerIdentities(context.tenant.id, customerId).find(
-      (i) => i.channel_id === channel.id
-    );
-    const recipientId = channel.type === "TELEGRAM"
-      ? externalConversationId
-      : identity?.external_user_id || customerId;
-
-    let attempts = 0;
-    let lastError: Error | null = null;
-
-    await db.unit(async () => db.updateMessage(context.tenant.id, messageId, { status: "SENDING" }), () => true);
-
-    while (attempts < this.MAX_RETRIES) {
-      try {
-        attempts++;
-        let sendResult;
-
-        if (payload.productCards && adapter.sendProductCards) {
-          sendResult = await adapter.sendProductCards(credentials, recipientId, payload.productCards);
-        } else if (payload.templateName) {
-          sendResult = await adapter.sendTemplateMessage(
-            credentials,
-            recipientId,
-            payload.templateName,
-            payload.templateParameters || {}
-          );
-        } else if (payload.mediaUrl) {
-          sendResult = await adapter.sendMediaMessage(
-            credentials,
-            recipientId,
-            payload.mediaType || "IMAGE",
-            payload.mediaUrl
-          );
-        } else {
-          sendResult = await adapter.sendTextMessage(
-            credentials,
-            recipientId,
-            payload.text,
-            { replyToMessageId: payload.replyToMessageId }
-          );
-        }
-
-        // WhatsApp sends one message per card and stops early on a failure: keep only the cards that went out
-        const sentIds = sendResult.rawResponse?.message_ids;
-        const sentCards = payload.productCards && Array.isArray(sentIds) && sentIds.length < payload.productCards.length
-          ? payload.productCards.slice(0, sentIds.length)
-          : undefined;
-        const updated = await db.unit(async () => {
-          const current = sentCards ? db.findMessageById(context.tenant.id, messageId) : undefined;
-          const saved = db.updateMessage(context.tenant.id, messageId, {
-            ...(sentCards ? { metadata: { ...(current?.metadata ?? {}), product_cards: sentCards } } : {}),
-            status: "SENT",
-            external_message_id: sendResult.externalMessageId,
-            sent_at: new Date().toISOString(),
-            provider_timestamp: sendResult.providerTimestamp || new Date().toISOString(),
-            retry_count: attempts - 1,
-          });
-          SocialEventService.emit({
-            tenantId: context.tenant.id,
-            eventType: "message.sent",
-            aggregateType: "message",
-            aggregateId: messageId,
-            actor: { type: "USER", id: context.user.id },
-            payload: { messageId, conversationId: saved.conversation_id, channelType: channel.type, text: saved.text, recipientId },
-          });
-          return saved;
-        }, () => true);
-
-        return updated;
-      } catch (err) {
-        lastError = err instanceof Error ? err : new Error(String(err));
-        if (err instanceof IntegrationNotConfiguredError) break; // retrying can't help (FX-31)
-        // Telegram sendMessage has no idempotency key. A timeout or lost response may follow an accepted message,
-        // so never automatically repeat it; a human can inspect Telegram before choosing to retry.
-        if (channel.type === "TELEGRAM") break;
-        // Cards follow a text reply that already went out: a lost response mustn't send them twice
-        if (payload.productCards) break;
-        if (attempts < this.MAX_RETRIES) {
-          // Exponential backoff: 200ms * 2^(attempt-1)
-          const backoffMs = 200 * Math.pow(2, attempts - 1);
-          await new Promise((res) => setTimeout(res, backoffMs));
-        }
-      }
-    }
-
-    // Permanently failed
-    const failureReason = channel.type === "TELEGRAM" && lastError instanceof TelegramApiError && lastError.telegramCode === 429
-      ? `Telegram rate limited this bot. Retry after ${lastError.retryAfterSeconds ?? 1} seconds.`
-      : lastError?.message || "Provider transmission failed after retries";
-    const failedMsg = await db.unit(async () => {
-      const saved = db.updateMessage(context.tenant.id, messageId, {
-        status: "FAILED", failed_at: new Date().toISOString(), failure_reason: failureReason, retry_count: attempts,
-      });
-      SocialEventService.emit({
-        tenantId: context.tenant.id,
-        eventType: "message.failed",
-        aggregateType: "message",
-        aggregateId: messageId,
-        actor: { type: "USER", id: context.user.id },
-        payload: { messageId, error: saved.failure_reason },
-      });
-      return saved;
-    }, () => true);
-
-    return failedMsg;
+    const queued = () => db.findMessageById(context.tenant.id, prepared.messageId) as Message;
+    // Deferred by the burst limit: the delivery pass sends it when it is due
+    if (prepared.deferred) return queued();
+    return (await deliverMessage(context.tenant.id, prepared.messageId, { inline: true })) ?? queued();
   }
 }

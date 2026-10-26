@@ -140,6 +140,10 @@ Each phase ships on its own branch, behind a flag where it changes behaviour, an
   `agentHandedOff` / `agentTurnStartedAt` moved to S4 (the flag-off path needs them). S4 not started.
 
 ### MR5. Durable queue and worker service (≈3 days, needs a paid Render instance) — FX-104
+- *Built 2026-10-26 as ADR-122* (owner chose "queue now, worker later"): no `queue_items` table; the message row is the
+  outbox, with a delivery pass in the existing loop and the `outbound-redeliver` job. Agent jobs were already durable
+  store documents. Migration is `012_outbound_delivery.sql`. Items 1–3 below are superseded; item 2 (worker service)
+  waits for a paid Render plan.
 1. `queue_items` table (migration `009_queue.sql`): `kind`, `dedupe_key`, `run_after`, `attempts`, `locked_until`; claim with
    `FOR UPDATE SKIP LOCKED`. Kinds: `agent_turn`, `outbound_send`, `comment_dispatch`.
 2. Render background worker service running `scripts/worker.mjs`; the web service only enqueues. Webhook ingress enqueues in

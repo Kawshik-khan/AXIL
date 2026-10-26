@@ -3,6 +3,7 @@
  * later outbound is either waiting for a person (the chat is paused: the inbox shows it) or a silent drop (the agent
  * should have answered it and nothing did). Silent drops are what the monitoring job alerts on.
  */
+import { db } from "@/infrastructure/db";
 import { readTenantRows } from "@/infrastructure/db/tenant-rows";
 import type { TenantRecord } from "@/infrastructure/db";
 import type { Conversation, ConversationStatus } from "@/types/social";
@@ -20,6 +21,13 @@ export interface SilentDropReport {
   tenants: Array<{ tenant_id: string; silent: number; awaiting_human: number }>;
 }
 
+/** A reply after `since` that reached the customer or is still on its way (ADR-122): a FAILED one answered nothing. */
+function answeredAfter(c: Conversation, since: string): boolean {
+  return db
+    .getMessages(c.tenant_id, c.id, { limit: 50 })
+    .messages.some((m) => m.direction === "OUTBOUND" && m.message_type !== "INTERNAL_NOTE" && m.created_at >= since && m.status !== "FAILED" && m.status !== "CANCELLED");
+}
+
 export async function findSilentDrops(tenants: readonly TenantRecord[], now = Date.now()): Promise<SilentDropReport> {
   const before = new Date(now - SILENT_DROP_GRACE_MS).toISOString();
   const after = new Date(now - SILENT_DROP_WINDOW_MS).toISOString();
@@ -31,7 +39,7 @@ export async function findSilentDrops(tenants: readonly TenantRecord[], now = Da
     for (const c of await readTenantRows<Conversation>("conversations", tenant.id)) {
       const inbound = c.last_inbound_at;
       if (!inbound || inbound > before || inbound < after || CLOSED.has(c.status)) continue;
-      if (c.last_outbound_at && c.last_outbound_at >= inbound) continue;
+      if (c.last_outbound_at && c.last_outbound_at >= inbound && answeredAfter(c, inbound)) continue;
       if (agentPaused(c)) awaiting++;
       else if (autonomous && channelAllowed(tenant.id, c.channel_type, c.channel_id)) silent++;
     }

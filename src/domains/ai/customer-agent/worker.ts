@@ -32,6 +32,7 @@ import { hourWithin, localHour } from "@/lib/local-time";
 import { quoteShownIn } from "./output";
 import { loadCustomerRows } from "@/infrastructure/db/tenant-rows";
 import { agentPaused, controlOf } from "@/domains/social/conversations/conversation-control.state";
+import { runDeliveriesOnce } from "@/domains/social/outbound/outbound-delivery";
 
 /** The turn's lease on the chat (ADR-121 S2), when the job was claimed with one. */
 const leaseOf = (job: AgentJob) => (job.control_version === undefined ? undefined : { version: job.control_version, turnId: job.id });
@@ -50,7 +51,8 @@ const DEFER_MS = 60_000;
 /** Jobs looked at per pass, and turns run per pass (one per workspace). */
 const SCAN_LIMIT = 200;
 const TURNS_PER_PASS = 5;
-const DELIVERED = new Set(["SENT", "QUEUED", "DELIVERED", "READ"]);
+// ADR-122: delivered means the provider took it. A QUEUED reply (waiting in the outbox) hasn't reached the customer yet.
+const DELIVERED = new Set(["SENT", "DELIVERED", "READ"]);
 /** Health alerts (FX-81) are checked once a minute per server; incidents are deduplicated by title. */
 const ALERT_INTERVAL_MS = 60_000;
 let lastAlertCheck = 0;
@@ -160,10 +162,8 @@ async function outsideHours(job: AgentJob, pr: NonNullable<ReturnType<typeof pri
   // "A team member will reply" is only said when a team member really has the chat
   if (!handed.ok) return { status: "BLOCKED", outcome: "OUTSIDE_HOURS_HANDOFF_FAILED" };
   try {
-    // Past the burst limit too: once handed off, a deferred rerun would find the chat paused and never send this
-    await sendPastBurstLimit(() =>
-      OutboundMessageService.sendMessage(capabilityContext(pr, "send"), job.conversation_id, { text, idempotency_key: `agent:${job.id}:${last?.id ?? job.last_message_id}:hours` }, { asAgent: true, agentHandedOff: true, traceId: job.id, agentLease: leaseOf(job) })
-    );
+    // Over the burst limit it waits in the outbox (ADR-122) and the delivery pass sends it
+    await OutboundMessageService.sendMessage(capabilityContext(pr, "send"), job.conversation_id, { text, idempotency_key: `agent:${job.id}:${last?.id ?? job.last_message_id}:hours` }, { asAgent: true, agentHandedOff: true, traceId: job.id, agentLease: leaseOf(job) });
   } catch (err) {
     if (!(err instanceof AppError)) throw err;
     return { status: "BLOCKED", outcome: `OUTSIDE_HOURS_SEND_REFUSED:${err.code}` };
@@ -257,14 +257,13 @@ async function runLoadedAgentJob(job: AgentJob): Promise<Finish> {
   }
 
   try {
-    const sent = await sendPastBurstLimit(() =>
-      OutboundMessageService.sendMessage(
-        capabilityContext(pr, "send"),
-        job.conversation_id,
-        // Keyed on the message this turn answered, so a message that arrived after the claim gets one reply, not two
-        { text: turn.reply, idempotency_key: `agent:${job.id}:${turn.answeredMessageId ?? job.last_message_id}` },
-        { asAgent: true, agentTurnStartedAt: turnStartedAt, agentHandedOff: turn.handoff, traceId: job.id, agentLease: leaseOf(job) }
-      )
+    // Over the burst limit the reply waits in the outbox (ADR-122): sent later by the delivery pass, no second model call
+    const sent = await OutboundMessageService.sendMessage(
+      capabilityContext(pr, "send"),
+      job.conversation_id,
+      // Keyed on the message this turn answered, so a message that arrived after the claim gets one reply, not two
+      { text: turn.reply, idempotency_key: `agent:${job.id}:${turn.answeredMessageId ?? job.last_message_id}` },
+      { asAgent: true, agentTurnStartedAt: turnStartedAt, agentHandedOff: turn.handoff, traceId: job.id, agentLease: leaseOf(job) }
     );
     if (DELIVERED.has(sent.status)) {
       await markQuotesShown(job, turnStartedAt, sent.id, turn.reply);
@@ -273,35 +272,12 @@ async function runLoadedAgentJob(job: AgentJob): Promise<Finish> {
     return { status: "DONE", outcome: `${turn.status}:${sent.status}` };
   } catch (err) {
     if (err instanceof AppError && err.code === "AGENT_SUPERSEDED") return { status: "CANCELLED", outcome: "STAFF_REPLIED" };
-    // Still over the channel's burst limit after waiting: run the turn again shortly, never drop the reply
-    if (err instanceof AppError && err.code === "CHANNEL_RATE_LIMITED") {
-      return { status: "PENDING", outcome: "CHANNEL_RATE_LIMITED", notBefore: new Date(Date.now() + DEFER_RATE_LIMITED_MS).toISOString() };
-    }
     // A kill switch, a disabled feature or channel policy: sending again won't help, and a person should look
     if (err instanceof KillSwitchActiveError || (err instanceof AppError && err.statusCode < 500 && err.statusCode !== 409)) {
       logger.warn("customer_agent.send_refused", { tenant_id: job.tenant_id, conversation_id: job.conversation_id, code: err.code });
       return { status: "BLOCKED", outcome: `SEND_REFUSED:${err.code}` };
     }
     throw err;
-  }
-}
-
-/** How long a reply over the channel's burst limit waits before its turn runs again. */
-const DEFER_RATE_LIMITED_MS = 5_000;
-
-/**
- * The channel's burst limit refills in milliseconds: wait what it asks (at most 2 s) and send again, up to three times,
- * before the turn is deferred. The idempotency key makes a repeated send safe.
- */
-async function sendPastBurstLimit<T>(send: () => Promise<T>): Promise<T> {
-  for (let attempt = 0; ; attempt++) {
-    try {
-      return await send();
-    } catch (err) {
-      if (!(err instanceof AppError && err.code === "CHANNEL_RATE_LIMITED") || attempt >= 2) throw err;
-      const waitMs = Math.min(2_000, Math.max(50, Number(err.details?.retry_after_ms) || 200));
-      await new Promise((r) => setTimeout(r, waitMs));
-    }
   }
 }
 
@@ -389,6 +365,9 @@ export function startCustomerAgentWorker(): void {
     runAgentJobsOnce()
       .then(async (s) => {
         if (s.claimed) logger.info("customer_agent.worker_pass", s);
+        // Outbound the request couldn't finish: restarts, deploys, rate limits (ADR-122)
+        const d = await runDeliveriesOnce();
+        if (d.sent || d.requeued || d.failed || d.refused || d.uncertain || d.expired || d.skipped) logger.info("outbound.delivery_pass", { ...d });
         // Comment-to-inbox replies: retries and anything the webhook's own kick missed
         const c = await dispatchCommentTriggersOnce();
         if (c.sent || c.failed || c.retrying) logger.info("comment_trigger.dispatch_pass", c);

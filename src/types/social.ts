@@ -196,8 +196,31 @@ export interface Message {
   retry_count: number;
   attachments?: Attachment[];
   metadata: Record<string, unknown>;
+  /** Outbound only (ADR-122): the row is the outbox; a delivery pass finishes what the request couldn't. */
+  delivery?: MessageDelivery;
   created_at: string;
   updated_at: string;
+}
+
+export interface MessageDelivery {
+  attempts: number;
+  /** When a QUEUED message may be (re)tried. */
+  next_attempt_at?: string;
+  /** A SENDING claim expires here; an expired one is uncertain and never resent automatically. */
+  lease_until?: string;
+  /** A code (CHANNEL_RATE_LIMITED, DELIVERY_UNCERTAIN, ...), never provider text. */
+  last_error_code?: string;
+  dead_lettered_at?: string;
+  /** An agent reply's right to be sent, re-checked when it is actually sent (ADR-122 review): the turn's lease, or its own handoff. */
+  agent?: { lease?: { version: number; turnId: string }; handed_off?: boolean };
+  /** What `text` and `metadata.product_cards` don't carry, so a later pass can send the same thing. */
+  request?: {
+    templateName?: string;
+    templateParameters?: Record<string, string>;
+    mediaUrl?: string;
+    mediaType?: "IMAGE" | "VIDEO" | "AUDIO" | "FILE";
+    replyToMessageId?: string;
+  };
 }
 
 export interface CustomerIdentity {
