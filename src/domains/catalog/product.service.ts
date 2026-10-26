@@ -13,6 +13,13 @@ import { assertWithinLimit } from "@/lib/safety-gate";
 import { searchTokens } from "./search-synonyms";
 import { productRepository } from "./product.repository";
 
+/** A product's category is one of this shop's own categories (the customer agent lists products by it). */
+function assertOwnCategory(tenantId: string, categoryId: string | null | undefined): void {
+  if (categoryId && !db.getCategories(tenantId).some((c) => c.id === categoryId)) {
+    throw new BadRequestError("Unknown category.");
+  }
+}
+
 export class ProductService {
   /**
    * Slug generator with collision resolution
@@ -147,6 +154,7 @@ export class ProductService {
     if (!payload.sku || payload.sku.trim().length === 0) {
       throw new BadRequestError("Product SKU is required.");
     }
+    assertOwnCategory(context.tenant.id, payload.category_id);
     if (typeof payload.base_price !== "number" || payload.base_price < 0) {
       throw new BadRequestError("Valid base price in BDT is required.");
     }
@@ -238,6 +246,7 @@ export class ProductService {
 
     // Only whitelisted fields; unknown keys (tenant_id, id, variants, …) are a 400 (FX-12, audit H4).
     const patch = parseOrThrow(ProductPatchSchema, body);
+    assertOwnCategory(context.tenant.id, patch.category_id);
     const updates: Partial<Product> = {
       ...patch,
       category_id: patch.category_id === null ? undefined : patch.category_id,

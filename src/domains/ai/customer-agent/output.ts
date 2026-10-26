@@ -308,6 +308,16 @@ export function synthesizeGroundedResponse(toolResults: unknown[], script: Scrip
     const r = toolResults[i] as Record<string, any>;
     if (!r || typeof r !== "object") continue;
 
+    // The category overview: categories first, the customer picks one
+    if (r.view === "categories" && Array.isArray(r.categories_untrusted) && r.categories_untrusted.length > 0) {
+      const cats = (r.categories_untrusted as Array<{ name?: string; products?: number }>)
+        .filter((c) => typeof c.name === "string" && c.name.trim())
+        .map((c) => (script === "bangla" ? `${c.name} (${c.products}টি)` : `${c.name} (${c.products} ta)`))
+        .join("\n- ");
+      if (script === "bangla") return `আমাদের শপে এই ক্যাটাগরিগুলো আছে:\n- ${cats}\n\nকোন ক্যাটাগরির প্রোডাক্ট দেখতে চান?`;
+      return `Amader shop e ei category gulo ache:\n- ${cats}\n\nKon category r product dekhte chan?`;
+    }
+
     const list = Array.isArray(r.results) ? r.results : Array.isArray(r.products) ? r.products : null;
     if (list) {
       if (list.length > 0) {
