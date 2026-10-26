@@ -4,7 +4,8 @@
  * workflow .github/workflows/scheduled-jobs.yml (free; a Render Cron Job running this script works the same).
  *
  * Calls POST /api/v1/jobs/<job>/run for every job. The server runs a job at most once per its own time bucket
- * (monitoring every 5 min, courier-poll every 30 min, daily-report and low-stock hourly at the shop's local hour,
+ * (monitoring every 5 min, webhook-reconcile every 10 min, courier-poll every 30 min, webhook-canary hourly,
+ * daily-report and low-stock hourly at the shop's local hour,
  * rto-followup, retention-purge and knowledge-reindex daily, cod-reconciliation weekly); a call inside a bucket that
  * already ran returns the stored result, so calling them all every time is safe and cheap.
  *
@@ -24,6 +25,8 @@ const JOB_NAMES = [
   "retention-purge",
   "knowledge-reindex",
   "connection-health",
+  "webhook-reconcile",
+  "webhook-canary",
 ];
 
 const TIMEOUT_MS = 120_000;

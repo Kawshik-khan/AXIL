@@ -248,6 +248,12 @@ export const UnifiedInbox: React.FC<UnifiedInboxProps> = ({
                       {convo.tags && convo.tags.length > 0 && (
                         <span className={styles.tagBadge}>#{convo.tags[0]}</span>
                       )}
+
+                      {convo.automation_paused && Boolean(convo.awaiting_count) && (
+                        <span className={styles.awaitingBadge} title="AI paused: these customer messages wait for a person">
+                          {convo.awaiting_count} waiting
+                        </span>
+                      )}
                     </div>
 
                     {convo.unread_count > 0 && (

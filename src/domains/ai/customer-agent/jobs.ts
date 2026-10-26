@@ -7,6 +7,7 @@
  */
 import { db } from "@/infrastructure/db";
 import { isFeatureEnabled } from "@/lib/safety-gate";
+import { logger } from "@/lib/logger";
 import type { ChannelType, Conversation } from "@/types/social";
 
 export const AUTONOMOUS_FLAG = "customer_agent_autonomous";
@@ -31,7 +32,12 @@ function kickWorker(): void {
     db.outsideTenantReads(() => {
       m.startCustomerAgentWorker();
       setTimeout(() => {
-        void m.runAgentJobsOnce().catch(() => undefined);
+        // Logged like the timer's pass: this kick is usually the pass that runs the turn
+        void m.runAgentJobsOnce()
+          .then((s) => {
+            if (s.claimed) logger.info("customer_agent.worker_pass", { ...s, trigger: "kick" });
+          })
+          .catch((err: unknown) => logger.warn("customer_agent.worker_failed", { trigger: "kick", error: (err as Error).message }));
       }, DEBOUNCE_MS + 200);
     });
   }).catch(() => undefined);
@@ -65,7 +71,15 @@ export function enqueueCustomerTurn(conversation: Conversation, messageId: strin
   if (!channelAllowed(conversation.tenant_id, conversation.channel_type, conversation.channel_id)) return;
   if (agentMode(conversation.tenant_id) === "OFF") return;
   // A handoff or a staff reply pauses automation: from then on a person answers this chat
-  if (conversation.automation_paused) return;
+  if (conversation.automation_paused) {
+    logger.info("customer_agent.not_queued", { reason: "automation_paused", tenant_id: conversation.tenant_id, conversation_id: conversation.id });
+    // The message now waits for a person: the inbox shows how many, and a resume answers them (MR2)
+    db.updateConversation(conversation.tenant_id, conversation.id, {
+      awaiting_since: conversation.awaiting_since ?? new Date().toISOString(),
+      awaiting_count: (conversation.awaiting_count ?? 0) + 1,
+    });
+    return;
+  }
   const now = new Date();
   const notBefore = new Date(now.getTime() + DEBOUNCE_MS).toISOString();
   const existing = db.findAgentJob(conversation.tenant_id, conversation.id);

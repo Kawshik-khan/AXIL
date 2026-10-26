@@ -98,14 +98,20 @@ function accessLogEnabled(): boolean {
   return flag === "1" || process.env.NODE_ENV === "production";
 }
 
+/** A path segment kept as written: a lowercase route word. Anything else (ids, tokens, phone numbers) becomes `:id`. */
+const ROUTE_WORD = /^[a-z][a-z-]{0,29}$/;
+
 function logRequest(request: unknown, status: number, startedAt: number): void {
   if (!accessLogEnabled() || !(request instanceof Request)) return;
   const path = new URL(request.url).pathname;
   if (path.startsWith("/health")) return;
+  const segments = path.split("/");
   logger.info("http.request", {
     method: request.method,
     // split("/") starts with an empty string, so four pieces are "", "api", "v1" and the resource
-    path: path.split("/").slice(0, 4).join("/"),
+    path: segments.slice(0, 4).join("/"),
+    // The whole route with ids masked, so /connectors/:id/webhook and /connectors/:id/actions/:id tell apart
+    route: segments.map((s, i) => (i < 3 || s === "" || ROUTE_WORD.test(s) ? s : ":id")).join("/"),
     status,
     duration_ms: Date.now() - startedAt,
   });

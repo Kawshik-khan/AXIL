@@ -5,6 +5,7 @@ import { ChannelService } from "@/domains/social/channels/channel.service";
 import { WebhookIngressService } from "@/domains/social/webhooks/webhook-ingress.service";
 import { TelegramAdapter, TELEGRAM_SECRET_HEADER, telegramCall } from "@/domains/social/channels/adapters/telegram.adapter";
 import { BadRequestError, AuthenticationError, NotFoundError } from "@/lib/errors";
+import { apiError } from "@/lib/api-response";
 import { logger } from "@/lib/logger";
 import { withStore } from "@/lib/store-unit";
 import crypto from "crypto";
@@ -23,25 +24,19 @@ async function handleGET() {
   return NextResponse.json({ status: "OK", message: "Connector webhook endpoint is reachable." });
 }
 
-async function handlePOST(
-  request: Request,
-  { params: rawParams }: { params: Promise<{ id: string }> }
-) {
-  const { id } = await rawParams;
-
+async function ingest(request: Request, id: string) {
   // 1. Resolve the connector by its public id. The row's tenant_id is authoritative; no tenant comes from the request.
-  const connector = db.findConnectorForIngress(id);
-  if (!connector) {
-    throw new NotFoundError(`Connector '${id}' not found.`);
-  }
-  if (connector.enabled === false) {
-    throw new BadRequestError("This connector is disabled.");
-  }
-
   // 2. Find the channel this connector feeds (D3: the channel references the connector).
-  const channel = db.getConnectedChannels(connector.tenant_id).find((c) => c.connector_id === connector.id);
-  if (!channel) {
-    throw new BadRequestError(`No channel is connected to connector '${id}'.`);
+  // Before the signature is checked, an unknown, disabled or unconnected connector all get the same 404: an
+  // unauthenticated caller learns nothing about its state. The reason goes to the log only.
+  const connector = db.findConnectorForIngress(id);
+  const channel = connector && connector.enabled !== false
+    ? db.getConnectedChannels(connector.tenant_id).find((c) => c.connector_id === connector.id)
+    : undefined;
+  if (!connector || !channel) {
+    const reason = !connector ? "unknown" : connector.enabled === false ? "disabled" : "no_channel";
+    logger.warn("connector_webhook.unroutable", { connector_id: id, reason });
+    throw new NotFoundError("Connector", id);
   }
 
   // 3. Verify the provider's signature. Each provider has its own mechanism.
@@ -99,6 +94,19 @@ async function handlePOST(
   }
 
   return NextResponse.json({ status: "EVENT_RECEIVED", ...result });
+}
+
+async function handlePOST(
+  request: Request,
+  { params: rawParams }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await rawParams;
+  try {
+    return await ingest(request, id);
+  } catch (err) {
+    // An unknown connector or a bad signature is the caller's error (4xx), not a crash: a 500 makes Telegram retry
+    return apiError(err);
+  }
 }
 
 export const GET = withStore("GET", handleGET);

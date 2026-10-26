@@ -120,7 +120,8 @@ export class OutboundMessageService {
       // A handed-off chat keeps waiting for a person, even after the bot's "a team member will reply" message
       const agentAfterHandoff = Boolean(options.asAgent && conversation.automation_paused);
       db.updateConversation(context.tenant.id, conversationId, {
-        ...(options.asAgent ? (agentAfterHandoff ? {} : { mode: "AI" as const }) : { automation_paused: true, mode: "HUMAN" as const }),
+        // A staff reply answers whatever was waiting for a person
+        ...(options.asAgent ? (agentAfterHandoff ? {} : { mode: "AI" as const }) : { automation_paused: true, mode: "HUMAN" as const, awaiting_since: undefined, awaiting_count: 0 }),
         status: !agentAfterHandoff && conversation.status === "WAITING_AGENT" ? "WAITING_CUSTOMER" : conversation.status,
         last_outbound_at: now,
         last_message_at: now,
