@@ -333,13 +333,14 @@ export async function runCustomerTurn(pr: CustomerAgentPrincipal, opts: { budget
     if (guards.includes("prompt_injection_blocked")) guardrailTriggers.push("PROMPT_INJECTION_DETECTED");
     if (guards.includes("budget_hard_cap_exceeded")) guardrailTriggers.push("BUDGET_CAP_EXCEEDED");
 
-    // Dynamic confidence evaluation
-    const isCatalogGrounded = !guardrailTriggers.includes("UNGROUNDED_PRICE_DETECTED");
+    // Dynamic confidence evaluation. The reply is judged after the guards: an ungrounded amount was already removed
+    // (traced as UNGROUNDED_PRICE_DETECTED), and a refused or failed tool call the model answered around isn't a
+    // failed turn. Neither may pause the chat on its own (MR2; before, either one alone dropped the score under 75).
     const confEval = ConfidenceEngine.evaluate({
       customerMessage: current,
       agentReply: reply,
-      isCatalogGrounded,
-      hasToolExecutionError: toolCalls.some((tc) => !tc.ok),
+      isCatalogGrounded: true,
+      hasToolExecutionError: status !== "COMPLETED" && toolCalls.some((tc) => !tc.ok),
     });
 
     // A guard that rewrote the reply (stripped amount, blocked claim, removed number) already protected the customer:

@@ -73,6 +73,11 @@ export function enqueueCustomerTurn(conversation: Conversation, messageId: strin
   // A handoff or a staff reply pauses automation: from then on a person answers this chat
   if (conversation.automation_paused) {
     logger.info("customer_agent.not_queued", { reason: "automation_paused", tenant_id: conversation.tenant_id, conversation_id: conversation.id });
+    // The message now waits for a person: the inbox shows how many, and a resume answers them (MR2)
+    db.updateConversation(conversation.tenant_id, conversation.id, {
+      awaiting_since: conversation.awaiting_since ?? new Date().toISOString(),
+      awaiting_count: (conversation.awaiting_count ?? 0) + 1,
+    });
     return;
   }
   const now = new Date();

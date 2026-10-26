@@ -1,6 +1,6 @@
 # Messaging reliability: no customer message goes unanswered silently
 
-**Status:** plan only (MR0 shipped in this session, uncommitted) · **Date:** 2026-10-26 · **Owner:** Kawshik ·
+**Status:** MR0–MR2 built on `codex/AIAgentSkills` (c64f283, 1f10449, MR2), not deployed; MR3–MR5 planned · **Date:** 2026-10-26 · **Owner:** Kawshik ·
 **Evidence:** a live Telegram auto-reply test on Render `AXIL` (logs 00:30–01:31 UTC, `agent_jobs` rows on Neon `CommercesOS`)
 and a read of the webhook route, ingress, `customer-agent/{jobs,worker,runtime}.ts`, `outbound-message.service.ts` and HITL.
 Related: `docs/telegram-bot-messaging-plan.md` (T0–T5, §9), ADR-112 (customer agent jobs), ADR-109 (store unit of work).
@@ -57,7 +57,7 @@ Non-goals: new channels, a new LLM provider, rewriting the agent prompt.
 Each phase ships on its own branch, behind a flag where it changes behaviour, and ends with `npm run type-check`, `npm test`,
 `npm run test:pg` (store shape changes) and a live Telegram check on Render.
 
-### MR0. Stop the bleeding (done in this session, uncommitted)
+### MR0. Stop the bleeding (commit c64f283)
 - Webhook route returns `apiError` (404 unknown connector, 401 bad secret) instead of an uncaught 500. `tests/social-tests.ts`.
 - A turn's own HITL escalation counts as its handoff (`escalate()` helper in `runtime.ts`): its reply goes out, the chat stays
   paused; a chat already paused by staff stays refused; one ticket per turn (was two on injection/budget).
@@ -92,6 +92,10 @@ Each phase ships on its own branch, behind a flag where it changes behaviour, an
    Files: `ConversationThread.tsx`, `SocialInbox`, CSS module (tokens only).
 4. **Guard rewrites don't escalate (B6):** `isCatalogGrounded` is true when the amount guard already removed the ungrounded
    figure; tool errors escalate only when the turn has no usable reply. Tune with `npm run test:eval` before merging.
+- *Built 2026-10-26:* `awaiting_since`/`awaiting_count` on the conversation (set in `enqueueCustomerTurn`'s paused
+  branch, cleared by a staff send and by resume); `ConversationService.catchUpAfterResume`; banner moved to CSS module classes
+  (`pausedBanner`, tokens) with `position: sticky`; `awaitingBadge` in `UnifiedInbox`; `runtime.ts` passes
+  `isCatalogGrounded: true` and counts tool errors only for a turn that didn't complete.
 - **Tests:** pause → inbound → resume → exactly one turn, one reply; a stripped amount no longer pauses the chat; eval gate green.
 - **Acceptance:** live test of today's sequence (message during pause, then resume) gets a reply.
 
@@ -157,7 +161,7 @@ Each phase ships on its own branch, behind a flag where it changes behaviour, an
 
 ## 8. What I need from you
 
-1. Go-ahead to commit MR0 (branch `codex/AIAgentSkills` has many unrelated uncommitted changes; I'd commit only the 5 MR0 files).
+1. ~~Go-ahead to commit MR0~~: done (only the MR files were staged; unrelated changes on the branch stay uncommitted).
 2. Silent-drop window `N` (default 5 min) and the catch-up window (default 24 h).
 3. A platform-owned tenant and a second Telegram bot for the canary (MR3.4).
 4. Render plan upgrade decision for MR5.

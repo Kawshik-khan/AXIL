@@ -1048,6 +1048,58 @@
   border-radius: 4px;
 }
 
+/* Customer messages waiting for a person while the AI is paused (MR2) */
+.awaitingBadge {
+  font-size: 0.625rem;
+  font-weight: 700;
+  color: var(--color-accent-amber);
+  background: var(--color-warning-bg);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+/* AI paused banner: sticky at the top of the scrolling message stream so Resume stays reachable (MR2) */
+.pausedBanner {
+  position: sticky;
+  top: -20px; /* the stream's top padding: the banner sits flush with the stream's top edge */
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  /* the tint over an opaque surface: messages scrolling under the sticky banner don't show through */
+  background: linear-gradient(var(--color-warning-bg), var(--color-warning-bg)), var(--color-surface);
+  border: 1px solid var(--color-warning);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  font-size: 0.8125rem;
+  color: var(--color-accent-amber);
+}
+
+.pausedBannerText {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pausedBannerButton {
+  background: var(--color-primary);
+  color: #121316; /* dark text on lime, like the module's other primary buttons */
+  border: none;
+  font-weight: 600;
+  font-size: 0.75rem;
+  padding: 4px 12px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.pausedBannerButton:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
 /* Header Context Toggle Button */
 .contextToggleBtn {
   display: flex;

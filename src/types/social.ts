@@ -85,6 +85,10 @@ export interface Conversation {
   priority: ConversationPriority;
   mode: ConversationMode;
   automation_paused: boolean;
+  /** First customer message the agent skipped because a person has the chat; cleared by a staff reply or a resume (MR2). */
+  awaiting_since?: string;
+  /** Customer messages since `awaiting_since` that nobody has answered yet. */
+  awaiting_count?: number;
   assigned_user_id?: string;
   assigned_team_id?: "SALES" | "SUPPORT" | "ORDERS" | "RETURNS" | "FINANCE" | "GENERAL";
   last_message_at: string;

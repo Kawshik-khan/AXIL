@@ -10,6 +10,7 @@ import { ProductService } from "@/domains/catalog/product.service";
 import { ChannelService } from "@/domains/social/channels/channel.service";
 import { WebhookIngressService } from "@/domains/social/webhooks/webhook-ingress.service";
 import { OutboundMessageService } from "@/domains/social/outbound/outbound-message.service";
+import { ConversationService } from "@/domains/social/conversations/conversation.service";
 import { PERMISSIONS } from "@/lib/permissions";
 import { setOutboundTransportForTesting, type OutboundResponse } from "@/lib/outbound-http";
 import type { RequestContext } from "@/lib/context";
@@ -898,6 +899,65 @@ async function main() {
     setMode(false, true);
     assert.strictEqual((await findSilentDrops([tenant])).silent, 0, "shadow mode never sends, so nothing is a drop");
     setMode(true, false);
+  });
+
+  await runTest("messages during a pause are counted, and resuming answers the latest one once (MR2)", async () => {
+    setMode(true, false);
+    const convo = await inbound("rf_catchup", "hello");
+    makeDue(convo.id);
+    scripted.steps = [say("Ji bolun.")];
+    await runAgentJobsOnce();
+    db.updateConversation(tenantId, convo.id, { automation_paused: true, mode: "HUMAN" });
+    const jobBefore = db.findAgentJob(tenantId, convo.id)!;
+    await inbound("rf_catchup", "black t-shirt ache?");
+    await inbound("rf_catchup", "L size?");
+    assert.strictEqual(conv("rf_catchup").awaiting_count, 2);
+    assert.ok(conv("rf_catchup").awaiting_since);
+    assert.deepStrictEqual(db.findAgentJob(tenantId, convo.id), jobBefore, "no turn while a person has the chat");
+
+    await ConversationService.setAutomationPaused(ownerCtx, convo.id, false);
+    const after = conv("rf_catchup");
+    assert.strictEqual(after.awaiting_count, 0);
+    assert.strictEqual(after.awaiting_since, undefined);
+    const job = db.findAgentJob(tenantId, convo.id)!;
+    assert.strictEqual(job.status, "PENDING", "the resume queued a catch-up turn");
+    const lastCustomer = db.getMessages(tenantId, convo.id, { limit: 50 }).messages.filter((m) => m.sender_type === "CUSTOMER").pop()!;
+    assert.strictEqual(job.last_message_id, lastCustomer.id);
+    const sentBefore = outbound(convo.id).length;
+    makeDue(convo.id);
+    scripted.steps = [say("Ji, L size ache.")];
+    await runAgentJobsOnce();
+    scripted.steps = [];
+    assert.strictEqual(outbound(convo.id).length - sentBefore, 1, "one reply for what waited");
+
+    // Resuming again with nothing new from the customer queues nothing
+    db.updateConversation(tenantId, convo.id, { automation_paused: true, mode: "HUMAN" });
+    const settled = db.findAgentJob(tenantId, convo.id)!;
+    await ConversationService.setAutomationPaused(ownerCtx, convo.id, false);
+    assert.deepStrictEqual(db.findAgentJob(tenantId, convo.id), settled);
+  });
+
+  await runTest("a staff reply clears the waiting count (MR2)", async () => {
+    setMode(true, false);
+    const convo = await inbound("rf_staff_clears", "hello");
+    db.updateConversation(tenantId, convo.id, { automation_paused: true, mode: "HUMAN" });
+    await inbound("rf_staff_clears", "anyone?");
+    assert.strictEqual(conv("rf_staff_clears").awaiting_count, 1);
+    await OutboundMessageService.sendMessage(ownerCtx, convo.id, { text: "Ji, bolun" });
+    assert.strictEqual(conv("rf_staff_clears").awaiting_count, 0);
+  });
+
+  await runTest("an amount the guard removed doesn't pause the chat (MR2)", async () => {
+    setMode(true, false);
+    const convo = await inbound("rf_stripped", "black t-shirt er dam koto?");
+    makeDue(convo.id);
+    scripted.steps = [say("Dam 999 taka."), say("Dam 999 taka.")];
+    await runAgentJobsOnce();
+    scripted.steps = [];
+    const sent = outbound(convo.id).pop()!;
+    assert.ok(!sent.text.includes("999"), `the ungrounded amount is gone: ${sent.text}`);
+    assert.strictEqual(conv("rf_stripped").automation_paused, false, "the agent keeps the chat");
+    assert.strictEqual(db.findAgentHitlEscalationByConversation(tenantId, convo.id), undefined);
   });
 
   await runTest("a channel the workspace's AI policy doesn't allow gets no turn", async () => {
