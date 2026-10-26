@@ -308,6 +308,16 @@ export function synthesizeGroundedResponse(toolResults: unknown[], script: Scrip
     const r = toolResults[i] as Record<string, any>;
     if (!r || typeof r !== "object") continue;
 
+    // The category overview: categories first, the customer picks one
+    if (r.view === "categories" && Array.isArray(r.categories_untrusted) && r.categories_untrusted.length > 0) {
+      const cats = (r.categories_untrusted as Array<{ name?: string; products?: number }>)
+        .filter((c) => typeof c.name === "string" && c.name.trim())
+        .map((c) => (script === "bangla" ? `${c.name} (${c.products}টি)` : `${c.name} (${c.products} ta)`))
+        .join("\n- ");
+      if (script === "bangla") return `আমাদের শপে এই ক্যাটাগরিগুলো আছে:\n- ${cats}\n\nকোন ক্যাটাগরির প্রোডাক্ট দেখতে চান?`;
+      return `Amader shop e ei category gulo ache:\n- ${cats}\n\nKon category r product dekhte chan?`;
+    }
+
     const list = Array.isArray(r.results) ? r.results : Array.isArray(r.products) ? r.products : null;
     if (list) {
       if (list.length > 0) {
@@ -328,10 +338,12 @@ export function synthesizeGroundedResponse(toolResults: unknown[], script: Scrip
           return typeof price === "number" ? `${name} (৳${price.toLocaleString("en-US")})` : name;
         }).join("\n- ");
 
+        // A page of the catalog is never presented as the whole shop
+        const more = typeof r.more_count === "number" && r.more_count > 0 ? r.more_count : 0;
         if (script === "bangla") {
-          return `জি, আমাদের কাছে এই প্রোডাক্টগুলো স্টকে আছে:\n- ${lines}\n\nআপনার কোনটি পছন্দ?`;
+          return `জি, আমাদের কাছে এই প্রোডাক্টগুলো স্টকে আছে:\n- ${lines}\n\n${more ? `আরো ${more}টি প্রোডাক্ট আছে, দেখতে চাইলে বলুন। ` : ""}আপনার কোনটি পছন্দ?`;
         }
-        return `Ji, amader kache ei product gulo stock e ache:\n- ${lines}\n\nApnar kon ti pochondo?`;
+        return `Ji, amader kache ei product gulo stock e ache:\n- ${lines}\n\n${more ? `Aro ${more} ta product ache, dekhte chaile bolun. ` : ""}Apnar kon ti pochondo?`;
       }
 
       // Explicitly returned empty results: offer the shop's suggestions when the search returned some

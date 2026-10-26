@@ -23,7 +23,7 @@ import { EmptyState, LoadingState } from "@/components/ui/States/States";
 import { BulkImportModal } from "@/components/catalog/BulkImportModal";
 import { ProductImageUploader } from "@/components/catalog/ProductImageUploader";
 import { ProductPhotosModal } from "@/components/catalog/ProductPhotosModal";
-import { Product } from "@/types/commerce";
+import { Category, Product } from "@/types/commerce";
 import { useDebounce } from "@/hooks/useDebounce";
 
 export default function ProductsPage() {
@@ -45,6 +45,8 @@ export default function ProductsPage() {
   const [compareAtPrice, setCompareAtPrice] = useState("");
   const [initialStock, setInitialStock] = useState("10");
   const [description, setDescription] = useState("");
+  const [categoryName, setCategoryName] = useState("");
+  const [categories, setCategories] = useState<Category[]>([]);
   const [images, setImages] = useState<string[]>([]);
   const [imagesBusy, setImagesBusy] = useState(false);
   const [photosProduct, setPhotosProduct] = useState<Product | null>(null);
@@ -64,9 +66,39 @@ export default function ProductsPage() {
     }
   };
 
+  const loadCategories = async () => {
+    try {
+      const res = await fetch("/api/v1/categories");
+      if (res.ok) {
+        const json = await res.json();
+        setCategories((json.data?.categories || []).filter((c: Category) => c.status !== "ARCHIVED"));
+      }
+    } catch {
+      // The form still works without the list; a typed category is created on save
+    }
+  };
+
   useEffect(() => {
     loadProducts();
+    loadCategories();
   }, []);
+
+  /** The chosen category's id: an existing one by name, or a new one created now. Customers browse the shop by category. */
+  const resolveCategoryId = async (): Promise<string | undefined> => {
+    const wanted = categoryName.trim();
+    if (!wanted) return undefined;
+    const existing = categories.find((c) => c.name.toLowerCase() === wanted.toLowerCase());
+    if (existing) return existing.id;
+    const res = await fetch("/api/v1/categories", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: wanted }),
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error?.message || "Failed to create the category");
+    await loadCategories();
+    return json.data?.category?.id;
+  };
 
   const handleCreateProduct = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -90,6 +122,7 @@ export default function ProductsPage() {
 
     try {
       setIsSubmitting(true);
+      const categoryId = await resolveCategoryId();
       const res = await fetch("/api/v1/products", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -100,6 +133,7 @@ export default function ProductsPage() {
           compare_at_price: compareAtPrice ? parseFloat(compareAtPrice) : undefined,
           initial_stock: parseInt(initialStock, 10) || 0,
           description: description.trim(),
+          category_id: categoryId,
           images,
           status: "ACTIVE",
         }),
@@ -117,6 +151,7 @@ export default function ProductsPage() {
       setBasePrice("");
       setCompareAtPrice("");
       setDescription("");
+      setCategoryName("");
       setInitialStock("10");
       setImages([]);
       await loadProducts();
@@ -406,6 +441,21 @@ export default function ProductsPage() {
               onChange={(e) => setCompareAtPrice(e.target.value)}
             />
           </div>
+
+          <Input
+            label="Category"
+            placeholder="e.g. Panjabi, Saree, Shoes"
+            list="product-categories"
+            value={categoryName}
+            onChange={(e) => setCategoryName(e.target.value)}
+            hint="Pick one or type a new one. Customers browse your shop by category in chat."
+            maxLength={80}
+          />
+          <datalist id="product-categories">
+            {categories.map((c) => (
+              <option key={c.id} value={c.name} />
+            ))}
+          </datalist>
 
           <ProductImageUploader value={images} onChange={setImages} onBusyChange={setImagesBusy} disabled={isSubmitting} />
 

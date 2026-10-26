@@ -48,6 +48,9 @@ function variantStock(tenantId: string, variantId: string): number {
 
 const stockStatus = (q: number) => (q <= 0 ? "out_of_stock" : q <= 3 ? "low_stock" : "in_stock");
 
+/** Labels that only mean "the product's one variant": shown to customers they read as a size ("Panjabi – Regular"). */
+const GENERIC_VARIANT_LABEL = /^(?:regular|default(?: title)?|standard)$/i;
+
 function productView(tenantId: string, p: Product) {
   const variants = p.variants && p.variants.length > 0 ? p.variants : db.getProductVariants(tenantId, p.id);
   return {
@@ -55,9 +58,10 @@ function productView(tenantId: string, p: Product) {
     name: p.name,
     variants: variants.map((v) => {
       const q = variantStock(tenantId, v.id);
+      const label = v.attributes?.size ?? v.title;
       return {
         variant_id: v.id,
-        size: v.attributes?.size ?? v.title,
+        size: variants.length === 1 && typeof label === "string" && GENERIC_VARIANT_LABEL.test(label.trim()) ? undefined : label,
         price_bdt: v.price || p.base_price,
         stock_status: stockStatus(q),
         available_qty: Math.min(q, 10), // exact stock above 10 isn't disclosed
@@ -107,7 +111,9 @@ function confirmationSummary(q: CustomerQuote, details: { customer_name: string;
 // ---------------------------------------------------------------------------------------------------------------------
 // Schemas (strict: an argument the tool doesn't know, such as tenant_id or customer_id, is refused)
 // ---------------------------------------------------------------------------------------------------------------------
-const SearchArgs = z.object({ query: z.string().min(1).max(100), max_price_bdt: z.number().positive().optional() }).strict();
+const SearchArgs = z
+  .object({ query: z.string().min(1).max(100), max_price_bdt: z.number().positive().optional(), category: z.string().min(1).max(80).optional() })
+  .strict();
 const ProductArgs = z.object({ product_id: z.string().min(1).max(80) }).strict();
 const DistrictArgs = z.object({ district: z.string().min(2).max(40) }).strict();
 const QuoteArgs = z
@@ -156,14 +162,151 @@ const HandoffArgs = z
 // ---------------------------------------------------------------------------------------------------------------------
 /** Words of a question about the whole shop, anywhere in the query. Used only when no product name matched. */
 const GENERAL_CATALOG_WORDS =
-  /\b(?:all|any|anything|catalog|catalogue|collection|collections|product|products|item|items|shop|sell|selling|available|popular|best)\b|ki ki|সব|প্রোডাক্ট|কালেকশন/i;
+  /\b(?:all|any|anything|catalog|catalogue|collection|collections|product|products|item|items|shop|sell|selling|available|popular|best|more|other|others|aro|baki|onno)\b|ki ki|সব|প্রোডাক্ট|কালেকশন|আরো|আর কি|অন্য/i;
+
+/** Products per catalog page, and how long a chat remembers which pages it has seen. */
+const CATALOG_PAGE_SIZE = 5;
+const CATALOG_MEMORY_MS = 6 * 60 * 60_000;
+type CatalogMemory = { ids: string[]; at: string };
+/** From this many products, and with two or more categories in use, "what do you sell?" shows the categories first. */
+const CATEGORY_FIRST_MIN_PRODUCTS = 9;
+const CATEGORY_PREVIEW_SIZE = 3;
+/** Products without a category (or with an archived one) are listed under this name. */
+const OTHERS_CATEGORY = "Others";
+type CategoryGroup = { id?: string; name: string; slug: string; products: Product[] };
+
+/** What this chat has seen of the catalog, per list ("all", "cat:<slug>", "overview"); stale entries count as unseen. */
+function catalogMemory(pr: CustomerAgentPrincipal, key: string): CatalogMemory | undefined {
+  const pages = db.findConversationById(pr.tenantId, pr.conversationId)?.metadata?.catalog_pages as Record<string, CatalogMemory> | undefined;
+  const m = pages?.[key];
+  return m && Date.now() - Date.parse(m.at) < CATALOG_MEMORY_MS ? m : undefined;
+}
+
+/** Best effort: a chat that can't remember shows page one again, never fails the answer. */
+async function rememberCatalog(pr: CustomerAgentPrincipal, key: string, ids: string[]): Promise<void> {
+  const remember = () => {
+    const current = db.findConversationById(pr.tenantId, pr.conversationId);
+    if (!current) return true;
+    const pages = (current.metadata?.catalog_pages as Record<string, CatalogMemory> | undefined) ?? {};
+    db.updateConversation(pr.tenantId, current.id, { metadata: { ...current.metadata, catalog_pages: { ...pages, [key]: { ids, at: new Date().toISOString() } } } });
+    return true;
+  };
+  try {
+    if (db.isInUnit()) remember();
+    else await db.unit(async () => remember(), () => true);
+  } catch {
+    /* ignore */
+  }
+}
+
+const normalizeName = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+
+/** The shop's categories that have products, from the merchant's own categories; never guessed from product names. */
+function categoryGroups(tenantId: string, products: Product[]): CategoryGroup[] {
+  const groups: CategoryGroup[] = db
+    .getCategories(tenantId)
+    .filter((c) => c.status !== "ARCHIVED")
+    .map((c) => ({ id: c.id, name: c.name, slug: c.slug, products: products.filter((p) => p.category_id === c.id) }))
+    .filter((g) => g.products.length > 0);
+  const grouped = new Set(groups.map((g) => g.id));
+  const rest = products.filter((p) => !p.category_id || !grouped.has(p.category_id));
+  return rest.length > 0 && groups.length > 0 ? [...groups, { name: OTHERS_CATEGORY, slug: "others", products: rest }] : groups;
+}
+
+/** The category the customer named: its exact name or slug, else (unless exactOnly) the one category whose name contains it. */
+function findCategory(groups: CategoryGroup[], asked: string, exactOnly = false): CategoryGroup | undefined {
+  const n = normalizeName(asked);
+  if (!n) return undefined;
+  if (/^(?:other|others|onnanno|onno|অন্যান্য|অন্য)$/.test(n)) return groups.find((g) => !g.id);
+  const exact = groups.find((g) => normalizeName(g.name) === n || normalizeName(g.slug) === n);
+  if (exact) return exact;
+  if (exactOnly || n.length < 3) return undefined;
+  const partial = groups.filter((g) => g.id && normalizeName(g.name).includes(n));
+  return partial.length === 1 ? partial[0] : undefined;
+}
+
+/** A category name as merchant text in a tool result: one line, no quotes, capped. Never part of a note. */
+// eslint-disable-next-line no-control-regex -- control characters are what is being removed
+const cleanCategoryName = (name: string) => name.replace(/[\u0000-\u001f\u007f\u2028\u2029"`]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 60);
+const categoryList = (groups: CategoryGroup[]) => groups.map((g) => ({ name: cleanCategoryName(g.name), products: g.products.length }));
+
+/**
+ * The shop's catalog a page at a time, for "what do you sell?" and "what else?" (2026-10-26 live: the same first five came
+ * back on every ask, and the agent called them the whole shop). In-stock products first, then by age, so pages are
+ * stable. The chat remembers what it has seen, so the next ask gets the next page without the model tracking pages; the
+ * result says how many products there are and how many are left, so the agent never presents a page as the whole shop.
+ */
+async function catalogPage(
+  pr: CustomerAgentPrincipal,
+  active: Product[],
+  maxPrice?: number,
+  opts: { key?: string; label?: boolean; pageSize?: number; categories?: CategoryGroup[] } = {}
+): Promise<{ page: Product[]; facts: ToolResult }> {
+  const key = opts.key ?? "all";
+  const where = opts.label ? " in this category" : "";
+  const inStock = (p: Product) => (p.variants?.length ? p.variants : db.getProductVariants(pr.tenantId, p.id)).some((v) => variantStock(pr.tenantId, v.id) > 0);
+  const ordered = active
+    .filter((p) => !maxPrice || p.base_price <= maxPrice)
+    .map((p) => ({ p, stocked: inStock(p) }))
+    .sort((a, b) => Number(b.stocked) - Number(a.stocked) || a.p.created_at.localeCompare(b.p.created_at) || a.p.id.localeCompare(b.p.id))
+    .map((x) => x.p);
+
+  let seen = new Set(catalogMemory(pr, key)?.ids ?? []);
+  let remaining = ordered.filter((p) => !seen.has(p.id));
+  const restarted = remaining.length === 0 && ordered.length > 0;
+  if (restarted) {
+    seen = new Set();
+    remaining = ordered;
+  }
+  const page = remaining.slice(0, opts.pageSize ?? CATALOG_PAGE_SIZE);
+  const shown = [...seen, ...page.map((p) => p.id)].filter((id) => ordered.some((p) => p.id === id));
+  await rememberCatalog(pr, key, shown);
+
+  const total = ordered.length;
+  const left = Math.max(0, total - shown.length);
+  const categories = opts.categories && opts.categories.length >= 2 ? categoryList(opts.categories) : [];
+  const inline = !opts.label && categories.length ? " or to pick a category" : "";
+  const tail = opts.label && categories.length ? " The customer can also pick another category." : "";
+  const note = restarted
+    ? `The customer has already seen all ${total} products${where}; these are the first again. Say they have seen everything${where} and ask what they are looking for.${tail}`
+    : left > 0
+      ? `Products ${shown.length - page.length + 1}-${shown.length} of ${total}${where}: NOT the whole ${opts.label ? "category" : "shop"}. Name them with prices, then say ${left} more products are available${where} and offer to show more${inline}.${tail} Never say these are all the products.`
+      : `The last ${page.length} of ${total} products${where}: the customer has now seen ${opts.label ? "every product in this category." : "the whole shop."}${tail}${!opts.label && categories.length ? " They can also pick a category." : ""}`;
+  return {
+    page,
+    facts: { total_products: total, shown_so_far: shown.length, has_more: left > 0, more_count: left, ...(categories.length ? { categories_untrusted: categories } : {}), note },
+  };
+}
+
+/**
+ * "What do you sell?": a bigger shop with its products in categories answers with the categories first (names, product
+ * counts, a few examples), once per chat; the customer picks one and sees its products. A small shop, or one without
+ * categories, gets the paged list, as does the next "what else?" after the overview.
+ */
+async function browseShop(pr: CustomerAgentPrincipal, products: Product[], groups: CategoryGroup[]): Promise<ToolResult> {
+  const useCategories = products.length >= CATEGORY_FIRST_MIN_PRODUCTS && groups.filter((g) => g.id).length >= 2;
+  if (useCategories && !catalogMemory(pr, "overview")) {
+    await rememberCatalog(pr, "overview", []);
+    const { page, facts } = await catalogPage(pr, products, undefined, { pageSize: CATEGORY_PREVIEW_SIZE });
+    return {
+      view: "categories",
+      categories_untrusted: categoryList(groups),
+      results: page.map((p) => productView(pr.tenantId, p)),
+      total_products: facts.total_products,
+      has_more: facts.has_more,
+      more_count: facts.more_count,
+      note: `This shop has ${products.length} products in ${groups.length} categories. List the categories with their product counts and ask which one the customer wants to see; you may name the ${page.length} products here as examples. When the customer picks a category, call search_products with "category" set to its name. Never say these products are the whole shop.`,
+    };
+  }
+  const { page, facts } = await catalogPage(pr, products, undefined, { categories: useCategories ? groups : undefined });
+  return { results: page.map((p) => productView(pr.tenantId, p)), ...facts };
+}
 
 async function searchProducts(pr: CustomerAgentPrincipal, a: z.infer<typeof SearchArgs>): Promise<ToolResult> {
   const isGeneralCatalogQuery =
     !a.query ||
     /^(?:all|catalog|product|products|collection|shop|ki ki|সব|প্রোডাক্ট|কালেকশন)/i.test(a.query.trim());
 
-  const query = searchTokens(a.query);
   let allActive = db.getAllProducts(pr.tenantId).filter((p) => p.status === "ACTIVE");
 
   // When products table is unhydrated from memory, fetch active products via repository
@@ -175,11 +318,20 @@ async function searchProducts(pr: CustomerAgentPrincipal, a: z.infer<typeof Sear
     allActive = cursorRes.items;
   }
 
-  if (isGeneralCatalogQuery && allActive.length > 0) {
-    const results = allActive.slice(0, 5).map((p) => productView(pr.tenantId, p));
-    return { results, note: "Showing featured products available in the shop." };
+  const priced = allActive.filter((p) => !a.max_price_bdt || p.base_price <= a.max_price_bdt);
+  const groups = categoryGroups(pr.tenantId, priced);
+  // A category the customer picked (or named exactly): that category's products, a page at a time
+  const picked = findCategory(groups, a.category ?? "") ?? (isGeneralCatalogQuery ? undefined : findCategory(groups, a.query, true));
+  if (picked) {
+    const { page, facts } = await catalogPage(pr, picked.products, undefined, { key: `cat:${picked.id ?? "others"}`, label: true, categories: groups });
+    return { category_untrusted: cleanCategoryName(picked.name), results: page.map((p) => productView(pr.tenantId, p)), ...facts };
   }
+  // A category this shop doesn't have is searched as words ("panjabi"), never invented
+  const asked = a.category && isGeneralCatalogQuery ? a.category : a.query;
 
+  if (isGeneralCatalogQuery && !a.category && priced.length > 0) return browseShop(pr, priced, groups);
+
+  const query = searchTokens(asked);
   const scored = allActive
     .map((p) => {
       const words = new Set(searchTokens(`${p.name} ${p.sku} ${p.short_description ?? ""}`));
@@ -191,17 +343,19 @@ async function searchProducts(pr: CustomerAgentPrincipal, a: z.infer<typeof Sear
   if (results.length) return { results };
 
   // "What products do you sell?" names no product: show the shop instead of saying it's out of stock (2026-10-25 smoke)
-  const featured = allActive.filter((p) => !a.max_price_bdt || p.base_price <= a.max_price_bdt);
-  if (GENERAL_CATALOG_WORDS.test(a.query) && featured.length > 0) {
-    return { results: featured.slice(0, 5).map((p) => productView(pr.tenantId, p)), note: "Showing featured products available in the shop." };
-  }
+  const featured = priced;
+  if (GENERAL_CATALOG_WORDS.test(asked) && featured.length > 0) return browseShop(pr, featured, groups);
   // Nothing matches (the model may search a guessed word, e.g. "apparel"): results stay empty, so the asked-for item is
   // never claimed, but the customer is offered what the shop does sell instead of a dead end (2026-10-26 smoke)
   if (featured.length > 0) {
+    const { page, facts } = await catalogPage(pr, featured);
     return {
       results: [],
-      suggestions: featured.slice(0, 5).map((p) => productView(pr.tenantId, p)),
-      note: "No product matches this search, so don't say it is available. The suggestions are products this shop does sell: offer them (name and price) and ask which the customer likes; do NOT hand off to human.",
+      suggestions: page.map((p) => productView(pr.tenantId, p)),
+      total_products: facts.total_products,
+      has_more: facts.has_more,
+      more_count: facts.more_count,
+      note: `No product matches this search, so don't say it is available. The suggestions are products this shop does sell: offer them (name and price) and ask which the customer likes; do NOT hand off to human.${facts.has_more ? ` They are not the whole shop: ${facts.more_count} more products exist.` : ""}`,
     };
   }
   return { results: [], note: "No product in this shop matches the search. Tell the customer politely that this specific item is not currently in stock; do NOT hand off to human. You may ask what other item they are looking for." };
@@ -471,8 +625,16 @@ export const CUSTOMER_TOOLS: Record<string, CustomerTool> = {
   search_products: {
     def: def(
       "search_products",
-      "Find products by name, type, colour or size words (English, Bangla or Banglish). Returns each match's variants with variant_id, size, price_bdt and stock_status. Call it before stating any price or stock; not for orders or policies. For a general question about the shop (\"what do you sell?\") search \"all products\"; don't guess a category. Example: {\"query\": \"black t-shirt\"}",
-      { type: "object", properties: { query: { type: "string", description: "What the customer wants, e.g. \"panjabi\", \"kalo genji\", or \"all products\" for the whole shop; no size words" }, max_price_bdt: { type: "number", description: "Optional price ceiling" } }, required: ["query"] }
+      "Find products by name, type, colour or size words (English, Bangla or Banglish). Returns each match's variants with variant_id, size, price_bdt and stock_status. Call it before stating any price or stock; not for orders or policies. For a general question about the shop (\"what do you sell?\") search \"all products\"; the result may list the shop's categories instead. When the customer picks one of those categories, search again with \"category\" set to its name; never invent a category. Example: {\"query\": \"black t-shirt\"}",
+      {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "What the customer wants, e.g. \"panjabi\", \"kalo genji\", or \"all products\" for the whole shop; no size words" },
+          max_price_bdt: { type: "number", description: "Optional price ceiling" },
+          category: { type: "string", description: "A category name exactly as an earlier search_products result listed it" },
+        },
+        required: ["query"],
+      }
     ),
     schema: SearchArgs,
     run: searchProducts as CustomerTool["run"],
