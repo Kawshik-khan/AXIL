@@ -127,8 +127,8 @@ the scheduled job `outbound-redeliver` (every 10 minutes, for an instance that s
 - **Never resent:** a send that may have reached the customer (timeout, lost response, interrupted claim). It shows as
   `FAILED` with "DELIVERY_UNCERTAIN ... Check the chat before resending" (log `outbound.delivery_uncertain`).
 - **Logs to watch:** `outbound.delivery_pass`, `outbound.requeued`, `outbound.dead_lettered`, `outbound.delivery_uncertain`.
-- **Migration 012** (`012_outbound_delivery.sql`) adds indexed columns for the pass; apply with `npm run db:migrate`
-  after deploy (the code works without it while messages are hydrated).
+- **Migration 012** (`012_outbound_delivery.sql`) adds indexed columns for the pass. Applied to Neon `CommercesOS` on
+  2026-10-26 (it is additive; the code before MR5 ignores it).
 
 ## Telegram webhooks (messaging reliability MR3)
 

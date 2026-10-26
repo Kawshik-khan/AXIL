@@ -2023,4 +2023,5 @@ has no background workers, so the worker stays in the web process for now.
   send path emits `message.failed` too; uncertain reasons carry our codes, not provider or store text.
 - *Open:* an older queued staff message and a newer inline one in the same chat may go out of order (a bot reply is
   cancelled instead, see above); `message.sent` still carries the text and recipient id, as before; migration 012 adds
-  stored generated columns, which rewrites `messages`: time it on a Neon branch before applying.
+  stored generated columns, which rewrites `messages`. Applied to Neon on 2026-10-26 after a temporary-branch rehearsal
+  (56 rows, 128 kB: the rewrite was negligible); recorded in `_migrations`.
