@@ -17,8 +17,11 @@ import { OutboundMessageService } from "@/domains/social/outbound/outbound-messa
 import { FacebookAdapter } from "@/domains/social/channels/adapters/facebook.adapter";
 import { InstagramAdapter } from "@/domains/social/channels/adapters/instagram.adapter";
 import { WhatsAppAdapter } from "@/domains/social/channels/adapters/whatsapp.adapter";
+import { TelegramAdapter } from "@/domains/social/channels/adapters/telegram.adapter";
+import { telegramTapData } from "@/domains/social/outbound/product-tap";
+import { ProductCardSettingsSchema, cardsEnabledFor } from "@/domains/social/outbound/product-card-settings";
 import { PERMISSIONS } from "@/lib/permissions";
-import { setOutboundTransportForTesting, type OutboundResponse } from "@/lib/outbound-http";
+import { OutboundTimeoutError, setOutboundTransportForTesting, type OutboundResponse } from "@/lib/outbound-http";
 import { readProductCards } from "@/lib/product-card-shape";
 import type { RequestContext } from "@/lib/context";
 import type { ConnectedChannel, Message, NormalizedIncomingMessage, ProductCard } from "@/types/social";
@@ -32,6 +35,7 @@ import {
   productCardsText,
   productTapText,
   productsFromToolResults,
+  telegramProductMessage,
   turnShowsProductCards,
   whatsappProductMessage,
 } from "@/domains/social/outbound/product-cards";
@@ -230,6 +234,53 @@ async function main() {
     assert.strictEqual(productTapText(undefined), null);
   });
 
+  await runTest("Telegram card: photo with title and price, an Order now button with short data; sold out has no button; no photo is text", () => {
+    const m = telegramProductMessage(cards[0], "501", "latin") as R;
+    assert.strictEqual(m.method, "sendPhoto");
+    assert.strictEqual(m.params.chat_id, "501");
+    assert.strictEqual(m.params.photo, cards[0].image_url);
+    assert.strictEqual(m.params.caption, "Blue Silk Panjabi\nfrom ৳1,500 (৳1,800)");
+    assert.deepStrictEqual(m.params.reply_markup, { inline_keyboard: [[{ text: "Order now", callback_data: `PO|${panjabi.id}|e` }]] });
+    assert.ok(new TextEncoder().encode(m.params.reply_markup.inline_keyboard[0][0].callback_data).length <= 64, "Telegram's 64-byte limit");
+    const soldOut = telegramProductMessage({ ...cards[0], in_stock: false }, "501", "latin") as R;
+    assert.strictEqual(soldOut.params.reply_markup, undefined, "nothing to order");
+    assert.ok(soldOut.params.caption.includes("Out of stock"));
+    const noPhoto = telegramProductMessage({ ...cards[0], image_url: undefined }, "501", "latin") as R;
+    assert.strictEqual(noPhoto.method, "sendMessage");
+    assert.strictEqual(noPhoto.params.text, "Blue Silk Panjabi\nfrom ৳1,500 (৳1,800)");
+    assert.ok(noPhoto.params.reply_markup, "the button stays without a photo");
+    assert.strictEqual(telegramTapData("p".repeat(70), "latin"), null, "an id too long for Telegram gets no button");
+  });
+
+  await runTest("a Telegram button press becomes the customer's text; other buttons, groups and bots are ignored", () => {
+    const tg = new TelegramAdapter();
+    const press = (data: string, message: R, from: R = { id: 501, first_name: "Rahim" }) =>
+      tg.normalizeIncomingEvent({ update_id: 9001, callback_query: { id: "cbq_1", data, from, message: { message_id: 7, chat: { id: 501, type: "private" }, ...message } } }, "chn_tg");
+    const [m] = press(`PO|${panjabi.id}|e`, { caption: "Blue Silk Panjabi\nfrom ৳1,500" });
+    assert.strictEqual(m.text, "Order now: Blue Silk Panjabi");
+    assert.strictEqual(m.externalMessageId, "cb:cbq_1", "a redelivered press is the same message");
+    assert.strictEqual(m.externalConversationId, "501");
+    assert.strictEqual(m.externalSenderId, "501");
+    assert.strictEqual(press(`PO|${panjabi.id}|b`, { caption: "নীল পাঞ্জাবি\n৳1,500 থেকে" })[0].text, "অর্ডার করুন: নীল পাঞ্জাবি");
+    assert.strictEqual(press(`PO|${panjabi.id}|e`, { text: "Blue Silk Panjabi\nfrom ৳1,500" })[0].text, "Order now: Blue Silk Panjabi", "a card sent without a photo");
+    assert.strictEqual(press("SOMETHING_ELSE", { caption: "x" }).length, 0);
+    assert.strictEqual(press("PO|../../etc|e", { caption: "x" }).length, 0);
+    assert.strictEqual(press(`PO|${panjabi.id}|e`, { caption: "x", chat: { id: -100, type: "group" } }).length, 0);
+    assert.strictEqual(press(`PO|${panjabi.id}|e`, { caption: "x" }, { id: 7, is_bot: true }).length, 0);
+    // A press on a card too old for Telegram to include its content: the product id stands in for the title
+    assert.strictEqual(press(`PO|${panjabi.id}|e`, {})[0].text, `Order now: ${panjabi.id}`);
+  });
+
+  await runTest("a Telegram press is never a yes to an open quote, whatever its title", async () => {
+    const { isAffirmative } = await import("@/domains/ai/customer-agent/confirmation");
+    const tg = new TelegramAdapter();
+    const textOf = (data: string, caption?: string) =>
+      tg.normalizeIncomingEvent({ update_id: 9002, callback_query: { id: "cbq_2", data, from: { id: 501 }, message: { message_id: 8, chat: { id: 501, type: "private" }, ...(caption ? { caption } : {}) } } }, "chn_tg")[0].text;
+    for (const text of [textOf(`PO|${panjabi.id}|e`, "Blue Silk Panjabi\n৳1,500"), textOf(`PO|${panjabi.id}|b`, "নীল পাঞ্জাবি\n৳1,500"), textOf(`PO|${panjabi.id}|e`), textOf(`PO|${panjabi.id}|e`, "yes\n৳1")]) {
+      assert.strictEqual(isAffirmative(text), false, text);
+    }
+  });
+
   await runTest("a card tap is never a yes to an open quote (Bangla label is also a confirmation word)", async () => {
     const { isAffirmative } = await import("@/domains/ai/customer-agent/confirmation");
     assert.strictEqual(isAffirmative("অর্ডার করুন"), true, "typed on its own it still confirms");
@@ -360,7 +411,7 @@ async function main() {
     }
   });
 
-  await runTest("a channel without cards (Telegram) is refused before anything is stored", async () => {
+  await runTest("Telegram: one message per card, at most 3; a refused photo goes out as text; cards are never retried; a channel without cards is refused", async () => {
     const tg = (await ChannelService.connectChannel(ownerCtx, {
       type: "TELEGRAM", name: `Tg ${stamp}`, provider_account_id: `tg_${stamp}`, credentials: { bot_token: `${"7".repeat(9)}:${"A".repeat(35)}` },
     } as never)) as ConnectedChannel;
@@ -370,9 +421,62 @@ async function main() {
       externalSenderId: "user_9", senderProfile: {}, direction: "INBOUND", messageType: "TEXT", text: "hi", timestamp: new Date().toISOString(),
     } as NormalizedIncomingMessage], []);
     const convo = db.findConversationByExternalId(tenantId, tg.id, "chat_9")!;
-    const before = outbound(convo.id).length;
-    await assert.rejects(OutboundMessageService.sendMessage(ownerCtx, convo.id, { text: "x", productCards: cards }), (e: R) => e.code === "PRODUCT_CARDS_UNSUPPORTED");
-    assert.strictEqual(outbound(convo.id).length, before);
+    const four = [cards[0], cards[1], { ...cards[0], product_id: "p3", title: "Third" }, { ...cards[0], product_id: "p4", title: "Fourth" }];
+    const sends: Array<{ method: string; body: R }> = [];
+    let reply = (method: string): OutboundResponse => ({ status: 200, headers: {}, body: JSON.stringify({ ok: true, result: { message_id: sends.length } }), truncated: false, durationMs: 1 });
+    setOutboundTransportForTesting(async (url, options): Promise<OutboundResponse> => {
+      assert.strictEqual(url.hostname, "api.telegram.org");
+      const method = url.pathname.split("/").pop()!;
+      sends.push({ method, body: JSON.parse(String(options.body || "{}")) });
+      return reply(method);
+    });
+    try {
+      const sent = await OutboundMessageService.sendMessage(ownerCtx, convo.id, { text: productCardsText(four), productCards: four });
+      assert.strictEqual(sent.status, "SENT");
+      assert.deepStrictEqual(sends.map((s) => s.method), ["sendPhoto", "sendMessage", "sendPhoto"], "3 cards; the one without a photo is text");
+      assert.ok(sends.every((s) => s.body.chat_id === "chat_9"), "to the stored Telegram chat");
+      assert.strictEqual(readProductCards(sent.metadata?.product_cards).length, 3, "only the cards that went out");
+
+      // Telegram can't fetch the photo: nothing was sent, so the card goes out as text with its button
+      sends.length = 0;
+      reply = (method) => method === "sendPhoto"
+        ? { status: 400, headers: {}, body: JSON.stringify({ ok: false, error_code: 400, description: "Bad Request: wrong file identifier/HTTP URL specified" }), truncated: false, durationMs: 1 }
+        : { status: 200, headers: {}, body: JSON.stringify({ ok: true, result: { message_id: 50 } }), truncated: false, durationMs: 1 };
+      const fallback = await OutboundMessageService.sendMessage(ownerCtx, convo.id, { text: "x", productCards: [cards[0]] });
+      assert.strictEqual(fallback.status, "SENT");
+      assert.deepStrictEqual(sends.map((s) => s.method), ["sendPhoto", "sendMessage"]);
+      assert.ok(sends[1].body.reply_markup, "the button survives the fallback");
+
+      // A photo that times out may have been delivered: no text copy, no retry
+      sends.length = 0;
+      reply = () => {
+        throw new OutboundTimeoutError("api.telegram.org", 8_000);
+      };
+      const uncertain = await OutboundMessageService.sendMessage(ownerCtx, convo.id, { text: "x", productCards: [cards[0]] });
+      assert.strictEqual(uncertain.status, "FAILED");
+      assert.deepStrictEqual(sends.map((s) => s.method), ["sendPhoto"]);
+
+      // Telegram is down: the send fails once and is not repeated (a lost response may follow a delivered card)
+      sends.length = 0;
+      reply = () => ({ status: 500, headers: {}, body: "{}", truncated: false, durationMs: 1 });
+      const failed = await OutboundMessageService.sendMessage(ownerCtx, convo.id, { text: "x", productCards: [cards[0]] });
+      assert.strictEqual(failed.status, "FAILED");
+      assert.strictEqual(sends.length, 1);
+
+      // A channel whose adapter can't send cards is still refused before anything is stored
+      const adapter = ChannelService.getAdapter("TELEGRAM") as R;
+      const sendCards = adapter.sendProductCards;
+      adapter.sendProductCards = undefined;
+      try {
+        const before = outbound(convo.id).length;
+        await assert.rejects(OutboundMessageService.sendMessage(ownerCtx, convo.id, { text: "x", productCards: cards }), (e: R) => e.code === "PRODUCT_CARDS_UNSUPPORTED");
+        assert.strictEqual(outbound(convo.id).length, before);
+      } finally {
+        adapter.sendProductCards = sendCards;
+      }
+    } finally {
+      setOutboundTransportForTesting(fakeGraph);
+    }
   });
 
   // The agent on Messenger, autonomous
@@ -470,6 +574,18 @@ async function main() {
     assert.strictEqual(db.findTenantById(tenantId)!.settings?.product_cards, undefined, "GET never writes");
   });
 
+  await runTest("a template saved before Telegram cards keeps every choice and gets Telegram on", () => {
+    const savedBefore = { ...DEFAULT_PRODUCT_CARD_SETTINGS, max_cards: 2, theme: "dark", channels: { FACEBOOK_MESSENGER: true, INSTAGRAM: false, WHATSAPP: false, WEBSITE_CHAT: true } };
+    const parsed = ProductCardSettingsSchema.safeParse(savedBefore);
+    assert.ok(parsed.success, "still valid: it must not fall back to the defaults");
+    assert.deepStrictEqual(parsed.data.channels, { FACEBOOK_MESSENGER: true, INSTAGRAM: false, WHATSAPP: false, WEBSITE_CHAT: true, TELEGRAM: true });
+    assert.strictEqual(parsed.data.max_cards, 2);
+    assert.strictEqual(parsed.data.theme, "dark");
+    assert.strictEqual(cardsEnabledFor(parsed.data, "TELEGRAM"), true);
+    const off = ProductCardSettingsSchema.parse({ ...savedBefore, channels: { ...savedBefore.channels, TELEGRAM: false } });
+    assert.strictEqual(cardsEnabledFor(off, "TELEGRAM"), false, "the shop can turn Telegram cards off");
+  });
+
   await runTest("owner saves a template: stored, read back, audited", async () => {
     const custom = { ...DEFAULT_PRODUCT_CARD_SETTINGS, button_label_latin: "Buy this", button_label_bangla: "কিনুন", theme: "dark", max_cards: 2 };
     const { status } = await putSettings(ownerToken, custom);
@@ -488,7 +604,7 @@ async function main() {
       { ...DEFAULT_PRODUCT_CARD_SETTINGS, max_cards: 6 },
       { ...DEFAULT_PRODUCT_CARD_SETTINGS, theme: "neon" },
       { ...DEFAULT_PRODUCT_CARD_SETTINGS, price_bdt: 1 },
-      { ...DEFAULT_PRODUCT_CARD_SETTINGS, channels: { ...DEFAULT_PRODUCT_CARD_SETTINGS.channels, TELEGRAM: true } },
+      { ...DEFAULT_PRODUCT_CARD_SETTINGS, channels: { ...DEFAULT_PRODUCT_CARD_SETTINGS.channels, TIKTOK: true } },
       { enabled: false },
     ];
     for (const body of bad) assert.strictEqual((await putSettings(ownerToken, body)).status, 400, JSON.stringify(body));

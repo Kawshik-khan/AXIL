@@ -24,6 +24,28 @@ export function productTapPayload(productId: string, title: string, script: "ban
   return `${PRODUCT_ORDER_PREFIX}|${productId}|${title.replace(/\|/g, "/").slice(0, 60)}|${script === "bangla" ? "bn" : "en"}`;
 }
 
+/** Telegram button data is at most 64 bytes, too small for the full payload with a (Bangla) title. */
+const TELEGRAM_TAP_PREFIX = "PO";
+const TELEGRAM_DATA_MAX_BYTES = 64;
+
+/** A card's Telegram button data, `PO|<product_id>|<b|e>`, or null when the id makes it too long for Telegram. */
+export function telegramTapData(productId: string, script: "bangla" | "latin"): string | null {
+  const data = `${TELEGRAM_TAP_PREFIX}|${productId}|${script === "bangla" ? "b" : "e"}`;
+  return new TextEncoder().encode(data).length <= TELEGRAM_DATA_MAX_BYTES ? data : null;
+}
+
+/**
+ * The full payload for a Telegram button tap, or null when the data isn't ours. The title is the first line of the
+ * card's caption, which we wrote (`<title>\n<price>`); productTapText still validates the product id. Telegram leaves
+ * the content out of a press on a very old card: the product id stands in, so the agent can still look it up.
+ */
+export function telegramTapPayload(data: string | undefined, caption: string | undefined): string | null {
+  const [prefix, productId, script, ...rest] = (data ?? "").split("|");
+  if (prefix !== TELEGRAM_TAP_PREFIX || !productId || (script !== "b" && script !== "e") || rest.length) return null;
+  const title = (caption ?? "").split("\n")[0].trim() || productId;
+  return productTapPayload(productId, title, script === "b" ? "bangla" : "latin");
+}
+
 /**
  * The customer message a tap becomes, from a button payload, or null when it isn't ours. Title and script come from
  * the payload we wrote; whatever button title the channel echoes back is ignored.

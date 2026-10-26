@@ -8,7 +8,7 @@ import { z } from "zod";
 import { db } from "@/infrastructure/db";
 import type { ChannelType } from "@/types/social";
 
-export const CARD_CHANNELS = ["FACEBOOK_MESSENGER", "INSTAGRAM", "WHATSAPP", "WEBSITE_CHAT"] as const satisfies readonly ChannelType[];
+export const CARD_CHANNELS = ["FACEBOOK_MESSENGER", "INSTAGRAM", "WHATSAPP", "WEBSITE_CHAT", "TELEGRAM"] as const satisfies readonly ChannelType[];
 export type CardChannel = (typeof CARD_CHANNELS)[number];
 
 /** A button text customers see: one line, no markup, no characters our tap payload uses. */
@@ -23,8 +23,18 @@ const ButtonLabel = z
 export const ProductCardSettingsSchema = z
   .object({
     enabled: z.boolean(),
-    channels: z.object({ FACEBOOK_MESSENGER: z.boolean(), INSTAGRAM: z.boolean(), WHATSAPP: z.boolean(), WEBSITE_CHAT: z.boolean() }).strict(),
-    /** Cards per reply; WhatsApp sends at most 3 (one message each). */
+    channels: z
+      .object({
+        FACEBOOK_MESSENGER: z.boolean(),
+        INSTAGRAM: z.boolean(),
+        WHATSAPP: z.boolean(),
+        WEBSITE_CHAT: z.boolean(),
+        // Added after shops had saved settings: a stored value without it must still validate (or it falls back to the
+        // defaults and the shop loses its choices), so it defaults to on like the other channels
+        TELEGRAM: z.boolean().default(true),
+      })
+      .strict(),
+    /** Cards per reply; WhatsApp and Telegram send at most 3 (one message each). */
     max_cards: z.number().int().min(1).max(5),
     button_label_latin: ButtonLabel,
     button_label_bangla: ButtonLabel,
@@ -40,7 +50,7 @@ export type ProductCardSettings = z.infer<typeof ProductCardSettingsSchema>;
 
 export const DEFAULT_PRODUCT_CARD_SETTINGS: ProductCardSettings = {
   enabled: true,
-  channels: { FACEBOOK_MESSENGER: true, INSTAGRAM: true, WHATSAPP: true, WEBSITE_CHAT: true },
+  channels: { FACEBOOK_MESSENGER: true, INSTAGRAM: true, WHATSAPP: true, WEBSITE_CHAT: true, TELEGRAM: true },
   max_cards: 5,
   button_label_latin: "Order now",
   button_label_bangla: "অর্ডার করুন",

@@ -294,6 +294,46 @@ export async function runSocialCommerceTests() {
     assert.strictEqual(adapter.normalizeIncomingEvent({ ...update, message: { ...update.message, from: { id: 501, is_bot: true } } }, channel.id).length, 0);
     assert.strictEqual(adapter.normalizeIncomingEvent({ update_id: "bad", message: update.message }, channel.id).length, 0);
 
+    // A product card's "Order now" press: stored as the customer's message, and answered so the button stops spinning
+    {
+      const answered: string[] = [];
+      let answerFails = false;
+      setOutboundTransportForTesting(async (url, options) => {
+        assert.ok(url.toString().endsWith("/answerCallbackQuery"), url.toString());
+        answered.push(String(JSON.parse(String(options.body || "{}")).callback_query_id));
+        if (answerFails) throw new OutboundTimeoutError("api.telegram.org", 5_000);
+        return { status: 200, headers: {}, body: JSON.stringify({ ok: true, result: true }), truncated: false, durationMs: 1 };
+      });
+      const press = (updateId: number, callbackId: string, secret = webhookSecret) => telegramConnectorWebhook(new Request(`https://commerceos.example/api/v1/connectors/${connector.id}/webhook`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-telegram-bot-api-secret-token": secret },
+        body: JSON.stringify({
+          update_id: updateId,
+          callback_query: {
+            id: callbackId, data: "PO|prd_test_card_01|e", from: { id: 501, first_name: "Telegram" },
+            message: { message_id: 40, caption: "Blue Silk Panjabi\n৳1,500", chat: { id: 501, type: "private" } },
+          },
+        }),
+      }), { params: Promise.resolve({ id: connector.id }) });
+      try {
+        // A forged press without the webhook secret: refused, nothing stored, Telegram not called
+        await assert.rejects(() => press(10003, "cbq_route_1", "wrong"), (err: unknown) => err instanceof AuthenticationError);
+        assert.strictEqual(db.findMessageByExternalId(contextA.tenant.id, channel.id, "cb:cbq_route_1"), undefined);
+        assert.deepStrictEqual(answered, []);
+
+        assert.strictEqual((await (await press(10003, "cbq_route_1")).json()).messagesProcessed, 1);
+        const tap = db.findMessageByExternalId(contextA.tenant.id, channel.id, "cb:cbq_route_1");
+        assert.strictEqual(tap?.text, "Order now: Blue Silk Panjabi");
+        assert.deepStrictEqual(answered, ["cbq_route_1"]);
+        assert.strictEqual((await (await press(10003, "cbq_route_1")).json()).messagesProcessed, 0, "a redelivered press is stored once");
+        answerFails = true;
+        const res = await press(10004, "cbq_route_2");
+        assert.strictEqual((await res.json()).messagesProcessed, 1, "Telegram unreachable for the answer: the press is still stored");
+      } finally {
+        setOutboundTransportForTesting(null);
+      }
+    }
+
     let requestUrl = "";
     let requestBody: Record<string, unknown> = {};
     setOutboundTransportForTesting(async (url, options) => {

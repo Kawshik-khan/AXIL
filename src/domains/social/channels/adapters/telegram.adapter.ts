@@ -1,7 +1,9 @@
 import crypto from "crypto";
 import { BadRequestError, AppError } from "@/lib/errors";
 import { outboundRequest, OutboundBlockedError, OutboundNetworkError, OutboundTimeoutError } from "@/lib/outbound-http";
-import { ChannelType, NormalizedIncomingMessage } from "@/types/social";
+import { ChannelType, NormalizedIncomingMessage, ProductCard } from "@/types/social";
+import { MAX_WHATSAPP_PRODUCT_CARDS, scriptOfCards, telegramProductMessage } from "@/domains/social/outbound/product-cards";
+import { productTapText, telegramTapPayload } from "@/domains/social/outbound/product-tap";
 import {
   IChannelProvider,
   ChannelCredentials,
@@ -86,10 +88,12 @@ export class TelegramAdapter implements IChannelProvider {
   }
 
   /**
-   * Update -> message.
+   * Update -> message. A product card's "Order now" press (callback_query) becomes the customer's message
+   * "Order now: <title>", as on the other channels; other button data is ignored.
    */
   public normalizeIncomingEvent(rawPayload: Record<string, unknown>, channelId: string): NormalizedIncomingMessage[] {
     const updateId = rawPayload.update_id;
+    if (rawPayload.callback_query) return this.normalizeCardTap(rawPayload, channelId);
     const msg = rawPayload.message as
       | {
           message_id?: number; date?: number; text?: string; chat?: { id?: number | string; type?: string };
@@ -136,6 +140,49 @@ export class TelegramAdapter implements IChannelProvider {
     ];
   }
 
+  private normalizeCardTap(rawPayload: Record<string, unknown>, channelId: string): NormalizedIncomingMessage[] {
+    const updateId = rawPayload.update_id;
+    const cb = rawPayload.callback_query as
+      | {
+          id?: string; data?: string;
+          from?: { id?: number; first_name?: string; last_name?: string; username?: string; is_bot?: boolean };
+          message?: { message_id?: number; caption?: string; text?: string; chat?: { id?: number | string; type?: string } };
+        }
+      | undefined;
+    const chat = cb?.message?.chat;
+    if (
+      !Number.isSafeInteger(updateId) ||
+      typeof cb?.id !== "string" ||
+      !cb.from ||
+      !Number.isSafeInteger(cb.from.id) ||
+      cb.from.is_bot ||
+      !chat ||
+      chat.type !== "private" ||
+      !(typeof chat.id === "string" || Number.isSafeInteger(chat.id))
+    ) return [];
+    // Only our card buttons: the title is read back from the card we sent (photo caption, or text without a photo)
+    const tap = productTapText(telegramTapPayload(cb.data, cb.message?.caption ?? cb.message?.text) ?? undefined);
+    if (!tap) return [];
+    const name = [cb.from.first_name, cb.from.last_name].filter(Boolean).join(" ") || undefined;
+    return [
+      {
+        channelType: "TELEGRAM",
+        channelId,
+        externalEventId: String(updateId),
+        // A callback query id is unique per bot: a redelivered update is the same message
+        externalMessageId: `cb:${cb.id}`,
+        externalConversationId: String(chat.id),
+        externalSenderId: String(cb.from.id),
+        senderProfile: { displayName: name, username: cb.from.username },
+        direction: "INBOUND",
+        messageType: "TEXT",
+        text: tap.text,
+        timestamp: new Date().toISOString(),
+        rawPayload,
+      },
+    ];
+  }
+
   public parseDeliveryReceipts(_rawPayload: Record<string, unknown>): DeliveryReceipt[] {
     return []; // Telegram sends no delivery or read receipts for bots
   }
@@ -168,6 +215,32 @@ export class TelegramAdapter implements IChannelProvider {
     if (!/^https:\/\//i.test(mediaUrl)) throw new BadRequestError("Telegram media must be an https URL.");
     const result = await telegramCall(credentials, method, { chat_id: recipientId, [field]: mediaUrl, ...(options?.caption ? { caption: options.caption.slice(0, 1024) } : {}) });
     return { externalMessageId: String(result.message_id ?? ""), status: "SENT", providerTimestamp: new Date().toISOString() };
+  }
+
+  /** One message per card (photo with caption and an "Order now" button); the first message's id is returned. */
+  public async sendProductCards(credentials: ChannelCredentials, recipientId: string, cards: ProductCard[]): Promise<SendMessageResult> {
+    const script = scriptOfCards(cards);
+    const ids: string[] = [];
+    for (const card of cards.slice(0, MAX_WHATSAPP_PRODUCT_CARDS)) {
+      try {
+        const { method, params } = telegramProductMessage(card, recipientId, script);
+        let result: Record<string, unknown>;
+        try {
+          result = await telegramCall(credentials, method, params);
+        } catch (err) {
+          // Telegram refused the photo (a URL it can't fetch): nothing was sent, so send the card without it
+          if (method !== "sendPhoto" || !(err instanceof TelegramApiError) || err.telegramCode !== 400) throw err;
+          result = await telegramCall(credentials, "sendMessage", telegramProductMessage({ ...card, image_url: undefined }, recipientId, script).params);
+        }
+        ids.push(String(result.message_id ?? ""));
+      } catch (err) {
+        // Once a card is out, report success with what was sent: a retry would send the first cards twice
+        if (ids.length) break;
+        throw err;
+      }
+    }
+    if (!ids.length) throw new BadRequestError("No product card to send.");
+    return { externalMessageId: ids[0], status: "SENT", providerTimestamp: new Date().toISOString(), rawResponse: { message_ids: ids } };
   }
 
   public async sendTemplateMessage(): Promise<SendMessageResult> {

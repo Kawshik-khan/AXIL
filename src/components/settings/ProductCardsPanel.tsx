@@ -25,7 +25,7 @@ interface CardSettings {
   theme: ProductCardTheme;
 }
 
-type ChannelKey = "FACEBOOK_MESSENGER" | "INSTAGRAM" | "WHATSAPP" | "WEBSITE_CHAT";
+type ChannelKey = "FACEBOOK_MESSENGER" | "INSTAGRAM" | "WHATSAPP" | "WEBSITE_CHAT" | "TELEGRAM";
 
 interface ApiError {
   message: string;
@@ -38,6 +38,7 @@ const CHANNELS: Array<{ key: ChannelKey; label: string; note: string }> = [
   { key: "INSTAGRAM", label: "Instagram", note: "Swipeable cards" },
   { key: "WHATSAPP", label: "WhatsApp", note: "One message per product, at most 3" },
   { key: "WEBSITE_CHAT", label: "Website chat", note: "Cards in the chat widget" },
+  { key: "TELEGRAM", label: "Telegram", note: "One message per product, at most 3" },
 ];
 
 const THEMES: Array<{ key: ProductCardTheme; label: string }> = [
