@@ -334,7 +334,20 @@ export function synthesizeGroundedResponse(toolResults: unknown[], script: Scrip
         return `Ji, amader kache ei product gulo stock e ache:\n- ${lines}\n\nApnar kon ti pochondo?`;
       }
 
-      // Explicitly returned empty results
+      // Explicitly returned empty results: offer the shop's suggestions when the search returned some
+      const suggestions = Array.isArray(r.suggestions) ? r.suggestions.slice(0, 5) : [];
+      if (suggestions.length > 0) {
+        type Suggestion = { name?: string; title?: string; base_price?: number; min_price_bdt?: number; variants?: Array<{ price_bdt?: number }> };
+        const offered = (suggestions as Suggestion[]).map((p) => {
+          const name = p.name || p.title || "Product";
+          const price = p.variants?.[0]?.price_bdt ?? p.base_price ?? p.min_price_bdt;
+          return typeof price === "number" ? `${name} (৳${price.toLocaleString("en-US")})` : name;
+        }).join("\n- ");
+        if (script === "bangla") {
+          return `দুঃখিত, এই প্রোডাক্টটি আমাদের কাছে নেই। তবে আমাদের কাছে এগুলো আছে:\n- ${offered}\n\nআপনার কোনটি পছন্দ?`;
+        }
+        return `Dukkhito, ei product ti amader kache nei. Tobe amader kache egulo ache:\n- ${offered}\n\nApnar kon ti pochondo?`;
+      }
       if (script === "bangla") {
         return "দুঃখিত, এই মুহূর্তে এই প্রোডাক্টটি আমাদের স্টকে নেই। অন্য কোনো প্রোডাক্ট দেখতে চাইলে জানাতে পারেন।";
       }

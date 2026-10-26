@@ -195,6 +195,15 @@ async function searchProducts(pr: CustomerAgentPrincipal, a: z.infer<typeof Sear
   if (GENERAL_CATALOG_WORDS.test(a.query) && featured.length > 0) {
     return { results: featured.slice(0, 5).map((p) => productView(pr.tenantId, p)), note: "Showing featured products available in the shop." };
   }
+  // Nothing matches (the model may search a guessed word, e.g. "apparel"): results stay empty, so the asked-for item is
+  // never claimed, but the customer is offered what the shop does sell instead of a dead end (2026-10-26 smoke)
+  if (featured.length > 0) {
+    return {
+      results: [],
+      suggestions: featured.slice(0, 5).map((p) => productView(pr.tenantId, p)),
+      note: "No product matches this search, so don't say it is available. The suggestions are products this shop does sell: offer them (name and price) and ask which the customer likes; do NOT hand off to human.",
+    };
+  }
   return { results: [], note: "No product in this shop matches the search. Tell the customer politely that this specific item is not currently in stock; do NOT hand off to human. You may ask what other item they are looking for." };
 }
 
@@ -458,8 +467,8 @@ export const CUSTOMER_TOOLS: Record<string, CustomerTool> = {
   search_products: {
     def: def(
       "search_products",
-      "Find products by name, type, colour or size words (English, Bangla or Banglish). Returns each match's variants with variant_id, size, price_bdt and stock_status. Call it before stating any price or stock; not for orders or policies. Example: {\"query\": \"black t-shirt\"}",
-      { type: "object", properties: { query: { type: "string", description: "What the customer wants, e.g. \"panjabi\", \"kalo genji\"; no size words" }, max_price_bdt: { type: "number", description: "Optional price ceiling" } }, required: ["query"] }
+      "Find products by name, type, colour or size words (English, Bangla or Banglish). Returns each match's variants with variant_id, size, price_bdt and stock_status. Call it before stating any price or stock; not for orders or policies. For a general question about the shop (\"what do you sell?\") search \"all products\"; don't guess a category. Example: {\"query\": \"black t-shirt\"}",
+      { type: "object", properties: { query: { type: "string", description: "What the customer wants, e.g. \"panjabi\", \"kalo genji\", or \"all products\" for the whole shop; no size words" }, max_price_bdt: { type: "number", description: "Optional price ceiling" } }, required: ["query"] }
     ),
     schema: SearchArgs,
     run: searchProducts as CustomerTool["run"],
