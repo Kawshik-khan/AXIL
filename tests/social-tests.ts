@@ -25,7 +25,6 @@ import { ChannelService } from "@/domains/social/channels/channel.service";
 import { ConnectorService } from "@/domains/connectors/service";
 import { OutboundTimeoutError, setOutboundTransportForTesting } from "@/lib/outbound-http";
 import { encryptCredential, decryptCredential } from "@/lib/security";
-import { AuthenticationError } from "@/lib/errors";
 import { POST as telegramConnectorWebhook } from "@/app/api/v1/connectors/[id]/webhook/route";
 import { RequestContext } from "@/lib/context";
 import { PERMISSIONS } from "@/lib/permissions";
@@ -247,11 +246,12 @@ export async function runSocialCommerceTests() {
       body: JSON.stringify(update),
     });
     {
-      await assert.rejects(
-        () => telegramConnectorWebhook(requestFor("wrong"), { params: Promise.resolve({ id: connector.id }) }),
-        (err: unknown) => err instanceof AuthenticationError,
-        "wrong webhook secret must fail before storing anything"
-      );
+      const rejected = await telegramConnectorWebhook(requestFor("wrong"), { params: Promise.resolve({ id: connector.id }) });
+      assert.strictEqual(rejected.status, 401, "wrong webhook secret must fail before storing anything");
+      // A webhook still pointing at a deleted connector is a 404, not a crash (a 500 makes Telegram retry it)
+      const unknown = await telegramConnectorWebhook(requestFor(webhookSecret), { params: Promise.resolve({ id: "conn_telegram_gone" }) });
+      assert.strictEqual(unknown.status, 404);
+      assert.strictEqual((await unknown.json()).error.code, "NOT_FOUND");
       assert.strictEqual(
         db.findMessageByExternalId(contextA.tenant.id, channel.id, normalized[0].externalMessageId),
         undefined,

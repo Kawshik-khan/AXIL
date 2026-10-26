@@ -5,6 +5,7 @@ import { ChannelService } from "@/domains/social/channels/channel.service";
 import { WebhookIngressService } from "@/domains/social/webhooks/webhook-ingress.service";
 import { TelegramAdapter, TELEGRAM_SECRET_HEADER } from "@/domains/social/channels/adapters/telegram.adapter";
 import { BadRequestError, AuthenticationError, NotFoundError } from "@/lib/errors";
+import { apiError } from "@/lib/api-response";
 import { logger } from "@/lib/logger";
 import { withStore } from "@/lib/store-unit";
 import crypto from "crypto";
@@ -23,16 +24,11 @@ async function handleGET() {
   return NextResponse.json({ status: "OK", message: "Connector webhook endpoint is reachable." });
 }
 
-async function handlePOST(
-  request: Request,
-  { params: rawParams }: { params: Promise<{ id: string }> }
-) {
-  const { id } = await rawParams;
-
+async function ingest(request: Request, id: string) {
   // 1. Resolve the connector by its public id. The row's tenant_id is authoritative; no tenant comes from the request.
   const connector = db.findConnectorForIngress(id);
   if (!connector) {
-    throw new NotFoundError(`Connector '${id}' not found.`);
+    throw new NotFoundError("Connector", id);
   }
   if (connector.enabled === false) {
     throw new BadRequestError("This connector is disabled.");
@@ -90,6 +86,19 @@ async function handlePOST(
   );
 
   return NextResponse.json({ status: "EVENT_RECEIVED", ...result });
+}
+
+async function handlePOST(
+  request: Request,
+  { params: rawParams }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await rawParams;
+  try {
+    return await ingest(request, id);
+  } catch (err) {
+    // An unknown connector or a bad signature is the caller's error (4xx), not a crash: a 500 makes Telegram retry
+    return apiError(err);
+  }
 }
 
 export const GET = withStore("GET", handleGET);

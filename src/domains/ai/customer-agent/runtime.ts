@@ -32,7 +32,7 @@ import {
 import { PromptInjectionClassifier } from "../safety/prompt-injection";
 import { AiBudgetGuard } from "../safety/budget-guard";
 import { ConfidenceEngine } from "../safety/confidence-engine";
-import { HitlEscalationService } from "../hitl/hitl-escalation.service";
+import { HitlEscalationService, type CreateEscalationInput } from "../hitl/hitl-escalation.service";
 import type { AgentExecutionTraceRecord, GuardrailTriggerType } from "@/types/ai";
 
 import { envNumber } from "@/lib/env-number";
@@ -293,6 +293,16 @@ export async function runCustomerTurn(pr: CustomerAgentPrincipal, opts: { budget
     handoff = out.ok || handoff;
     if (out.ok) handoffReason = reason;
   };
+  // One HITL ticket per turn. Its pause hands the chat off, so this turn's own reply still goes out; a chat already
+  // paused (staff took over, or an earlier handoff) stays refused, as before.
+  let escalated = false;
+  const escalate = (input: Omit<CreateEscalationInput, "tenantId" | "conversationId">) => {
+    if (escalated) return;
+    const wasPaused = db.findConversationById(pr.tenantId, pr.conversationId)?.automation_paused === true;
+    HitlEscalationService.createEscalation({ ...input, tenantId: pr.tenantId, conversationId: pr.conversationId });
+    escalated = true;
+    if (!wasPaused) handoff = true;
+  };
   const finish = (status: CustomerTurn["status"], reply: string): CustomerTurn => {
     const { costUsd, costBdt } = modelRouter.calculateCost("TIER_1_FAST", promptTokens, completionTokens, cachedTokens);
     db.updateAgentRun(pr.tenantId, runId, {
@@ -342,9 +352,7 @@ export async function runCustomerTurn(pr: CustomerAgentPrincipal, opts: { budget
         .filter((q) => q.status === "QUOTED" && Date.parse(q.expires_at) > Date.now())
         .pop();
 
-      HitlEscalationService.createEscalation({
-        tenantId: pr.tenantId,
-        conversationId: pr.conversationId,
+      escalate({
         traceId,
         triggerReason: escalationReason || "Automated HITL low-confidence escalation",
         priority: confEval.sentiment === "HOSTILE" || guardrailTriggers.includes("PROMPT_INJECTION_DETECTED") ? "URGENT" : "HIGH",
@@ -432,9 +440,7 @@ export async function runCustomerTurn(pr: CustomerAgentPrincipal, opts: { budget
       timestamp: new Date().toISOString(),
     };
     db.saveAgentExecutionTrace(traceRecord);
-    HitlEscalationService.createEscalation({
-      tenantId: pr.tenantId,
-      conversationId: pr.conversationId,
+    escalate({
       traceId: traceRecord.id,
       triggerReason: `Prompt injection attempt: ${injection.matchedPatterns[0] ?? "Jailbreak"}`,
       priority: "HIGH",
@@ -446,9 +452,7 @@ export async function runCustomerTurn(pr: CustomerAgentPrincipal, opts: { budget
   const budgetCheck = AiBudgetGuard.checkBudget(pr.tenantId);
   if (!budgetCheck.allowed) {
     guards.push("budget_hard_cap_exceeded");
-    HitlEscalationService.createEscalation({
-      tenantId: pr.tenantId,
-      conversationId: pr.conversationId,
+    escalate({
       triggerReason: "Monthly AI budget hard cap reached",
       priority: "HIGH",
     });
