@@ -2,10 +2,8 @@
 -- scans outbound messages that are QUEUED (due) or SENDING (claimed). These generated columns and the partial index keep
 -- that scan cheap once messages are no longer hydrated at boot. The values stay in `data` like every message field.
 --
--- Forward-only, additive. Rollback:
---   DROP INDEX IF EXISTS commerceos.messages_undelivered_idx;
---   ALTER TABLE commerceos.messages DROP COLUMN IF EXISTS delivery_status, DROP COLUMN IF EXISTS direction,
---     DROP COLUMN IF EXISTS next_attempt_at;
+-- Forward-only, additive.
+-- rollback: DROP INDEX IF EXISTS commerceos.messages_undelivered_idx; ALTER TABLE commerceos.messages DROP COLUMN IF EXISTS delivery_status, DROP COLUMN IF EXISTS direction, DROP COLUMN IF EXISTS next_attempt_at;
 
 ALTER TABLE commerceos.messages
     ADD COLUMN IF NOT EXISTS direction text GENERATED ALWAYS AS (data->>'direction') STORED;
