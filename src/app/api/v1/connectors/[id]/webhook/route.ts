@@ -3,7 +3,7 @@ import { db } from "@/infrastructure/db";
 import { decryptCredential } from "@/lib/security";
 import { ChannelService } from "@/domains/social/channels/channel.service";
 import { WebhookIngressService } from "@/domains/social/webhooks/webhook-ingress.service";
-import { TelegramAdapter, TELEGRAM_SECRET_HEADER } from "@/domains/social/channels/adapters/telegram.adapter";
+import { TelegramAdapter, TELEGRAM_SECRET_HEADER, telegramCall } from "@/domains/social/channels/adapters/telegram.adapter";
 import { BadRequestError, AuthenticationError, NotFoundError } from "@/lib/errors";
 import { logger } from "@/lib/logger";
 import { withStore } from "@/lib/store-unit";
@@ -88,6 +88,15 @@ async function handlePOST(
     () => WebhookIngressService.ingestNormalized(channel, normalizedMessages, receipts),
     () => true
   );
+
+  // A pressed button shows a spinner until the bot answers it. Best effort, after the tap is stored and outside the
+  // store's unit: if Telegram can't be reached the spinner just times out.
+  const callbackId = (payload.callback_query as { id?: unknown } | undefined)?.id;
+  if (channel.type === "TELEGRAM" && typeof callbackId === "string") {
+    await telegramCall(credentials, "answerCallbackQuery", { callback_query_id: callbackId }).catch((err: unknown) =>
+      logger.warn("connector_webhook.callback_answer_failed", { connector_id: id, error: (err as Error).message })
+    );
+  }
 
   return NextResponse.json({ status: "EVENT_RECEIVED", ...result });
 }

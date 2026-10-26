@@ -10,7 +10,7 @@ import { db } from "@/infrastructure/db";
 import { productRepository } from "@/domains/catalog/product.repository";
 import type { ChannelType, ProductCard } from "@/types/social";
 import type { ToolResult } from "@/domains/ai/customer-agent/tools";
-import { CARD_LABELS, productTapPayload } from "./product-tap";
+import { CARD_LABELS, productTapPayload, telegramTapData } from "./product-tap";
 import { getProductCardSettings, type ProductCardSettings } from "./product-card-settings";
 
 export { PRODUCT_ORDER_PREFIX, productTapText, isProductTapText } from "./product-tap";
@@ -87,7 +87,8 @@ export async function buildProductCards(
   script: CardScript,
   settings: ProductCardSettings = getProductCardSettings(tenantId)
 ): Promise<ProductCard[]> {
-  const max = Math.min(settings.max_cards, channel === "WHATSAPP" ? MAX_WHATSAPP_PRODUCT_CARDS : MAX_PRODUCT_CARDS);
+  // WhatsApp and Telegram send one message per card
+  const max = Math.min(settings.max_cards, channel === "WHATSAPP" || channel === "TELEGRAM" ? MAX_WHATSAPP_PRODUCT_CARDS : MAX_PRODUCT_CARDS);
   const views = productsFromToolResults(results).slice(0, MAX_PRODUCT_CARDS * 2);
   if (!views.length) return [];
   const products = new Map((await productRepository.findByIds(tenantId, views.map((v) => v.product_id))).map((p) => [p.id, p]));
@@ -185,4 +186,18 @@ export function whatsappProductMessage(card: ProductCard, to: string, script: Ca
       action: { buttons: [{ type: "reply", reply: { id: card.button_payload.slice(0, 256), title: card.button_label.slice(0, 20) } }] },
     },
   };
+}
+
+/**
+ * Telegram Bot API call for one card: sendPhoto with the title and price as caption (sendMessage without a photo), and
+ * an inline button whose data is the short `PO|<product_id>|<b|e>` (Telegram allows 64 bytes). The caption's first line
+ * is the title: a tap reads it back from there.
+ */
+export function telegramProductMessage(card: ProductCard, chatId: string, script: CardScript): { method: "sendPhoto" | "sendMessage"; params: Record<string, unknown> } {
+  const caption = `${card.title.replace(/\n/g, " ")}\n${cardPriceLine(card, script)}`.slice(0, 1024);
+  const data = card.in_stock ? telegramTapData(card.product_id, script) : null;
+  const markup = data ? { reply_markup: { inline_keyboard: [[{ text: card.button_label.slice(0, 20), callback_data: data }]] } } : {};
+  return card.image_url
+    ? { method: "sendPhoto", params: { chat_id: chatId, photo: card.image_url, caption, ...markup } }
+    : { method: "sendMessage", params: { chat_id: chatId, text: caption, ...markup } };
 }
