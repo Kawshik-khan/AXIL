@@ -25,10 +25,16 @@ import {
   stripAmounts, unsupportedAmounts,
 } from "@/domains/ai/customer-agent/output";
 import { conversationSlots, hasUnrecoveredToolFailure, runCustomerTurn } from "@/domains/ai/customer-agent/runtime";
-import { AUTONOMOUS_FLAG, SHADOW_FLAG, agentMode } from "@/domains/ai/customer-agent/jobs";
+import { AUTONOMOUS_FLAG, CONTROL_V2_FLAG, SHADOW_FLAG, agentMode } from "@/domains/ai/customer-agent/jobs";
 import { customerMessages } from "@/domains/ai/customer-agent/confirmation";
 import { runAgentJobsOnce } from "@/domains/ai/customer-agent/worker";
 import { findSilentDrops } from "@/domains/ai/customer-agent/silent-drops";
+import { ConversationControlService, controlOf } from "@/domains/social/conversations/conversation-control.service";
+import { HitlEscalationService } from "@/domains/ai/hitl/hitl-escalation.service";
+import { ChannelRateLimiter } from "@/domains/social/outbound/rate-limiter";
+import { AgentRouter } from "@/domains/ai/router/agent-router";
+import fs from "fs";
+import path from "path";
 
 const GREEN = "\x1b[32m";
 const RED = "\x1b[31m";
@@ -1066,6 +1072,252 @@ async function main() {
     assert.strictEqual(after.attempts, 0);
     db.data.agent_runs = db.data.agent_runs.filter((r: R) => !String(r.id).startsWith("run_cap_"));
     db.saveAgentJob({ ...after, status: "DONE" });
+  });
+
+  // ================================================================ ADR-121 conversation control (MR4 S1)
+  await runTest("control: allowed moves bump the version and are audited; others change nothing (ADR-121)", async () => {
+    setMode(true, false);
+    const convo = await inbound("rf_ctl_table", "hello");
+    assert.deepStrictEqual([controlOf(conv("rf_ctl_table")).state, controlOf(conv("rf_ctl_table")).version], ["BOT", 0], "an old row reads as BOT");
+    const t1 = ConversationControlService.transition(tenantId, convo.id, "ESCALATED", "system:hitl", "hitl_escalation");
+    assert.ok(t1.changed && t1.from === "BOT");
+    const after1 = conv("rf_ctl_table");
+    assert.deepStrictEqual([after1.control!.state, after1.control!.version, after1.automation_paused, after1.mode], ["ESCALATED", 1, true, "HUMAN"]);
+    // Same state and a move the table doesn't allow: nothing changes
+    assert.strictEqual(ConversationControlService.transition(tenantId, convo.id, "ESCALATED", "system:hitl", "again").changed, false);
+    ConversationControlService.transition(tenantId, convo.id, "HUMAN", `user:${owner.user.id}`, "hitl_claim", { ownerUserId: owner.user.id });
+    assert.strictEqual(ConversationControlService.transition(tenantId, convo.id, "ESCALATED", "system:hitl", "late").changed, false, "a person keeps the chat");
+    const human = conv("rf_ctl_table").control!;
+    assert.deepStrictEqual([human.state, human.version, human.owner_user_id, human.changed_by], ["HUMAN", 2, owner.user.id, `user:${owner.user.id}`]);
+    ConversationControlService.transition(tenantId, convo.id, "BOT", `user:${owner.user.id}`, "inbox_resume");
+    const bot = conv("rf_ctl_table");
+    assert.deepStrictEqual([bot.control!.state, bot.control!.version, bot.automation_paused, bot.mode, bot.control!.owner_user_id], ["BOT", 3, false, "AI", undefined]);
+    const audits = db.getAuditLogsByTenant(tenantId, 500).logs.filter((a) => a.action === "CONVERSATION_CONTROL" && a.resource_id === convo.id);
+    assert.strictEqual(audits.length, 3, "one audit row per real change");
+    const ordered = audits.map((a) => a.metadata as R).sort((a, b) => a.version - b.version);
+    assert.deepStrictEqual(ordered.map((m) => `${m.from}>${m.to}@${m.version}`), ["BOT>ESCALATED@1", "ESCALATED>HUMAN@2", "HUMAN>BOT@3"]);
+    assert.ok(!JSON.stringify(audits).includes("hello"), "no message text in the audit");
+    // A paused row written before ADR-121 reads as HUMAN, or ESCALATED when it carries a handoff card
+    const legacy = await inbound("rf_ctl_legacy", "hi");
+    db.updateConversation(tenantId, legacy.id, { control: undefined, metadata: { handoff_card: { reason: "other" } } });
+    db.data.conversations.find((c) => c.id === legacy.id)!.automation_paused = true;
+    assert.strictEqual(controlOf(conv("rf_ctl_legacy")).state, "ESCALATED");
+  });
+
+  await runTest("control: a HITL 'resume bot' answers what waited, like the inbox resume (ADR-121)", async () => {
+    setMode(true, false);
+    const convo = await inbound("rf_ctl_hitl", "hello");
+    makeDue(convo.id);
+    scripted.steps = [say("Ji bolun.")];
+    await runAgentJobsOnce();
+    const ticket = HitlEscalationService.createEscalation({ tenantId, conversationId: convo.id, triggerReason: "test" });
+    await inbound("rf_ctl_hitl", "keu achen?");
+    assert.strictEqual(conv("rf_ctl_hitl").awaiting_count, 1);
+    HitlEscalationService.resolveEscalation(tenantId, { escalationId: ticket.id, resolutionType: "BOT_RESUMED", resumeBot: true, userId: owner.user.id });
+    const after = conv("rf_ctl_hitl");
+    assert.deepStrictEqual([controlOf(after).state, after.awaiting_count], ["BOT", 0]);
+    assert.strictEqual(db.findAgentJob(tenantId, convo.id)!.status, "PENDING", "the resume queued a catch-up turn");
+    scripted.steps = [];
+  });
+
+  await runTest("control: a platform operator's claim is audited as platform and never made the owner; an old ticket can't retake a chat (ADR-121)", async () => {
+    setMode(true, false);
+    const convo = await inbound("rf_ctl_platform", "hello");
+    const ticket = HitlEscalationService.createEscalation({ tenantId, conversationId: convo.id, triggerReason: "test" });
+    HitlEscalationService.claimEscalation(tenantId, ticket.id, "pu_operator_1", { platformOperator: true });
+    const claimed = controlOf(conv("rf_ctl_platform"));
+    assert.deepStrictEqual([claimed.state, claimed.owner_user_id, claimed.changed_by], ["HUMAN", undefined, "platform:pu_operator_1"]);
+    const row = db.getAuditLogsByTenant(tenantId, 500).logs.find((a) => a.action === "CONVERSATION_CONTROL" && a.resource_id === convo.id && (a.metadata as R).reason === "hitl_claim")!;
+    assert.deepStrictEqual([row.actor_user_id, (row.metadata as R).actor_type], ["platform:pu_operator_1", "platform"]);
+    HitlEscalationService.resolveEscalation(tenantId, { escalationId: ticket.id, resolutionType: "BOT_RESUMED", resumeBot: true, userId: "pu_operator_1", platformOperator: true });
+    assert.strictEqual(controlOf(conv("rf_ctl_platform")).state, "BOT");
+    // Claiming the resolved ticket again doesn't take the live chat from the agent
+    HitlEscalationService.claimEscalation(tenantId, ticket.id, owner.user.id);
+    assert.strictEqual(controlOf(conv("rf_ctl_platform")).state, "BOT");
+  });
+
+  await runTest("control: nothing outside ConversationControlService writes automation_paused or mode (ADR-121)", async () => {
+    const root = path.resolve(__dirname, "../src");
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (/\.tsx?$/.test(entry.name) && !full.endsWith("conversation-control.service.ts")) {
+          const text = fs.readFileSync(full, "utf8");
+          for (const m of text.matchAll(/updateConversation\(([^;]*?)\);/gs)) {
+            if (/\bautomation_paused\s*:|\bmode\s*:/.test(m[1])) offenders.push(path.relative(root, full));
+          }
+        }
+      }
+    };
+    walk(root);
+    assert.deepStrictEqual(offenders, [], `direct writes: ${offenders.join(", ")}`);
+  });
+
+  await runTest("a reply over the channel's burst limit waits and goes out instead of being dropped (MR4)", async () => {
+    setMode(true, false);
+    const convo = await inbound("rf_burst", "hello");
+    makeDue(convo.id);
+    while (ChannelRateLimiter.tryConsume(channel.id).allowed) { /* empty the burst bucket */ }
+    scripted.steps = [say("Ji bolun.")];
+    await runAgentJobsOnce();
+    scripted.steps = [];
+    const job = db.findAgentJob(tenantId, convo.id)!;
+    assert.notStrictEqual(job.status, "BLOCKED", `a burst limit never blocks the reply: ${job.outcome}`);
+    assert.ok(outbound(convo.id).some((m) => m.sender_type === "BOT") || job.status === "PENDING", `sent or deferred: ${job.status} ${job.outcome}`);
+  });
+
+  await runTest("S2 (flag on): a new chat starts with the agent; its own escalation still replies; a staff reply or pause during the turn wins (ADR-121)", async () => {
+    setMode(true, false);
+    flag(CONTROL_V2_FLAG, true);
+    // One job per workspace per pass, oldest first: earlier tests leave jobs pending, so only this chat's is due
+    const onlyDue = (conversationId: string) => {
+      const later = new Date(Date.now() + 3_600_000).toISOString();
+      for (const j of db.data.agent_jobs) {
+        if (j.tenant_id === tenantId && j.conversation_id !== conversationId && j.status === "PENDING") db.saveAgentJob({ ...j, not_before: later });
+      }
+      makeDue(conversationId);
+    };
+    try {
+      const fresh = await inbound("rf_v2_new", "hello");
+      const ctl = conv("rf_v2_new").control!;
+      assert.deepStrictEqual([ctl.state, ctl.version, conv("rf_v2_new").mode, conv("rf_v2_new").automation_paused], ["BOT", 0, "AI", false]);
+      onlyDue(fresh.id);
+      scripted.steps = [say("Ji bolun.")];
+      await runAgentJobsOnce();
+      assert.strictEqual(db.findAgentJob(tenantId, fresh.id)!.control_version, 0, "the lease is the version at claim");
+      assert.ok(outbound(fresh.id).some((m) => m.sender_type === "BOT"), "a plain turn sends");
+
+      // The turn's own escalation (hostile message): its reply goes out, recorded as this turn's change
+      const angry = await inbound("rf_v2_escalate", "apnara chor, taka ferot din");
+      onlyDue(angry.id);
+      scripted.steps = [say("Dukkhito, amader team er ekjon apnar sathe kotha bolbe.")];
+      await runAgentJobsOnce();
+      const escJob = db.findAgentJob(tenantId, angry.id)!;
+      assert.ok(outbound(angry.id).some((m) => m.sender_type === "BOT"), `own escalation replies: ${escJob.outcome}`);
+      assert.deepStrictEqual([conv("rf_v2_escalate").control!.state, conv("rf_v2_escalate").control!.changed_by], ["ESCALATED", `turn:${escJob.id}`]);
+
+      // Staff reply during the turn: the version moved under the agent, its reply is refused
+      await new Promise((r) => setTimeout(r, 1500)); // the burst test above emptied the channel bucket (5 a second refill)
+      const busy = await inbound("rf_v2_staff", "hello");
+      onlyDue(busy.id);
+      scripted.steps = [
+        () => {
+          void OutboundMessageService.sendMessage(ownerCtx, busy.id, { text: "Ami Owner" }).catch(() => undefined);
+          return { content: "Ji bolun." };
+        },
+      ];
+      await runAgentJobsOnce();
+      await new Promise((r) => setTimeout(r, 50));
+      assert.ok(outbound(busy.id).every((m) => m.sender_type !== "BOT"), JSON.stringify({ job: db.findAgentJob(tenantId, busy.id), control: conv("rf_v2_staff").control, out: outbound(busy.id).map((m) => [m.sender_type, m.created_at]) }));
+      assert.strictEqual(db.findAgentJob(tenantId, busy.id)!.outcome, "STAFF_REPLIED");
+
+      // Staff pause (no reply) during a turn that then escalates: the person keeps the chat, nothing is sent
+      const paused = await inbound("rf_v2_pause", "apnara chor, taka ferot din");
+      onlyDue(paused.id);
+      scripted.steps = [
+        () => {
+          void ConversationService.setAutomationPaused(ownerCtx, paused.id, true);
+          return { content: "Dukkhito." };
+        },
+      ];
+      await runAgentJobsOnce();
+      assert.strictEqual(outbound(paused.id).length, 0);
+      assert.strictEqual(controlOf(conv("rf_v2_pause")).state, "HUMAN");
+    } finally {
+      scripted.steps = [];
+      flag(CONTROL_V2_FLAG, false);
+    }
+  });
+
+  await runTest("S3: readers ask the control state, never automation_paused or mode (ADR-121)", async () => {
+    const readers = [
+      "domains/ai/customer-agent/jobs.ts",
+      "domains/ai/customer-agent/worker.ts",
+      "domains/ai/customer-agent/silent-drops.ts",
+      "domains/ai/customer-agent/runtime.ts",
+      "domains/ai/router/agent-router.ts",
+      "domains/ai/runtime/agent-runtime.ts",
+      "domains/social/outbound/outbound-message.service.ts",
+      "components/social/ConversationThread.tsx",
+      "components/social/UnifiedInbox.tsx",
+    ];
+    const root = path.resolve(__dirname, "../src");
+    const stale = readers.filter((file) => /\.automation_paused\b|\.mode === "HUMAN"/.test(fs.readFileSync(path.join(root, file), "utf8")));
+    assert.deepStrictEqual(stale, [], `still reading the legacy fields: ${stale.join(", ")}`);
+  });
+
+  await runTest("S3: an unpaused chat created as mode HUMAN (before S2) isn't a human takeover for the older router (ADR-121)", async () => {
+    setMode(true, false);
+    const convo = await inbound("rf_s3_router", "black t-shirt ache?");
+    db.updateConversation(tenantId, convo.id, { control: undefined });
+    db.data.conversations.find((c) => c.id === convo.id)!.mode = "HUMAN";
+    const routed = await AgentRouter.route(ownerCtx, convo.id, "black t-shirt ache?");
+    assert.notStrictEqual(routed.intent, "HUMAN_REQUEST", "mode alone no longer means a person has the chat");
+    await ConversationService.setAutomationPaused(ownerCtx, convo.id, true);
+    assert.strictEqual((await AgentRouter.route(ownerCtx, convo.id, "black t-shirt ache?")).intent, "HUMAN_REQUEST", "a paused chat still is");
+  });
+
+  await runTest("control property test: random staff/agent/HITL sequences never drop a message or answer a person's chat (ADR-121)", async () => {
+    setMode(true, false);
+    const OPS = ["inbound", "staff_send", "pause", "resume", "escalate", "claim", "turn"] as const;
+    // S1 rules and the S2 lease (flag on): the same invariants must hold under both
+    for (const v2 of [false, true]) {
+    flag(CONTROL_V2_FLAG, v2);
+    let seed = 20261026;
+    const rand = (n: number) => ((seed = (seed * 1103515245 + 12345) % 2147483648), seed % n);
+    for (let run = 0; run < 12; run++) {
+      const chat = `rf_prop_${v2 ? "v2" : "v1"}_${run}`;
+      const convo = await inbound(chat, "hello");
+      let ticket: string | undefined;
+      const trace: string[] = [];
+      for (let step = 0; step < 10; step++) {
+        const op = OPS[rand(OPS.length)];
+        trace.push(op);
+        const before = controlOf(conv(chat)).state;
+        const botBefore = outbound(convo.id).filter((m) => m.sender_type === "BOT").length;
+        if (op === "inbound") await inbound(chat, `msg ${step}`);
+        else if (op === "staff_send") {
+          // The channel's burst limit refuses some sends here; a refused send changes nothing (its unit rolls back)
+          await OutboundMessageService.sendMessage(ownerCtx, convo.id, { text: `staff ${step}` }).catch((err: Error) => {
+            if (!/rate-limited/.test(err.message)) throw err;
+          });
+        }
+        else if (op === "pause") await ConversationService.setAutomationPaused(ownerCtx, convo.id, true);
+        else if (op === "resume") await ConversationService.setAutomationPaused(ownerCtx, convo.id, false);
+        else if (op === "escalate") ticket = HitlEscalationService.createEscalation({ tenantId, conversationId: convo.id, triggerReason: "prop" }).id;
+        else if (op === "claim" && ticket) HitlEscalationService.claimEscalation(tenantId, ticket, owner.user.id);
+        else if (op === "turn") {
+          if (db.findAgentJob(tenantId, convo.id)?.status === "PENDING") makeDue(convo.id);
+          scripted.steps = [say("Ji bolun.")];
+          await runAgentJobsOnce();
+          scripted.steps = [];
+        }
+        const c = conv(chat);
+        const ctl = controlOf(c);
+        const where = `${chat} after [${trace.join(", ")}]`;
+        // Legacy fields always agree with the state
+        assert.strictEqual(c.automation_paused, ctl.state !== "BOT", `paused flag: ${where}`);
+        // The agent never answers a chat that wasn't its own when the step began
+        const botAfter = outbound(convo.id).filter((m) => m.sender_type === "BOT").length;
+        if (before !== "BOT") assert.strictEqual(botAfter, botBefore, `bot sent into a ${before} chat: ${where}`);
+        // No silent drop: an unanswered customer message has a queued turn, a person who owns the chat, or a waiting count
+        const msgs = db.getMessages(tenantId, convo.id, { limit: 200 }).messages;
+        const lastCustomer = msgs.map((m) => m.sender_type).lastIndexOf("CUSTOMER");
+        const answered = msgs.slice(lastCustomer + 1).some((m) => m.direction === "OUTBOUND" && m.message_type !== "INTERNAL_NOTE");
+        if (lastCustomer >= 0 && !answered) {
+          const job = db.findAgentJob(tenantId, convo.id);
+          const ok =
+            ctl.state === "BOT" ? job?.status === "PENDING" || job?.status === "RUNNING"
+            : ctl.state === "ESCALATED" ? true
+            : Boolean(ctl.owner_user_id) || (c.awaiting_count ?? 0) > 0;
+          assert.ok(ok, `silent drop (${ctl.state}, job ${job?.status} ${job?.outcome}): ${where}`);
+        }
+      }
+    }
+    }
+    flag(CONTROL_V2_FLAG, false);
   });
 
   await runTest("fair scheduling: one busy workspace doesn't hold up another", async () => {

@@ -31,6 +31,10 @@ import { replyScript } from "./output";
 import { hourWithin, localHour } from "@/lib/local-time";
 import { quoteShownIn } from "./output";
 import { loadCustomerRows } from "@/infrastructure/db/tenant-rows";
+import { agentPaused, controlOf } from "@/domains/social/conversations/conversation-control.state";
+
+/** The turn's lease on the chat (ADR-121 S2), when the job was claimed with one. */
+const leaseOf = (job: AgentJob) => (job.control_version === undefined ? undefined : { version: job.control_version, turnId: job.id });
 
 const INTERVAL_MS = 1_000;
 /** A claim older than this belongs to a server that died mid-turn; the job is taken again (a turn takes under a minute). */
@@ -65,7 +69,10 @@ async function claim(job: AgentJob): Promise<AgentJob | undefined> {
     const due = current.status === "PENDING" && current.not_before <= now.toISOString();
     const stale = current.status === "RUNNING" && (current.claimed_at ?? "") < new Date(now.getTime() - STALE_CLAIM_MS).toISOString();
     if (!due && !stale) return undefined;
-    return db.saveAgentJob({ ...current, status: "RUNNING", claimed_at: now.toISOString(), attempts: current.attempts + 1, rerun: false });
+    // The lease (ADR-121): this turn may send only while the chat's control is still at this version, or moved by this turn
+    const conversation = db.findConversationById(current.tenant_id, current.conversation_id);
+    const control_version = conversation ? controlOf(conversation).version : undefined;
+    return db.saveAgentJob({ ...current, status: "RUNNING", claimed_at: now.toISOString(), attempts: current.attempts + 1, rerun: false, control_version });
   }, (r) => Boolean(r));
 }
 
@@ -101,9 +108,9 @@ async function finish(job: AgentJob, result: Finish): Promise<void> {
 async function handOff(job: AgentJob, summary: string): Promise<void> {
   await db.withFreshTenantReads(async () => {
     await loadChatCustomer(job);
-    const pr = principalFor(job.tenant_id, job.conversation_id);
-    if (!pr) return;
-    await runCustomerTool(pr, "handoff_to_human", { reason: "other", summary });
+    const base = principalFor(job.tenant_id, job.conversation_id);
+    if (!base) return;
+    await runCustomerTool({ ...base, turnId: job.id }, "handoff_to_human", { reason: "other", summary });
   });
 }
 
@@ -153,7 +160,10 @@ async function outsideHours(job: AgentJob, pr: NonNullable<ReturnType<typeof pri
   // "A team member will reply" is only said when a team member really has the chat
   if (!handed.ok) return { status: "BLOCKED", outcome: "OUTSIDE_HOURS_HANDOFF_FAILED" };
   try {
-    await OutboundMessageService.sendMessage(capabilityContext(pr, "send"), job.conversation_id, { text, idempotency_key: `agent:${job.id}:${last?.id ?? job.last_message_id}:hours` }, { asAgent: true, agentHandedOff: true, traceId: job.id });
+    // Past the burst limit too: once handed off, a deferred rerun would find the chat paused and never send this
+    await sendPastBurstLimit(() =>
+      OutboundMessageService.sendMessage(capabilityContext(pr, "send"), job.conversation_id, { text, idempotency_key: `agent:${job.id}:${last?.id ?? job.last_message_id}:hours` }, { asAgent: true, agentHandedOff: true, traceId: job.id, agentLease: leaseOf(job) })
+    );
   } catch (err) {
     if (!(err instanceof AppError)) throw err;
     return { status: "BLOCKED", outcome: `OUTSIDE_HOURS_SEND_REFUSED:${err.code}` };
@@ -170,7 +180,9 @@ export async function runAgentJob(job: AgentJob): Promise<Finish> {
 }
 
 async function runLoadedAgentJob(job: AgentJob): Promise<Finish> {
-  const pr = principalFor(job.tenant_id, job.conversation_id);
+  // The turn acts as `turn:<job id>`: its own handoff or escalation is its own change to the chat, not someone else's
+  const base = principalFor(job.tenant_id, job.conversation_id);
+  const pr = base ? { ...base, turnId: job.id } : null;
   if (!pr) return { status: "BLOCKED", outcome: "INACTIVE_WORKSPACE_OR_CHANNEL" };
   const conversation = db.findConversationById(job.tenant_id, job.conversation_id);
   const mode = agentMode(job.tenant_id);
@@ -178,7 +190,7 @@ async function runLoadedAgentJob(job: AgentJob): Promise<Finish> {
     logger.warn("customer_agent.not_eligible", { reason: "no_conversation", conversation_id: job.conversation_id });
     return { status: "CANCELLED", outcome: "NOT_ELIGIBLE:NO_CONVERSATION" };
   }
-  if (conversation.automation_paused) {
+  if (agentPaused(conversation)) {
     logger.warn("customer_agent.not_eligible", { reason: "automation_paused", conversation_id: job.conversation_id });
     return { status: "CANCELLED", outcome: "NOT_ELIGIBLE:AUTOMATION_PAUSED" };
   }
@@ -245,12 +257,14 @@ async function runLoadedAgentJob(job: AgentJob): Promise<Finish> {
   }
 
   try {
-    const sent = await OutboundMessageService.sendMessage(
-      capabilityContext(pr, "send"),
-      job.conversation_id,
-      // Keyed on the message this turn answered, so a message that arrived after the claim gets one reply, not two
-      { text: turn.reply, idempotency_key: `agent:${job.id}:${turn.answeredMessageId ?? job.last_message_id}` },
-      { asAgent: true, agentTurnStartedAt: turnStartedAt, agentHandedOff: turn.handoff, traceId: job.id }
+    const sent = await sendPastBurstLimit(() =>
+      OutboundMessageService.sendMessage(
+        capabilityContext(pr, "send"),
+        job.conversation_id,
+        // Keyed on the message this turn answered, so a message that arrived after the claim gets one reply, not two
+        { text: turn.reply, idempotency_key: `agent:${job.id}:${turn.answeredMessageId ?? job.last_message_id}` },
+        { asAgent: true, agentTurnStartedAt: turnStartedAt, agentHandedOff: turn.handoff, traceId: job.id, agentLease: leaseOf(job) }
+      )
     );
     if (DELIVERED.has(sent.status)) {
       await markQuotesShown(job, turnStartedAt, sent.id, turn.reply);
@@ -259,12 +273,35 @@ async function runLoadedAgentJob(job: AgentJob): Promise<Finish> {
     return { status: "DONE", outcome: `${turn.status}:${sent.status}` };
   } catch (err) {
     if (err instanceof AppError && err.code === "AGENT_SUPERSEDED") return { status: "CANCELLED", outcome: "STAFF_REPLIED" };
+    // Still over the channel's burst limit after waiting: run the turn again shortly, never drop the reply
+    if (err instanceof AppError && err.code === "CHANNEL_RATE_LIMITED") {
+      return { status: "PENDING", outcome: "CHANNEL_RATE_LIMITED", notBefore: new Date(Date.now() + DEFER_RATE_LIMITED_MS).toISOString() };
+    }
     // A kill switch, a disabled feature or channel policy: sending again won't help, and a person should look
     if (err instanceof KillSwitchActiveError || (err instanceof AppError && err.statusCode < 500 && err.statusCode !== 409)) {
       logger.warn("customer_agent.send_refused", { tenant_id: job.tenant_id, conversation_id: job.conversation_id, code: err.code });
       return { status: "BLOCKED", outcome: `SEND_REFUSED:${err.code}` };
     }
     throw err;
+  }
+}
+
+/** How long a reply over the channel's burst limit waits before its turn runs again. */
+const DEFER_RATE_LIMITED_MS = 5_000;
+
+/**
+ * The channel's burst limit refills in milliseconds: wait what it asks (at most 2 s) and send again, up to three times,
+ * before the turn is deferred. The idempotency key makes a repeated send safe.
+ */
+async function sendPastBurstLimit<T>(send: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await send();
+    } catch (err) {
+      if (!(err instanceof AppError && err.code === "CHANNEL_RATE_LIMITED") || attempt >= 2) throw err;
+      const waitMs = Math.min(2_000, Math.max(50, Number(err.details?.retry_after_ms) || 200));
+      await new Promise((r) => setTimeout(r, waitMs));
+    }
   }
 }
 
@@ -290,7 +327,7 @@ async function sendProductCards(job: AgentJob, pr: CustomerAgentPrincipal, turn:
       capabilityContext(pr, "send"),
       job.conversation_id,
       { text: productCardsText(cards), productCards: cards, idempotency_key: `agent:${job.id}:${turn.answeredMessageId ?? job.last_message_id}:cards` },
-      { asAgent: true, agentTurnStartedAt: turnStartedAt, agentHandedOff: turn.handoff, traceId: job.id }
+      { asAgent: true, agentTurnStartedAt: turnStartedAt, agentHandedOff: turn.handoff, traceId: job.id, agentLease: leaseOf(job) }
     );
   } catch (err) {
     logger.warn("customer_agent.product_cards_failed", {

@@ -13,6 +13,9 @@ import { SocialEventService } from "../events/social-event.service";
 import { assertNotKilled, isFeatureEnabled } from "@/lib/safety-gate";
 import { TelegramApiError } from "../channels/adapters/telegram.adapter";
 import { loadCustomerRows } from "@/infrastructure/db/tenant-rows";
+import { ConversationControlService } from "../conversations/conversation-control.service";
+import { agentPaused, controlOf, legacyFields } from "../conversations/conversation-control.state";
+import { CONTROL_V2_FLAG, strictFlag } from "@/domains/ai/customer-agent/jobs";
 
 export interface SendOutboundPayload {
   text: string;
@@ -42,7 +45,14 @@ export class OutboundMessageService {
     context: RequestContext,
     conversationId: string,
     payload: SendOutboundPayload,
-    options: { asAgent?: boolean; agentTurnStartedAt?: string; agentHandedOff?: boolean; traceId?: string } = {}
+    options: {
+      asAgent?: boolean;
+      agentTurnStartedAt?: string;
+      agentHandedOff?: boolean;
+      traceId?: string;
+      /** The turn's lease (ADR-121 S2): the chat's control version when the job was claimed, and the job id. */
+      agentLease?: { version: number; turnId: string };
+    } = {}
   ): Promise<Message> {
     const prepared = await db.unit(async () => {
       RbacService.assertCan(context, PERMISSIONS.SOCIAL_MESSAGE_SEND);
@@ -65,14 +75,21 @@ export class OutboundMessageService {
       }
       if (!isFeatureEnabled("real_messaging", context.tenant.id)) throw new FeatureNotEntitledError("real_messaging");
 
-      if (options.asAgent && options.agentTurnStartedAt) {
+      if (options.asAgent && options.agentLease && strictFlag(CONTROL_V2_FLAG, context.tenant.id)) {
+        // ADR-121 S2: one rule. The chat is still the agent's at the version the turn was claimed with, or the only change
+        // since is this turn's own handoff/escalation (its one reply). Staff replies and pauses bump the version.
+        const { version, turnId } = options.agentLease;
+        const control = controlOf(conversation);
+        const leased = control.version === version ? control.state === "BOT" : control.version === version + 1 && control.changed_by === `turn:${turnId}`;
+        if (!leased) throw new AppError("AGENT_SUPERSEDED", "The conversation changed hands during the agent's turn; the agent's reply was not sent.", 409);
+      } else if (options.asAgent && options.agentTurnStartedAt) {
         const since = options.agentTurnStartedAt;
         const staffReplied = db
           .getMessages(context.tenant.id, conversationId, { limit: 50 })
           .messages.some((m) => m.direction === "OUTBOUND" && m.sender_type === "AGENT" && m.message_type !== "INTERNAL_NOTE" && m.created_at >= since);
         if (staffReplied) throw new AppError("AGENT_SUPERSEDED", "A team member replied during the agent's turn; the agent's reply was not sent.", 409);
         // Paused by staff or another handoff while the turn ran: only this turn's own handoff acknowledgement may go out
-        if (conversation.automation_paused && !options.agentHandedOff) {
+        if (agentPaused(conversation) && !options.agentHandedOff) {
           throw new AppError("AGENT_SUPERSEDED", "The conversation was taken over during the agent's turn; the agent's reply was not sent.", 409);
         }
       }
@@ -86,7 +103,11 @@ export class OutboundMessageService {
       ChannelPolicyService.assertCanSend(channel.type, conversation.last_inbound_at, payload.messageType || "TEXT", payload.text);
       const rateCheck = ChannelRateLimiter.tryConsume(channel.id);
       if (!rateCheck.allowed) {
-        throw new BadRequestError(`Channel '${channel.name}' is temporarily rate-limited. Retry in ${rateCheck.retryAfterMs}ms.`);
+        // 429 with its own code: a burst limit passes in milliseconds, so senders retry instead of giving up
+        throw new AppError("CHANNEL_RATE_LIMITED", `Channel '${channel.name}' is temporarily rate-limited. Retry in ${rateCheck.retryAfterMs}ms.`, 429, {
+          retry_after_ms: rateCheck.retryAfterMs ?? 0,
+          retry_after_sec: Math.max(1, Math.ceil((rateCheck.retryAfterMs ?? 0) / 1000)),
+        });
       }
 
       const msgId = `msg_${Date.now()}_${randomSuffix()}`;
@@ -118,10 +139,14 @@ export class OutboundMessageService {
 
       db.createMessage(initialMessage);
       // A handed-off chat keeps waiting for a person, even after the bot's "a team member will reply" message
-      const agentAfterHandoff = Boolean(options.asAgent && conversation.automation_paused);
+      const agentAfterHandoff = Boolean(options.asAgent && agentPaused(conversation));
+      // A staff reply takes the chat (ADR-121); an agent reply leaves ownership as it is
+      if (!options.asAgent) {
+        ConversationControlService.transition(context.tenant.id, conversationId, "HUMAN", `user:${context.user.id}`, "staff_reply", { ownerUserId: context.user.id });
+      }
       db.updateConversation(context.tenant.id, conversationId, {
         // A staff reply answers whatever was waiting for a person
-        ...(options.asAgent ? (agentAfterHandoff ? {} : { mode: "AI" as const }) : { automation_paused: true, mode: "HUMAN" as const, awaiting_since: undefined, awaiting_count: 0 }),
+        ...(options.asAgent ? (agentAfterHandoff ? {} : legacyFields("BOT")) : { awaiting_since: undefined, awaiting_count: 0 }),
         status: !agentAfterHandoff && conversation.status === "WAITING_AGENT" ? "WAITING_CUSTOMER" : conversation.status,
         last_outbound_at: now,
         last_message_at: now,

@@ -4,6 +4,7 @@ import React, { useMemo } from "react";
 import { Search, MessageSquare, Phone, Globe, RefreshCw } from "lucide-react";
 import { Conversation, ChannelType } from "@/types/social";
 import styles from "./SocialInbox.module.css";
+import { agentPaused } from "@/domains/social/conversations/conversation-control.state";
 
 interface UnifiedInboxProps {
   conversations: any[];
@@ -249,7 +250,7 @@ export const UnifiedInbox: React.FC<UnifiedInboxProps> = ({
                         <span className={styles.tagBadge}>#{convo.tags[0]}</span>
                       )}
 
-                      {convo.automation_paused && Boolean(convo.awaiting_count) && (
+                      {agentPaused(convo) && Boolean(convo.awaiting_count) && (
                         <span className={styles.awaitingBadge} title="AI paused: these customer messages wait for a person">
                           {convo.awaiting_count} waiting
                         </span>

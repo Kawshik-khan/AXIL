@@ -818,6 +818,8 @@ export interface AgentJob {
   attempts: number;
   rerun?: boolean;
   claimed_at?: string;
+  /** The chat's control version when this turn was claimed: the agent's lease (ADR-121 S2). */
+  control_version?: number;
   outcome?: string;
   created_at: string;
   updated_at: string;

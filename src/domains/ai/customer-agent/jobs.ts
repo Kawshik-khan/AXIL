@@ -8,10 +8,13 @@
 import { db } from "@/infrastructure/db";
 import { isFeatureEnabled } from "@/lib/safety-gate";
 import { logger } from "@/lib/logger";
+import { agentPaused } from "@/domains/social/conversations/conversation-control.state";
 import type { ChannelType, Conversation } from "@/types/social";
 
 export const AUTONOMOUS_FLAG = "customer_agent_autonomous";
 export const SHADOW_FLAG = "customer_agent_shadow";
+/** ADR-121 S2, per workspace: the agent's lease decides its sends, and new chats start with the agent (BOT). */
+export const CONTROL_V2_FLAG = "conversation_control_v2";
 const DEBOUNCE_MS = 2_000;
 /** Channels the agent can't reply on yet: a turn there would cost model calls for a reply nobody receives. */
 const NO_REPLY_CHANNELS: ReadonlySet<ChannelType> = new Set<ChannelType>(["WEBSITE_CHAT"]);
@@ -71,7 +74,7 @@ export function enqueueCustomerTurn(conversation: Conversation, messageId: strin
   if (!channelAllowed(conversation.tenant_id, conversation.channel_type, conversation.channel_id)) return;
   if (agentMode(conversation.tenant_id) === "OFF") return;
   // A handoff or a staff reply pauses automation: from then on a person answers this chat
-  if (conversation.automation_paused) {
+  if (agentPaused(conversation)) {
     logger.info("customer_agent.not_queued", { reason: "automation_paused", tenant_id: conversation.tenant_id, conversation_id: conversation.id });
     // The message now waits for a person: the inbox shows how many, and a resume answers them (MR2)
     db.updateConversation(conversation.tenant_id, conversation.id, {

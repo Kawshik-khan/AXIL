@@ -32,6 +32,8 @@ export interface CustomerAgentPrincipal {
   identityId?: string;
   customerId?: string;
   assurance: Assurance;
+  /** The agent job running this turn: the actor of the chat changes the turn makes (ADR-121 `turn:<id>`). */
+  turnId?: string;
 }
 
 const ASSURANCE: Partial<Record<ChannelType, Assurance>> = {

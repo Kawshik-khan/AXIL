@@ -3,6 +3,7 @@
  * Hybrid routing pipeline: Deterministic Rules -> Banglish Heuristics -> Lightweight LLM Classifier.
  */
 
+import { agentPaused } from "@/domains/social/conversations/conversation-control.state";
 import { db } from "@/infrastructure/db";
 import { RequestContext } from "@/lib/context";
 import {
@@ -34,7 +35,7 @@ export class AgentRouter {
 
     // 1. Check Automation Lock & Conversation Mode (Skip for operator Copilot assist)
     const conversation = db.findConversationById(tenantId, conversationId);
-    if (!options?.isCopilot && conversation && (conversation.mode === "HUMAN" || conversation.automation_paused)) {
+    if (!options?.isCopilot && conversation && agentPaused(conversation)) {
       return {
         intent: "HUMAN_REQUEST",
         category: "SYSTEM",
