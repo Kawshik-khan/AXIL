@@ -251,7 +251,22 @@ export async function runSocialCommerceTests() {
       // A webhook still pointing at a deleted connector is a 404, not a crash (a 500 makes Telegram retry it)
       const unknown = await telegramConnectorWebhook(requestFor(webhookSecret), { params: Promise.resolve({ id: "conn_telegram_gone" }) });
       assert.strictEqual(unknown.status, 404);
-      assert.strictEqual((await unknown.json()).error.code, "NOT_FOUND");
+      const unknownBody = await unknown.json();
+      assert.strictEqual(unknownBody.error.code, "NOT_FOUND");
+      assert.deepStrictEqual(unknownBody.error.details, { resource: "Connector", identifier: "conn_telegram_gone" }, "nothing beyond the URL's id");
+      // Disabled and unconnected connectors answer exactly like an unknown one: no state oracle before the secret
+      const shapeOf = async (res: Response) => {
+        const body = await res.json();
+        return { status: res.status, code: body.error.code, details: body.error.details };
+      };
+      const expected = { status: 404, code: "NOT_FOUND", details: { resource: "Connector", identifier: connector.id } };
+      db.saveConnector({ ...db.findConnectorById(contextA.tenant.id, connector.id)!, enabled: false });
+      assert.deepStrictEqual(await shapeOf(await telegramConnectorWebhook(requestFor("wrong"), { params: Promise.resolve({ id: connector.id }) })), expected, "disabled");
+      db.saveConnector({ ...db.findConnectorById(contextA.tenant.id, connector.id)!, enabled: true });
+      const storedChannel = db.data.connected_channels.find((c) => c.id === channel.id)!;
+      storedChannel.connector_id = "conn_other";
+      assert.deepStrictEqual(await shapeOf(await telegramConnectorWebhook(requestFor("wrong"), { params: Promise.resolve({ id: connector.id }) })), expected, "no channel");
+      storedChannel.connector_id = connector.id;
       assert.strictEqual(
         db.findMessageByExternalId(contextA.tenant.id, channel.id, normalized[0].externalMessageId),
         undefined,

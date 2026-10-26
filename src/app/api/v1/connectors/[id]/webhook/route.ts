@@ -26,18 +26,17 @@ async function handleGET() {
 
 async function ingest(request: Request, id: string) {
   // 1. Resolve the connector by its public id. The row's tenant_id is authoritative; no tenant comes from the request.
-  const connector = db.findConnectorForIngress(id);
-  if (!connector) {
-    throw new NotFoundError("Connector", id);
-  }
-  if (connector.enabled === false) {
-    throw new BadRequestError("This connector is disabled.");
-  }
-
   // 2. Find the channel this connector feeds (D3: the channel references the connector).
-  const channel = db.getConnectedChannels(connector.tenant_id).find((c) => c.connector_id === connector.id);
-  if (!channel) {
-    throw new BadRequestError(`No channel is connected to connector '${id}'.`);
+  // Before the signature is checked, an unknown, disabled or unconnected connector all get the same 404: an
+  // unauthenticated caller learns nothing about its state. The reason goes to the log only.
+  const connector = db.findConnectorForIngress(id);
+  const channel = connector && connector.enabled !== false
+    ? db.getConnectedChannels(connector.tenant_id).find((c) => c.connector_id === connector.id)
+    : undefined;
+  if (!connector || !channel) {
+    const reason = !connector ? "unknown" : connector.enabled === false ? "disabled" : "no_channel";
+    logger.warn("connector_webhook.unroutable", { connector_id: id, reason });
+    throw new NotFoundError("Connector", id);
   }
 
   // 3. Verify the provider's signature. Each provider has its own mechanism.

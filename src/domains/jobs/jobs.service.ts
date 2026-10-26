@@ -25,6 +25,7 @@ import { inventoryRepository } from "@/domains/inventory/inventory.repository";
 import { loadOrderRows } from "@/infrastructure/db/tenant-rows";
 import { NotificationService } from "@/domains/notifications/notification.service";
 import { runConnectionHealth } from "@/domains/connectors/connection-lifecycle";
+import { findSilentDrops } from "@/domains/ai/customer-agent/silent-drops";
 
 export { localHour };
 
@@ -182,10 +183,14 @@ export const JOBS: Record<string, JobDefinition> = {
     async run(now) {
       const alerts = AgentHealthService.evaluateAlerts(now);
       await CspReportService.load(now); // zero-hydration: the week's CSP counters
+      // Customer messages the agent should have answered and nothing did (messaging reliability MR1)
+      const drops = await findSilentDrops(dueTenants(), now);
+      if (drops.silent) logger.error("messaging.silent_drop", { silent: drops.silent, tenants: drops.tenants });
       return {
         agent_alerts: alerts.map((a) => ({ title: a.title, severity: a.severity, detail: a.detail })),
         csp: CspReportService.summary(now),
-        healthy: alerts.length === 0,
+        messaging: drops,
+        healthy: alerts.length === 0 && drops.silent === 0,
       };
     },
   },

@@ -66,7 +66,20 @@ async function main(): Promise<void> {
       });
       const line = logs.find((l) => l.event === "http.request");
       assert.strictEqual(line?.path, "/api/v1/invitations");
+      assert.strictEqual(line?.route, "/api/v1/invitations/:id/accept");
       assert.ok(!JSON.stringify(logs).includes("SECRET-TOKEN"));
+    });
+
+    await runTest("route keeps the shape of the path with every id masked", async () => {
+      env.NODE_ENV = "production";
+      const logs = await captureLog(async () => {
+        await ok(new Request("http://x/api/v1/connectors/conn_telegram_1790966379462_povyh4gbu8in/webhook"));
+        await ok(new Request("http://x/api/v1/social/conversations/cnv_1792977123807_1q5tpdf5xv9q/messages"));
+        await ok(new Request("http://x/api/v1/customers/01712345678"));
+      });
+      const routes = logs.filter((l) => l.event === "http.request").map((l) => l.route);
+      assert.deepStrictEqual(routes, ["/api/v1/connectors/:id/webhook", "/api/v1/social/conversations/:id/messages", "/api/v1/customers/:id"]);
+      assert.ok(!JSON.stringify(logs).includes("01712345678") && !JSON.stringify(logs).includes("povyh4gbu8in"));
     });
 
     await runTest("health probes are not logged", async () => {

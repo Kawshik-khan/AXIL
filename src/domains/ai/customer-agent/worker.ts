@@ -65,6 +65,11 @@ async function claim(job: AgentJob): Promise<AgentJob | undefined> {
 }
 
 async function finish(job: AgentJob, result: Finish): Promise<void> {
+  // One line per turn end, whatever the outcome: the job row keeps only the latest one
+  logger.info("customer_agent.turn_finished", {
+    tenant_id: job.tenant_id, conversation_id: job.conversation_id, status: result.status, outcome: result.outcome,
+    attempt: job.attempts, ms: job.claimed_at ? Date.now() - Date.parse(job.claimed_at) : undefined,
+  });
   await db.unit(async () => {
     const current = db.findAgentJob(job.tenant_id, job.conversation_id) ?? job;
     if (result.notBefore) {

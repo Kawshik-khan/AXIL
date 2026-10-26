@@ -301,7 +301,10 @@ export async function runCustomerTurn(pr: CustomerAgentPrincipal, opts: { budget
     const wasPaused = db.findConversationById(pr.tenantId, pr.conversationId)?.automation_paused === true;
     HitlEscalationService.createEscalation({ ...input, tenantId: pr.tenantId, conversationId: pr.conversationId });
     escalated = true;
-    if (!wasPaused) handoff = true;
+    if (wasPaused) return;
+    handoff = true;
+    // finish() may have recorded the run already (its own escalation comes after); the run says what happened
+    db.updateAgentRun(pr.tenantId, runId, { current_step: "HUMAN_HANDOFF" });
   };
   const finish = (status: CustomerTurn["status"], reply: string): CustomerTurn => {
     const { costUsd, costBdt } = modelRouter.calculateCost("TIER_1_FAST", promptTokens, completionTokens, cachedTokens);

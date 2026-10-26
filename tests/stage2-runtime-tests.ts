@@ -27,6 +27,7 @@ import { conversationSlots, runCustomerTurn } from "@/domains/ai/customer-agent/
 import { AUTONOMOUS_FLAG, SHADOW_FLAG, agentMode } from "@/domains/ai/customer-agent/jobs";
 import { customerMessages } from "@/domains/ai/customer-agent/confirmation";
 import { runAgentJobsOnce } from "@/domains/ai/customer-agent/worker";
+import { findSilentDrops } from "@/domains/ai/customer-agent/silent-drops";
 
 const GREEN = "\x1b[32m";
 const RED = "\x1b[31m";
@@ -813,6 +814,8 @@ async function main() {
     assert.strictEqual(job.status, "DONE", job.outcome);
     assert.ok(db.findAgentHitlEscalationByConversation(tenantId, convo.id), "the escalation was raised");
     assert.strictEqual(conv("rf_escalated").automation_paused, true, "a person answers from now on");
+    const run = db.getAgentRuns(tenantId, { conversation_id: convo.id })[0];
+    assert.strictEqual(run?.current_step, "HUMAN_HANDOFF", "the run records the handoff");
   });
 
   await runTest("staff pausing the chat during a turn that escalates still gets no bot reply", async () => {
@@ -841,6 +844,60 @@ async function main() {
     const out = outbound(convo.id);
     assert.ok(out.length === 1 && out[0].sender_type === "BOT", JSON.stringify(out.map((m) => m.sender_type)));
     assert.strictEqual(db.getAgentHitlEscalations(tenantId).filter((e) => e.conversation_id === convo.id).length, 1);
+  });
+
+  const captureInfo = async (fn: () => Promise<void>): Promise<R[]> => {
+    const lines: string[] = [];
+    const real = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: string | Uint8Array) => (lines.push(String(chunk)), true)) as typeof process.stdout.write;
+    try {
+      await fn();
+    } finally {
+      process.stdout.write = real;
+    }
+    return lines.flatMap((l) => l.split("\n")).filter((l) => l.startsWith("{")).map((l) => JSON.parse(l) as R);
+  };
+
+  await runTest("every turn end is logged with its outcome; a paused chat logs why no turn was queued (MR1)", async () => {
+    setMode(true, false);
+    const convo = await inbound("rf_logged", "hello");
+    makeDue(convo.id);
+    scripted.steps = [say("Ji bolun.")];
+    const logs = await captureInfo(async () => {
+      await runAgentJobsOnce();
+    });
+    scripted.steps = [];
+    const ended = logs.filter((l) => l.event === "customer_agent.turn_finished" && l.conversation_id === convo.id);
+    assert.strictEqual(ended.length, 1, JSON.stringify(logs.map((l) => l.event)));
+    assert.strictEqual(ended[0].status, "DONE");
+    assert.ok(typeof ended[0].outcome === "string" && (ended[0].outcome as string).endsWith(":SENT"), String(ended[0].outcome));
+
+    db.updateConversation(tenantId, convo.id, { automation_paused: true, mode: "HUMAN" });
+    const skipped = await captureInfo(async () => {
+      await inbound("rf_logged", "are you there?");
+    });
+    const line = skipped.find((l) => l.event === "customer_agent.not_queued");
+    assert.ok(line && line.reason === "automation_paused" && line.conversation_id === convo.id);
+    assert.ok(!JSON.stringify(line).includes("are you there"), "no message text in the log");
+  });
+
+  await runTest("silent-drop detector: an unanswered chat the agent owns is a drop, a paused one is awaiting a person (MR1)", async () => {
+    setMode(true, false);
+    const tenant = db.findTenantById(tenantId)!;
+    const before = await findSilentDrops([tenant]);
+    const tenMinAgo = new Date(Date.now() - 10 * 60_000).toISOString();
+    const dropped = await inbound("rf_drop", "hello?");
+    db.updateConversation(tenantId, dropped.id, { last_inbound_at: tenMinAgo, last_outbound_at: undefined, status: "OPEN", automation_paused: false });
+    const waiting = await inbound("rf_waiting", "hello?");
+    db.updateConversation(tenantId, waiting.id, { last_inbound_at: tenMinAgo, last_outbound_at: undefined, status: "OPEN", automation_paused: true });
+    const answered = await inbound("rf_answered", "hello?");
+    db.updateConversation(tenantId, answered.id, { last_inbound_at: tenMinAgo, last_outbound_at: new Date().toISOString(), status: "OPEN", automation_paused: false });
+    const after = await findSilentDrops([tenant]);
+    assert.strictEqual(after.silent - before.silent, 1);
+    assert.strictEqual(after.awaiting_human - before.awaiting_human, 1);
+    setMode(false, true);
+    assert.strictEqual((await findSilentDrops([tenant])).silent, 0, "shadow mode never sends, so nothing is a drop");
+    setMode(true, false);
   });
 
   await runTest("a channel the workspace's AI policy doesn't allow gets no turn", async () => {
