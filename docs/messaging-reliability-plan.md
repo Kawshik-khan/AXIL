@@ -108,6 +108,12 @@ Each phase ships on its own branch, behind a flag where it changes behaviour, an
 3. ~~Uniform pre-auth response~~: done in MR0's follow-up.
 4. **Canary:** an hourly job posts a signed synthetic update to a dedicated canary channel's webhook and asserts a turn reaches a
    terminal outcome (shadow mode on that channel, so nothing is sent).
+- *Built 2026-10-26:* `src/domains/connectors/telegram-webhook-reconciler.ts` (job `webhook-reconcile`, 10 min) and
+  `webhook-canary.ts` (job `webhook-canary`, hourly). *Changed while building:* a mismatch is re-registered only when
+  Telegram points at this app under another connector id (the live incident); an unset webhook or a bot routed elsewhere
+  (n8n, polling) is reported, never taken over (security review MEDIUM: having registered it once isn't consent to take
+  it back). System re-registrations are audited with `reason: stale_connector_id`. The re-register script became "run the job once" in the runbook.
+  `set-webhook` moved into `ConnectorService.registerTelegramWebhook` (shared by the action and the reconciler).
 - **Tests:** reconciler with a mocked Telegram (mismatch → re-register; error → incident); canary happy path and failure.
 - **Acceptance:** deleting and recreating a connector, or a DB cutover, heals within one reconciler interval with no manual step.
 

@@ -116,3 +116,19 @@ https `APP_URL` on the service, then in the Meta app:
 
 The scheduled job `connection-health` (every 6 hours, `scripts/run-scheduled-jobs.mjs`) checks every sign-in token with Meta.
 Until App Review grants Advanced Access, only people with a role on the Meta app can connect.
+
+## Telegram webhooks (messaging reliability MR3)
+
+The scheduled job `webhook-reconcile` (every 10 minutes) asks Telegram where each connected bot posts. A bot pointing at
+this app under another connector id (a deleted connector, or ids from before a database cutover) is registered again;
+anything else (no webhook, or a bot routed through n8n or polled) is only reported, never overridden. The connector page shows `DEGRADED` with a
+code: `WEBHOOK_ELSEWHERE`, `WEBHOOK_NOT_SET`, `WEBHOOK_ERRORING`, `WEBHOOK_BACKLOG`, `TELEGRAM_UNREACHABLE`.
+
+- **After a database cutover or a connector re-create:** run the job once instead of waiting:
+  `POST ${APP_URL}/api/v1/jobs/webhook-reconcile/run` with the jobs token (a new bucket runs every 10 minutes anyway).
+- **Logs to watch:** `connector_webhook.reregistered`, `connector_webhook.degraded`, `connector_webhook.unroutable`
+  (a request for an unknown, disabled or unconnected connector), `connector_webhook.remove_failed` (disconnect couldn't
+  reach Telegram; the reconciler can't fix a deleted connector's bot, so set its webhook again from the new connector).
+- **Canary (optional):** `webhook-canary` (hourly) posts a signed synthetic update to its own public webhook. Set
+  `WEBHOOK_CANARY_CONNECTOR_ID` to a Telegram connector in a workspace kept in shadow or copilot mode (the canary refuses
+  an autonomous one). Unset, it reports `NOT_CONFIGURED`. A failure logs `connector_webhook.canary_failed` with a code.

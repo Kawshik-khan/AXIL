@@ -26,6 +26,9 @@ import { ConnectorService } from "@/domains/connectors/service";
 import { OutboundTimeoutError, setOutboundTransportForTesting } from "@/lib/outbound-http";
 import { encryptCredential, decryptCredential } from "@/lib/security";
 import { POST as telegramConnectorWebhook } from "@/app/api/v1/connectors/[id]/webhook/route";
+import { reconcileTelegramWebhooks, RECONCILER_ACTOR, type ReconcileReport } from "@/domains/connectors/telegram-webhook-reconciler";
+import { runWebhookCanary, CANARY_CHAT_ID } from "@/domains/connectors/webhook-canary";
+import { agentMode } from "@/domains/ai/customer-agent/jobs";
 import { RequestContext } from "@/lib/context";
 import { PERMISSIONS } from "@/lib/permissions";
 import { RbacService } from "@/domains/rbac/service";
@@ -351,6 +354,117 @@ export async function runSocialCommerceTests() {
       assert.strictEqual(timeoutCalls, 1, "reusing an idempotency key cannot send a duplicate");
     } finally {
       setOutboundTransportForTesting(null);
+    }
+  });
+
+  await runTest("webhook reconciler: heals a stale URL of this app, leaves a foreign one alone, flags errors (MR3)", async () => {
+    const savedAppUrl = process.env.APP_URL;
+    process.env.APP_URL = "https://app.example";
+    const connector = await ConnectorService.saveConnector(contextA, {
+      provider_id: "telegram",
+      credentials: { bot_token: "987654321:ZYXwvuTSRqpoNMlkjIHgfeDCba_987654", bot_username: "@CommerceOSReconcileBot" },
+    });
+    const expected = `https://app.example/api/v1/connectors/${connector.id}/webhook`;
+    const tenants = [db.findTenantById(contextA.tenant.id)!];
+    const mine = (r: ReconcileReport) => r.items.find((i) => i.connector_id === connector.id)!;
+    let telegramUrl = "https://n8n.example/webhook/telegram";
+    let lastErrorDate: number | undefined;
+    const setCalls: string[] = [];
+    setOutboundTransportForTesting(async (url, options) => {
+      const method = url.toString().split("/").pop();
+      const body = JSON.parse(String(options.body || "{}"));
+      if (method === "setWebhook") {
+        setCalls.push(body.url);
+        telegramUrl = body.url;
+        assert.ok(typeof body.secret_token === "string" && body.secret_token.length > 0, "registered with the connector's secret");
+      }
+      const result = method === "getWebhookInfo" ? { url: telegramUrl, pending_update_count: 0, ...(lastErrorDate ? { last_error_date: lastErrorDate, last_error_message: "Wrong response from the webhook: 500" } : {}) } : true;
+      return { status: 200, headers: {}, body: JSON.stringify({ ok: true, result }), truncated: false, durationMs: 2 };
+    });
+    try {
+      // A bot routed elsewhere (n8n) that this app never registered: reported, never taken over
+      const foreign = mine(await reconcileTelegramWebhooks(tenants));
+      assert.deepStrictEqual([foreign.result, foreign.code], ["MISMATCH_NOT_OURS", "WEBHOOK_ELSEWHERE"]);
+      assert.strictEqual(setCalls.length, 0);
+      assert.strictEqual(db.findConnectorById(contextA.tenant.id, connector.id)!.health_code, "WEBHOOK_ELSEWHERE");
+
+      // Telegram still posting to this app under a deleted connector id (today's incident): registered again
+      telegramUrl = "https://app.example/api/v1/connectors/conn_telegram_gone/webhook";
+      const healedItem = mine(await reconcileTelegramWebhooks(tenants));
+      assert.strictEqual(healedItem.result, "REREGISTERED", JSON.stringify(healedItem));
+      assert.deepStrictEqual(setCalls, [expected]);
+      const healed = db.findConnectorById(contextA.tenant.id, connector.id)!;
+      assert.strictEqual(healed.health_status, "HEALTHY");
+      assert.strictEqual(healed.health_code, undefined);
+      assert.ok(db.getAuditLogsByTenant(contextA.tenant.id, 200).logs.some((a) => a.resource_id === connector.id && a.actor_user_id === RECONCILER_ACTOR));
+
+      // Pointing here: healthy, nothing changed
+      assert.strictEqual(mine(await reconcileTelegramWebhooks(tenants)).result, "HEALTHY");
+      assert.strictEqual(setCalls.length, 1);
+
+      // Registered by this app before, then moved by the owner (n8n, polling) or to a lookalike host: never taken back
+      for (const moved of ["https://n8n.example/webhook/telegram", "", "https://app.example.evil/api/v1/connectors/x/webhook", "https://app.example/api/v1/connectors/x/webhook/../../evil"]) {
+        telegramUrl = moved;
+        const item = mine(await reconcileTelegramWebhooks(tenants));
+        assert.strictEqual(item.result, "MISMATCH_NOT_OURS", `${moved}: ${JSON.stringify(item)}`);
+      }
+      assert.strictEqual(setCalls.length, 1, "no setWebhook for a webhook the owner moved");
+      telegramUrl = expected;
+
+      // Pointing here but failing now: degraded with a code, never Telegram's text
+      lastErrorDate = Math.floor(Date.now() / 1000) - 60;
+      const erroring = mine(await reconcileTelegramWebhooks(tenants));
+      assert.deepStrictEqual([erroring.result, erroring.code], ["DEGRADED", "WEBHOOK_ERRORING"]);
+      assert.ok(!JSON.stringify(db.findConnectorById(contextA.tenant.id, connector.id)).includes("Wrong response"));
+
+      process.env.APP_URL = "http://app.example";
+      assert.strictEqual((await reconcileTelegramWebhooks(tenants)).skipped, "APP_URL_NOT_HTTPS");
+    } finally {
+      setOutboundTransportForTesting(null);
+      if (savedAppUrl === undefined) delete process.env.APP_URL;
+      else process.env.APP_URL = savedAppUrl;
+      await ConnectorService.deleteConnector(contextA, connector.id).catch(() => undefined);
+    }
+  });
+
+  await runTest("webhook canary: off until configured; a signed synthetic update reaches the inbox (MR3)", async () => {
+    assert.deepStrictEqual(await runWebhookCanary(Date.now(), {} as NodeJS.ProcessEnv), { status: "NOT_CONFIGURED" });
+    const connector = await ConnectorService.saveConnector(contextA, {
+      provider_id: "telegram",
+      credentials: { bot_token: "555666777:CanaryTokenAbcdefGhijklmnoPqrstuvwx", bot_username: "@CommerceOSCanaryBot" },
+    });
+    const stored = db.findConnectorById(contextA.tenant.id, connector.id)!;
+    db.saveConnector({ ...stored, credentials_encrypted: encryptCredential({ ...decryptCredential<Record<string, unknown>>(stored.credentials_encrypted), webhook_secret: "canary-test-secret-0123456789abcdef" }) });
+    const env = { WEBHOOK_CANARY_CONNECTOR_ID: connector.id, APP_URL: "https://app.example" } as unknown as NodeJS.ProcessEnv;
+    const savedAppUrl = process.env.APP_URL;
+    process.env.APP_URL = "https://app.example";
+    // An autonomous workspace would answer the synthetic chat for real: the canary refuses to run there
+    const policy = db.getAIPolicy(contextA.tenant.id);
+    if (agentMode(contextA.tenant.id) === "AUTONOMOUS") {
+      assert.strictEqual((await runWebhookCanary(Date.now(), env)).code, "CANARY_WORKSPACE_AUTONOMOUS");
+    }
+    db.setAIPolicy({ ...policy, ai_mode: "AI_COPILOT" });
+    // The app's own public URL is served by the real route
+    setOutboundTransportForTesting(async (url, options) => {
+      const res = await telegramConnectorWebhook(new Request(url.toString(), { method: "POST", headers: options.headers as Record<string, string>, body: String(options.body) }), { params: Promise.resolve({ id: connector.id }) });
+      return { status: res.status, headers: {}, body: await res.text(), truncated: false, durationMs: 2 };
+    });
+    try {
+      const report = await runWebhookCanary(Date.now(), env);
+      assert.strictEqual(report.status, "OK", JSON.stringify(report));
+      const channel = db.getConnectedChannels(contextA.tenant.id).find((c) => c.connector_id === connector.id)!;
+      assert.ok(db.findConversationByExternalId(contextA.tenant.id, channel.id, String(CANARY_CHAT_ID)), "the update landed in the canary chat");
+      // A wrong secret is a failed canary, not a silent pass
+      db.saveConnector({ ...db.findConnectorById(contextA.tenant.id, connector.id)!, credentials_encrypted: encryptCredential({ ...decryptCredential<Record<string, unknown>>(stored.credentials_encrypted), webhook_secret: "x".repeat(40) }) });
+      setOutboundTransportForTesting(async () => ({ status: 401, headers: {}, body: "{}", truncated: false, durationMs: 1 }));
+      const failed = await runWebhookCanary(Date.now() + 1000, env);
+      assert.deepStrictEqual([failed.status, failed.code, failed.http_status], ["FAILED", "CANARY_REJECTED", 401]);
+    } finally {
+      db.setAIPolicy(policy);
+      setOutboundTransportForTesting(null);
+      if (savedAppUrl === undefined) delete process.env.APP_URL;
+      else process.env.APP_URL = savedAppUrl;
+      await ConnectorService.deleteConnector(contextA, connector.id).catch(() => undefined);
     }
   });
 
