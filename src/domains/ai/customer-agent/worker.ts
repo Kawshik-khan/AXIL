@@ -31,6 +31,10 @@ import { replyScript } from "./output";
 import { hourWithin, localHour } from "@/lib/local-time";
 import { quoteShownIn } from "./output";
 import { loadCustomerRows } from "@/infrastructure/db/tenant-rows";
+import { controlOf } from "@/domains/social/conversations/conversation-control.service";
+
+/** The turn's lease on the chat (ADR-121 S2), when the job was claimed with one. */
+const leaseOf = (job: AgentJob) => (job.control_version === undefined ? undefined : { version: job.control_version, turnId: job.id });
 
 const INTERVAL_MS = 1_000;
 /** A claim older than this belongs to a server that died mid-turn; the job is taken again (a turn takes under a minute). */
@@ -65,7 +69,10 @@ async function claim(job: AgentJob): Promise<AgentJob | undefined> {
     const due = current.status === "PENDING" && current.not_before <= now.toISOString();
     const stale = current.status === "RUNNING" && (current.claimed_at ?? "") < new Date(now.getTime() - STALE_CLAIM_MS).toISOString();
     if (!due && !stale) return undefined;
-    return db.saveAgentJob({ ...current, status: "RUNNING", claimed_at: now.toISOString(), attempts: current.attempts + 1, rerun: false });
+    // The lease (ADR-121): this turn may send only while the chat's control is still at this version, or moved by this turn
+    const conversation = db.findConversationById(current.tenant_id, current.conversation_id);
+    const control_version = conversation ? controlOf(conversation).version : undefined;
+    return db.saveAgentJob({ ...current, status: "RUNNING", claimed_at: now.toISOString(), attempts: current.attempts + 1, rerun: false, control_version });
   }, (r) => Boolean(r));
 }
 
@@ -101,9 +108,9 @@ async function finish(job: AgentJob, result: Finish): Promise<void> {
 async function handOff(job: AgentJob, summary: string): Promise<void> {
   await db.withFreshTenantReads(async () => {
     await loadChatCustomer(job);
-    const pr = principalFor(job.tenant_id, job.conversation_id);
-    if (!pr) return;
-    await runCustomerTool(pr, "handoff_to_human", { reason: "other", summary });
+    const base = principalFor(job.tenant_id, job.conversation_id);
+    if (!base) return;
+    await runCustomerTool({ ...base, turnId: job.id }, "handoff_to_human", { reason: "other", summary });
   });
 }
 
@@ -155,7 +162,7 @@ async function outsideHours(job: AgentJob, pr: NonNullable<ReturnType<typeof pri
   try {
     // Past the burst limit too: once handed off, a deferred rerun would find the chat paused and never send this
     await sendPastBurstLimit(() =>
-      OutboundMessageService.sendMessage(capabilityContext(pr, "send"), job.conversation_id, { text, idempotency_key: `agent:${job.id}:${last?.id ?? job.last_message_id}:hours` }, { asAgent: true, agentHandedOff: true, traceId: job.id })
+      OutboundMessageService.sendMessage(capabilityContext(pr, "send"), job.conversation_id, { text, idempotency_key: `agent:${job.id}:${last?.id ?? job.last_message_id}:hours` }, { asAgent: true, agentHandedOff: true, traceId: job.id, agentLease: leaseOf(job) })
     );
   } catch (err) {
     if (!(err instanceof AppError)) throw err;
@@ -173,7 +180,9 @@ export async function runAgentJob(job: AgentJob): Promise<Finish> {
 }
 
 async function runLoadedAgentJob(job: AgentJob): Promise<Finish> {
-  const pr = principalFor(job.tenant_id, job.conversation_id);
+  // The turn acts as `turn:<job id>`: its own handoff or escalation is its own change to the chat, not someone else's
+  const base = principalFor(job.tenant_id, job.conversation_id);
+  const pr = base ? { ...base, turnId: job.id } : null;
   if (!pr) return { status: "BLOCKED", outcome: "INACTIVE_WORKSPACE_OR_CHANNEL" };
   const conversation = db.findConversationById(job.tenant_id, job.conversation_id);
   const mode = agentMode(job.tenant_id);
@@ -254,7 +263,7 @@ async function runLoadedAgentJob(job: AgentJob): Promise<Finish> {
         job.conversation_id,
         // Keyed on the message this turn answered, so a message that arrived after the claim gets one reply, not two
         { text: turn.reply, idempotency_key: `agent:${job.id}:${turn.answeredMessageId ?? job.last_message_id}` },
-        { asAgent: true, agentTurnStartedAt: turnStartedAt, agentHandedOff: turn.handoff, traceId: job.id }
+        { asAgent: true, agentTurnStartedAt: turnStartedAt, agentHandedOff: turn.handoff, traceId: job.id, agentLease: leaseOf(job) }
       )
     );
     if (DELIVERED.has(sent.status)) {
@@ -318,7 +327,7 @@ async function sendProductCards(job: AgentJob, pr: CustomerAgentPrincipal, turn:
       capabilityContext(pr, "send"),
       job.conversation_id,
       { text: productCardsText(cards), productCards: cards, idempotency_key: `agent:${job.id}:${turn.answeredMessageId ?? job.last_message_id}:cards` },
-      { asAgent: true, agentTurnStartedAt: turnStartedAt, agentHandedOff: turn.handoff, traceId: job.id }
+      { asAgent: true, agentTurnStartedAt: turnStartedAt, agentHandedOff: turn.handoff, traceId: job.id, agentLease: leaseOf(job) }
     );
   } catch (err) {
     logger.warn("customer_agent.product_cards_failed", {

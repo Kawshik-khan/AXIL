@@ -9,7 +9,7 @@
  */
 import { db } from "@/infrastructure/db";
 import { randomSuffix } from "@/lib/ids";
-import { enqueueCustomerTurn } from "@/domains/ai/customer-agent/jobs";
+import { CONTROL_V2_FLAG, enqueueCustomerTurn, strictFlag } from "@/domains/ai/customer-agent/jobs";
 import type { Conversation, ConversationControl, ConversationControlState } from "@/types/social";
 
 /** Customer messages older than this aren't answered by a resume: someone else's backlog, not a live question. */
@@ -41,9 +41,16 @@ export function legacyFields(state: ConversationControlState): Pick<Conversation
   return { automation_paused: state !== "BOT", mode: state === "BOT" ? "AI" : "HUMAN" };
 }
 
-/** Fields of a conversation being created (S1: unchanged from before ADR-121; S2 starts new chats as BOT). */
-export function initialControlFields(): Pick<Conversation, "automation_paused" | "mode"> {
-  return { automation_paused: false, mode: "HUMAN" };
+/**
+ * Fields of a conversation being created. With `conversation_control_v2` the chat starts as the agent's (BOT, `mode: AI`)
+ * with an explicit control; without it, as before ADR-121 (`mode: HUMAN`, not paused, which old readers took as paused).
+ */
+export function initialControlFields(tenantId: string): Pick<Conversation, "automation_paused" | "mode" | "control"> {
+  if (!strictFlag(CONTROL_V2_FLAG, tenantId)) return { automation_paused: false, mode: "HUMAN" };
+  return {
+    ...legacyFields("BOT"),
+    control: { state: "BOT", version: 0, reason: "created", changed_by: "system:ingress", changed_at: new Date().toISOString() },
+  };
 }
 
 export interface TransitionResult {

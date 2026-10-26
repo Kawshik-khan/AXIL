@@ -11,7 +11,7 @@ import { PERMISSIONS } from "@/lib/permissions";
 import { db } from "@/infrastructure/db";
 import { MessageService } from "@/domains/social/messages/message.service";
 import { slaDueAt, type HandoffCard } from "@/domains/ai/customer-agent/handoff-card";
-import { ConversationControlService } from "@/domains/social/conversations/conversation-control.service";
+import { ConversationControlService, type ControlActor } from "@/domains/social/conversations/conversation-control.service";
 
 const RequestHumanHandoffInputSchema = z.object({
   reason: z.string().describe("Explicit reason for human handoff"),
@@ -61,6 +61,8 @@ export class RequestHumanHandoffTool implements IAgentTool<z.infer<typeof Reques
       idempotencyKey?: string;
       signal?: AbortSignal;
       card?: Partial<HandoffCard>;
+      /** Who hands the chat over (ADR-121): the agent turn when the worker runs it. */
+      controlActor?: ControlActor;
     }
   ) {
     if (options?.conversationId) {
@@ -90,7 +92,7 @@ export class RequestHumanHandoffTool implements IAgentTool<z.infer<typeof Reques
           sla_due_at: slaDueAt(input.priority, now),
         };
         // ADR-121: the agent hands the chat over (a person who already has it keeps it)
-        ConversationControlService.transition(context.tenant.id, convo.id, "ESCALATED", "system:customer-agent", "handoff_tool");
+        ConversationControlService.transition(context.tenant.id, convo.id, "ESCALATED", options.controlActor ?? "system:customer-agent", "handoff_tool");
         db.updateConversation(context.tenant.id, convo.id, {
           status: "WAITING_AGENT",
           priority: input.priority,

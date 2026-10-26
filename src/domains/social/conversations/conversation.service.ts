@@ -98,7 +98,7 @@ export class ConversationService {
       external_conversation_id: externalConversationId,
       status: "OPEN",
       priority: "NORMAL",
-      ...initialControlFields(),
+      ...initialControlFields(tenantId),
       last_message_at: new Date().toISOString(),
       last_inbound_at: new Date().toISOString(),
       unread_count: 0,

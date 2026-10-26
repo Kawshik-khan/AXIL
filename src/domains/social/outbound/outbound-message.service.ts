@@ -13,7 +13,8 @@ import { SocialEventService } from "../events/social-event.service";
 import { assertNotKilled, isFeatureEnabled } from "@/lib/safety-gate";
 import { TelegramApiError } from "../channels/adapters/telegram.adapter";
 import { loadCustomerRows } from "@/infrastructure/db/tenant-rows";
-import { ConversationControlService, legacyFields } from "../conversations/conversation-control.service";
+import { ConversationControlService, controlOf, legacyFields } from "../conversations/conversation-control.service";
+import { CONTROL_V2_FLAG, strictFlag } from "@/domains/ai/customer-agent/jobs";
 
 export interface SendOutboundPayload {
   text: string;
@@ -43,7 +44,14 @@ export class OutboundMessageService {
     context: RequestContext,
     conversationId: string,
     payload: SendOutboundPayload,
-    options: { asAgent?: boolean; agentTurnStartedAt?: string; agentHandedOff?: boolean; traceId?: string } = {}
+    options: {
+      asAgent?: boolean;
+      agentTurnStartedAt?: string;
+      agentHandedOff?: boolean;
+      traceId?: string;
+      /** The turn's lease (ADR-121 S2): the chat's control version when the job was claimed, and the job id. */
+      agentLease?: { version: number; turnId: string };
+    } = {}
   ): Promise<Message> {
     const prepared = await db.unit(async () => {
       RbacService.assertCan(context, PERMISSIONS.SOCIAL_MESSAGE_SEND);
@@ -66,7 +74,14 @@ export class OutboundMessageService {
       }
       if (!isFeatureEnabled("real_messaging", context.tenant.id)) throw new FeatureNotEntitledError("real_messaging");
 
-      if (options.asAgent && options.agentTurnStartedAt) {
+      if (options.asAgent && options.agentLease && strictFlag(CONTROL_V2_FLAG, context.tenant.id)) {
+        // ADR-121 S2: one rule. The chat is still the agent's at the version the turn was claimed with, or the only change
+        // since is this turn's own handoff/escalation (its one reply). Staff replies and pauses bump the version.
+        const { version, turnId } = options.agentLease;
+        const control = controlOf(conversation);
+        const leased = control.version === version ? control.state === "BOT" : control.version === version + 1 && control.changed_by === `turn:${turnId}`;
+        if (!leased) throw new AppError("AGENT_SUPERSEDED", "The conversation changed hands during the agent's turn; the agent's reply was not sent.", 409);
+      } else if (options.asAgent && options.agentTurnStartedAt) {
         const since = options.agentTurnStartedAt;
         const staffReplied = db
           .getMessages(context.tenant.id, conversationId, { limit: 50 })

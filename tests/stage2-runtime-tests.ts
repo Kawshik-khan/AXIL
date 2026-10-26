@@ -25,7 +25,7 @@ import {
   stripAmounts, unsupportedAmounts,
 } from "@/domains/ai/customer-agent/output";
 import { conversationSlots, hasUnrecoveredToolFailure, runCustomerTurn } from "@/domains/ai/customer-agent/runtime";
-import { AUTONOMOUS_FLAG, SHADOW_FLAG, agentMode } from "@/domains/ai/customer-agent/jobs";
+import { AUTONOMOUS_FLAG, CONTROL_V2_FLAG, SHADOW_FLAG, agentMode } from "@/domains/ai/customer-agent/jobs";
 import { customerMessages } from "@/domains/ai/customer-agent/confirmation";
 import { runAgentJobsOnce } from "@/domains/ai/customer-agent/worker";
 import { findSilentDrops } from "@/domains/ai/customer-agent/silent-drops";
@@ -1167,13 +1167,79 @@ async function main() {
     assert.ok(outbound(convo.id).some((m) => m.sender_type === "BOT") || job.status === "PENDING", `sent or deferred: ${job.status} ${job.outcome}`);
   });
 
+  await runTest("S2 (flag on): a new chat starts with the agent; its own escalation still replies; a staff reply or pause during the turn wins (ADR-121)", async () => {
+    setMode(true, false);
+    flag(CONTROL_V2_FLAG, true);
+    // One job per workspace per pass, oldest first: earlier tests leave jobs pending, so only this chat's is due
+    const onlyDue = (conversationId: string) => {
+      const later = new Date(Date.now() + 3_600_000).toISOString();
+      for (const j of db.data.agent_jobs) {
+        if (j.tenant_id === tenantId && j.conversation_id !== conversationId && j.status === "PENDING") db.saveAgentJob({ ...j, not_before: later });
+      }
+      makeDue(conversationId);
+    };
+    try {
+      const fresh = await inbound("rf_v2_new", "hello");
+      const ctl = conv("rf_v2_new").control!;
+      assert.deepStrictEqual([ctl.state, ctl.version, conv("rf_v2_new").mode, conv("rf_v2_new").automation_paused], ["BOT", 0, "AI", false]);
+      onlyDue(fresh.id);
+      scripted.steps = [say("Ji bolun.")];
+      await runAgentJobsOnce();
+      assert.strictEqual(db.findAgentJob(tenantId, fresh.id)!.control_version, 0, "the lease is the version at claim");
+      assert.ok(outbound(fresh.id).some((m) => m.sender_type === "BOT"), "a plain turn sends");
+
+      // The turn's own escalation (hostile message): its reply goes out, recorded as this turn's change
+      const angry = await inbound("rf_v2_escalate", "apnara chor, taka ferot din");
+      onlyDue(angry.id);
+      scripted.steps = [say("Dukkhito, amader team er ekjon apnar sathe kotha bolbe.")];
+      await runAgentJobsOnce();
+      const escJob = db.findAgentJob(tenantId, angry.id)!;
+      assert.ok(outbound(angry.id).some((m) => m.sender_type === "BOT"), `own escalation replies: ${escJob.outcome}`);
+      assert.deepStrictEqual([conv("rf_v2_escalate").control!.state, conv("rf_v2_escalate").control!.changed_by], ["ESCALATED", `turn:${escJob.id}`]);
+
+      // Staff reply during the turn: the version moved under the agent, its reply is refused
+      await new Promise((r) => setTimeout(r, 1500)); // the burst test above emptied the channel bucket (5 a second refill)
+      const busy = await inbound("rf_v2_staff", "hello");
+      onlyDue(busy.id);
+      scripted.steps = [
+        () => {
+          void OutboundMessageService.sendMessage(ownerCtx, busy.id, { text: "Ami Owner" }).catch(() => undefined);
+          return { content: "Ji bolun." };
+        },
+      ];
+      await runAgentJobsOnce();
+      await new Promise((r) => setTimeout(r, 50));
+      assert.ok(outbound(busy.id).every((m) => m.sender_type !== "BOT"), JSON.stringify({ job: db.findAgentJob(tenantId, busy.id), control: conv("rf_v2_staff").control, out: outbound(busy.id).map((m) => [m.sender_type, m.created_at]) }));
+      assert.strictEqual(db.findAgentJob(tenantId, busy.id)!.outcome, "STAFF_REPLIED");
+
+      // Staff pause (no reply) during a turn that then escalates: the person keeps the chat, nothing is sent
+      const paused = await inbound("rf_v2_pause", "apnara chor, taka ferot din");
+      onlyDue(paused.id);
+      scripted.steps = [
+        () => {
+          void ConversationService.setAutomationPaused(ownerCtx, paused.id, true);
+          return { content: "Dukkhito." };
+        },
+      ];
+      await runAgentJobsOnce();
+      assert.strictEqual(outbound(paused.id).length, 0);
+      assert.strictEqual(controlOf(conv("rf_v2_pause")).state, "HUMAN");
+    } finally {
+      scripted.steps = [];
+      flag(CONTROL_V2_FLAG, false);
+    }
+  });
+
   await runTest("control property test: random staff/agent/HITL sequences never drop a message or answer a person's chat (ADR-121)", async () => {
     setMode(true, false);
+    const OPS = ["inbound", "staff_send", "pause", "resume", "escalate", "claim", "turn"] as const;
+    // S1 rules and the S2 lease (flag on): the same invariants must hold under both
+    for (const v2 of [false, true]) {
+    flag(CONTROL_V2_FLAG, v2);
     let seed = 20261026;
     const rand = (n: number) => ((seed = (seed * 1103515245 + 12345) % 2147483648), seed % n);
-    const OPS = ["inbound", "staff_send", "pause", "resume", "escalate", "claim", "turn"] as const;
     for (let run = 0; run < 12; run++) {
-      const chat = `rf_prop_${run}`;
+      const chat = `rf_prop_${v2 ? "v2" : "v1"}_${run}`;
       const convo = await inbound(chat, "hello");
       let ticket: string | undefined;
       const trace: string[] = [];
@@ -1221,6 +1287,8 @@ async function main() {
         }
       }
     }
+    }
+    flag(CONTROL_V2_FLAG, false);
   });
 
   await runTest("fair scheduling: one busy workspace doesn't hold up another", async () => {

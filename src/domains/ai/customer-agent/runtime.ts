@@ -314,7 +314,12 @@ export async function runCustomerTurn(pr: CustomerAgentPrincipal, opts: { budget
   const escalate = (input: Omit<CreateEscalationInput, "tenantId" | "conversationId">) => {
     if (escalated) return;
     const wasPaused = db.findConversationById(pr.tenantId, pr.conversationId)?.automation_paused === true;
-    HitlEscalationService.createEscalation({ ...input, tenantId: pr.tenantId, conversationId: pr.conversationId });
+    HitlEscalationService.createEscalation({
+      ...input,
+      tenantId: pr.tenantId,
+      conversationId: pr.conversationId,
+      ...(pr.turnId ? { actor: `turn:${pr.turnId}` as const } : {}),
+    });
     escalated = true;
     if (wasPaused) return;
     handoff = true;

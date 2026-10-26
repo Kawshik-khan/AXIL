@@ -132,7 +132,10 @@ Each phase ships on its own branch, behind a flag where it changes behaviour, an
 - **Rollback:** flag off returns to the boolean path; `control` is additive.
 - *S1 built 2026-10-26* (branch `claude/mr4-conversation-control`): service, six writers, audit, derived legacy fields, HITL
   resume catch-up, a grep test for direct writes, and a seeded property test (12 chats × 10 random steps). The property
-  test found the burst-limit silent drop (fixed in S1). S2–S4 not started.
+  test found the burst-limit silent drop (fixed in S1).
+- *S2 built 2026-10-26* behind `conversation_control_v2`: lease recorded at claim, turn actor `turn:<job id>`, lease rule in
+  outbound, new chats start `BOT`; the property test runs with the flag off and on. Rollout: create the flag in super-admin,
+  allow-list one workspace in shadow first. S3–S4 not started.
 
 ### MR5. Durable queue and worker service (≈3 days, needs a paid Render instance) — FX-104
 1. `queue_items` table (migration `009_queue.sql`): `kind`, `dedupe_key`, `run_after`, `attempts`, `locked_until`; claim with

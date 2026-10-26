@@ -14,7 +14,7 @@ import type {
   EscalationStatus,
 } from "@/types/ai";
 import { ModelRouter } from "../providers/model-router";
-import { ConversationControlService } from "@/domains/social/conversations/conversation-control.service";
+import { ConversationControlService, type ControlActor } from "@/domains/social/conversations/conversation-control.service";
 
 const SLA_MINUTES: Record<EscalationPriority, number> = {
   URGENT: 5,
@@ -39,6 +39,8 @@ export interface CreateEscalationInput {
   customerId?: string;
   customerPhone?: string;
   orderDraft?: AgentHitlEscalationRecord["order_draft"];
+  /** Who escalates (ADR-121): the agent turn when the runtime raises it; `system:hitl` otherwise. */
+  actor?: ControlActor;
 }
 
 export interface ResolveEscalationInput {
@@ -83,7 +85,7 @@ export class HitlEscalationService {
     // Atomically pause bot on conversation (ADR-121: a person who already has it keeps it)
     const conversation = db.findConversationById(tenantId, conversationId);
     if (conversation) {
-      ConversationControlService.transition(tenantId, conversationId, "ESCALATED", "system:hitl", "hitl_escalation");
+      ConversationControlService.transition(tenantId, conversationId, "ESCALATED", input.actor ?? "system:hitl", "hitl_escalation");
     }
 
     const escalation: AgentHitlEscalationRecord = {

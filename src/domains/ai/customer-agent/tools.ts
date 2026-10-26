@@ -452,7 +452,11 @@ async function handoffToHuman(pr: CustomerAgentPrincipal, a: z.infer<typeof Hand
   const result = await new RequestHumanHandoffTool().execute(
     capabilityContext(pr, "handoff"),
     { reason: a.reason, summary: a.summary, priority: urgent ? "HIGH" : "NORMAL" },
-    { conversationId: pr.conversationId, card: customerAgentCardContext(pr, a.reason, await findVisibleOrders(pr, 5)) }
+    {
+      conversationId: pr.conversationId,
+      card: customerAgentCardContext(pr, a.reason, await findVisibleOrders(pr, 5)),
+      controlActor: pr.turnId ? `turn:${pr.turnId}` : "system:customer-agent",
+    }
   );
   return result as ToolResult;
 }

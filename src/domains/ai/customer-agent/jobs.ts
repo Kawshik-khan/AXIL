@@ -12,6 +12,8 @@ import type { ChannelType, Conversation } from "@/types/social";
 
 export const AUTONOMOUS_FLAG = "customer_agent_autonomous";
 export const SHADOW_FLAG = "customer_agent_shadow";
+/** ADR-121 S2, per workspace: the agent's lease decides its sends, and new chats start with the agent (BOT). */
+export const CONTROL_V2_FLAG = "conversation_control_v2";
 const DEBOUNCE_MS = 2_000;
 /** Channels the agent can't reply on yet: a turn there would cost model calls for a reply nobody receives. */
 const NO_REPLY_CHANNELS: ReadonlySet<ChannelType> = new Set<ChannelType>(["WEBSITE_CHAT"]);

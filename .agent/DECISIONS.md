@@ -1850,7 +1850,7 @@ on their phones or Facebook Pages, not at public URLs. Image product search (ADR
 
 ## ADR-121: Conversation Control — One Owner, One Writer, a Lease for the Agent
 
-**Date**: 2026-10-26 · **Status**: Accepted (approved by the owner 2026-10-26; S1 built, S2–S4 open) · **Plan**: `docs/messaging-reliability-plan.md` MR4 (FX-103) · **Builds on**: ADR-112 (customer agent jobs), ADR-109 (store unit of work)
+**Date**: 2026-10-26 · **Status**: Accepted (approved by the owner 2026-10-26; S1 and S2 built, S3–S4 open) · **Plan**: `docs/messaging-reliability-plan.md` MR4 (FX-103) · **Builds on**: ADR-112 (customer agent jobs), ADR-109 (store unit of work)
 
 ### Context
 Who answers a chat (the agent or a person) is two loosely related fields, `automation_paused` and `mode`, written
@@ -1914,6 +1914,12 @@ nothing records who changed ownership or why.
   deferral re-runs the whole turn (another model call) instead of resending the reply it already made.
 - **S2, flag `conversation_control_v2` (per workspace)**: the lease rule replaces the outbound checks; new
   conversations start `BOT`. Shadow on one workspace first.
+- *S2 as built:* `conversation_control_v2` is a strict platform flag (missing = off, like `customer_agent_autonomous`).
+  The worker records `control_version` on the job at claim and runs the turn as `turn:<job id>` (`CustomerAgentPrincipal.turnId`),
+  so the handoff tool and the runtime's HITL escalation carry that actor. With the flag on, an agent send passes only if
+  `control.version` is still the lease and the chat is `BOT`, or the version moved by exactly one and `changed_by` is this
+  turn; the old checks run when the flag is off or the job has no lease (claimed before S2). New chats start `BOT`
+  (`mode: AI`) with an explicit control. The property test runs under both rule sets.
 - **S3**: readers (`enqueueCustomerTurn`, silent drops, UI, `agent-router`, `agent-runtime`) read `control.state`;
   `agentHandedOff` / `agentTurnStartedAt` removed.
 - **S4**: flag removed; legacy fields kept as derived values for one more release, then dropped from writes.
