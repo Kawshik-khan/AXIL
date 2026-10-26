@@ -32,6 +32,7 @@ import { findSilentDrops } from "@/domains/ai/customer-agent/silent-drops";
 import { ConversationControlService, controlOf } from "@/domains/social/conversations/conversation-control.service";
 import { HitlEscalationService } from "@/domains/ai/hitl/hitl-escalation.service";
 import { ChannelRateLimiter } from "@/domains/social/outbound/rate-limiter";
+import { AgentRouter } from "@/domains/ai/router/agent-router";
 import fs from "fs";
 import path from "path";
 
@@ -1228,6 +1229,34 @@ async function main() {
       scripted.steps = [];
       flag(CONTROL_V2_FLAG, false);
     }
+  });
+
+  await runTest("S3: readers ask the control state, never automation_paused or mode (ADR-121)", async () => {
+    const readers = [
+      "domains/ai/customer-agent/jobs.ts",
+      "domains/ai/customer-agent/worker.ts",
+      "domains/ai/customer-agent/silent-drops.ts",
+      "domains/ai/customer-agent/runtime.ts",
+      "domains/ai/router/agent-router.ts",
+      "domains/ai/runtime/agent-runtime.ts",
+      "domains/social/outbound/outbound-message.service.ts",
+      "components/social/ConversationThread.tsx",
+      "components/social/UnifiedInbox.tsx",
+    ];
+    const root = path.resolve(__dirname, "../src");
+    const stale = readers.filter((file) => /\.automation_paused\b|\.mode === "HUMAN"/.test(fs.readFileSync(path.join(root, file), "utf8")));
+    assert.deepStrictEqual(stale, [], `still reading the legacy fields: ${stale.join(", ")}`);
+  });
+
+  await runTest("S3: an unpaused chat created as mode HUMAN (before S2) isn't a human takeover for the older router (ADR-121)", async () => {
+    setMode(true, false);
+    const convo = await inbound("rf_s3_router", "black t-shirt ache?");
+    db.updateConversation(tenantId, convo.id, { control: undefined });
+    db.data.conversations.find((c) => c.id === convo.id)!.mode = "HUMAN";
+    const routed = await AgentRouter.route(ownerCtx, convo.id, "black t-shirt ache?");
+    assert.notStrictEqual(routed.intent, "HUMAN_REQUEST", "mode alone no longer means a person has the chat");
+    await ConversationService.setAutomationPaused(ownerCtx, convo.id, true);
+    assert.strictEqual((await AgentRouter.route(ownerCtx, convo.id, "black t-shirt ache?")).intent, "HUMAN_REQUEST", "a paused chat still is");
   });
 
   await runTest("control property test: random staff/agent/HITL sequences never drop a message or answer a person's chat (ADR-121)", async () => {

@@ -1850,7 +1850,7 @@ on their phones or Facebook Pages, not at public URLs. Image product search (ADR
 
 ## ADR-121: Conversation Control — One Owner, One Writer, a Lease for the Agent
 
-**Date**: 2026-10-26 · **Status**: Accepted (approved by the owner 2026-10-26; S1 and S2 built, S3–S4 open) · **Plan**: `docs/messaging-reliability-plan.md` MR4 (FX-103) · **Builds on**: ADR-112 (customer agent jobs), ADR-109 (store unit of work)
+**Date**: 2026-10-26 · **Status**: Accepted (approved by the owner 2026-10-26; S1–S3 built, S4 open) · **Plan**: `docs/messaging-reliability-plan.md` MR4 (FX-103) · **Builds on**: ADR-112 (customer agent jobs), ADR-109 (store unit of work)
 
 ### Context
 Who answers a chat (the agent or a person) is two loosely related fields, `automation_paused` and `mode`, written
@@ -1922,7 +1922,13 @@ nothing records who changed ownership or why.
   (`mode: AI`) with an explicit control. The property test runs under both rule sets.
 - **S3**: readers (`enqueueCustomerTurn`, silent drops, UI, `agent-router`, `agent-runtime`) read `control.state`;
   `agentHandedOff` / `agentTurnStartedAt` removed.
-- **S4**: flag removed; legacy fields kept as derived values for one more release, then dropped from writes.
+- *S3 as built:* reading lives in `conversation-control.state.ts` (`controlOf`, `agentPaused`, `legacyFields`; no
+  imports, so the inbox UI uses it too). Enqueue, worker eligibility, the runtime's escalation, silent drops, outbound,
+  the inbox banner and badge, and the older `agent-router` / `agent-runtime` (eval and copilot only today) ask the
+  state; a test fails if they read `automation_paused` or `mode === "HUMAN"` again. The older paths no longer treat an
+  unpaused chat created as `mode: HUMAN` as a takeover. *Changed while building:* `agentHandedOff` and
+  `agentTurnStartedAt` stay until S4: the flag-off path still uses them.
+- **S4**: flag removed; `agentHandedOff` / `agentTurnStartedAt` and the flag-off checks deleted; legacy fields kept as derived values for one more release, then dropped from writes.
 
 ### Consequences
 - **Positive**: one place decides who answers; every change is audited with actor and reason; the agent can't send

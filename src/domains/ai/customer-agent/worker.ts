@@ -31,7 +31,7 @@ import { replyScript } from "./output";
 import { hourWithin, localHour } from "@/lib/local-time";
 import { quoteShownIn } from "./output";
 import { loadCustomerRows } from "@/infrastructure/db/tenant-rows";
-import { controlOf } from "@/domains/social/conversations/conversation-control.service";
+import { agentPaused, controlOf } from "@/domains/social/conversations/conversation-control.state";
 
 /** The turn's lease on the chat (ADR-121 S2), when the job was claimed with one. */
 const leaseOf = (job: AgentJob) => (job.control_version === undefined ? undefined : { version: job.control_version, turnId: job.id });
@@ -190,7 +190,7 @@ async function runLoadedAgentJob(job: AgentJob): Promise<Finish> {
     logger.warn("customer_agent.not_eligible", { reason: "no_conversation", conversation_id: job.conversation_id });
     return { status: "CANCELLED", outcome: "NOT_ELIGIBLE:NO_CONVERSATION" };
   }
-  if (conversation.automation_paused) {
+  if (agentPaused(conversation)) {
     logger.warn("customer_agent.not_eligible", { reason: "automation_paused", conversation_id: job.conversation_id });
     return { status: "CANCELLED", outcome: "NOT_ELIGIBLE:AUTOMATION_PAUSED" };
   }

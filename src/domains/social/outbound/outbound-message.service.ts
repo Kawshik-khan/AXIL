@@ -13,7 +13,8 @@ import { SocialEventService } from "../events/social-event.service";
 import { assertNotKilled, isFeatureEnabled } from "@/lib/safety-gate";
 import { TelegramApiError } from "../channels/adapters/telegram.adapter";
 import { loadCustomerRows } from "@/infrastructure/db/tenant-rows";
-import { ConversationControlService, controlOf, legacyFields } from "../conversations/conversation-control.service";
+import { ConversationControlService } from "../conversations/conversation-control.service";
+import { agentPaused, controlOf, legacyFields } from "../conversations/conversation-control.state";
 import { CONTROL_V2_FLAG, strictFlag } from "@/domains/ai/customer-agent/jobs";
 
 export interface SendOutboundPayload {
@@ -88,7 +89,7 @@ export class OutboundMessageService {
           .messages.some((m) => m.direction === "OUTBOUND" && m.sender_type === "AGENT" && m.message_type !== "INTERNAL_NOTE" && m.created_at >= since);
         if (staffReplied) throw new AppError("AGENT_SUPERSEDED", "A team member replied during the agent's turn; the agent's reply was not sent.", 409);
         // Paused by staff or another handoff while the turn ran: only this turn's own handoff acknowledgement may go out
-        if (conversation.automation_paused && !options.agentHandedOff) {
+        if (agentPaused(conversation) && !options.agentHandedOff) {
           throw new AppError("AGENT_SUPERSEDED", "The conversation was taken over during the agent's turn; the agent's reply was not sent.", 409);
         }
       }
@@ -138,7 +139,7 @@ export class OutboundMessageService {
 
       db.createMessage(initialMessage);
       // A handed-off chat keeps waiting for a person, even after the bot's "a team member will reply" message
-      const agentAfterHandoff = Boolean(options.asAgent && conversation.automation_paused);
+      const agentAfterHandoff = Boolean(options.asAgent && agentPaused(conversation));
       // A staff reply takes the chat (ADR-121); an agent reply leaves ownership as it is
       if (!options.asAgent) {
         ConversationControlService.transition(context.tenant.id, conversationId, "HUMAN", `user:${context.user.id}`, "staff_reply", { ownerUserId: context.user.id });

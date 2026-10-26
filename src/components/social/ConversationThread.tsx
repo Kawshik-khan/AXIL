@@ -25,6 +25,7 @@ import {
 import { Message, Conversation, QuickReply } from "@/types/social";
 import { Button } from "@/components/ui/Button/Button";
 import styles from "./SocialInbox.module.css";
+import { agentPaused } from "@/domains/social/conversations/conversation-control.state";
 import { HandoffContextCard, isHandoffCard } from "./HandoffContextCard";
 import { ShadowDraftCard, isShadowDraft } from "./ShadowDraftCard";
 import { ProductCardList } from "./ProductCardList";
@@ -130,10 +131,11 @@ export const ConversationThread: React.FC<ConversationThreadProps> = ({
         body: JSON.stringify({ automation_paused: false, status: "OPEN" }),
       });
       if (res.ok) {
-        conversation.automation_paused = false;
+        // The server's answer: the new control, legacy fields and cleared waiting count (ADR-121)
+        const json = await res.json().catch(() => null);
+        if (json?.data?.conversation) Object.assign(conversation, json.data.conversation);
         conversation.status = "OPEN";
         if (onStatusChange) onStatusChange("OPEN");
-        conversation.awaiting_count = 0;
       }
     } catch (err) {
       console.error("Failed to resume automation", err);
@@ -356,7 +358,7 @@ export const ConversationThread: React.FC<ConversationThreadProps> = ({
 
       {/* Message Stream */}
       <div ref={streamContainerRef} className={styles.messageStream}>
-        {conversation.automation_paused && (
+        {agentPaused(conversation) && (
           // Sticky: the only way back to the agent must stay in view while the thread is scrolled (MR2)
           <div className={styles.pausedBanner} role="status">
             <div className={styles.pausedBannerText}>
@@ -378,7 +380,7 @@ export const ConversationThread: React.FC<ConversationThreadProps> = ({
             </button>
           </div>
         )}
-        {conversation.automation_paused && isHandoffCard(conversation.metadata?.handoff_card) && (
+        {agentPaused(conversation) && isHandoffCard(conversation.metadata?.handoff_card) && (
           <HandoffContextCard card={conversation.metadata.handoff_card} />
         )}
         {isLoadingMessages && (

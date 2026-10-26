@@ -33,6 +33,7 @@ import { PromptInjectionClassifier } from "../safety/prompt-injection";
 import { AiBudgetGuard } from "../safety/budget-guard";
 import { ConfidenceEngine } from "../safety/confidence-engine";
 import { HitlEscalationService, type CreateEscalationInput } from "../hitl/hitl-escalation.service";
+import { agentPaused } from "@/domains/social/conversations/conversation-control.state";
 import type { AgentExecutionTraceRecord, GuardrailTriggerType } from "@/types/ai";
 
 import { envNumber } from "@/lib/env-number";
@@ -313,7 +314,8 @@ export async function runCustomerTurn(pr: CustomerAgentPrincipal, opts: { budget
   let escalated = false;
   const escalate = (input: Omit<CreateEscalationInput, "tenantId" | "conversationId">) => {
     if (escalated) return;
-    const wasPaused = db.findConversationById(pr.tenantId, pr.conversationId)?.automation_paused === true;
+    const current = db.findConversationById(pr.tenantId, pr.conversationId);
+    const wasPaused = current ? agentPaused(current) : false;
     HitlEscalationService.createEscalation({
       ...input,
       tenantId: pr.tenantId,

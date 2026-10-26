@@ -1,3 +1,4 @@
+import { agentPaused } from "@/domains/social/conversations/conversation-control.state";
 import { randomSuffix } from "@/lib/ids";
 /**
  * CommerceOS Phase 4: Agent Runtime & State Machine
@@ -161,7 +162,7 @@ export class AgentRuntime {
     const conversation = db.findConversationById(tenantId, options.conversationId);
 
     // Human takeover constraint: if conversation is in HUMAN mode or automation is paused, STOP (unless running as human Copilot assist)
-    if (!options.isCopilot && conversation && (conversation.mode === "HUMAN" || conversation.automation_paused)) {
+    if (!options.isCopilot && conversation && agentPaused(conversation)) {
       return {
         runId,
         status: "BLOCKED",

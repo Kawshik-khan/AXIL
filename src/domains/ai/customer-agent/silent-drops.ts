@@ -7,6 +7,7 @@ import { readTenantRows } from "@/infrastructure/db/tenant-rows";
 import type { TenantRecord } from "@/infrastructure/db";
 import type { Conversation, ConversationStatus } from "@/types/social";
 import { agentMode, channelAllowed } from "./jobs";
+import { agentPaused } from "@/domains/social/conversations/conversation-control.state";
 
 export const SILENT_DROP_GRACE_MS = 5 * 60_000;
 /** Older messages are someone else's backlog, not a live failure. */
@@ -31,7 +32,7 @@ export async function findSilentDrops(tenants: readonly TenantRecord[], now = Da
       const inbound = c.last_inbound_at;
       if (!inbound || inbound > before || inbound < after || CLOSED.has(c.status)) continue;
       if (c.last_outbound_at && c.last_outbound_at >= inbound) continue;
-      if (c.automation_paused) awaiting++;
+      if (agentPaused(c)) awaiting++;
       else if (autonomous && channelAllowed(tenant.id, c.channel_type, c.channel_id)) silent++;
     }
     if (silent || awaiting) report.tenants.push({ tenant_id: tenant.id, silent, awaiting_human: awaiting });

@@ -11,6 +11,7 @@ import { db } from "@/infrastructure/db";
 import { randomSuffix } from "@/lib/ids";
 import { CONTROL_V2_FLAG, enqueueCustomerTurn, strictFlag } from "@/domains/ai/customer-agent/jobs";
 import type { Conversation, ConversationControl, ConversationControlState } from "@/types/social";
+import { controlOf, legacyFields } from "./conversation-control.state";
 
 /** Customer messages older than this aren't answered by a resume: someone else's backlog, not a live question. */
 const CATCH_UP_WINDOW_MS = 24 * 60 * 60_000;
@@ -25,21 +26,7 @@ const ALLOWED: Record<ConversationControlState, readonly ConversationControlStat
 /** `platform:` is a CommerceOS operator (support takeover): audited as such, never recorded as the chat's owner. */
 export type ControlActor = `user:${string}` | `platform:${string}` | `turn:${string}` | `system:${string}`;
 
-/** The chat's control, derived for rows written before ADR-121 (never written on read). */
-export function controlOf(conversation: Conversation): ConversationControl {
-  if (conversation.control) return conversation.control;
-  const state: ConversationControlState = !conversation.automation_paused
-    ? "BOT"
-    : conversation.metadata?.handoff_card
-      ? "ESCALATED"
-      : "HUMAN";
-  return { state, version: 0, reason: "derived", changed_by: "system:derived", changed_at: conversation.updated_at };
-}
-
-/** The legacy fields for a state: what every reader of `automation_paused` / `mode` sees. */
-export function legacyFields(state: ConversationControlState): Pick<Conversation, "automation_paused" | "mode"> {
-  return { automation_paused: state !== "BOT", mode: state === "BOT" ? "AI" : "HUMAN" };
-}
+export { agentPaused, controlOf, legacyFields } from "./conversation-control.state";
 
 /**
  * Fields of a conversation being created. With `conversation_control_v2` the chat starts as the agent's (BOT, `mode: AI`)
