@@ -263,12 +263,13 @@ export class ConversationService {
    * customer message, when nothing was sent after it and it is under a day old. The turn reads the whole chat.
    */
   private static catchUpAfterResume(conversation: Conversation): void {
-    const last = [...db.getMessages(conversation.tenant_id, conversation.id, { limit: 50 }).messages]
-      .reverse()
-      .find((m) => m.direction === "INBOUND" && m.sender_type === "CUSTOMER");
-    if (!last) return;
-    if (conversation.last_outbound_at && conversation.last_outbound_at >= last.created_at) return;
-    if (Date.now() - Date.parse(last.created_at) > CATCH_UP_WINDOW_MS) return;
-    enqueueCustomerTurn(conversation, last.id);
+    // Newest first, in stored order: timestamps can tie (same millisecond), the order of the messages can't
+    for (const m of [...db.getMessages(conversation.tenant_id, conversation.id, { limit: 50 }).messages].reverse()) {
+      if (m.direction === "OUTBOUND" && m.message_type !== "INTERNAL_NOTE") return; // answered after it
+      if (m.direction !== "INBOUND" || m.sender_type !== "CUSTOMER") continue;
+      if (Date.now() - Date.parse(m.created_at) > CATCH_UP_WINDOW_MS) return;
+      enqueueCustomerTurn(conversation, m.id);
+      return;
+    }
   }
 }
