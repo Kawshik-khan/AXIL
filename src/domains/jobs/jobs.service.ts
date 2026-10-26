@@ -25,6 +25,9 @@ import { inventoryRepository } from "@/domains/inventory/inventory.repository";
 import { loadOrderRows } from "@/infrastructure/db/tenant-rows";
 import { NotificationService } from "@/domains/notifications/notification.service";
 import { runConnectionHealth } from "@/domains/connectors/connection-lifecycle";
+import { findSilentDrops } from "@/domains/ai/customer-agent/silent-drops";
+import { reconcileTelegramWebhooks } from "@/domains/connectors/telegram-webhook-reconciler";
+import { runWebhookCanary } from "@/domains/connectors/webhook-canary";
 
 export { localHour };
 
@@ -182,10 +185,14 @@ export const JOBS: Record<string, JobDefinition> = {
     async run(now) {
       const alerts = AgentHealthService.evaluateAlerts(now);
       await CspReportService.load(now); // zero-hydration: the week's CSP counters
+      // Customer messages the agent should have answered and nothing did (messaging reliability MR1)
+      const drops = await findSilentDrops(dueTenants(), now);
+      if (drops.silent) logger.error("messaging.silent_drop", { silent: drops.silent, tenants: drops.tenants });
       return {
         agent_alerts: alerts.map((a) => ({ title: a.title, severity: a.severity, detail: a.detail })),
         csp: CspReportService.summary(now),
-        healthy: alerts.length === 0,
+        messaging: drops,
+        healthy: alerts.length === 0 && drops.silent === 0,
       };
     },
   },
@@ -204,6 +211,24 @@ export const JOBS: Record<string, JobDefinition> = {
     cadenceMs: 6 * HOUR,
     async run(now) {
       return { ...(await runConnectionHealth(now)) };
+    },
+  },
+
+  /** Every 10 minutes: each connected Telegram bot's webhook still points here (messaging reliability MR3). */
+  "webhook-reconcile": {
+    cadenceMs: 10 * MINUTE,
+    async run(now) {
+      const report = await reconcileTelegramWebhooks(dueTenants(), now);
+      if (report.degraded) logger.error("connector_webhook.reconcile_degraded", { degraded: report.degraded, items: report.items.filter((i) => i.result !== "HEALTHY" && i.result !== "REREGISTERED") });
+      return { ...report, healthy: report.degraded === 0 };
+    },
+  },
+
+  /** Hourly: a signed synthetic update through the public webhook of the canary connector, when one is configured. */
+  "webhook-canary": {
+    cadenceMs: HOUR,
+    async run(now) {
+      return { ...(await runWebhookCanary(now)) };
     },
   },
 

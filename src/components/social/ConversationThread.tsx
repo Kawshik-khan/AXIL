@@ -133,6 +133,7 @@ export const ConversationThread: React.FC<ConversationThreadProps> = ({
         conversation.automation_paused = false;
         conversation.status = "OPEN";
         if (onStatusChange) onStatusChange("OPEN");
+        conversation.awaiting_count = 0;
       }
     } catch (err) {
       console.error("Failed to resume automation", err);
@@ -356,41 +357,22 @@ export const ConversationThread: React.FC<ConversationThreadProps> = ({
       {/* Message Stream */}
       <div ref={streamContainerRef} className={styles.messageStream}>
         {conversation.automation_paused && (
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              background: "rgba(245, 158, 11, 0.12)",
-              border: "1px solid rgba(245, 158, 11, 0.35)",
-              borderRadius: "var(--radius-md)",
-              padding: "10px 14px",
-              marginBottom: "12px",
-              fontSize: "0.8125rem",
-              color: "#F59E0B",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          // Sticky: the only way back to the agent must stay in view while the thread is scrolled (MR2)
+          <div className={styles.pausedBanner} role="status">
+            <div className={styles.pausedBannerText}>
               <Bot size={16} />
               <span>
-                <strong>AI Automation Paused:</strong> Customer messages are held for human agents and will not receive automated AI replies until resumed.
+                <strong>AI Automation Paused:</strong>{" "}
+                {conversation.awaiting_count
+                  ? `${conversation.awaiting_count} customer message${conversation.awaiting_count === 1 ? "" : "s"} waiting for a reply. Resuming lets the AI answer the latest one.`
+                  : "Customer messages are held for human agents and will not receive automated AI replies until resumed."}
               </span>
             </div>
             <button
               type="button"
               onClick={handleResumeAutomation}
               disabled={isResumingAutomation}
-              style={{
-                background: "var(--color-primary)",
-                color: "#000",
-                border: "none",
-                fontWeight: 600,
-                fontSize: "0.75rem",
-                padding: "4px 12px",
-                borderRadius: "var(--radius-sm)",
-                cursor: "pointer",
-                whiteSpace: "nowrap",
-              }}
+              className={styles.pausedBannerButton}
             >
               {isResumingAutomation ? "Resuming…" : "Resume AI Assistant"}
             </button>

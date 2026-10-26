@@ -26,6 +26,7 @@ import { ChannelService } from "@/domains/social/channels/channel.service";
 import { telegramCall } from "@/domains/social/channels/adapters/telegram.adapter";
 import { appBaseUrl } from "@/lib/app-url";
 import { enforceRateLimit, MINUTE } from "@/lib/rate-limit";
+import { logger } from "@/lib/logger";
 import crypto from "crypto";
 
 /**
@@ -614,55 +615,72 @@ export class ConnectorService {
     }
 
     if (action === "set-webhook") {
-      if (!webhookUrl || !webhookUrl.startsWith("https://")) {
-        throw new BadRequestError("APP_URL must be set to this app's public https address before Telegram's webhook can be registered.");
-      }
-      const secret = typeof credentials.webhook_secret === "string" && credentials.webhook_secret
-        ? credentials.webhook_secret
-        : crypto.randomBytes(32).toString("base64url");
-      // Save the secret before asking Telegram to use it. If Telegram accepts setWebhook but the following write
-      // fails, ingress can still authenticate the webhook and a retry uses the same secret.
-      if (credentials.webhook_secret !== secret) {
-        await db.unit(async () => {
-          db.saveConnector({
-            ...connector,
-            credentials_encrypted: encryptCredential({ ...credentials, webhook_secret: secret }),
-            updated_at: new Date().toISOString(),
-          });
-          return true;
-        }, () => true);
-      }
-      await telegramCall(credentials, "setWebhook", {
-        url: webhookUrl,
-        secret_token: secret,
-        allowed_updates: ["message", "callback_query"],
-        max_connections: 20,
-      });
-      const now = new Date().toISOString();
-      await db.unit(async () => {
-        const current = db.findConnectorById(context.tenant.id, connector.id);
-        if (!current) throw new NotFoundError(`Connector configuration '${connector.id}' not found.`);
-        db.saveConnector({
-          ...current,
-          configuration: { ...current.configuration, webhook_set_at: now },
-          updated_at: now,
-        });
-        db.createAuditLog({
-          id: `aud_${Date.now()}_connector_action_${randomSuffix()}`,
-          tenant_id: context.tenant.id,
-          actor_user_id: context.user.id,
-          action: "CONNECTOR_ACTION",
-          resource_type: "connector",
-          resource_id: connector.id,
-          metadata: { provider_id: connector.provider_id, connector_action: action },
-          created_at: now,
-        });
-        return true;
-      }, () => true);
-      return { status: "WEBHOOK_SET", webhook_url: webhookUrl };
+      return this.registerTelegramWebhook(context.tenant.id, connector, context.user.id);
     }
 
     throw new BadRequestError(`Unknown action '${action}'.`);
+  }
+
+  /**
+   * Points the Telegram bot at this app's webhook for `connector`, with a secret_token stored encrypted in the connector.
+   * Used by the "set-webhook" action (actor: the member) and the webhook reconciler (actor: `system:webhook-reconciler`).
+   */
+  public static async registerTelegramWebhook(
+    tenantId: string,
+    connector: ConnectorConfigRecord,
+    actorUserId: string,
+    /** Why a system actor did it (audit); a member's action needs none. Never a URL: it may carry a token. */
+    reason?: "stale_connector_id"
+  ): Promise<{ status: "WEBHOOK_SET"; webhook_url: string }> {
+    const base = appBaseUrl();
+    const webhookUrl = base ? `${base}/api/v1/connectors/${connector.id}/webhook` : null;
+    if (!webhookUrl || !webhookUrl.startsWith("https://")) {
+      throw new BadRequestError("APP_URL must be set to this app's public https address before Telegram's webhook can be registered.");
+    }
+    const credentials = decryptCredential<Record<string, unknown>>(connector.credentials_encrypted);
+    const secret = typeof credentials.webhook_secret === "string" && credentials.webhook_secret
+      ? credentials.webhook_secret
+      : crypto.randomBytes(32).toString("base64url");
+    // Save the secret before asking Telegram to use it. If Telegram accepts setWebhook but the following write
+    // fails, ingress can still authenticate the webhook and a retry uses the same secret.
+    if (credentials.webhook_secret !== secret) {
+      await db.unit(async () => {
+        db.saveConnector({
+          ...connector,
+          credentials_encrypted: encryptCredential({ ...credentials, webhook_secret: secret }),
+          updated_at: new Date().toISOString(),
+        });
+        return true;
+      }, () => true);
+    }
+    await telegramCall(credentials, "setWebhook", {
+      url: webhookUrl,
+      secret_token: secret,
+      allowed_updates: ["message", "callback_query"],
+      max_connections: 20,
+    });
+    const now = new Date().toISOString();
+    await db.unit(async () => {
+      const current = db.findConnectorById(tenantId, connector.id);
+      if (!current) throw new NotFoundError(`Connector configuration '${connector.id}' not found.`);
+      db.saveConnector({
+        ...current,
+        configuration: { ...current.configuration, webhook_set_at: now },
+        updated_at: now,
+      });
+      db.createAuditLog({
+        id: `aud_${Date.now()}_connector_action_${randomSuffix()}`,
+        tenant_id: tenantId,
+        actor_user_id: actorUserId,
+        action: "CONNECTOR_ACTION",
+        resource_type: "connector",
+        resource_id: connector.id,
+        metadata: { provider_id: connector.provider_id, connector_action: "set-webhook", ...(reason ? { reason } : {}) },
+        created_at: now,
+      });
+      return true;
+    }, () => true);
+    return { status: "WEBHOOK_SET", webhook_url: webhookUrl };
   }
 
   /**
@@ -779,6 +797,8 @@ export class ConnectorService {
       } catch {
         // Disconnect must still erase local credentials if Telegram is unavailable. A later setWebhook replaces the old URL.
         telegramWebhookRemoved = false;
+        // Telegram keeps posting to the deleted id (now a 404) until the bot gets a new webhook: say so
+        logger.warn("connector_webhook.remove_failed", { tenant_id: context.tenant.id, connector_id: id });
       }
     }
 
