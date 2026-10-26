@@ -13,6 +13,7 @@ import { SocialEventService } from "../events/social-event.service";
 import { assertNotKilled, isFeatureEnabled } from "@/lib/safety-gate";
 import { TelegramApiError } from "../channels/adapters/telegram.adapter";
 import { loadCustomerRows } from "@/infrastructure/db/tenant-rows";
+import { ConversationControlService, legacyFields } from "../conversations/conversation-control.service";
 
 export interface SendOutboundPayload {
   text: string;
@@ -86,7 +87,11 @@ export class OutboundMessageService {
       ChannelPolicyService.assertCanSend(channel.type, conversation.last_inbound_at, payload.messageType || "TEXT", payload.text);
       const rateCheck = ChannelRateLimiter.tryConsume(channel.id);
       if (!rateCheck.allowed) {
-        throw new BadRequestError(`Channel '${channel.name}' is temporarily rate-limited. Retry in ${rateCheck.retryAfterMs}ms.`);
+        // 429 with its own code: a burst limit passes in milliseconds, so senders retry instead of giving up
+        throw new AppError("CHANNEL_RATE_LIMITED", `Channel '${channel.name}' is temporarily rate-limited. Retry in ${rateCheck.retryAfterMs}ms.`, 429, {
+          retry_after_ms: rateCheck.retryAfterMs ?? 0,
+          retry_after_sec: Math.max(1, Math.ceil((rateCheck.retryAfterMs ?? 0) / 1000)),
+        });
       }
 
       const msgId = `msg_${Date.now()}_${randomSuffix()}`;
@@ -119,9 +124,13 @@ export class OutboundMessageService {
       db.createMessage(initialMessage);
       // A handed-off chat keeps waiting for a person, even after the bot's "a team member will reply" message
       const agentAfterHandoff = Boolean(options.asAgent && conversation.automation_paused);
+      // A staff reply takes the chat (ADR-121); an agent reply leaves ownership as it is
+      if (!options.asAgent) {
+        ConversationControlService.transition(context.tenant.id, conversationId, "HUMAN", `user:${context.user.id}`, "staff_reply", { ownerUserId: context.user.id });
+      }
       db.updateConversation(context.tenant.id, conversationId, {
         // A staff reply answers whatever was waiting for a person
-        ...(options.asAgent ? (agentAfterHandoff ? {} : { mode: "AI" as const }) : { automation_paused: true, mode: "HUMAN" as const, awaiting_since: undefined, awaiting_count: 0 }),
+        ...(options.asAgent ? (agentAfterHandoff ? {} : legacyFields("BOT")) : { awaiting_since: undefined, awaiting_count: 0 }),
         status: !agentAfterHandoff && conversation.status === "WAITING_AGENT" ? "WAITING_CUSTOMER" : conversation.status,
         last_outbound_at: now,
         last_message_at: now,

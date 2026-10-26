@@ -8,10 +8,7 @@ import { AuditService } from "@/domains/audit/service";
 import { NotFoundError, BadRequestError } from "@/lib/errors";
 import { ConversationStateMachine } from "./state-machine";
 import { loadCustomerRows } from "@/infrastructure/db/tenant-rows";
-import { enqueueCustomerTurn } from "@/domains/ai/customer-agent/jobs";
-
-/** Customer messages older than this aren't answered by a resume: someone else's backlog, not a live question. */
-const CATCH_UP_WINDOW_MS = 24 * 60 * 60_000;
+import { ConversationControlService, initialControlFields } from "./conversation-control.service";
 
 export class ConversationService {
   public static async listConversations(
@@ -101,8 +98,7 @@ export class ConversationService {
       external_conversation_id: externalConversationId,
       status: "OPEN",
       priority: "NORMAL",
-      mode: "HUMAN",
-      automation_paused: false,
+      ...initialControlFields(),
       last_message_at: new Date().toISOString(),
       last_inbound_at: new Date().toISOString(),
       unread_count: 0,
@@ -248,28 +244,15 @@ export class ConversationService {
     paused: boolean
   ): Promise<Conversation> {
     RbacService.assertCan(context, PERMISSIONS.SOCIAL_CONVERSATION_MANAGE);
-    const before = db.findConversationById(context.tenant.id, conversationId);
-    const updated = db.updateConversation(context.tenant.id, conversationId, {
-      automation_paused: paused,
-      mode: paused ? "HUMAN" : "AUTOMATION",
-      ...(paused ? {} : { awaiting_since: undefined, awaiting_count: 0 }),
-    });
-    if (!paused && before?.automation_paused) this.catchUpAfterResume(updated);
-    return updated;
-  }
-
-  /**
-   * Resuming the agent answers what the customer said while a person had the chat (MR2): one turn for the latest
-   * customer message, when nothing was sent after it and it is under a day old. The turn reads the whole chat.
-   */
-  private static catchUpAfterResume(conversation: Conversation): void {
-    // Newest first, in stored order: timestamps can tie (same millisecond), the order of the messages can't
-    for (const m of [...db.getMessages(conversation.tenant_id, conversation.id, { limit: 50 }).messages].reverse()) {
-      if (m.direction === "OUTBOUND" && m.message_type !== "INTERNAL_NOTE") return; // answered after it
-      if (m.direction !== "INBOUND" || m.sender_type !== "CUSTOMER") continue;
-      if (Date.now() - Date.parse(m.created_at) > CATCH_UP_WINDOW_MS) return;
-      enqueueCustomerTurn(conversation, m.id);
-      return;
-    }
+    if (!db.findConversationById(context.tenant.id, conversationId)) throw new NotFoundError("Conversation", conversationId);
+    // Resuming answers what waited (ConversationControlService.transition to BOT)
+    return ConversationControlService.transition(
+      context.tenant.id,
+      conversationId,
+      paused ? "HUMAN" : "BOT",
+      `user:${context.user.id}`,
+      paused ? "inbox_pause" : "inbox_resume",
+      { ownerUserId: context.user.id }
+    ).conversation;
   }
 }

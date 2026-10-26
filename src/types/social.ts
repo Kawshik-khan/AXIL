@@ -67,6 +67,21 @@ export type ConversationPriority = "LOW" | "NORMAL" | "HIGH" | "URGENT";
 
 export type ConversationMode = "HUMAN" | "AUTOMATION" | "AI";
 
+/** Who answers the chat (ADR-121). Changed only by ConversationControlService.transition. */
+export type ConversationControlState = "BOT" | "ESCALATED" | "HUMAN";
+
+export interface ConversationControl {
+  state: ConversationControlState;
+  /** Bumped by every real transition; the agent's lease is this number (S2). */
+  version: number;
+  owner_user_id?: string;
+  /** A code (staff_reply, hitl_escalation, ...), never text. */
+  reason: string;
+  /** `user:<id>`, `turn:<agent job id>` or `system:<name>`. */
+  changed_by: string;
+  changed_at: string;
+}
+
 export type ConversationSource =
   | "FACEBOOK"
   | "INSTAGRAM"
@@ -85,6 +100,8 @@ export interface Conversation {
   priority: ConversationPriority;
   mode: ConversationMode;
   automation_paused: boolean;
+  /** ADR-121. Absent on rows written before it: read through `controlOf`, never directly. */
+  control?: ConversationControl;
   /** First customer message the agent skipped because a person has the chat; cleared by a staff reply or a resume (MR2). */
   awaiting_since?: string;
   /** Customer messages since `awaiting_since` that nobody has answered yet. */

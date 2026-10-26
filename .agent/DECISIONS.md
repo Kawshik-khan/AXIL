@@ -1847,3 +1847,84 @@ on their phones or Facebook Pages, not at public URLs. Image product search (ADR
   there (runbook).
 - **Rollback**: unset `MEDIA_STORAGE`; uploads answer 424, existing URLs keep working while the bucket exists.
 
+
+## ADR-121: Conversation Control — One Owner, One Writer, a Lease for the Agent
+
+**Date**: 2026-10-26 · **Status**: Accepted (approved by the owner 2026-10-26; S1 built, S2–S4 open) · **Plan**: `docs/messaging-reliability-plan.md` MR4 (FX-103) · **Builds on**: ADR-112 (customer agent jobs), ADR-109 (store unit of work)
+
+### Context
+Who answers a chat (the agent or a person) is two loosely related fields, `automation_paused` and `mode`, written
+directly by six places with different values: a staff send (`HUMAN`, paused), the `handoff_to_human` tool (`HUMAN`,
+paused), a HITL escalation (`HUMAN`, paused), a HITL resolve with "resume bot" (`AI`, unpaused), the inbox PATCH
+(`AUTOMATION`, unpaused) and conversation creation (`HUMAN`, **unpaused**: contradictory, and the older
+`agent-router` / `agent-runtime` treat `mode === "HUMAN"` as paused). Readers infer intent from the pair:
+`enqueueCustomerTurn`, `OutboundMessageService` (with `agentHandedOff`, `agentTurnStartedAt` and a 50-message scan for a
+staff reply), silent-drop detection, the inbox UI.
+
+The live Telegram test (2026-10-26) lost messages through exactly this: a turn's own escalation paused the chat and its
+reply was then refused as superseded (MR0 patched that path with `escalate()`), messages during a pause were skipped
+silently (MR2 added `awaiting_count` and a catch-up on the inbox resume, but a HITL resolve resumes without it), and
+nothing records who changed ownership or why.
+
+### Decision
+1. **`conversation.control`**: `{ state, version, owner_user_id?, reason, changed_by, changed_at }`.
+   - `BOT`: the agent answers (subject to workspace mode, channel policy, kill switches, budgets, as today).
+   - `ESCALATED`: the agent handed the chat over (tool handoff, HITL escalation, guard). It waits for a person; only the
+     turn that escalated may still send its one reply.
+   - `HUMAN`: a person has it (staff reply, inbox pause, HITL claim or takeover); `owner_user_id` when known.
+   Workspace-level stops (mode OFF, channel not allowed, kill switch, budget) stay where they are; they are not per-chat
+   ownership.
+2. **One writer**: `ConversationControlService.transition(tenantId, conversationId, to, actor, reason)` is the only code
+   that changes `control` (like `OrderLifecycleService` for order status). A transition table allows
+   `BOT→ESCALATED`, `BOT→HUMAN`, `ESCALATED→HUMAN`, `ESCALATED→BOT`, `HUMAN→BOT`; same-state calls are no-ops (no version
+   bump, no audit). `actor` is `user:<id>`, `turn:<agent_job_id>` or `system:<name>`, from the session or the worker,
+   never from a request body. Every real transition bumps `version` and writes one `CONVERSATION_CONTROL` audit row
+   (from, to, reason code; no message text). Any transition to `BOT` clears `awaiting_*` and runs the MR2 catch-up, so
+   every resume path behaves the same.
+3. **The agent holds a lease**: the worker records `control.version` when it claims a job. An agent send is allowed only
+   if the chat is `BOT` at that version, or the only change since is this turn's own escalation (`changed_by =
+   turn:<job id>`). This one rule replaces `agentHandedOff`, `agentTurnStartedAt` and the staff-reply scan in
+   `OutboundMessageService`, and covers every escalation path, not only the ones MR0 patched.
+4. **Legacy fields are derived, read-only**: the service writes `automation_paused = state !== "BOT"` and
+   `mode = state === "BOT" ? "AI" : "HUMAN"` with every transition, for the UI and old readers, until they read `control`.
+   A conversation without `control` (all rows today) is read as `HUMAN` if `automation_paused`, else `BOT`
+   (`ESCALATED` when it carries a `handoff_card`); nothing is written on read (GET never writes).
+5. **New conversations start `BOT`** (legacy `mode: "AI"`), behind the flag below.
+
+### Alternatives considered
+- **Keep the booleans and patch each path** (what MR0/MR2 did): every new writer can reintroduce the bug class; no audit.
+- **Event-sourced ownership log**: complete history, but a second write path and replay logic for one small state;
+  the audit row gives the history.
+- **A row lock held for the turn**: the store is version-checked JSON documents (ADR-109), not long transactions; a
+  version counter fits it and survives a worker crash.
+
+### Staged migration (no hard cutover, no SQL migration: `control` lives in the conversation's JSON data)
+- **S1, no behaviour change**: add the service, the derived read, the audit; route all six writers through it. Legacy
+  fields keep today's meaning, except `mode` is normalised to `AI`/`HUMAN` (`AUTOMATION` was only a label) and a HITL
+  "resume bot" now also clears `awaiting_*` and catches up. Tests: existing suites unchanged in meaning, plus a property
+  test over random sequences of {inbound, staff send, staff pause, resume, escalation, handoff tool, HITL claim/resolve,
+  turn start/end} asserting the silent-drop invariant and "the agent never sends into a `HUMAN` chat".
+- *S1 as built:* the property test found a second silent drop: the channel burst limiter refused the agent's reply as
+  400 and the turn ended `BLOCKED`. It is now `CHANNEL_RATE_LIMITED` (429); the worker waits and resends (3 tries, ≤ 2 s)
+  and defers the turn after that (the out-of-hours reply only retries: a deferred rerun would find the chat paused).
+  HITL claim of a *pending* ticket moves the chat to `HUMAN` with the claimer as owner; an old ticket never retakes a
+  chat. A platform operator acts as `platform:<id>`: audited as such (`actor_type`), never recorded as owner; the
+  takeover gate payload and platform audit carry `resume_bot`. Behaviour that did change in S1: a HITL claim pauses the
+  agent, and a HITL or platform "resume bot" queues a catch-up reply. Open (security review LOW): a rate-limited
+  deferral re-runs the whole turn (another model call) instead of resending the reply it already made.
+- **S2, flag `conversation_control_v2` (per workspace)**: the lease rule replaces the outbound checks; new
+  conversations start `BOT`. Shadow on one workspace first.
+- **S3**: readers (`enqueueCustomerTurn`, silent drops, UI, `agent-router`, `agent-runtime`) read `control.state`;
+  `agentHandedOff` / `agentTurnStartedAt` removed.
+- **S4**: flag removed; legacy fields kept as derived values for one more release, then dropped from writes.
+
+### Consequences
+- **Positive**: one place decides who answers; every change is audited with actor and reason; the agent can't send
+  into a chat a person took, and can always send its own escalation reply; every resume path answers what waited.
+- **Negative**: one more service in the hot path of ingress and outbound; audit rows grow with ownership changes
+  (staff replies to an agent-owned chat each add one); the property test and flag add test and rollout time; until S3,
+  two representations exist and the derived fields must never be written directly (a test greps for direct writes).
+- **Security**: actor and owner come from the session or the worker, never the body; the PATCH route keeps
+  `SOCIAL_CONVERSATION_MANAGE`; platform takeover keeps its privileged-action rules; audit rows hold codes, not text.
+- **Rollback**: S1 is behaviour-neutral (revert the commit); S2 is the flag off; `control` is additive data that old
+  code ignores.

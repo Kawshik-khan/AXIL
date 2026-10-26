@@ -14,6 +14,7 @@ import type {
   EscalationStatus,
 } from "@/types/ai";
 import { ModelRouter } from "../providers/model-router";
+import { ConversationControlService } from "@/domains/social/conversations/conversation-control.service";
 
 const SLA_MINUTES: Record<EscalationPriority, number> = {
   URGENT: 5,
@@ -46,6 +47,8 @@ export interface ResolveEscalationInput {
   resumeBot?: boolean;
   notes?: string;
   userId?: string;
+  /** A CommerceOS operator (platform takeover) rather than a member of the workspace (ADR-121 audit). */
+  platformOperator?: boolean;
 }
 
 export class HitlEscalationService {
@@ -71,23 +74,22 @@ export class HitlEscalationService {
    * Creates an escalation ticket and automatically pauses the AI bot on the conversation.
    */
   public static createEscalation(input: CreateEscalationInput): AgentHitlEscalationRecord {
+    // Callers pass the tenant from the request context (escalate route) or the agent principal (runtime), never a body
+    const { tenantId, conversationId } = input;
     const priority = input.priority || "NORMAL";
     const now = new Date().toISOString();
     const id = `hitl_${Date.now()}_${randomSuffix()}`;
 
-    // Atomically pause bot on conversation
-    const conversation = db.findConversationById(input.tenantId, input.conversationId);
+    // Atomically pause bot on conversation (ADR-121: a person who already has it keeps it)
+    const conversation = db.findConversationById(tenantId, conversationId);
     if (conversation) {
-      db.updateConversation(input.tenantId, input.conversationId, {
-        automation_paused: true,
-        mode: "HUMAN",
-      });
+      ConversationControlService.transition(tenantId, conversationId, "ESCALATED", "system:hitl", "hitl_escalation");
     }
 
     const escalation: AgentHitlEscalationRecord = {
       id,
-      tenant_id: input.tenantId,
-      conversation_id: input.conversationId,
+      tenant_id: tenantId,
+      conversation_id: conversationId,
       trace_id: input.traceId || `trc_direct_${randomSuffix()}`,
       customer_id: input.customerId,
       customer_phone_masked: this.maskPhone(input.customerPhone),
@@ -106,11 +108,17 @@ export class HitlEscalationService {
   /**
    * Claims an escalation ticket by a merchant staff operator.
    */
-  public static claimEscalation(tenantId: string, escalationId: string, userId: string): AgentHitlEscalationRecord {
+  public static claimEscalation(
+    tenantId: string,
+    escalationId: string,
+    userId: string,
+    opts: { platformOperator?: boolean } = {}
+  ): AgentHitlEscalationRecord {
     const escalation = db.findAgentHitlEscalation(tenantId, escalationId);
     if (!escalation) {
       throw new NotFoundError("Escalation ticket not found");
     }
+    const pending = escalation.status === "PENDING_REVIEW";
 
     const updated: AgentHitlEscalationRecord = {
       ...escalation,
@@ -119,6 +127,18 @@ export class HitlEscalationService {
       assigned_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
+    // The person who claimed a pending ticket now has the chat. An old (claimed or resolved) ticket never takes a live
+    // chat back from the agent. A platform operator is audited as one and never recorded as the chat's owner.
+    if (pending && db.findConversationById(tenantId, escalation.conversation_id)) {
+      ConversationControlService.transition(
+        tenantId,
+        escalation.conversation_id,
+        "HUMAN",
+        opts.platformOperator ? `platform:${userId}` : `user:${userId}`,
+        "hitl_claim",
+        { ownerUserId: userId }
+      );
+    }
 
     return db.saveAgentHitlEscalation(updated);
   }
@@ -143,14 +163,17 @@ export class HitlEscalationService {
       assigned_to_user_id: input.userId || escalation.assigned_to_user_id,
     };
 
-    // If staff requests bot resume, unpause conversation
+    // If staff requests bot resume, unpause conversation (ADR-121: and answer what waited, like any resume)
     if (input.resumeBot) {
       const convo = db.findConversationById(tenantId, escalation.conversation_id);
       if (convo) {
-        db.updateConversation(tenantId, escalation.conversation_id, {
-          automation_paused: false,
-          mode: "AI",
-        });
+        ConversationControlService.transition(
+          tenantId,
+          escalation.conversation_id,
+          "BOT",
+          !input.userId ? "system:hitl" : input.platformOperator ? `platform:${input.userId}` : `user:${input.userId}`,
+          "hitl_resolved"
+        );
       }
     }
 

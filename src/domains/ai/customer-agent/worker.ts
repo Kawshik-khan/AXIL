@@ -153,7 +153,10 @@ async function outsideHours(job: AgentJob, pr: NonNullable<ReturnType<typeof pri
   // "A team member will reply" is only said when a team member really has the chat
   if (!handed.ok) return { status: "BLOCKED", outcome: "OUTSIDE_HOURS_HANDOFF_FAILED" };
   try {
-    await OutboundMessageService.sendMessage(capabilityContext(pr, "send"), job.conversation_id, { text, idempotency_key: `agent:${job.id}:${last?.id ?? job.last_message_id}:hours` }, { asAgent: true, agentHandedOff: true, traceId: job.id });
+    // Past the burst limit too: once handed off, a deferred rerun would find the chat paused and never send this
+    await sendPastBurstLimit(() =>
+      OutboundMessageService.sendMessage(capabilityContext(pr, "send"), job.conversation_id, { text, idempotency_key: `agent:${job.id}:${last?.id ?? job.last_message_id}:hours` }, { asAgent: true, agentHandedOff: true, traceId: job.id })
+    );
   } catch (err) {
     if (!(err instanceof AppError)) throw err;
     return { status: "BLOCKED", outcome: `OUTSIDE_HOURS_SEND_REFUSED:${err.code}` };
@@ -245,12 +248,14 @@ async function runLoadedAgentJob(job: AgentJob): Promise<Finish> {
   }
 
   try {
-    const sent = await OutboundMessageService.sendMessage(
-      capabilityContext(pr, "send"),
-      job.conversation_id,
-      // Keyed on the message this turn answered, so a message that arrived after the claim gets one reply, not two
-      { text: turn.reply, idempotency_key: `agent:${job.id}:${turn.answeredMessageId ?? job.last_message_id}` },
-      { asAgent: true, agentTurnStartedAt: turnStartedAt, agentHandedOff: turn.handoff, traceId: job.id }
+    const sent = await sendPastBurstLimit(() =>
+      OutboundMessageService.sendMessage(
+        capabilityContext(pr, "send"),
+        job.conversation_id,
+        // Keyed on the message this turn answered, so a message that arrived after the claim gets one reply, not two
+        { text: turn.reply, idempotency_key: `agent:${job.id}:${turn.answeredMessageId ?? job.last_message_id}` },
+        { asAgent: true, agentTurnStartedAt: turnStartedAt, agentHandedOff: turn.handoff, traceId: job.id }
+      )
     );
     if (DELIVERED.has(sent.status)) {
       await markQuotesShown(job, turnStartedAt, sent.id, turn.reply);
@@ -259,12 +264,35 @@ async function runLoadedAgentJob(job: AgentJob): Promise<Finish> {
     return { status: "DONE", outcome: `${turn.status}:${sent.status}` };
   } catch (err) {
     if (err instanceof AppError && err.code === "AGENT_SUPERSEDED") return { status: "CANCELLED", outcome: "STAFF_REPLIED" };
+    // Still over the channel's burst limit after waiting: run the turn again shortly, never drop the reply
+    if (err instanceof AppError && err.code === "CHANNEL_RATE_LIMITED") {
+      return { status: "PENDING", outcome: "CHANNEL_RATE_LIMITED", notBefore: new Date(Date.now() + DEFER_RATE_LIMITED_MS).toISOString() };
+    }
     // A kill switch, a disabled feature or channel policy: sending again won't help, and a person should look
     if (err instanceof KillSwitchActiveError || (err instanceof AppError && err.statusCode < 500 && err.statusCode !== 409)) {
       logger.warn("customer_agent.send_refused", { tenant_id: job.tenant_id, conversation_id: job.conversation_id, code: err.code });
       return { status: "BLOCKED", outcome: `SEND_REFUSED:${err.code}` };
     }
     throw err;
+  }
+}
+
+/** How long a reply over the channel's burst limit waits before its turn runs again. */
+const DEFER_RATE_LIMITED_MS = 5_000;
+
+/**
+ * The channel's burst limit refills in milliseconds: wait what it asks (at most 2 s) and send again, up to three times,
+ * before the turn is deferred. The idempotency key makes a repeated send safe.
+ */
+async function sendPastBurstLimit<T>(send: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await send();
+    } catch (err) {
+      if (!(err instanceof AppError && err.code === "CHANNEL_RATE_LIMITED") || attempt >= 2) throw err;
+      const waitMs = Math.min(2_000, Math.max(50, Number(err.details?.retry_after_ms) || 200));
+      await new Promise((r) => setTimeout(r, waitMs));
+    }
   }
 }
 

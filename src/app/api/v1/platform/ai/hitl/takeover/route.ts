@@ -24,26 +24,31 @@ async function handlePOST(request: Request) {
   try {
     const context = await extractPlatformContext(request);
     const body = parseOrThrow(TakeoverBody, await readJson(request));
+    // A platform operator names the workspace they act on (authorized by the platform context and the privileged-action gate)
+    const { tenant_id: targetTenantId } = body;
     // A takeover changes a customer conversation: manage permission (SA-6) and a recorded reason (security review M7)
     PrivilegedActionGate.assert(context, "ai.hitl.takeover", {
       reason: body.reason,
-      payload: { escalation_id: body.escalation_id, action: body.action },
+      // resume_bot hands the chat back to the tenant's agent, which may then message the customer: gate and audit it
+      payload: { escalation_id: body.escalation_id, action: body.action, resume_bot: body.resume_bot === true },
     });
 
     let result;
     if (body.action === "CLAIM") {
       result = HitlEscalationService.claimEscalation(
-        body.tenant_id,
+        targetTenantId,
         body.escalation_id,
-        context.platformUser.id
+        context.platformUser.id,
+        { platformOperator: true }
       );
     } else {
-      result = HitlEscalationService.resolveEscalation(body.tenant_id, {
+      result = HitlEscalationService.resolveEscalation(targetTenantId, {
         escalationId: body.escalation_id,
         resolutionType: body.resolution_type || "HUMAN_REPLIED",
         notes: body.notes || body.reason,
         resumeBot: body.resume_bot,
         userId: context.platformUser.id,
+        platformOperator: true,
       });
     }
 
@@ -52,9 +57,10 @@ async function handlePOST(request: Request) {
         action: `platform.ai.hitl.${body.action.toLowerCase()}`,
         resource_type: "hitl_escalation",
         resource_id: body.escalation_id,
-        target_tenant_id: body.tenant_id,
+        target_tenant_id: targetTenantId,
         reason: body.reason,
         result: "SUCCESS",
+        after_state: { resume_bot: body.resume_bot === true },
       },
       context
     );

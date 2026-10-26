@@ -11,6 +11,7 @@ import { PERMISSIONS } from "@/lib/permissions";
 import { db } from "@/infrastructure/db";
 import { MessageService } from "@/domains/social/messages/message.service";
 import { slaDueAt, type HandoffCard } from "@/domains/ai/customer-agent/handoff-card";
+import { ConversationControlService } from "@/domains/social/conversations/conversation-control.service";
 
 const RequestHumanHandoffInputSchema = z.object({
   reason: z.string().describe("Explicit reason for human handoff"),
@@ -88,9 +89,9 @@ export class RequestHumanHandoffTool implements IAgentTool<z.infer<typeof Reques
           created_at: new Date(now).toISOString(),
           sla_due_at: slaDueAt(input.priority, now),
         };
+        // ADR-121: the agent hands the chat over (a person who already has it keeps it)
+        ConversationControlService.transition(context.tenant.id, convo.id, "ESCALATED", "system:customer-agent", "handoff_tool");
         db.updateConversation(context.tenant.id, convo.id, {
-          mode: "HUMAN",
-          automation_paused: true,
           status: "WAITING_AGENT",
           priority: input.priority,
           metadata: { ...convo.metadata, handoff_card: card },
