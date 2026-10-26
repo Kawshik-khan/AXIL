@@ -48,6 +48,9 @@ function variantStock(tenantId: string, variantId: string): number {
 
 const stockStatus = (q: number) => (q <= 0 ? "out_of_stock" : q <= 3 ? "low_stock" : "in_stock");
 
+/** Labels that only mean "the product's one variant": shown to customers they read as a size ("Panjabi – Regular"). */
+const GENERIC_VARIANT_LABEL = /^(?:regular|default(?: title)?|standard)$/i;
+
 function productView(tenantId: string, p: Product) {
   const variants = p.variants && p.variants.length > 0 ? p.variants : db.getProductVariants(tenantId, p.id);
   return {
@@ -55,9 +58,10 @@ function productView(tenantId: string, p: Product) {
     name: p.name,
     variants: variants.map((v) => {
       const q = variantStock(tenantId, v.id);
+      const label = v.attributes?.size ?? v.title;
       return {
         variant_id: v.id,
-        size: v.attributes?.size ?? v.title,
+        size: variants.length === 1 && typeof label === "string" && GENERIC_VARIANT_LABEL.test(label.trim()) ? undefined : label,
         price_bdt: v.price || p.base_price,
         stock_status: stockStatus(q),
         available_qty: Math.min(q, 10), // exact stock above 10 isn't disclosed
@@ -156,7 +160,72 @@ const HandoffArgs = z
 // ---------------------------------------------------------------------------------------------------------------------
 /** Words of a question about the whole shop, anywhere in the query. Used only when no product name matched. */
 const GENERAL_CATALOG_WORDS =
-  /\b(?:all|any|anything|catalog|catalogue|collection|collections|product|products|item|items|shop|sell|selling|available|popular|best)\b|ki ki|সব|প্রোডাক্ট|কালেকশন/i;
+  /\b(?:all|any|anything|catalog|catalogue|collection|collections|product|products|item|items|shop|sell|selling|available|popular|best|more|other|others|aro|baki|onno)\b|ki ki|সব|প্রোডাক্ট|কালেকশন|আরো|আর কি|অন্য/i;
+
+/** Products per catalog page, and how long a chat remembers which pages it has seen. */
+const CATALOG_PAGE_SIZE = 5;
+const CATALOG_MEMORY_MS = 6 * 60 * 60_000;
+type CatalogMemory = { ids: string[]; at: string };
+
+/**
+ * The shop's catalog a page at a time, for "what do you sell?" and "what else?" (2026-10-26 live: the same first five came
+ * back on every ask, and the agent called them the whole shop). In-stock products first, then by age, so pages are
+ * stable. The chat remembers what it has seen, so the next ask gets the next page without the model tracking pages; the
+ * result says how many products there are and how many are left, so the agent never presents a page as the whole shop.
+ */
+async function catalogPage(pr: CustomerAgentPrincipal, active: Product[], maxPrice?: number): Promise<{ page: Product[]; facts: ToolResult }> {
+  const inStock = (p: Product) => (p.variants?.length ? p.variants : db.getProductVariants(pr.tenantId, p.id)).some((v) => variantStock(pr.tenantId, v.id) > 0);
+  const ordered = active
+    .filter((p) => !maxPrice || p.base_price <= maxPrice)
+    .map((p) => ({ p, stocked: inStock(p) }))
+    .sort((a, b) => Number(b.stocked) - Number(a.stocked) || a.p.created_at.localeCompare(b.p.created_at) || a.p.id.localeCompare(b.p.id))
+    .map((x) => x.p);
+
+  const conversation = db.findConversationById(pr.tenantId, pr.conversationId);
+  const memory = conversation?.metadata?.catalog_shown as CatalogMemory | undefined;
+  let seen = new Set(memory && Date.now() - Date.parse(memory.at) < CATALOG_MEMORY_MS ? memory.ids : []);
+  let remaining = ordered.filter((p) => !seen.has(p.id));
+  const restarted = remaining.length === 0 && ordered.length > 0;
+  if (restarted) {
+    seen = new Set();
+    remaining = ordered;
+  }
+  const page = remaining.slice(0, CATALOG_PAGE_SIZE);
+  const shown = [...seen, ...page.map((p) => p.id)].filter((id) => ordered.some((p) => p.id === id));
+  if (conversation) {
+    const remember = () => {
+      const current = db.findConversationById(pr.tenantId, pr.conversationId);
+      if (current) db.updateConversation(pr.tenantId, current.id, { metadata: { ...current.metadata, catalog_shown: { ids: shown, at: new Date().toISOString() } } });
+      return true;
+    };
+    // Best effort: a chat that can't remember shows page one again, never fails the answer
+    try {
+      if (db.isInUnit()) remember();
+      else await db.unit(async () => remember(), () => true);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const total = ordered.length;
+  const left = Math.max(0, total - shown.length);
+  const categories =
+    total > 10
+      ? db
+          .getCategories(pr.tenantId)
+          .map((c) => ({ name: c.name, products: ordered.filter((p) => p.category_id === c.id).length }))
+          .filter((c) => c.products > 0)
+      : [];
+  const note = restarted
+    ? `The customer has already seen all ${total} products; these are the first again. Say they have seen everything and ask what they are looking for.`
+    : left > 0
+      ? `Products ${shown.length - page.length + 1}-${shown.length} of ${total}: NOT the whole shop. Name them with prices, then say ${left} more products are available and offer to show more${categories.length ? " or to pick a category" : ""}. Never say these are all the products.`
+      : `The last ${page.length} of ${total} products: the customer has now seen the whole shop.`;
+  return {
+    page,
+    facts: { total_products: total, shown_so_far: shown.length, has_more: left > 0, more_count: left, ...(categories.length ? { categories_untrusted: categories } : {}), note },
+  };
+}
 
 async function searchProducts(pr: CustomerAgentPrincipal, a: z.infer<typeof SearchArgs>): Promise<ToolResult> {
   const isGeneralCatalogQuery =
@@ -176,8 +245,8 @@ async function searchProducts(pr: CustomerAgentPrincipal, a: z.infer<typeof Sear
   }
 
   if (isGeneralCatalogQuery && allActive.length > 0) {
-    const results = allActive.slice(0, 5).map((p) => productView(pr.tenantId, p));
-    return { results, note: "Showing featured products available in the shop." };
+    const { page, facts } = await catalogPage(pr, allActive, a.max_price_bdt);
+    return { results: page.map((p) => productView(pr.tenantId, p)), ...facts };
   }
 
   const scored = allActive
@@ -193,15 +262,20 @@ async function searchProducts(pr: CustomerAgentPrincipal, a: z.infer<typeof Sear
   // "What products do you sell?" names no product: show the shop instead of saying it's out of stock (2026-10-25 smoke)
   const featured = allActive.filter((p) => !a.max_price_bdt || p.base_price <= a.max_price_bdt);
   if (GENERAL_CATALOG_WORDS.test(a.query) && featured.length > 0) {
-    return { results: featured.slice(0, 5).map((p) => productView(pr.tenantId, p)), note: "Showing featured products available in the shop." };
+    const { page, facts } = await catalogPage(pr, featured);
+    return { results: page.map((p) => productView(pr.tenantId, p)), ...facts };
   }
   // Nothing matches (the model may search a guessed word, e.g. "apparel"): results stay empty, so the asked-for item is
   // never claimed, but the customer is offered what the shop does sell instead of a dead end (2026-10-26 smoke)
   if (featured.length > 0) {
+    const { page, facts } = await catalogPage(pr, featured);
     return {
       results: [],
-      suggestions: featured.slice(0, 5).map((p) => productView(pr.tenantId, p)),
-      note: "No product matches this search, so don't say it is available. The suggestions are products this shop does sell: offer them (name and price) and ask which the customer likes; do NOT hand off to human.",
+      suggestions: page.map((p) => productView(pr.tenantId, p)),
+      total_products: facts.total_products,
+      has_more: facts.has_more,
+      more_count: facts.more_count,
+      note: `No product matches this search, so don't say it is available. The suggestions are products this shop does sell: offer them (name and price) and ask which the customer likes; do NOT hand off to human.${facts.has_more ? ` They are not the whole shop: ${facts.more_count} more products exist.` : ""}`,
     };
   }
   return { results: [], note: "No product in this shop matches the search. Tell the customer politely that this specific item is not currently in stock; do NOT hand off to human. You may ask what other item they are looking for." };

@@ -328,10 +328,12 @@ export function synthesizeGroundedResponse(toolResults: unknown[], script: Scrip
           return typeof price === "number" ? `${name} (৳${price.toLocaleString("en-US")})` : name;
         }).join("\n- ");
 
+        // A page of the catalog is never presented as the whole shop
+        const more = typeof r.more_count === "number" && r.more_count > 0 ? r.more_count : 0;
         if (script === "bangla") {
-          return `জি, আমাদের কাছে এই প্রোডাক্টগুলো স্টকে আছে:\n- ${lines}\n\nআপনার কোনটি পছন্দ?`;
+          return `জি, আমাদের কাছে এই প্রোডাক্টগুলো স্টকে আছে:\n- ${lines}\n\n${more ? `আরো ${more}টি প্রোডাক্ট আছে, দেখতে চাইলে বলুন। ` : ""}আপনার কোনটি পছন্দ?`;
         }
-        return `Ji, amader kache ei product gulo stock e ache:\n- ${lines}\n\nApnar kon ti pochondo?`;
+        return `Ji, amader kache ei product gulo stock e ache:\n- ${lines}\n\n${more ? `Aro ${more} ta product ache, dekhte chaile bolun. ` : ""}Apnar kon ti pochondo?`;
       }
 
       // Explicitly returned empty results: offer the shop's suggestions when the search returned some
