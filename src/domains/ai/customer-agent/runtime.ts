@@ -72,7 +72,8 @@ export interface CustomerTurn {
   /** The reply to send, already through the output pipeline; empty when there is nothing to send. */
   reply: string;
   handoff: boolean;
-  toolCalls: Array<{ name: string; ok: boolean; refused?: string }>;
+  /** `issues`: what the schema refused (field paths and messages, no values), for evals and traces. */
+  toolCalls: Array<{ name: string; ok: boolean; refused?: string; issues?: string[] }>;
   guards: string[];
   /** The customer message this turn answered (the idempotency key for its reply). */
   answeredMessageId?: string;
@@ -585,7 +586,8 @@ export async function runCustomerTurn(pr: CustomerAgentPrincipal, opts: { budget
           outcome = await runCustomerTool(pr, tc.name, tc.arguments);
         }
         recordToolCall(pr, runId, traceId, tc.name, tc.arguments, outcome, Date.now() - t0);
-        toolCalls.push({ name: tc.name, ok: outcome.ok, ...(outcome.refused ? { refused: outcome.refused } : {}) });
+        const issues = outcome.refused === "INVALID_ARGS" ? (outcome.result as { issues?: string[] }).issues : undefined;
+        toolCalls.push({ name: tc.name, ok: outcome.ok, ...(outcome.refused ? { refused: outcome.refused } : {}), ...(issues?.length ? { issues: issues.slice(0, 5) } : {}) });
         toolResults.push(outcome.result);
         if (tc.name === "handoff_to_human" && outcome.ok) {
           handoff = true;

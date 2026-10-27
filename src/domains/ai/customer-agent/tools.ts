@@ -111,8 +111,18 @@ function confirmationSummary(q: CustomerQuote, details: { customer_name: string;
 // ---------------------------------------------------------------------------------------------------------------------
 // Schemas (strict: an argument the tool doesn't know, such as tenant_id or customer_id, is refused)
 // ---------------------------------------------------------------------------------------------------------------------
+// The model fills optional arguments it has nothing for with "" or null, and a strict refusal costs a retry (2026-10-27
+// nightly eval: 79 of 124 searches refused once `category` was added, p95 latency 3 s → 25 s). Those mean "not given".
+const unset = (v: unknown) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v);
 const SearchArgs = z
-  .object({ query: z.string().min(1).max(100), max_price_bdt: z.number().positive().optional(), category: z.string().min(1).max(80).optional() })
+  .object({
+    query: z.string().min(1).max(100),
+    max_price_bdt: z.preprocess((v) => {
+      const n = typeof v === "string" && v.trim() !== "" ? Number(v) : unset(v);
+      return n === 0 ? undefined : n;
+    }, z.number().positive().optional()),
+    category: z.preprocess((v) => (typeof v === "string" ? unset(v.trim().slice(0, 80)) : unset(v)), z.string().min(1).max(80).optional()),
+  })
   .strict();
 const ProductArgs = z.object({ product_id: z.string().min(1).max(80) }).strict();
 const DistrictArgs = z.object({ district: z.string().min(2).max(40) }).strict();
