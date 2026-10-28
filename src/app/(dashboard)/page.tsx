@@ -266,14 +266,10 @@ export default function DashboardPage() {
       {/* 0. Top Command Center Header */}
       <div className={styles.pageHeader}>
         <div>
-          <h1 className={styles.pageTitle}>
-            <span>CommerceOS Command Center</span>
-            <span style={{ fontSize: "14px", fontWeight: 400, color: "var(--color-text-muted)" }}>
-              / Business Operations
-            </span>
-          </h1>
+          <p className={styles.pageEyebrow}>Business operations</p>
+          <h1 className={styles.pageTitle}>Command Center</h1>
           <p className={styles.pageDescription}>
-            Authoritative multi-channel intelligence, automated fulfillment, and F-commerce revenue for{" "}
+            Revenue, orders and fulfillment across all channels for{" "}
             <strong>{session?.tenant?.name || "your store"}</strong>.
           </p>
         </div>
@@ -287,13 +283,13 @@ export default function DashboardPage() {
               alignItems: "center",
               gap: "6px",
               padding: "6px 12px",
-              background: "#ffffff",
-              border: "1px solid rgba(0, 0, 0, 0.1)",
+              background: "var(--color-surface-pure)",
+              border: "1px solid var(--color-border-medium)",
               borderRadius: "14px",
               boxShadow: "0 2px 8px rgba(0, 0, 0, 0.04)",
             }}
           >
-            <span style={{ fontSize: "12px", color: "#6b7280", fontWeight: 500 }}>Currency:</span>
+            <span style={{ fontSize: "12px", color: "var(--color-text-secondary)", fontWeight: 500 }}>Currency</span>
             <select
               value={selectedCurrency}
               onChange={(e) => setSelectedCurrency(e.target.value as CurrencyCode)}
@@ -302,7 +298,7 @@ export default function DashboardPage() {
                 background: "transparent",
                 fontSize: "13px",
                 fontWeight: 700,
-                color: "#111827",
+                color: "var(--color-text-primary)",
                 cursor: "pointer",
                 outline: "none",
               }}
@@ -316,7 +312,7 @@ export default function DashboardPage() {
 
           <Link href="/orders">
             <Button variant="primary" size="sm" icon={<Plus size={14} />}>
-              + Create Order
+              Create order
             </Button>
           </Link>
         </div>
@@ -409,10 +405,10 @@ export default function DashboardPage() {
                 className={styles.iconCircle}
                 style={{
                   background: "rgba(59, 130, 246, 0.14)",
-                  color: "#2563eb",
+                  color: "var(--color-accent-blue)",
                 }}
               >
-                <ShoppingBag size={20} color="#2563eb" />
+                <ShoppingBag size={20} color="var(--color-accent-blue)" />
               </div>
               <Link href="/orders" className={styles.actionArrow} aria-label="View orders">
                 <ArrowUpRight size={16} />
@@ -434,10 +430,10 @@ export default function DashboardPage() {
                 className={styles.iconCircle}
                 style={{
                   background: "rgba(168, 85, 247, 0.14)",
-                  color: "#9333ea",
+                  color: "var(--color-accent-violet)",
                 }}
               >
-                <Users size={20} color="#9333ea" />
+                <Users size={20} color="var(--color-accent-violet)" />
               </div>
               <Link href="/customers" className={styles.actionArrow} aria-label="View customers">
                 <ArrowUpRight size={16} />
@@ -463,10 +459,10 @@ export default function DashboardPage() {
                 className={styles.iconCircle}
                 style={{
                   background: "rgba(245, 158, 11, 0.16)",
-                  color: "#d97706",
+                  color: "var(--color-accent-amber)",
                 }}
               >
-                <CreditCard size={20} color="#d97706" />
+                <CreditCard size={20} color="var(--color-accent-amber)" />
               </div>
               <Link href="/analytics" className={styles.actionArrow} aria-label="View AOV">
                 <ArrowUpRight size={16} />
@@ -490,10 +486,10 @@ export default function DashboardPage() {
                 className={styles.iconCircle}
                 style={{
                   background: "rgba(16, 185, 129, 0.14)",
-                  color: "#059669",
+                  color: "var(--color-accent-emerald)",
                 }}
               >
-                <Percent size={20} color="#059669" />
+                <Percent size={20} color="var(--color-accent-emerald)" />
               </div>
               <Link href="/analytics" className={styles.actionArrow} aria-label="View profitability">
                 <ArrowUpRight size={16} />
@@ -527,7 +523,7 @@ export default function DashboardPage() {
             <div>
               <div style={{ display: "flex", alignItems: "baseline", gap: "12px" }}>
                 <span className={styles.panelTitle}>Revenue, last 30 days</span>
-                <span style={{ fontSize: "24px", fontWeight: 700, color: "#111827" }}>
+                <span style={{ fontSize: "24px", fontWeight: 700, color: "var(--color-text-primary)" }}>
                   {cur.format(financials?.gmv_bdt ?? 0)}
                 </span>
               </div>
@@ -562,7 +558,7 @@ export default function DashboardPage() {
                         borderRadius: "6px 6px 0 0",
                       }}
                     />
-                    <span style={{ fontSize: "9px", color: "var(--color-text-muted)" }}>{p.date.slice(5)}</span>
+                    <span style={{ fontSize: "11px", color: "var(--color-text-muted)" }}>{p.date.slice(5)}</span>
                   </div>
                 ))}
               </div>
@@ -583,7 +579,7 @@ export default function DashboardPage() {
                       padding: "2px 8px",
                       borderRadius: "10px",
                       background: "rgba(199, 249, 0, 0.25)",
-                      color: "#4a5e00",
+                      color: "var(--color-lime-ink)",
                       fontSize: "11px",
                       fontWeight: 700,
                       cursor: "pointer",
@@ -614,13 +610,13 @@ export default function DashboardPage() {
                     <span style={{ width: 8, height: 8, borderRadius: "50%", background: activeChannel.color }} />
                     <span style={{ fontWeight: 700, fontSize: "12px", color: "#ffffff" }}>{activeChannel.shortName}</span>
                   </div>
-                  <span style={{ fontSize: "11px", fontWeight: 700, color: "#C7F900" }}>{activeChannel.sharePercent}%</span>
+                  <span style={{ fontSize: "12px", fontWeight: 700, color: "#C7F900" }}>{activeChannel.sharePercent}%</span>
                 </div>
                 <div style={{ display: "flex", justifyContent: "space-between", marginTop: "6px", fontSize: "11px", color: "#d1d5db" }}>
                   <span>Revenue: <strong style={{ color: "#ffffff" }}>{cur.format(activeChannel.revenueBDT)}</strong></span>
                   <span>Orders: <strong style={{ color: "#ffffff" }}>{activeChannel.orders}</strong></span>
                 </div>
-                <div style={{ display: "flex", justifyContent: "space-between", marginTop: "4px", fontSize: "10px", color: "#9ca3af" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginTop: "4px", fontSize: "11px", color: "#9ca3af" }}>
                   <span>{activeChannel.agentStatus}</span>
                 </div>
               </div>
@@ -640,7 +636,7 @@ export default function DashboardPage() {
                     cy="100"
                     r="70"
                     fill="none"
-                    stroke="#f1f3f5"
+                    stroke="var(--color-track)"
                     strokeWidth="18"
                   />
 
@@ -694,10 +690,10 @@ export default function DashboardPage() {
                     <text x="100" y="78" textAnchor="middle" fontSize="12" fontWeight="700" fill={activeChannel.color}>
                       {activeChannel.shortName}
                     </text>
-                    <text x="100" y="102" textAnchor="middle" fontSize="19" fontWeight="800" fill="#111827">
+                    <text x="100" y="102" textAnchor="middle" fontSize="19" fontWeight="800" fill="var(--color-text-primary)">
                       {cur.format(activeChannel.revenueBDT)}
                     </text>
-                    <text x="100" y="119" textAnchor="middle" fontSize="10" fontWeight="600" fill="#4b5563">
+                    <text x="100" y="119" textAnchor="middle" fontSize="10" fontWeight="600" fill="var(--color-text-secondary)">
                       {activeChannel.orders} Orders ({activeChannel.sharePercent}%)
                     </text>
                     <text x="100" y="133" textAnchor="middle" fontSize="9" fontWeight="600" fill="var(--color-text-secondary)">
@@ -706,16 +702,16 @@ export default function DashboardPage() {
                   </g>
                 ) : (
                   <g>
-                    <text x="100" y="80" textAnchor="middle" fontSize="10" fontWeight="700" fill="#6b7280" letterSpacing="0.06em">
+                    <text x="100" y="80" textAnchor="middle" fontSize="10" fontWeight="700" fill="var(--color-text-secondary)" letterSpacing="0.06em">
                       OMNICHANNEL
                     </text>
-                    <text x="100" y="104" textAnchor="middle" fontSize="22" fontWeight="800" fill="#111827">
+                    <text x="100" y="104" textAnchor="middle" fontSize="22" fontWeight="800" fill="var(--color-text-primary)">
                       {totalOrders.toLocaleString()}
                     </text>
-                    <text x="100" y="122" textAnchor="middle" fontSize="11" fontWeight="600" fill="#4b5563">
+                    <text x="100" y="122" textAnchor="middle" fontSize="11" fontWeight="600" fill="var(--color-text-secondary)">
                       Total Orders
                     </text>
-                    <text x="100" y="136" textAnchor="middle" fontSize="9" fontWeight="500" fill="#9ca3af">
+                    <text x="100" y="136" textAnchor="middle" fontSize="9" fontWeight="500" fill="var(--color-text-muted)">
                       Hover or click slice
                     </text>
                   </g>
@@ -729,10 +725,10 @@ export default function DashboardPage() {
                 <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                   <span style={{ fontSize: "14px" }}>{activeChannel.icon}</span>
                   <div>
-                    <div style={{ fontWeight: 700, color: "#111827", fontSize: "12px" }}>
+                    <div style={{ fontWeight: 700, color: "var(--color-text-primary)", fontSize: "12px" }}>
                       {activeChannel.shortName} Selected
                     </div>
-                    <div style={{ fontSize: "10px", color: "#6b7280" }}>
+                    <div style={{ fontSize: "11px", color: "var(--color-text-secondary)" }}>
                       {activeChannel.orders} orders · {cur.format(activeChannel.revenueBDT)}
                     </div>
                   </div>
@@ -745,10 +741,10 @@ export default function DashboardPage() {
                       style={{
                         padding: "4px 8px",
                         borderRadius: "8px",
-                        background: "#18191c",
-                        color: "#ffffff",
+                        background: "var(--color-text-primary)",
+                        color: "var(--color-bg-base)",
                         border: "none",
-                        fontSize: "10px",
+                        fontSize: "11px",
                         fontWeight: 600,
                         cursor: "pointer",
                       }}
@@ -763,9 +759,9 @@ export default function DashboardPage() {
                       padding: "4px 8px",
                       borderRadius: "8px",
                       background: "transparent",
-                      border: "1px solid #d1d5db",
-                      color: "#374151",
-                      fontSize: "10px",
+                      border: "1px solid var(--color-border-medium)",
+                      color: "var(--color-text-secondary)",
+                      fontSize: "11px",
                       fontWeight: 600,
                       cursor: "pointer",
                     }}
@@ -777,7 +773,7 @@ export default function DashboardPage() {
             )}
           </div>
 
-          <div style={{ marginTop: "12px", paddingTop: "10px", borderTop: "1px solid #f3f4f6", display: "flex", justifyContent: "space-between", fontSize: "11px", color: "#6b7280" }}>
+          <div style={{ marginTop: "12px", paddingTop: "10px", borderTop: "1px solid var(--color-border-subtle)", display: "flex", justifyContent: "space-between", fontSize: "11px", color: "var(--color-text-secondary)" }}>
             <span>
               Most orders: <strong>{topChannel && topChannel.orders > 0 ? `${topChannel.shortName} (${topChannel.orders})` : "no orders yet"}</strong>
             </span>
@@ -869,12 +865,12 @@ export default function DashboardPage() {
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
               <div>
                 <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                  <Sparkles size={18} color="#65a30d" />
-                  <span style={{ fontSize: "17px", fontWeight: 700, color: "#111827" }}>
+                  <Sparkles size={18} color="var(--color-lime-ink)" />
+                  <span style={{ fontSize: "17px", fontWeight: 700, color: "var(--color-text-primary)" }}>
                     Commerce Intelligence
                   </span>
                 </div>
-                <p style={{ fontSize: "12px", color: "#6b7280", marginTop: "2px" }}>
+                <p style={{ fontSize: "12px", color: "var(--color-text-secondary)", marginTop: "2px" }}>
                   Autonomous reasoning, anomaly alerts &amp; growth actions
                 </p>
               </div>
@@ -890,7 +886,7 @@ export default function DashboardPage() {
                   border: "1px solid rgba(132, 204, 22, 0.35)",
                   fontSize: "11px",
                   fontWeight: 700,
-                  color: "#3f6212",
+                  color: "var(--color-lime-ink)",
                 }}
               >
                 {intelligence?.snapshots?.[0]?.source === "SNAPSHOT" ? "Stored analysis" : "Computed now"}
@@ -937,7 +933,7 @@ export default function DashboardPage() {
             <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
               <ShieldCheck size={14} color="var(--color-success)" /> Computed from your orders, stock and payments
             </span>
-            <Link href="/agents" style={{ color: "#111827", fontWeight: 600 }}>
+            <Link href="/agents" style={{ color: "var(--color-text-primary)", fontWeight: 600 }}>
               Agent Logs →
             </Link>
           </div>
@@ -963,7 +959,7 @@ export default function DashboardPage() {
           </div>
 
           {/* Counts from the recent runs (were literal 14 Online / 2,840 / 99.8% / 2 Actions) */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "10px", marginBottom: "14px" }}>
+          <div className={styles.miniStatGrid}>
             {[
               { label: "Recent runs", value: String(agentRuns.length) },
               { label: "Completed", value: String(agentRuns.filter((r) => r.status === "COMPLETED").length) },
@@ -985,11 +981,11 @@ export default function DashboardPage() {
               <div key={idx} className={styles.streamItem}>
                 <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                   <span className={styles.streamPulseDot} />
-                  <strong style={{ color: "#111827" }}>{item.agent}:</strong>
-                  <span style={{ color: "#4b5563" }}>{item.action}</span>
+                  <strong style={{ color: "var(--color-text-primary)" }}>{item.agent}:</strong>
+                  <span style={{ color: "var(--color-text-secondary)" }}>{item.action}</span>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                  <span style={{ fontSize: "10px", color: "#9ca3af" }}>{item.time}</span>
+                  <span style={{ fontSize: "11px", color: "var(--color-text-muted)" }}>{item.time}</span>
                   <Badge variant="active">{item.status}</Badge>
                 </div>
               </div>
@@ -1050,21 +1046,21 @@ export default function DashboardPage() {
           {/* From the store (were literal Dhaka 62% / 72.9% repeat / ৳1,540 / +57%) */}
           <div className={styles.cityKpiStrip}>
             <div className={styles.cityKpiItem}>
-              <span style={{ fontSize: "10px", color: "var(--color-text-secondary)", fontWeight: 600 }}>Top division (orders)</span>
+              <span style={{ fontSize: "11px", color: "var(--color-text-secondary)", fontWeight: 600 }}>Top division (orders)</span>
               <strong style={{ fontSize: "13px", color: "var(--color-text-primary)", marginTop: "2px" }}>{topCity ? topCity.city : "—"}</strong>
-              <span style={{ fontSize: "10px", color: "var(--color-text-secondary)" }}>{topCity ? `${topCity.volumePercent}% (${topCity.orders} orders)` : "No orders yet"}</span>
+              <span style={{ fontSize: "11px", color: "var(--color-text-secondary)" }}>{topCity ? `${topCity.volumePercent}% (${topCity.orders} orders)` : "No orders yet"}</span>
             </div>
             <div className={styles.cityKpiItem}>
-              <span style={{ fontSize: "10px", color: "var(--color-text-secondary)", fontWeight: 600 }}>Returning buyers</span>
+              <span style={{ fontSize: "11px", color: "var(--color-text-secondary)", fontWeight: 600 }}>Returning buyers</span>
               <strong style={{ fontSize: "13px", color: "var(--color-text-primary)", marginTop: "2px" }}>
                 {typeof metrics?.returningBuyerPercent === "number" ? `${metrics.returningBuyerPercent}%` : "—"}
               </strong>
-              <span style={{ fontSize: "10px", color: "var(--color-text-secondary)" }}>customers with 2+ orders</span>
+              <span style={{ fontSize: "11px", color: "var(--color-text-secondary)" }}>customers with 2+ orders</span>
             </div>
             <div className={styles.cityKpiItem}>
-              <span style={{ fontSize: "10px", color: "var(--color-text-secondary)", fontWeight: 600 }}>Average paid order</span>
+              <span style={{ fontSize: "11px", color: "var(--color-text-secondary)", fontWeight: 600 }}>Average paid order</span>
               <strong style={{ fontSize: "13px", color: "var(--color-text-primary)", marginTop: "2px" }}>{aovBDT > 0 ? cur.format(aovBDT) : "—"}</strong>
-              <span style={{ fontSize: "10px", color: "var(--color-text-secondary)" }}>all divisions</span>
+              <span style={{ fontSize: "11px", color: "var(--color-text-secondary)" }}>all divisions</span>
             </div>
           </div>
 
@@ -1081,13 +1077,13 @@ export default function DashboardPage() {
                     style={{
                       cursor: "pointer",
                       border: isSelected ? `1px solid ${item.color}` : "1px solid rgba(0, 0, 0, 0.04)",
-                      background: isSelected ? "rgba(199, 249, 0, 0.08)" : "#fafafa",
+                      background: isSelected ? "rgba(199, 249, 0, 0.08)" : "var(--color-surface-soft)",
                     }}
                   >
                     <div style={{ display: "flex", alignItems: "center", gap: "8px", minWidth: "115px" }}>
                       <span className={styles.cityRankPill}>#{idx + 1}</span>
                       <div>
-                        <div style={{ fontWeight: 700, fontSize: "12px", color: "#111827" }}>{item.city}</div>
+                        <div style={{ fontWeight: 700, fontSize: "12px", color: "var(--color-text-primary)" }}>{item.city}</div>
 
                       </div>
                     </div>
@@ -1095,10 +1091,10 @@ export default function DashboardPage() {
                     {/* Progress Bar Track */}
                     <div style={{ flex: 1, margin: "0 12px" }}>
                       <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", marginBottom: "3px" }}>
-                        <span style={{ color: "#6b7280", fontWeight: 500 }}>{item.volumePercent}% volume</span>
+                        <span style={{ color: "var(--color-text-secondary)", fontWeight: 500 }}>{item.volumePercent}% volume</span>
 
                       </div>
-                      <div style={{ width: "100%", height: "6px", background: "#f3f4f6", borderRadius: "999px", overflow: "hidden" }}>
+                      <div style={{ width: "100%", height: "6px", background: "var(--color-track)", borderRadius: "999px", overflow: "hidden" }}>
                         <div
                           style={{
                             width: `${item.volumePercent}%`,
@@ -1112,10 +1108,10 @@ export default function DashboardPage() {
                     </div>
 
                     <div style={{ textAlign: "right", minWidth: "75px" }}>
-                      <div style={{ fontWeight: 700, fontSize: "12px", color: "#111827" }}>
+                      <div style={{ fontWeight: 700, fontSize: "12px", color: "var(--color-text-primary)" }}>
                         {cur.format(item.revenueBDT)}
                       </div>
-                      <div style={{ fontSize: "10px", color: "#6b7280" }}>{item.orders} ord</div>
+                      <div style={{ fontSize: "11px", color: "var(--color-text-secondary)" }}>{item.orders} ord</div>
                     </div>
                   </div>
                 );
@@ -1137,7 +1133,7 @@ export default function DashboardPage() {
                 >
                   <div style={{ display: "flex", alignItems: "center", gap: "8px", minWidth: "110px" }}>
                     <span style={{ width: 8, height: 8, borderRadius: "50%", background: item.color }} />
-                    <span style={{ fontWeight: 600, fontSize: "12px", color: "#111827" }}>{item.city}</span>
+                    <span style={{ fontWeight: 600, fontSize: "12px", color: "var(--color-text-primary)" }}>{item.city}</span>
                   </div>
 
                   <div style={{ flex: 1, margin: "0 10px" }}>
@@ -1145,9 +1141,9 @@ export default function DashboardPage() {
                       <span style={{ fontWeight: 600, color: "var(--color-text-primary)" }}>
                         {typeof item.returningBuyerPercent === "number" ? `${item.returningBuyerPercent}% repeat` : "—"}
                       </span>
-                      <span style={{ color: "var(--color-text-secondary)", fontSize: "10px" }}>{item.reorderFreq ? `${item.reorderFreq} orders per buyer` : ""}</span>
+                      <span style={{ color: "var(--color-text-secondary)", fontSize: "11px" }}>{item.reorderFreq ? `${item.reorderFreq} orders per buyer` : ""}</span>
                     </div>
-                    <div style={{ width: "100%", height: "5px", background: "#f3f4f6", borderRadius: "999px", overflow: "hidden" }}>
+                    <div style={{ width: "100%", height: "5px", background: "var(--color-track)", borderRadius: "999px", overflow: "hidden" }}>
                       <div
                         style={{
                           width: `${item.returningBuyerPercent ?? 0}%`,
@@ -1181,7 +1177,7 @@ export default function DashboardPage() {
       {/* TIER 5: CONSOLIDATED OPERATIONS & RECENT ORDERS         */}
       {/* Reduced Inventory Dominance -> Shifted to Operations    */}
       {/* ======================================================= */}
-      <section style={{ display: "grid", gridTemplateColumns: "3.8fr 8.2fr", gap: "20px", width: "100%" }}>
+      <section className={styles.tierGridSplit}>
         {/* Consolidated Operations Box */}
         <div className={styles.whitePanel}>
           <div className={styles.panelHeader}>
@@ -1205,7 +1201,7 @@ export default function DashboardPage() {
               <div key={box.label} className={styles.opsBox}>
                 <span style={{ fontSize: "11px", color: "var(--color-text-muted)" }}>{box.label}</span>
                 <strong style={{ fontSize: "14px", color: "var(--color-text-primary)" }}>{box.value}</strong>
-                <span style={{ fontSize: "10px", color: "var(--color-text-secondary)" }}>{box.note}</span>
+                <span style={{ fontSize: "11px", color: "var(--color-text-secondary)" }}>{box.note}</span>
               </div>
             ))}
           </div>
@@ -1232,7 +1228,7 @@ export default function DashboardPage() {
                       padding: "2px 8px",
                       borderRadius: "10px",
                       background: "rgba(199, 249, 0, 0.25)",
-                      color: "#4a5e00",
+                      color: "var(--color-lime-ink)",
                       fontSize: "11px",
                       fontWeight: 700,
                       cursor: "pointer",
@@ -1276,7 +1272,7 @@ export default function DashboardPage() {
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
               <thead>
-                <tr style={{ color: "#9ca3af", textAlign: "left", borderBottom: "1px solid #f3f4f6" }}>
+                <tr style={{ color: "var(--color-text-muted)", textAlign: "left", borderBottom: "1px solid var(--color-border-subtle)" }}>
                   <th style={{ padding: "8px 6px", fontWeight: 500 }}>Order #</th>
                   <th style={{ padding: "8px 6px", fontWeight: 500 }}>Customer</th>
                   <th style={{ padding: "8px 6px", fontWeight: 500 }}>Channel</th>
@@ -1301,7 +1297,7 @@ export default function DashboardPage() {
                   if (displayedOrders.length === 0) {
                     return (
                       <tr>
-                        <td colSpan={7} style={{ padding: "24px 10px", textAlign: "center", color: "#9ca3af" }}>
+                        <td colSpan={7} style={{ padding: "24px 10px", textAlign: "center", color: "var(--color-text-muted)" }}>
                           {recentOrders.length === 0 ? "No orders yet." : "No recent orders match the selected filters."}{" "}
                           <button
                             type="button"
@@ -1312,7 +1308,7 @@ export default function DashboardPage() {
                             style={{
                               background: "none",
                               border: "none",
-                              color: "#18191c",
+                              color: "var(--color-text-primary)",
                               fontWeight: 700,
                               textDecoration: "underline",
                               cursor: "pointer",
@@ -1327,23 +1323,23 @@ export default function DashboardPage() {
                   }
 
                   return displayedOrders.map((ord: any) => (
-                    <tr key={ord.id} style={{ borderBottom: "1px solid #f9fafb" }}>
+                    <tr key={ord.id} style={{ borderBottom: "1px solid var(--color-border-subtle)" }}>
                       <td style={{ padding: "10px 6px", fontWeight: 700 }}>
-                        <Link href="/orders" style={{ color: "#111827", textDecoration: "underline" }}>
+                        <Link href="/orders" style={{ color: "var(--color-text-primary)", textDecoration: "underline" }}>
                           {ord.id}
                         </Link>
                       </td>
                       <td style={{ padding: "10px 6px" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                          <span style={{ fontWeight: 600, color: "#111827" }}>{ord.customer}</span>
+                          <span style={{ fontWeight: 600, color: "var(--color-text-primary)" }}>{ord.customer}</span>
                           {ord.isReturning ? (
                             <span
                               style={{
                                 padding: "1px 5px",
                                 borderRadius: "4px",
                                 background: "rgba(132, 204, 22, 0.15)",
-                                color: "#4d7c0f",
-                                fontSize: "9px",
+                                color: "var(--color-lime-ink)",
+                                fontSize: "11px",
                                 fontWeight: 700,
                               }}
                               title="Returning Customer"
@@ -1356,8 +1352,8 @@ export default function DashboardPage() {
                                 padding: "1px 5px",
                                 borderRadius: "4px",
                                 background: "rgba(59, 130, 246, 0.12)",
-                                color: "#1d4ed8",
-                                fontSize: "9px",
+                                color: "var(--color-info-ink)",
+                                fontSize: "11px",
                                 fontWeight: 700,
                               }}
                               title="First-Time Customer"
@@ -1366,14 +1362,14 @@ export default function DashboardPage() {
                             </span>
                           )}
                         </div>
-                        <div style={{ fontSize: "10px", color: "#9ca3af" }}>
+                        <div style={{ fontSize: "11px", color: "var(--color-text-muted)" }}>
                           {ord.city}
                         </div>
                       </td>
                       <td style={{ padding: "10px 6px" }}>
                         <Badge variant="role">{ord.channel}</Badge>
                       </td>
-                      <td style={{ padding: "10px 6px", fontWeight: 700, color: "#111827" }}>
+                      <td style={{ padding: "10px 6px", fontWeight: 700, color: "var(--color-text-primary)" }}>
                         {cur.format(ord.amountBDT)}
                       </td>
                       <td style={{ padding: "10px 6px" }}>
@@ -1394,7 +1390,7 @@ export default function DashboardPage() {
                           {ord.status}
                         </Badge>
                       </td>
-                      <td style={{ padding: "10px 6px", textAlign: "right", color: "#6b7280" }}>
+                      <td style={{ padding: "10px 6px", textAlign: "right", color: "var(--color-text-secondary)" }}>
                         {ord.delivery}
                       </td>
                     </tr>

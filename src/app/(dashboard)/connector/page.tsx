@@ -561,10 +561,12 @@ export default function ConnectorPage() {
       <div className={styles.headerSection}>
         <div className={styles.titleArea}>
           <div className={styles.titleRow}>
-            <PlugZap size={28} style={{ color: "var(--color-lime-primary, #C7F900)" }} />
+            <span className={styles.titleIcon} aria-hidden="true">
+              <PlugZap size={22} />
+            </span>
             <h1 className={styles.pageTitle}>
               {!isAdmin || viewScope === "STORE"
-                ? "Store Connectors & Logistics Hub"
+                ? "Connectors & Logistics"
                 : viewScope === "INFRA"
                 ? "Cloud Infrastructure & AI Gateway Hub"
                 : "Connectors & Integrations Gateway"}
@@ -606,7 +608,7 @@ export default function ConnectorPage() {
               setActiveCategory("ALL");
             }}
           >
-            📦 Store Channels (Couriers, Social, Ads)
+            📦 Store Channels
           </button>
           <button
             type="button"
@@ -616,7 +618,7 @@ export default function ConnectorPage() {
               setActiveCategory("ALL");
             }}
           >
-            ⚡ Cloud & Infrastructure (LLMs, Vector DB, Redis, DBs, ERP)
+            ⚡ Cloud & Infrastructure
           </button>
           <button
             type="button"

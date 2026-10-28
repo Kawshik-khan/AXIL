@@ -243,6 +243,19 @@
   color: #111111;
 }
 
+/* Tablet: shrink padding, let the search collapse */
+@media (max-width: 1100px) {
+  .topBar {
+    padding: 0 20px;
+  }
+  .centerSection {
+    flex: 1;
+    min-width: 0;
+    max-width: 360px;
+    margin: 0 12px;
+  }
+}
+
 /* Mobile Responsive */
 @media (max-width: 768px) {
   .topBar {

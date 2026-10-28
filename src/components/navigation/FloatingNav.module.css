@@ -2,8 +2,8 @@
 .dockWrapper {
   position: fixed;
   left: 20px;
-  top: 50%;
-  transform: translateY(-50%);
+  top: 12px;
+  bottom: 12px;
   z-index: 100;
   display: flex;
   align-items: center;
@@ -31,10 +31,13 @@
   border: none !important;
   border-radius: 0 !important;
   box-shadow: none !important;
-  overflow: visible !important;
-  overflow-y: visible !important;
-  overflow-x: visible !important;
-  max-height: none !important;
+  /* tall dock scrolls inside the viewport instead of being cut off; centred when it fits */
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  max-height: 100% !important;
+  margin-block: auto;
+  padding: 4px 6px !important;
+  scrollbar-width: none;
   pointer-events: auto;
 }
 
@@ -126,8 +129,8 @@
 
 /* Floating Tooltip pointing to the right */
 .dockTooltip {
-  position: absolute;
-  left: 48px;
+  position: fixed;
+  left: 72px;
   background: #111111;
   color: #ffffff;
   font-size: 12px;
@@ -184,8 +187,13 @@
     flex-direction: row;
     max-height: none;
     width: 100%;
-    justify-content: space-around;
-    padding: 6px 10px;
+    justify-content: flex-start;
+    gap: 8px;
+    padding: 6px 10px !important;
+    max-height: none !important;
+    margin-block: 0;
+    overflow-y: hidden !important;
+    scrollbar-width: none;
     background: rgba(255, 255, 255, 0.9) !important;
     border: 1px solid rgba(0, 0, 0, 0.08) !important;
     border-radius: 9999px !important;
