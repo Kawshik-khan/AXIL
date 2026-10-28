@@ -10,6 +10,7 @@ import {
   ChannelAttributionReport,
   ExecutiveDigest,
 } from "@/types/analytics";
+import { useDebounce } from "@/hooks/useDebounce";
 
 type ActiveTab = "financials" | "rto" | "channels" | "digests";
 
@@ -26,6 +27,7 @@ export default function AnalyticsPage() {
   // Filtering & search
   const [selectedDivision, setSelectedDivision] = useState<string>("ALL");
   const [districtSearch, setDistrictSearch] = useState<string>("");
+  const debouncedDistrictSearch = useDebounce(districtSearch, 300);
 
   // Modals & inspectors
   const [selectedDistrict, setSelectedDistrict] = useState<DistrictRtoMetric | null>(null);
@@ -97,7 +99,7 @@ export default function AnalyticsPage() {
     try {
       await Promise.all([
         fetchFinancials(datePreset),
-        fetchRtoGeography(selectedDivision, districtSearch),
+        fetchRtoGeography(selectedDivision, debouncedDistrictSearch),
         fetchChannels(datePreset),
         fetchDigests(),
       ]);
@@ -106,7 +108,7 @@ export default function AnalyticsPage() {
     } finally {
       setLoading(false);
     }
-  }, [datePreset, selectedDivision, districtSearch, fetchFinancials, fetchRtoGeography, fetchChannels, fetchDigests]);
+  }, [datePreset, selectedDivision, debouncedDistrictSearch, fetchFinancials, fetchRtoGeography, fetchChannels, fetchDigests]);
 
   useEffect(() => {
     loadAllData();
@@ -114,8 +116,8 @@ export default function AnalyticsPage() {
 
   // Handle RTO search & filter change
   useEffect(() => {
-    fetchRtoGeography(selectedDivision, districtSearch);
-  }, [selectedDivision, districtSearch, fetchRtoGeography]);
+    fetchRtoGeography(selectedDivision, debouncedDistrictSearch);
+  }, [selectedDivision, debouncedDistrictSearch, fetchRtoGeography]);
 
   // Trigger Executive Digest Generation
   const handleGenerateDigest = async () => {
