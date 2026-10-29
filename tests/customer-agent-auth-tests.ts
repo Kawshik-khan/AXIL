@@ -434,6 +434,28 @@ async function main() {
     await assert.rejects(() => ProductService.updateProduct(ownerCtx, db.getAllProducts(tenantId)[0].id, { category_id: panjabi.id }), /Unknown category/);
   });
 
+  await runTest("empty optional search arguments mean 'not given', never a refused call (2026-10-27 nightly eval)", async () => {
+    // 79 of 124 live searches were refused once `category` existed: each refusal cost the turn another model call
+    for (const args of [
+      { query: "black t-shirt", category: "" },
+      { query: "black t-shirt", category: null },
+      { query: "black t-shirt", category: "   " },
+      { query: "black t-shirt", max_price_bdt: null },
+      { query: "black t-shirt", max_price_bdt: 0 },
+      { query: "black t-shirt", max_price_bdt: "", category: null },
+    ]) {
+      const out = await runCustomerTool(prA, "search_products", args);
+      assert.ok(out.ok && !out.refused, JSON.stringify(args) + " " + JSON.stringify(out.result));
+      assert.ok(((out.result as R).results as R[]).some((p) => p.name === "Black Cotton T-Shirt"), JSON.stringify(args));
+    }
+    const priced = (await runCustomerTool(prA, "search_products", { query: "t-shirt", max_price_bdt: "700" })).result as R;
+    assert.ok((priced.results as R[]).length > 0 && (priced.results as R[]).every((p) => (p.variants as R[])[0].price_bdt <= 700));
+    // Unknown keys, bad values and an empty query are still refused
+    for (const args of [{ query: "" }, { query: "", category: null }, { query: "x", tenant_id: tenantId }, { query: "x", max_price_bdt: -5 }, { query: "x", max_price_bdt: "cheap" }]) {
+      assert.strictEqual((await runCustomerTool(prA, "search_products", args)).refused, "INVALID_ARGS", JSON.stringify(args));
+    }
+  });
+
   await runTest("the saving is computed by the tool (you_save_bdt)", async () => {
     const pj = (await run(prA, "search_products", { query: "panjabi" })).results[0];
     assert.strictEqual(pj.you_save_bdt, 500);
