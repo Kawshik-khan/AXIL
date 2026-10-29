@@ -13,6 +13,7 @@ import {
   AlertCircle,
   UploadCloud,
   Images,
+  Pencil,
 } from "lucide-react";
 import { BentoCard } from "@/components/bento/BentoCard";
 import { Button } from "@/components/ui/Button/Button";
@@ -50,6 +51,8 @@ export default function ProductsPage() {
   const [images, setImages] = useState<string[]>([]);
   const [imagesBusy, setImagesBusy] = useState(false);
   const [photosProduct, setPhotosProduct] = useState<Product | null>(null);
+  // Set while the modal edits an existing product; null when it creates one
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
 
   const loadProducts = async () => {
     try {
@@ -146,17 +149,116 @@ export default function ProductsPage() {
 
       // Success
       setIsModalOpen(false);
-      setName("");
-      setSku("");
-      setBasePrice("");
-      setCompareAtPrice("");
-      setDescription("");
-      setCategoryName("");
-      setInitialStock("10");
-      setImages([]);
+      resetForm();
       await loadProducts();
-    } catch (err: any) {
-      setFormError(err.message || "An error occurred");
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "An error occurred");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const resetForm = () => {
+    setEditingProduct(null);
+    setFormError("");
+    setName("");
+    setSku("");
+    setBasePrice("");
+    setCompareAtPrice("");
+    setDescription("");
+    setCategoryName("");
+    setInitialStock("10");
+    setImages([]);
+  };
+
+  const openCreateModal = () => {
+    resetForm();
+    setIsModalOpen(true);
+  };
+
+  const openEditModal = (product: Product) => {
+    resetForm();
+    setEditingProduct(product);
+    setName(product.name);
+    setSku(product.sku);
+    setBasePrice(String(product.base_price));
+    setCompareAtPrice(product.compare_at_price != null ? String(product.compare_at_price) : "");
+    setDescription(product.description ?? "");
+    setCategoryName(categories.find((c) => c.id === product.category_id)?.name ?? "");
+    setImages(product.images ?? []);
+    setIsModalOpen(true);
+  };
+
+  const closeModal = () => {
+    setIsModalOpen(false);
+    resetForm();
+  };
+
+  /** Sends only the fields that changed. Stock is not part of a product edit; it changes through inventory. */
+  const handleUpdateProduct = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingProduct) return;
+    setFormError("");
+
+    if (!name.trim()) {
+      setFormError("Product name is required.");
+      return;
+    }
+    if (!sku.trim()) {
+      setFormError("SKU is required.");
+      return;
+    }
+    if (imagesBusy) {
+      setFormError("Wait for the photos to finish uploading.");
+      return;
+    }
+    const priceNum = parseFloat(basePrice);
+    if (isNaN(priceNum) || priceNum <= 0) {
+      setFormError("A valid positive base price is required.");
+      return;
+    }
+    const compareNum = compareAtPrice.trim() ? parseFloat(compareAtPrice) : null;
+    if (compareNum !== null && (isNaN(compareNum) || compareNum < 0)) {
+      setFormError("Compare at price must be a positive number or empty.");
+      return;
+    }
+
+    try {
+      setIsSubmitting(true);
+      const original = editingProduct;
+      const patch: Record<string, unknown> = {};
+      if (name.trim() !== original.name) patch.name = name.trim();
+      if (sku.trim() !== original.sku) patch.sku = sku.trim();
+      if (priceNum !== original.base_price) patch.base_price = priceNum;
+      if (compareNum !== (original.compare_at_price ?? null)) patch.compare_at_price = compareNum;
+      if (description.trim() !== (original.description ?? "")) patch.description = description.trim();
+      // Only touch the category when the field changed, so a category missing from the list is never cleared
+      const originalCategoryName = categories.find((c) => c.id === original.category_id)?.name ?? "";
+      if (categoryName.trim() !== originalCategoryName) {
+        patch.category_id = (await resolveCategoryId()) ?? null;
+      }
+      const originalImages = original.images ?? [];
+      if (images.length !== originalImages.length || images.some((url, i) => url !== originalImages[i])) {
+        patch.images = images;
+        patch.primary_image = images[0] ?? "";
+      }
+
+      if (Object.keys(patch).length > 0) {
+        const res = await fetch(`/api/v1/products/${encodeURIComponent(original.id)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(patch),
+        });
+        if (!res.ok) {
+          const errJson = await res.json();
+          throw new Error(errJson.error?.message || "Failed to update product");
+        }
+      }
+
+      closeModal();
+      await loadProducts();
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "An error occurred");
     } finally {
       setIsSubmitting(false);
     }
@@ -197,7 +299,7 @@ export default function ProductsPage() {
           <Button variant="outline" size="md" onClick={() => setIsBulkImportModalOpen(true)}>
             <UploadCloud size={16} style={{ marginRight: 6 }} /> Import Catalog (CSV)
           </Button>
-          <Button variant="primary" size="md" onClick={() => setIsModalOpen(true)}>
+          <Button variant="primary" size="md" onClick={openCreateModal}>
             <Plus size={16} style={{ marginRight: 6 }} /> Add Product
           </Button>
         </div>
@@ -254,7 +356,7 @@ export default function ProductsPage() {
             title="No products found"
             description="Add products to your catalog to unlock inventory tracking, checkout, and AI recommendations."
             actionText="+ Add First Product"
-            onAction={() => setIsModalOpen(true)}
+            onAction={openCreateModal}
           />
         ) : (
           <div style={{ overflowX: "auto" }}>
@@ -352,6 +454,16 @@ export default function ProductsPage() {
                         <Button
                           variant="ghost"
                           size="sm"
+                          onClick={() => openEditModal(product)}
+                          aria-label={`Edit ${product.name}`}
+                        >
+                          <Pencil size={14} />
+                        </Button>
+                      )}
+                      {product.status !== "ARCHIVED" && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
                           onClick={() => setPhotosProduct(product)}
                           aria-label={`Edit photos of ${product.name}`}
                         >
@@ -377,9 +489,16 @@ export default function ProductsPage() {
         )}
       </BentoCard>
 
-      {/* Add Product Modal */}
-      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title="Create New Product">
-        <form onSubmit={handleCreateProduct} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+      {/* Add / Edit Product Modal */}
+      <Modal
+        isOpen={isModalOpen}
+        onClose={closeModal}
+        title={editingProduct ? "Edit Product" : "Create New Product"}
+      >
+        <form
+          onSubmit={editingProduct ? handleUpdateProduct : handleCreateProduct}
+          style={{ display: "flex", flexDirection: "column", gap: "16px" }}
+        >
           {formError && (
             <div
               style={{
@@ -408,19 +527,29 @@ export default function ProductsPage() {
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
             <Input
-              label="SKU (Leave blank to auto-generate)"
+              label={editingProduct ? "SKU *" : "SKU (Leave blank to auto-generate)"}
               placeholder="e.g. PAN-BLU-001"
               value={sku}
               onChange={(e) => setSku(e.target.value)}
+              required={Boolean(editingProduct)}
             />
-            <Input
-              label="Initial Stock *"
-              type="number"
-              min="0"
-              value={initialStock}
-              onChange={(e) => setInitialStock(e.target.value)}
-              required
-            />
+            {editingProduct ? (
+              <Input
+                label="Stock"
+                value="Managed in Inventory"
+                disabled
+                hint="Change stock from the Inventory page."
+              />
+            ) : (
+              <Input
+                label="Initial Stock *"
+                type="number"
+                min="0"
+                value={initialStock}
+                onChange={(e) => setInitialStock(e.target.value)}
+                required
+              />
+            )}
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
@@ -478,11 +607,11 @@ export default function ProductsPage() {
           </div>
 
           <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "12px" }}>
-            <Button variant="outline" type="button" onClick={() => setIsModalOpen(false)}>
+            <Button variant="outline" type="button" onClick={closeModal}>
               Cancel
             </Button>
             <Button variant="primary" type="submit" isLoading={isSubmitting} disabled={imagesBusy}>
-              Create Product
+              {editingProduct ? "Save Changes" : "Create Product"}
             </Button>
           </div>
         </form>
