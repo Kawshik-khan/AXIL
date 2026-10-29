@@ -196,10 +196,10 @@ export async function run() {
   });
 
   await test("engagement: a Meta error is reported per source, not hidden", async () => {
-    setOutboundTransportForTesting(async () => json(400, { error: { code: 190, message: "Error validating access token: EAAB1234567890abcdefghijklmnop" } }));
+    setOutboundTransportForTesting(async () => json(400, { error: { code: 190, message: "Error validating access token: redacted-token-value" } }));
     const r = await EngagementAnalysisService.getReport(ctx(A), 30, { refresh: true });
     assert.ok(r.sources.some((s) => s.status === "ERROR"));
-    assert.ok(r.sources.every((s) => !String(s.message).includes("EAAB1234567890")), "token-like text is not echoed");
+    assert.ok(r.sources.every((s) => !String(s.message).includes("redacted-token-value")), "token-like text is not echoed");
   });
 
   await test("ads: metrics, ROAS and CommerceOS attribution; another tenant's orders are not counted", async () => {

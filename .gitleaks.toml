@@ -1,0 +1,9 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Allow known placeholder strings in tests/docs"
+regexes = [
+  '''Error validating access token: EAAB1234567890abcdefghijklmnop''',
+  '''updating tenant token budgets, launching/revoking JIT impersonations''',
+]
