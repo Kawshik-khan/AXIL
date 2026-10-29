@@ -54,8 +54,7 @@ export class SearchKnowledgeTool implements IAgentTool<z.infer<typeof SearchKnow
     return KnowledgeService.searchKnowledge(
       context.tenant.id,
       input.query,
-      input.top_k || 3,
-      0.60
+      input.top_k || 3
     );
   }
 }

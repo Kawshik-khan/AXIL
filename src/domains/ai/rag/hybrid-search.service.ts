@@ -117,12 +117,16 @@ export class HybridSearchService {
     const fusedList = Array.from(fusedMap.values());
     fusedList.sort((a, b) => b.rrfScore - a.rrfScore);
 
-    // 4. Return topK candidates
+    // 4. Return topK candidates. A candidate found only by BM25 still gets its dense similarity (when its vector was
+    // made by the current embedding model), so the reranker reads a continuous signal instead of "missing" = 0
+    const queryEmbedding = dense.queryEmbedding;
     const results = fusedList.slice(0, topK).map((item) => ({
       chunk: item.chunk,
       rrf_score: Number(item.rrfScore.toFixed(5)),
       vector_rank: item.vectorRank,
-      vector_similarity: item.vectorSimilarity ? Number(item.vectorSimilarity.toFixed(4)) : undefined,
+      vector_similarity: item.vectorSimilarity !== undefined
+        ? Number(item.vectorSimilarity.toFixed(4))
+        : this.similarityTo(queryEmbedding, item.chunk, dense.profile),
       bm25_rank: item.bm25Rank,
       bm25_score: item.bm25Score ? Number(item.bm25Score.toFixed(4)) : undefined,
     }));
@@ -136,6 +140,25 @@ export class HybridSearchService {
     };
   }
 
+  /** Cosine similarity of a chunk's stored vector to the query's, when both come from the same embedding profile. */
+  private static similarityTo(queryEmbedding: number[] | undefined, chunk: KnowledgeChunk, profile: HybridSearchDiagnostics["index_profile"] | undefined): number | undefined {
+    const vector = chunk.embedding;
+    if (!queryEmbedding || !profile || !vector || vector.length !== queryEmbedding.length ||
+        chunk.metadata.embedding_dimensions !== profile.dimensions || chunk.metadata.index_version !== profile.index_version ||
+        chunk.metadata.embedding_provider !== profile.provider ||
+        chunk.metadata.embedding_model !== EmbeddingService.currentStamp().embedding_model) return undefined;
+    let dot = 0;
+    let normA = 0;
+    let normB = 0;
+    for (let i = 0; i < vector.length; i++) {
+      dot += queryEmbedding[i] * vector[i];
+      normA += queryEmbedding[i] * queryEmbedding[i];
+      normB += vector[i] * vector[i];
+    }
+    if (normA === 0 || normB === 0) return undefined;
+    return Number((dot / Math.sqrt(normA * normB)).toFixed(4));
+  }
+
   /**
    * Dense semantic vector retrieval channel via pgvector / embeddings.
    */
@@ -145,7 +168,7 @@ export class HybridSearchService {
     limit: number,
     minScore: number,
     onlyChildChunks: boolean
-  ): Promise<{ items: VectorSearchResultItem[]; status: RetrievalChannelTrace["status"]; latencyMs: number; errorCode?: string; profile?: HybridSearchDiagnostics["index_profile"] }> {
+  ): Promise<{ items: VectorSearchResultItem[]; status: RetrievalChannelTrace["status"]; latencyMs: number; errorCode?: string; profile?: HybridSearchDiagnostics["index_profile"]; queryEmbedding?: number[] }> {
     const start = Date.now();
     try {
       const queryEmbedding = await EmbeddingService.embedText(query);
@@ -172,7 +195,7 @@ export class HybridSearchService {
               return [{ chunk: localChunk, similarity: r.score, rank: 0 }];
           }).slice(0, limit).map((result, index) => ({ ...result, rank: index + 1 }));
           if (verifiedResults.length > 0) {
-            return { items: verifiedResults, status: "SUCCESS", latencyMs: Date.now() - start, profile };
+            return { items: verifiedResults, status: "SUCCESS", latencyMs: Date.now() - start, profile, queryEmbedding };
           }
         }
       } catch (pcErr) {
@@ -196,9 +219,9 @@ export class HybridSearchService {
         chunk: c,
         similarity: c.similarity,
         rank: idx + 1,
-      })), status: "SUCCESS", latencyMs: Date.now() - start, profile };
+      })), status: "SUCCESS", latencyMs: Date.now() - start, profile, queryEmbedding };
       const hasIndexedChunks = activeVersionChunks.some((chunk) => chunk.embedding?.length > 0);
-      return { items: [], status: hasIndexedChunks ? "EMPTY" : "INCOMPATIBLE_INDEX", latencyMs: Date.now() - start, profile };
+      return { items: [], status: hasIndexedChunks ? "EMPTY" : "INCOMPATIBLE_INDEX", latencyMs: Date.now() - start, profile, queryEmbedding: hasIndexedChunks ? queryEmbedding : undefined };
     } catch (err) {
       console.warn("[HybridSearch] Dense search unavailable:", (err as Error).message);
       return { items: [], status: "UNAVAILABLE", latencyMs: Date.now() - start, errorCode: (err as { code?: string }).code || "EMBEDDING_OR_VECTOR_SEARCH_FAILED" };

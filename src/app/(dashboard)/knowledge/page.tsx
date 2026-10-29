@@ -416,7 +416,7 @@ export default function KnowledgeBasePage() {
       const res = await fetch("/api/v1/ai/knowledge/search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: ragQuery.trim(), limit: 4, threshold: 0.5 }),
+        body: JSON.stringify({ query: ragQuery.trim(), limit: 4 }),
       });
       if (res.ok) {
         const d = await res.json();

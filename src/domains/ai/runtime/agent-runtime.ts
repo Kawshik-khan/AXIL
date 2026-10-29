@@ -384,7 +384,7 @@ export class AgentRuntime {
 
     if (isKnowledgeQuery) {
       try {
-        citations = await KnowledgeService.searchKnowledge(tenantId, options.messageText, 3, 0.60);
+        citations = await KnowledgeService.searchKnowledge(tenantId, options.messageText, 3);
       } catch {
         citations = [];
       }

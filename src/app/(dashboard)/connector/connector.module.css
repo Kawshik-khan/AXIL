@@ -31,16 +31,29 @@
   gap: 12px;
 }
 
+.titleIcon {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: var(--color-lime-glow, rgba(199, 249, 0, 0.25));
+  color: #1a1a1a;
+}
+
 .pageTitle {
-  font-size: 28px;
-  font-weight: 600;
+  font-size: 24px;
+  font-weight: 650;
   color: var(--color-text-primary, #202124);
   letter-spacing: -0.02em;
+  line-height: 1.25;
   margin: 0;
 }
 
 .pageSubtitle {
-  font-size: 13px;
+  font-size: 14px;
   color: var(--color-text-secondary, #70736F);
   margin: 0;
   max-width: 680px;
@@ -58,18 +71,18 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 16px;
-  margin-top: 4px;
 }
 
 .metricCard {
   background: var(--color-surface-pure, #ffffff);
   border: 1px solid var(--color-border-subtle, rgba(30, 32, 30, 0.08));
   border-radius: 16px;
-  padding: 16px 20px;
+  padding: 18px 20px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
+  gap: 10px;
+  min-width: 0;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
   transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 
@@ -91,15 +104,22 @@
 
 .metricValueRow {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
 }
 
 .metricValue {
   font-size: 22px;
-  font-weight: 700;
+  font-weight: 650;
+  line-height: 1.25;
   color: var(--color-text-primary, #202124);
   letter-spacing: -0.02em;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .metricSubtext {
@@ -113,18 +133,21 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  background: var(--color-surface-dark, #242529);
+  background: var(--color-surface-soft, #FAFBF8);
+  border: 1px solid var(--color-border-subtle, rgba(30, 32, 30, 0.08));
   padding: 4px;
   border-radius: 12px;
   width: fit-content;
+  max-width: 100%;
+  flex-wrap: wrap;
 }
 
 .scopeButton {
-  padding: 6px 14px;
-  border-radius: 8px;
-  font-size: 12px;
+  padding: 8px 14px;
+  border-radius: 9px;
+  font-size: 13px;
   font-weight: 500;
-  color: var(--color-text-muted, #9A9D98);
+  color: var(--color-text-secondary, #70736F);
   background: transparent;
   border: none;
   cursor: pointer;
@@ -132,13 +155,14 @@
 }
 
 .scopeButton:hover {
-  color: #FFFFFF;
+  color: var(--color-text-primary, #202124);
 }
 
 .scopeButtonActive {
-  background: rgba(255, 255, 255, 0.12);
-  color: var(--color-lime-primary, #C7F900);
+  background: var(--color-surface-pure, #FFFFFF);
+  color: var(--color-text-primary, #202124);
   font-weight: 600;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
 }
 
 /* Controls Bar (Tabs + Search) */
@@ -168,7 +192,7 @@
   gap: 8px;
   padding: 8px 14px;
   border-radius: 10px;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
   color: var(--color-text-secondary, #70736F);
   background: transparent;
