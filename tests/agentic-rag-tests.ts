@@ -10,7 +10,7 @@ import { KnowledgeService } from "@/domains/ai/rag/knowledge.service";
 import { ParentChildChunkingService } from "@/domains/ai/rag/parent-child-chunking.service";
 import { BM25Service } from "@/domains/ai/rag/bm25.service";
 import { HybridSearchService } from "@/domains/ai/rag/hybrid-search.service";
-import { RerankerService } from "@/domains/ai/rag/reranker.service";
+import { RELEVANCE_OFFLINE, RELEVANCE_REAL, RerankerService, relevanceCutoffs } from "@/domains/ai/rag/reranker.service";
 import { AgenticRagController } from "@/domains/ai/rag/agentic-rag.controller";
 import { ragQualityCases, RAG_QUALITY_DATASET_VERSION, validateRagQualityDataset } from "@/domains/ai/eval/rag-quality-dataset";
 import { evaluateRagQuality } from "@/domains/ai/eval/rag-evaluation";
@@ -451,6 +451,15 @@ Please consult our chest and length specifications before placing your order.
       "Agentic RAG must return ZERO citations across tenants"
     );
     assert.strictEqual(tenantBAgentic.is_fallback, true);
+  });
+
+  // Real embedding models score every pair higher: at the offline 0.30 cutoff, every off-topic question on production
+  // (Gemini, 2026-10-30) released evidence. The cutoffs follow the embedder that made the vectors.
+  await runTest("Relevance cutoffs: a real embedding provider gets its own, higher cutoffs", () => {
+    assert.deepStrictEqual(relevanceCutoffs("embeddings/gemini-embedding-001"), RELEVANCE_REAL);
+    assert.deepStrictEqual(relevanceCutoffs("local-hash-embedder"), RELEVANCE_OFFLINE);
+    assert.deepStrictEqual(relevanceCutoffs("MockIntelligentProvider"), RELEVANCE_OFFLINE);
+    assert(RELEVANCE_REAL.low > RELEVANCE_OFFLINE.low && RELEVANCE_REAL.high > RELEVANCE_REAL.low);
   });
 
   // -------------------------------------------------------------

@@ -14,7 +14,8 @@ import {
   RerankedChunkResult,
 } from "@/types/ai";
 import { HybridSearchService } from "./hybrid-search.service";
-import { EXPANSION_DISCOUNT, RELEVANCE_FLOOR, RELEVANCE_HIGH, RELEVANCE_LOW, RerankerService } from "./reranker.service";
+import { EXPANSION_DISCOUNT, RELEVANCE_FLOOR, RerankerService, relevanceCutoffs } from "./reranker.service";
+import { EmbeddingService } from "./embedding.service";
 
 /**
  * Declarative Intent Rule for RAG Query Classification.
@@ -27,8 +28,8 @@ export interface RagIntentRule {
 
 export interface AgenticRagControllerOptions {
   topK?: number; // Number of top citations to retrieve (default: 3)
-  confidenceThresholdHigh?: number; // High confidence cutoff (default: RELEVANCE_HIGH)
-  confidenceThresholdLow?: number; // Minimum confidence cutoff (default: RELEVANCE_LOW)
+  confidenceThresholdHigh?: number; // High confidence cutoff (default: relevanceCutoffs(embedder).high)
+  confidenceThresholdLow?: number; // Minimum confidence cutoff (default: relevanceCutoffs(embedder).low)
   enableQueryExpansion?: boolean; // Expand Banglish/Bangla terms (default: true)
   resolveParentContext?: boolean; // Expand child to parent chunk (default: true)
   minRerankScore?: number; // Reranker cutoff (default RELEVANCE_FLOOR); the customer agent passes 0 and decides relevance itself (FX-82)
@@ -190,9 +191,6 @@ export function banglaSubQuery(query: string): string | undefined {
 }
 
 export class AgenticRagController {
-  private static readonly CONFIDENCE_HIGH = RELEVANCE_HIGH;
-  private static readonly CONFIDENCE_LOW = RELEVANCE_LOW;
-
   /**
    * Main entrypoint for Agentic RAG execution loop.
    */
@@ -205,10 +203,11 @@ export class AgenticRagController {
     const traces: AgenticRagStepTrace[] = [];
 
     const topK = options.topK ?? 3;
-    const thresholdLow = options.confidenceThresholdLow ?? this.CONFIDENCE_LOW;
+    const cutoffs = relevanceCutoffs(EmbeddingService.currentStamp().embedding_model);
+    const thresholdLow = options.confidenceThresholdLow ?? cutoffs.low;
     // A caller's stricter cutoff lifts the default HIGH bar with it instead of making the options invalid
     const thresholdHigh =
-      options.confidenceThresholdHigh ?? Math.max(this.CONFIDENCE_HIGH, thresholdLow);
+      options.confidenceThresholdHigh ?? Math.max(cutoffs.high, thresholdLow);
     if (
       !Number.isInteger(topK) ||
       topK < 1 ||
