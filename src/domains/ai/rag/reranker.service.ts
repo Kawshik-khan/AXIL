@@ -46,14 +46,27 @@ const TITLE_BLOCK_MAX_CHARS = 160;
 const TITLE_MATCH_WEIGHT = 0.5;
 
 /**
- * Cutoffs on the weighted scale, calibrated 2026-10-29 on tests/agent-evals/section-eval.ts (offline embedder): every
- * answerable question's best section scored >= 0.35, and 4 of 5 questions no document answers stayed below 0.30
- * (the fifth, "international shipping", scored 0.44 against the delivery charges).
- * A real embedding model scores higher similarities; re-check with the eval's real-embeddings mode before raising them.
+ * Cutoffs on the weighted scale. Dense similarity is 35% of the score, and a real embedding model gives every pair of
+ * texts a higher cosine than the offline embedders, so each kind has its own cutoffs:
+ * - Offline (hashing embedder, demo mock; tests/agent-evals/section-eval.ts, 2026-10-29): every answerable question's
+ *   best section scored >= 0.35, and 4 of 5 questions no document answers stayed below 0.30.
+ * - Real (Gemini gemini-embedding-001, the same 8 documents on production, 2026-10-30): answerable questions' best
+ *   section scored 0.54-0.83; questions no document answers scored 0.32-0.39, except "international shipping" (0.54,
+ *   against the delivery charges). At 0.30 they all released evidence.
+ * `low`: below it no evidence is released (the answer is "I don't know"); `high`: at or above it, HIGH confidence.
  */
-export const RELEVANCE_LOW = 0.3;   // below: no evidence is released (the answer is "I don't know")
-export const RELEVANCE_HIGH = 0.5;  // at or above: HIGH confidence
+export const RELEVANCE_OFFLINE = { low: 0.3, high: 0.5 } as const;
+export const RELEVANCE_REAL = { low: 0.45, high: 0.65 } as const;
 export const RELEVANCE_FLOOR = 0.2; // reranker's own cutoff for candidates kept at all
+
+/**
+ * The cutoffs for the embedder that made the vectors, by its stamp (`EmbeddingService.currentStamp()`): a real
+ * provider is stamped "<provider>/<model>"; the offline embedders by a bare name ("local-hash-embedder",
+ * "MockIntelligentProvider").
+ */
+export function relevanceCutoffs(embeddingModel: string): { low: number; high: number } {
+  return embeddingModel.includes("/") ? RELEVANCE_REAL : RELEVANCE_OFFLINE;
+}
 
 /** How much an expansion phrase counts against the question itself. */
 export const EXPANSION_DISCOUNT = 0.6;
