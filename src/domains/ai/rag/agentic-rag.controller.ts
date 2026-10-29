@@ -14,7 +14,7 @@ import {
   RerankedChunkResult,
 } from "@/types/ai";
 import { HybridSearchService } from "./hybrid-search.service";
-import { RerankerService } from "./reranker.service";
+import { EXPANSION_DISCOUNT, RELEVANCE_FLOOR, RELEVANCE_HIGH, RELEVANCE_LOW, RerankerService } from "./reranker.service";
 
 /**
  * Declarative Intent Rule for RAG Query Classification.
@@ -27,11 +27,11 @@ export interface RagIntentRule {
 
 export interface AgenticRagControllerOptions {
   topK?: number; // Number of top citations to retrieve (default: 3)
-  confidenceThresholdHigh?: number; // High confidence cutoff (default: 0.80)
-  confidenceThresholdLow?: number; // Minimum confidence cutoff (default: 0.65)
+  confidenceThresholdHigh?: number; // High confidence cutoff (default: RELEVANCE_HIGH)
+  confidenceThresholdLow?: number; // Minimum confidence cutoff (default: RELEVANCE_LOW)
   enableQueryExpansion?: boolean; // Expand Banglish/Bangla terms (default: true)
   resolveParentContext?: boolean; // Expand child to parent chunk (default: true)
-  minRerankScore?: number; // Reranker cutoff (default 0.35); the customer agent passes 0 and decides relevance itself (FX-82)
+  minRerankScore?: number; // Reranker cutoff (default RELEVANCE_FLOOR); the customer agent passes 0 and decides relevance itself (FX-82)
   rerankTopK?: number; // Candidates kept after reranking (default: topK)
   customIntentRules?: readonly RagIntentRule[]; // Optional domain- or tenant-specific intent rules evaluated with priority
   // Rerank against the question and its Bangla→English sub-query only. The topic phrases from expansion still widen
@@ -190,8 +190,8 @@ export function banglaSubQuery(query: string): string | undefined {
 }
 
 export class AgenticRagController {
-  private static readonly CONFIDENCE_HIGH = 0.8;
-  private static readonly CONFIDENCE_LOW = 0.65;
+  private static readonly CONFIDENCE_HIGH = RELEVANCE_HIGH;
+  private static readonly CONFIDENCE_LOW = RELEVANCE_LOW;
 
   /**
    * Main entrypoint for Agentic RAG execution loop.
@@ -205,9 +205,10 @@ export class AgenticRagController {
     const traces: AgenticRagStepTrace[] = [];
 
     const topK = options.topK ?? 3;
-    const thresholdHigh =
-      options.confidenceThresholdHigh ?? this.CONFIDENCE_HIGH;
     const thresholdLow = options.confidenceThresholdLow ?? this.CONFIDENCE_LOW;
+    // A caller's stricter cutoff lifts the default HIGH bar with it instead of making the options invalid
+    const thresholdHigh =
+      options.confidenceThresholdHigh ?? Math.max(this.CONFIDENCE_HIGH, thresholdLow);
     if (
       !Number.isInteger(topK) ||
       topK < 1 ||
@@ -292,14 +293,35 @@ export class AgenticRagController {
 
     const allSubResults = await Promise.all(hybridSearchPromises);
 
+    // The question and its Bangla→English sub-query are scored in full; topic phrases from expansion widen retrieval
+    // but their match strength is discounted, or a document's title section outranks the section that answers
+    const bnSubQuery = banglaSubQuery(query);
+    const primaryQueries = new Set(
+      [expandedQueries[0], bnSubQuery].filter((v): v is string => Boolean(v)),
+    );
+    const strength = (subQuery: string, value: number | undefined) =>
+      value === undefined
+        ? undefined
+        : primaryQueries.has(subQuery)
+          ? value
+          : value * EXPANSION_DISCOUNT;
+    const maxOf = (a: number | undefined, b: number | undefined) =>
+      a === undefined ? b : b === undefined ? a : Math.max(a, b);
+
     // Merge and deduplicate candidates across all sub-queries
     const candidateMap = new Map<
       string,
       (typeof allSubResults)[0]["results"][number]
     >();
     const seenCounts = new Map<string, number>();
-    for (const searchRun of allSubResults) {
-      for (const cand of searchRun.results) {
+    allSubResults.forEach((searchRun, runIndex) => {
+      const subQuery = expandedQueries[runIndex];
+      for (const found of searchRun.results) {
+        const cand = {
+          ...found,
+          vector_similarity: strength(subQuery, found.vector_similarity),
+          bm25_score: strength(subQuery, found.bm25_score),
+        };
         if (!candidateMap.has(cand.chunk.id)) {
           candidateMap.set(cand.chunk.id, cand);
           seenCounts.set(cand.chunk.id, 1);
@@ -312,15 +334,14 @@ export class AgenticRagController {
             ...existing,
             rrf_score: Number(score.toFixed(5)),
             vector_rank: existing.vector_rank ?? cand.vector_rank,
-            vector_similarity:
-              existing.vector_similarity ?? cand.vector_similarity,
+            vector_similarity: maxOf(existing.vector_similarity, cand.vector_similarity),
             bm25_rank: existing.bm25_rank ?? cand.bm25_rank,
-            bm25_score: existing.bm25_score ?? cand.bm25_score,
+            bm25_score: maxOf(existing.bm25_score, cand.bm25_score),
           });
           seenCounts.set(cand.chunk.id, count);
         }
       }
-    }
+    });
 
     const aggregatedCandidates = Array.from(candidateMap.values());
 
@@ -352,12 +373,13 @@ export class AgenticRagController {
       aggregatedCandidates,
       {
         topK: options.rerankTopK ?? topK,
-        minRerankScore: options.minRerankScore ?? 0.35,
+        minRerankScore: options.minRerankScore ?? RELEVANCE_FLOOR,
         resolveParentContext: resolveParent,
         deduplicateParents: true,
-        queryVariants: options.rerankOnTranslationsOnly
-          ? [banglaSubQuery(query)].filter((v): v is string => Boolean(v))
-          : expandedQueries,
+        queryVariants: [bnSubQuery].filter((v): v is string => Boolean(v)),
+        expansionVariants: options.rerankOnTranslationsOnly
+          ? []
+          : expandedQueries.filter((v) => !primaryQueries.has(v)),
       },
     );
 
@@ -598,6 +620,22 @@ export class AgenticRagController {
       )
     ) {
       expansions.add("support hours team replies every day");
+    }
+
+    // Banglish words with no English look-alike in the policy text (2026-10-29)
+    // "koto din" also asks about return windows and guarantees; only without those words is it a delivery-time question
+    if (
+      /koto din|din lag|kobe pabo|kobe asbe|how long|how many days/i.test(q) &&
+      !/return|ferot|badla|exchange|refund|warranty|guarantee|replace/i.test(q)
+    ) {
+      expansions.add("delivery time days");
+    }
+    if (/\b(dhub|dhoy|dhoa)\w*|ধো|ধুই|ধুতে/i.test(q)) {
+      expansions.add("washing guide wash care");
+    }
+    if (/\b(dokan|shop|outlet|showroom|branch)\b|দোকান|শোরুম|আউটলেট/i.test(q)) {
+      expansions.add("outlet store location");
+      if (/khola|open|bondho|close|কখন|খোলা|বন্ধ/i.test(q)) expansions.add("outlet opening hours");
     }
 
     // Keep a hard upper bound while preserving targeted variants after the original query.

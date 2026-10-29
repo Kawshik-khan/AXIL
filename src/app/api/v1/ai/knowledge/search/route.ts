@@ -16,7 +16,8 @@ async function handlePOST(request: Request) {
     }
 
     const limit = typeof body.limit === "number" ? body.limit : 5;
-    const threshold = typeof body.threshold === "number" ? body.threshold : 0.6;
+    // Omitted: the controller's calibrated cutoff (scores are on the reranker's weighted scale)
+    const threshold = typeof body.threshold === "number" ? body.threshold : undefined;
 
     if (body.agentic || body.debug) {
       const agenticResult = await KnowledgeService.queryAgenticRag(

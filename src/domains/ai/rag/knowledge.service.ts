@@ -352,7 +352,7 @@ export class KnowledgeService {
     tenantId: string,
     query: string,
     topK: number = 3,
-    minScore: number = 0.60
+    minScore?: number // default: the controller's calibrated cutoff
   ): Promise<RetrievalCitation[]> {
     const result = await AgenticRagController.execute(tenantId, query, {
       topK,
@@ -374,7 +374,7 @@ export class KnowledgeService {
   ): Promise<AgenticRagResult> {
     return AgenticRagController.execute(tenantId, query, {
       topK: options?.topK || 3,
-      confidenceThresholdLow: options?.confidenceThresholdLow || 0.60,
+      confidenceThresholdLow: options?.confidenceThresholdLow,
       resolveParentContext: true,
       enableQueryExpansion: true,
     });
