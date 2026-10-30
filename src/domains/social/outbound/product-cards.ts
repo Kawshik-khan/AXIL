@@ -8,9 +8,9 @@
  */
 import { db } from "@/infrastructure/db";
 import { productRepository } from "@/domains/catalog/product.repository";
-import type { ChannelType, ProductCard } from "@/types/social";
+import type { CategoryChoice, ChannelType, ProductCard } from "@/types/social";
 import type { ToolResult } from "@/domains/ai/customer-agent/tools";
-import { CARD_LABELS, productTapPayload, telegramTapData } from "./product-tap";
+import { CARD_LABELS, categoryButtonText, productTapPayload, telegramCategoryData, telegramTapData } from "./product-tap";
 import { getProductCardSettings, type ProductCardSettings } from "./product-card-settings";
 
 export { PRODUCT_ORDER_PREFIX, productTapText, isProductTapText } from "./product-tap";
@@ -66,6 +66,22 @@ export function turnShowsProductCards(turn: { status: string; handoff: boolean; 
   if (turn.status !== "COMPLETED" || turn.handoff) return false;
   if (turn.toolCalls.some((t) => t.name === "quote_order" || t.name === "place_order")) return false;
   return turn.toolCalls.some((t) => t.ok && (t.name === "search_products" || t.name === "get_product"));
+}
+
+export const MAX_CATEGORY_CHOICES = 20;
+
+/**
+ * The categories a shop overview (search_products' `view: "categories"`) listed, as buttons to send with its cards.
+ * The names are the merchant's own categories from the tool, never model text; fewer than two is no choice.
+ */
+export function categoryChoicesFromToolResults(results: readonly ToolResult[]): CategoryChoice[] {
+  const overview = results.find((r) => r.view === "categories" && Array.isArray(r.categories_untrusted));
+  const choices = ((overview?.categories_untrusted ?? []) as unknown[])
+    .map((c) => c as { name?: unknown; products?: unknown })
+    .filter((c): c is CategoryChoice => typeof c.name === "string" && c.name.trim() !== "" && typeof c.products === "number" && c.products > 0)
+    .map((c) => ({ name: c.name.trim().slice(0, 60), products: c.products }))
+    .slice(0, MAX_CATEGORY_CHOICES);
+  return choices.length >= 2 ? choices : [];
 }
 
 /** Images a channel can show: Meta and WhatsApp fetch the URL themselves (public https); the website widget is ours. */
@@ -200,4 +216,14 @@ export function telegramProductMessage(card: ProductCard, chatId: string, script
   return card.image_url
     ? { method: "sendPhoto", params: { chat_id: chatId, photo: card.image_url, caption, ...markup } }
     : { method: "sendMessage", params: { chat_id: chatId, text: caption, ...markup } };
+}
+
+const CATEGORY_PROMPT = { bangla: "ক্যাটাগরি বেছে নিন:", latin: "Category bechhe nin:" } as const;
+
+/** Telegram sendMessage for the category buttons, two per row; a press comes back as the category's name. */
+export function telegramCategoryMessage(choices: readonly CategoryChoice[], chatId: string, script: CardScript): Record<string, unknown> {
+  const buttons = choices.slice(0, MAX_CATEGORY_CHOICES).map((c, i) => ({ text: categoryButtonText(c.name, c.products), callback_data: telegramCategoryData(i) }));
+  const rows: (typeof buttons)[] = [];
+  for (let i = 0; i < buttons.length; i += 2) rows.push(buttons.slice(i, i + 2));
+  return { chat_id: chatId, text: CATEGORY_PROMPT[script], reply_markup: { inline_keyboard: rows } };
 }

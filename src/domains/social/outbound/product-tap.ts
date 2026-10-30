@@ -46,6 +46,32 @@ export function telegramTapPayload(data: string | undefined, caption: string | u
   return productTapPayload(productId, title, script === "b" ? "bangla" : "latin");
 }
 
+/** Telegram category button data, `PC|<index>`: the name is too long for 64 bytes, so a tap reads the button's text. */
+const TELEGRAM_CATEGORY_PREFIX = "PC";
+
+export function telegramCategoryData(index: number): string {
+  return `${TELEGRAM_CATEGORY_PREFIX}|${index}`;
+}
+
+/** "Men's Wear (10)": the name and our product count. */
+export function categoryButtonText(name: string, products: number): string {
+  return `${name.slice(0, 60)} (${products})`;
+}
+
+type InlineKeyboard = { inline_keyboard?: Array<Array<{ text?: unknown; callback_data?: unknown }>> };
+
+/**
+ * The customer message a category button press becomes: the category's name, read from the pressed button on the
+ * message we sent (our count suffix removed). Null when the data isn't a category button or the button can't be found.
+ */
+export function telegramCategoryTapText(data: string | undefined, markup: InlineKeyboard | undefined): string | null {
+  if (!data || !/^PC\|\d{1,2}$/.test(data)) return null;
+  const button = (markup?.inline_keyboard ?? []).flat().find((b) => b?.callback_data === data);
+  if (typeof button?.text !== "string") return null;
+  const name = button.text.replace(/\s\(\d+\)$/, "").trim();
+  return name ? name.slice(0, 80) : null;
+}
+
 /**
  * The customer message a tap becomes, from a button payload, or null when it isn't ours. Title and script come from
  * the payload we wrote; whatever button title the channel echoes back is ignored.

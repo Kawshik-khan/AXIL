@@ -31,10 +31,12 @@ import { AUTONOMOUS_FLAG, SHADOW_FLAG } from "@/domains/ai/customer-agent/jobs";
 import { runAgentJobsOnce } from "@/domains/ai/customer-agent/worker";
 import {
   buildProductCards,
+  categoryChoicesFromToolResults,
   metaGenericTemplate,
   productCardsText,
   productTapText,
   productsFromToolResults,
+  telegramCategoryMessage,
   telegramProductMessage,
   turnShowsProductCards,
   whatsappProductMessage,
@@ -271,6 +273,31 @@ async function main() {
     assert.strictEqual(press(`PO|${panjabi.id}|e`, {})[0].text, `Order now: ${panjabi.id}`);
   });
 
+  await runTest("category buttons: from the shop overview only, two per row; a press becomes the category's name", () => {
+    const overview = { view: "categories", categories_untrusted: [{ name: "Men's Ethnic Wear", products: 10 }, { name: "নারীদের শাড়ি", products: 18 }, { name: "Fragrances", products: 3 }, { name: "", products: 2 }] };
+    const choices = categoryChoicesFromToolResults([searchResult, overview]);
+    assert.deepStrictEqual(choices.map((c) => c.name), ["Men's Ethnic Wear", "নারীদের শাড়ি", "Fragrances"]);
+    assert.deepStrictEqual(categoryChoicesFromToolResults([{ categories_untrusted: overview.categories_untrusted }]), [], "a paged list is not the overview");
+    assert.deepStrictEqual(categoryChoicesFromToolResults([{ view: "categories", categories_untrusted: [{ name: "Only", products: 3 }] }]), [], "one category is no choice");
+
+    const m = telegramCategoryMessage(choices, "501", "latin") as R;
+    assert.strictEqual(m.chat_id, "501");
+    assert.ok(m.text);
+    assert.deepStrictEqual(m.reply_markup.inline_keyboard, [
+      [{ text: "Men's Ethnic Wear (10)", callback_data: "PC|0" }, { text: "নারীদের শাড়ি (18)", callback_data: "PC|1" }],
+      [{ text: "Fragrances (3)", callback_data: "PC|2" }],
+    ]);
+
+    const tg = new TelegramAdapter();
+    const press = (data: string, message: R = { text: m.text, reply_markup: m.reply_markup }) =>
+      tg.normalizeIncomingEvent({ update_id: 9003, callback_query: { id: "cbq_3", data, from: { id: 501 }, message: { message_id: 9, chat: { id: 501, type: "private" }, ...message } } }, "chn_tg");
+    assert.strictEqual(press("PC|0")[0].text, "Men's Ethnic Wear");
+    assert.strictEqual(press("PC|1")[0].text, "নারীদের শাড়ি");
+    assert.strictEqual(press("PC|7").length, 0, "no such button");
+    assert.strictEqual(press("PC|0", { text: "old" }).length, 0, "a message without our buttons");
+    assert.strictEqual(press("PC|x").length, 0);
+  });
+
   await runTest("a Telegram press is never a yes to an open quote, whatever its title", async () => {
     const { isAffirmative } = await import("@/domains/ai/customer-agent/confirmation");
     const tg = new TelegramAdapter();
@@ -436,6 +463,25 @@ async function main() {
       assert.deepStrictEqual(sends.map((s) => s.method), ["sendPhoto", "sendMessage", "sendPhoto"], "3 cards; the one without a photo is text");
       assert.ok(sends.every((s) => s.body.chat_id === "chat_9"), "to the stored Telegram chat");
       assert.strictEqual(readProductCards(sent.metadata?.product_cards).length, 3, "only the cards that went out");
+
+      // The shop overview's categories go out after the cards as one message of buttons
+      sends.length = 0;
+      const categoryChoices = [{ name: "Panjabi", products: 4 }, { name: "Saree", products: 2 }, { name: "Shoes", products: 1 }];
+      const withCats = await OutboundMessageService.sendMessage(ownerCtx, convo.id, { text: "x", productCards: [cards[0]], categoryChoices });
+      assert.strictEqual(withCats.status, "SENT");
+      assert.deepStrictEqual(sends.map((s) => s.method), ["sendPhoto", "sendMessage"]);
+      assert.deepStrictEqual(sends[1].body.reply_markup.inline_keyboard.flat().map((b: R) => b.text), ["Panjabi (4)", "Saree (2)", "Shoes (1)"]);
+      assert.strictEqual(readProductCards(withCats.metadata?.product_cards).length, 1, "the category message isn't counted as a card");
+
+      // The category buttons failing doesn't fail (or repeat) the cards that went out
+      sends.length = 0;
+      reply = (method) => method === "sendMessage"
+        ? { status: 400, headers: {}, body: JSON.stringify({ ok: false, error_code: 400, description: "Bad Request" }), truncated: false, durationMs: 1 }
+        : { status: 200, headers: {}, body: JSON.stringify({ ok: true, result: { message_id: 60 } }), truncated: false, durationMs: 1 };
+      const catsFailed = await OutboundMessageService.sendMessage(ownerCtx, convo.id, { text: "x", productCards: [cards[0]], categoryChoices });
+      assert.strictEqual(catsFailed.status, "SENT");
+      assert.deepStrictEqual(sends.map((s) => s.method), ["sendPhoto", "sendMessage"]);
+      reply = () => ({ status: 200, headers: {}, body: JSON.stringify({ ok: true, result: { message_id: sends.length } }), truncated: false, durationMs: 1 });
 
       // Telegram can't fetch the photo: nothing was sent, so the card goes out as text with its button
       sends.length = 0;

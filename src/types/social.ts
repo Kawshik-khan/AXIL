@@ -357,6 +357,12 @@ export interface ProductCard {
 
 export type ProductCardTheme = "lime" | "dark" | "light";
 
+/** A category button sent with the shop overview's cards (Telegram); a tap comes back as the category's name. */
+export interface CategoryChoice {
+  name: string;
+  products: number;
+}
+
 export interface NormalizedIncomingMessage {
   channelType: ChannelType;
   channelId: string;

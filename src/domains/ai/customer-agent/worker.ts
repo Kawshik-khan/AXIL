@@ -14,7 +14,7 @@ import { assertNotKilled } from "@/lib/safety-gate";
 import type { AgentJob } from "@/types/ai";
 import { OutboundMessageService } from "@/domains/social/outbound/outbound-message.service";
 import { ChannelService } from "@/domains/social/channels/channel.service";
-import { buildProductCards, productCardsText, turnShowsProductCards } from "@/domains/social/outbound/product-cards";
+import { buildProductCards, categoryChoicesFromToolResults, productCardsText, turnShowsProductCards } from "@/domains/social/outbound/product-cards";
 import { cardsEnabledFor, getProductCardSettings } from "@/domains/social/outbound/product-card-settings";
 import type { CustomerAgentPrincipal } from "./principal";
 import type { CustomerTurn } from "./runtime";
@@ -299,10 +299,12 @@ async function sendProductCards(job: AgentJob, pr: CustomerAgentPrincipal, turn:
   try {
     const cards = await buildProductCards(pr.tenantId, turn.toolResults ?? [], pr.channelType, replyScript(turn.reply), settings);
     if (!cards.length) return;
+    // The shop overview's categories as buttons too (Telegram); a press comes back as the category's name
+    const categoryChoices = pr.channelType === "TELEGRAM" ? categoryChoicesFromToolResults(turn.toolResults ?? []) : [];
     await OutboundMessageService.sendMessage(
       capabilityContext(pr, "send"),
       job.conversation_id,
-      { text: productCardsText(cards), productCards: cards, idempotency_key: `agent:${job.id}:${turn.answeredMessageId ?? job.last_message_id}:cards` },
+      { text: productCardsText(cards), productCards: cards, ...(categoryChoices.length ? { categoryChoices } : {}), idempotency_key: `agent:${job.id}:${turn.answeredMessageId ?? job.last_message_id}:cards` },
       { asAgent: true, agentTurnStartedAt: turnStartedAt, agentHandedOff: turn.handoff, traceId: job.id, agentLease: leaseOf(job) }
     );
   } catch (err) {

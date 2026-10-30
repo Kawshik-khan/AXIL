@@ -18,7 +18,7 @@ import { OutboundBlockedError } from "@/lib/outbound-http";
 import { logger } from "@/lib/logger";
 import { assertNotKilled, isFeatureEnabled } from "@/lib/safety-gate";
 import { loadCustomerRows } from "@/infrastructure/db/tenant-rows";
-import type { ConnectedChannel, Conversation, Message, MessageDelivery, ProductCard } from "@/types/social";
+import type { CategoryChoice, ConnectedChannel, Conversation, Message, MessageDelivery, ProductCard } from "@/types/social";
 import { ChannelService } from "../channels/channel.service";
 import type { ChannelCredentials, SendMessageResult } from "../channels/channel-provider.interface";
 import { TelegramApiError } from "../channels/adapters/telegram.adapter";
@@ -174,11 +174,12 @@ export async function deliverMessage(tenantId: string, messageId: string, opts: 
   const adapter = ChannelService.getAdapter(channel.type);
   const request = delivery.request ?? {};
   const productCards = Array.isArray(claimed.metadata?.product_cards) ? (claimed.metadata.product_cards as ProductCard[]) : undefined;
+  const categoryChoices = Array.isArray(claimed.metadata?.category_choices) ? (claimed.metadata.category_choices as CategoryChoice[]) : undefined;
   let sendResult: SendMessageResult;
   try {
     sendResult =
       productCards && adapter.sendProductCards
-        ? await adapter.sendProductCards(credentials, recipientId, productCards)
+        ? await adapter.sendProductCards(credentials, recipientId, productCards, { categoryChoices })
         : request.templateName
           ? await adapter.sendTemplateMessage(credentials, recipientId, request.templateName, request.templateParameters || {})
           : request.mediaUrl
