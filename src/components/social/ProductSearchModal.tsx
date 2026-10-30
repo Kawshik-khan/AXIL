@@ -4,6 +4,7 @@ import React, { useState, useEffect } from "react";
 import { Search, X, Package, Check, Copy } from "lucide-react";
 import { Button } from "@/components/ui/Button/Button";
 import styles from "./SocialInbox.module.css";
+import { useDebounce } from "@/hooks/useDebounce";
 
 interface ProductSearchModalProps {
   isOpen: boolean;
@@ -17,13 +18,20 @@ export const ProductSearchModal: React.FC<ProductSearchModalProps> = ({
   onSelectProduct,
 }) => {
   const [query, setQuery] = useState("");
+
+  // ⚡ Bolt Performance Optimization:
+  // Debounce the search query to prevent unbounded API calls on every keystroke.
+  // Impact: Reduces backend load and network requests during rapid typing,
+  // only triggering a fetch after 300ms of user inactivity.
+  const debouncedQuery = useDebounce(query, 300);
+
   const [products, setProducts] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
     if (!isOpen) return;
     setIsLoading(true);
-    fetch(`/api/v1/products?search=${encodeURIComponent(query)}&limit=8`)
+    fetch(`/api/v1/products?search=${encodeURIComponent(debouncedQuery)}&limit=8`)
       .then((res) => res.json())
       .then((data) => {
         if (data.data) {
@@ -32,7 +40,7 @@ export const ProductSearchModal: React.FC<ProductSearchModalProps> = ({
       })
       .catch(() => {})
       .finally(() => setIsLoading(false));
-  }, [isOpen, query]);
+  }, [isOpen, debouncedQuery]);
 
   if (!isOpen) return null;
 
