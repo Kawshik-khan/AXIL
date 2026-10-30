@@ -8,3 +8,7 @@
 ## 2024-10-28 - Debouncing Unbounded Keystroke API Calls
 **Learning:** Found an unbounded API call bound to a React state (`districtSearch`) being updated `onChange` directly. Next.js does not batch multiple keystroke API calls, causing an overload.
 **Action:** Always check text inputs triggering `fetch` in `useEffect` and apply a debounce hook to avoid excessive network requests and computation.
+
+## 2023-10-27 - Debouncing Search Filters in React
+**Learning:** In-memory filtering arrays (e.g. `filteredOrders` and `filteredCustomers`) using an un-debounced `searchQuery` state variable can cause a noticeable performance degradation due to unnecessary recalculations on every keystroke, especially as the list size grows. By wrapping the filtering logic in `useMemo` and changing the dependency from `searchQuery` to `debouncedSearchQuery`, the expensive recalculation is postponed until the user stops typing, while leaving the input responsive.
+**Action:** When working with local data arrays and input searches, leverage `useMemo` combined with a debounced state to delay the filtering execution, ensuring UI inputs remain responsive without triggering heavy computations on every keystroke.
