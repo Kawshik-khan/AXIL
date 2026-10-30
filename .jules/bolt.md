@@ -12,3 +12,7 @@
 ## 2023-10-27 - Debouncing Search Filters in React
 **Learning:** In-memory filtering arrays (e.g. `filteredOrders` and `filteredCustomers`) using an un-debounced `searchQuery` state variable can cause a noticeable performance degradation due to unnecessary recalculations on every keystroke, especially as the list size grows. By wrapping the filtering logic in `useMemo` and changing the dependency from `searchQuery` to `debouncedSearchQuery`, the expensive recalculation is postponed until the user stops typing, while leaving the input responsive.
 **Action:** When working with local data arrays and input searches, leverage `useMemo` combined with a debounced state to delay the filtering execution, ensuring UI inputs remain responsive without triggering heavy computations on every keystroke.
+
+## 2026-10-30 - Debouncing Product Search in React
+**Learning:** In the `ProductSearchModal`, a search query tied directly to a `fetch` request inside a `useEffect` triggered an API call on every single keystroke. Next.js does not batch or throttle these independent network requests automatically.
+**Action:** When working with text inputs that trigger immediate backend API fetches (e.g. `/api/v1/products?search=...`), always wrap the query in a debounce hook (like `useDebounce`) to prevent excessive backend load and network spam, while keeping the UI responsive.
