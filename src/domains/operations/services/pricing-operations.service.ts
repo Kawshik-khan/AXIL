@@ -153,6 +153,8 @@ export class PricingOperationsService {
       newPrice: number;
       reason: string;
       scheduledAt?: string;
+      /** The user or agent asking; they can't approve their own request (F30). */
+      requestedBy?: string;
     }
   ): PriceChangeRequest {
     const simulation = this.simulatePriceChange(tenantId, params.variantId, params.newPrice);
@@ -171,6 +173,7 @@ export class PricingOperationsService {
       margin_percent: simulation.proposed_margin_percent,
       reason: params.reason,
       scheduled_at: params.scheduledAt,
+      ...(params.requestedBy ? { requested_by: params.requestedBy } : {}),
       status,
       created_at: new Date().toISOString(),
       rollback_price: variant.price,
@@ -222,6 +225,10 @@ export class PricingOperationsService {
     }
     const request = db.getPriceChangeRequests(tenantId).find((r) => r.id === requestId);
     if (!request) throw new AppError("NOT_FOUND", `Price change request not found: ${requestId}`, 404);
+    // Four eyes (F30): whoever asked for a change that needs approval can't approve it
+    if (request.status === "PENDING_APPROVAL" && options.approvedNow === true && request.requested_by === actor) {
+      throw new ForbiddenError("You asked for this price change, so someone else has to approve it.");
+    }
     const runnable = request.status === "SCHEDULED" || (request.status === "PENDING_APPROVAL" && options.approvedNow === true);
     if (!runnable) {
       throw new ConflictError(`This price change is ${request.status}; only a scheduled or just-approved change can run.`, {

@@ -239,6 +239,8 @@ export interface PriceChangeRequest {
   reason: string;
   scheduled_at?: string;
   approval_id?: string;
+  /** Who asked for the change (a user id, or an agent name); they can't approve it themselves (F30). */
+  requested_by?: string;
   status: "PENDING_APPROVAL" | "SCHEDULED" | "EXECUTED" | "REJECTED" | "ROLLED_BACK";
   created_at: string;
   executed_at?: string;

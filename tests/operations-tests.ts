@@ -344,6 +344,21 @@ export async function runOperationsTests() {
     assert.strictEqual(restoredVar?.price, 2500);
   });
 
+  await runTest("F30: whoever asked for a price change can't approve it; someone else can", () => {
+    const req = pricingOperationsService.requestPriceChange(tenantId, { variantId: var1.id, newPrice: 1600, reason: "CLEARANCE", requestedBy: "usr_requester" });
+    assert.strictEqual(req.status, "PENDING_APPROVAL", "a margin-breaching change waits for approval");
+    assert.strictEqual(req.requested_by, "usr_requester");
+    assert.throws(
+      () => pricingOperationsService.executePriceChange(tenantId, req.id, "usr_requester", { actorType: "USER", approvedNow: true }),
+      (err: { code?: string }) => err.code === "FORBIDDEN"
+    );
+    assert.strictEqual(db.findVariantById(tenantId, var1.id)?.price, 2500, "nothing changed");
+    const execution = pricingOperationsService.executePriceChange(tenantId, req.id, "usr_approver", { actorType: "USER", approvedNow: true });
+    assert.strictEqual(execution.new_price, 1600);
+    pricingOperationsService.rollbackPriceChange(tenantId, execution.id, "usr_approver");
+    assert.strictEqual(db.findVariantById(tenantId, var1.id)?.price, 2500);
+  });
+
   console.log(`\n${ANSI_BOLD}[5. Order Fulfillment & Multi-Item Planning]${ANSI_RESET}`);
 
   await runTest("Evaluates fulfillment readiness and plans warehouse allocation", () => {

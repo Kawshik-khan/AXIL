@@ -142,7 +142,13 @@ export async function extractRequestContext(request: Request): Promise<RequestCo
   if (stepUpHeader && !impersonated && context.role !== "SERVICE") {
     const user = db.findUserById(context.user.id);
     const claims = user ? await verifyStepUpToken(stepUpHeader, user.id, user.session_version ?? 1) : null;
-    context.stepUpVerified = Boolean(claims?.action?.startsWith(WORKSPACE_STEP_UP_PREFIX));
+    // Only a token issued in this workspace; the action it names is checked by requireStepUp
+    if (claims?.action?.startsWith(WORKSPACE_STEP_UP_PREFIX) && claims.tenantId === context.tenant.id) {
+      context.stepUpVerified = true;
+      context.stepUpAction = claims.action.slice(WORKSPACE_STEP_UP_PREFIX.length);
+    } else {
+      context.stepUpVerified = false;
+    }
   }
 
   // Enforced platform controls (FX-34): a paused workspace can still read, but changes nothing

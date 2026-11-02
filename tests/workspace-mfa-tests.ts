@@ -90,8 +90,9 @@ async function main() {
     stepUpToken = String((await json(res)).data?.stepUpToken);
     const claims = await verifyStepUpToken(stepUpToken, userId);
     assert.ok(claims?.action.startsWith(WORKSPACE_STEP_UP_PREFIX));
-    const replay = await call("auth/step-up", "POST", { code });
+    const replay = await call("auth/step-up", "POST", { code, action: "APPROVE_PRICE_CHANGE" });
     assert.strictEqual(replay.status, 400);
+    assert.strictEqual((await json(replay)).error?.code, "INVALID_MFA_CODE");
   });
 
   await runTest("a recovery code works once", async () => {
@@ -107,8 +108,26 @@ async function main() {
     assert.strictEqual((await withToken(stepUpToken)).stepUpVerified, true);
     const platformToken = await signStepUpToken(userId, "PRIVILEGED_ACTION", 1);
     assert.strictEqual((await withToken(platformToken)).stepUpVerified, false, "a platform step-up token doesn't count here");
-    const someoneElse = await signStepUpToken("usr_other", `${WORKSPACE_STEP_UP_PREFIX}X`, 1);
+    const someoneElse = await signStepUpToken("usr_other", `${WORKSPACE_STEP_UP_PREFIX}X`, 1, tenantId);
     assert.strictEqual((await withToken(someoneElse)).stepUpVerified, false);
+    assert.strictEqual((await withToken(stepUpToken)).stepUpAction, "APPROVE_PRICE_CHANGE");
+  });
+
+  await runTest("a step-up token counts only in the workspace it was issued in", async () => {
+    const sv = db.findUserById(userId)?.session_version ?? 1;
+    const otherWorkspace = await signStepUpToken(userId, `${WORKSPACE_STEP_UP_PREFIX}APPROVE_PRICE_CHANGE`, sv, "ten_someone_else");
+    const noWorkspace = await signStepUpToken(userId, `${WORKSPACE_STEP_UP_PREFIX}APPROVE_PRICE_CHANGE`, sv);
+    for (const token of [otherWorkspace, noWorkspace]) {
+      const ctx = await extractRequestContext(new Request(`${BASE}/orders`, { headers: { authorization: `Bearer ${await session()}`, "x-step-up-token": token } }));
+      assert.strictEqual(ctx.stepUpVerified, false);
+      assert.strictEqual(ctx.stepUpAction, undefined);
+    }
+  });
+
+  await runTest("the step-up route needs the action the code confirms", async () => {
+    const res = await call("auth/step-up", "POST", { code: "123456" });
+    assert.strictEqual(res.status, 400);
+    assert.strictEqual((await json(res)).error?.code, "VALIDATION_ERROR");
   });
 
   await runTest("the platform console refuses a workspace step-up token (enrolment there needs only the password)", async () => {
@@ -127,10 +146,10 @@ async function main() {
     assert.strictEqual(await verifyStepUpToken(stepUpToken, userId, 2), null);
   });
 
-  const ctx = (stepUpVerified: boolean, user = userId): RequestContext => ({
+  const ctx = (stepUpVerified: boolean, user = userId, stepUpAction: string | undefined = stepUpVerified ? "TEST" : undefined): RequestContext => ({
     requestId: "r", traceId: "t", user: { id: user, email: "x@example.com", name: "x", status: "ACTIVE" },
     tenant: { id: tenantId, name: "t", slug: "t", currency: "BDT", timezone: "Asia/Dhaka", language: "en", status: "ACTIVE" },
-    role: "OWNER", permissions: Object.values(PERMISSIONS), timestamp: new Date().toISOString(), stepUpVerified,
+    role: "OWNER", permissions: Object.values(PERMISSIONS), timestamp: new Date().toISOString(), stepUpVerified, stepUpAction,
   });
   const withEnforcement = async (from: string | undefined, fn: () => Promise<void> | void) => {
     const saved = process.env.WORKSPACE_STEP_UP_ENFORCED_FROM;
@@ -169,6 +188,19 @@ async function main() {
     });
   });
 
+  await runTest("a step-up for one action doesn't confirm another, and the refusal names the action to ask for", async () => {
+    await withEnforcement("2020-01-01", () => {
+      assert.strictEqual(code(() => requireStepUp(ctx(true, userId, "APPROVE_PRICE_CHANGE"), "APPROVE_CAMPAIGN")), "STEP_UP_REQUIRED");
+      try {
+        requireStepUp(ctx(false), "APPROVE_CAMPAIGN");
+        assert.fail("expected a refusal");
+      } catch (err) {
+        assert.ok(err instanceof AppError);
+        assert.deepStrictEqual(err.details, { action: "APPROVE_CAMPAIGN" });
+      }
+    });
+  });
+
   await runTest("enforced: approving a price change without step-up is refused before anything runs", async () => {
     await withEnforcement("2020-01-01", async () => {
       const mod = (await import("@/app/api/v1/operations/actions/[id]/approve/route")) as {
@@ -184,6 +216,59 @@ async function main() {
       );
       assert.strictEqual(res.status, 403);
       assert.strictEqual((await json(res)).error?.code, "STEP_UP_REQUIRED");
+    });
+  });
+
+  await runTest("enforced: campaign, broadcast and decision approvals, resuming sends, clearing the autonomy stop and replenishment need step-up", async () => {
+    await withEnforcement("2020-01-01", async () => {
+      type IdHandler = (r: Request, c: { params: Promise<{ id: string }> }) => Promise<Response>;
+      const post = async (path: string, body: unknown, id?: string, headers: Record<string, string> = {}) => {
+        const mod = (await import(`@/app/api/v1/${path}/route`)) as { POST: IdHandler & Handler };
+        const url = `${BASE}/${path.replace("[id]", id ?? "")}`;
+        const req = new Request(url, {
+          method: "POST",
+          headers: { authorization: `Bearer ${await session()}`, "content-type": "application/json", ...headers },
+          body: JSON.stringify(body),
+        });
+        return id ? mod.POST(req, { params: Promise.resolve({ id }) }) : mod.POST(req, { params: Promise.resolve({ id: "" }) });
+      };
+      const refused = async (res: Response, action: string) => {
+        assert.strictEqual(res.status, 403);
+        const body = (await res.json()) as { error?: { code: string; details?: { action?: string } } };
+        assert.strictEqual(body.error?.code, "STEP_UP_REQUIRED");
+        assert.strictEqual(body.error?.details?.action, action);
+      };
+      await refused(await post("growth/campaigns/[id]/approve", {}, "cmp_none"), "APPROVE_CAMPAIGN");
+      await refused(await post("marketing/broadcasts/[id]/approve", {}, "bc_none"), "APPROVE_BROADCAST");
+      await refused(await post("marketing/broadcasts/kill-switch", { active: false }), "RESUME_BROADCASTS");
+      await refused(await post("operations/autonomy/kill-switch", { action: "CLEAR" }), "CLEAR_AUTONOMY_KILL_SWITCH");
+      await refused(await post("operations/tasks", { workflow_type: "LOW_STOCK_REPLENISHMENT" }), "RUN_REPLENISHMENT");
+      await refused(await post("operations/tasks", { workflow_type: "STOCKOUT_REORDER" }), "RUN_REPLENISHMENT");
+      // Stopping is never slowed down by step-up
+      assert.strictEqual((await post("marketing/broadcasts/kill-switch", { active: true })).status, 200);
+      assert.strictEqual((await post("operations/autonomy/kill-switch", { action: "TRIGGER", reason: "test" })).status, 200);
+      // A token for another action doesn't help; one for this action reaches the lookup
+      const sv = db.findUserById(userId)?.session_version ?? 1;
+      const wrong = await signStepUpToken(userId, `${WORKSPACE_STEP_UP_PREFIX}APPROVE_PRICE_CHANGE`, sv, tenantId);
+      await refused(await post("growth/campaigns/[id]/approve", {}, "cmp_none", { "x-step-up-token": wrong }), "APPROVE_CAMPAIGN");
+      const right = await signStepUpToken(userId, `${WORKSPACE_STEP_UP_PREFIX}APPROVE_CAMPAIGN`, sv, tenantId);
+      assert.strictEqual((await post("growth/campaigns/[id]/approve", {}, "cmp_none", { "x-step-up-token": right })).status, 404);
+    });
+  });
+
+  await runTest("enforced: approving an autonomous decision needs step-up", async () => {
+    await withEnforcement("2020-01-01", async () => {
+      const mod = (await import("@/app/api/v1/autonomous/decisions/[id]/approve/route")) as {
+        POST: (r: Request, c: { params: Promise<{ id: string }> }) => Promise<Response>;
+      };
+      const res = await mod.POST(
+        new Request(`${BASE}/autonomous/decisions/dec_none/approve`, { method: "POST", headers: { authorization: `Bearer ${await session()}` } }),
+        { params: Promise.resolve({ id: "dec_none" }) }
+      );
+      const body = (await res.json()) as { error?: { code: string; details?: { action?: string } } };
+      assert.strictEqual(res.status, 403);
+      assert.strictEqual(body.error?.code, "STEP_UP_REQUIRED");
+      assert.strictEqual(body.error?.details?.action, "APPROVE_DECISION");
     });
   });
 

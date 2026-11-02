@@ -29,6 +29,9 @@ export interface RequestContext {
   timestamp: string;
   /** The user presented a valid workspace step-up token (a fresh authenticator code) with this request (FX-97 Part A). */
   stepUpVerified?: boolean;
+  /** The action that step-up token was issued for (without the "WORKSPACE:" prefix); `requireStepUp` accepts it only
+   * for that action, so one code can't approve something else (Stage 1 security review). */
+  stepUpAction?: string;
   /** Set when a platform operator is serving this request through a support session (FX-34); `user` is the operator. */
   impersonation?: {
     session_id: string;
