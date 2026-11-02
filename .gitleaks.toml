@@ -1,0 +1,26 @@
+# gitleaks configuration for the Security workflow's "Secret scan" job (.github/workflows/security.yml).
+#
+# Policy: every built-in gitleaks rule stays on everywhere. The exceptions below are deliberately narrow:
+# each one names the single rule it relaxes and the reason. Provider-specific rules (AWS, GitHub, Stripe,
+# OpenAI, Slack, private keys, JWTs, ...) are never relaxed, including in tests/.
+#
+# Before adding an exception, prefer fixing the code: build test secrets at runtime
+# (crypto.randomBytes(24).toString("hex")) instead of committing a literal.
+# A single reviewed false positive goes in .gitleaksignore (by fingerprint), not here.
+# A real secret is never allowlisted: rotate it first, then remove it (see docs/ci-setup.md).
+
+title = "CommerceOS gitleaks config"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Test fixtures: the entropy-based generic rule only. Fixture secrets are fake by convention and tests run against the demo AI and in-memory stores."
+targetRules = ["generic-api-key"]
+paths = ['''^tests/''']
+
+[[allowlists]]
+description = "An environment variable NAME used as a reference (e.g. credential_reference: \"COMMERCEOS_N8N_API_KEY\") is not a secret value."
+targetRules = ["generic-api-key"]
+regexTarget = "secret"
+regexes = ['''^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$''']
