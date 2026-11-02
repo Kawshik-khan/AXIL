@@ -45,7 +45,7 @@ const SendBody = z
     mediaUrl: z.string().url().max(2000).optional(),
     mediaType: z.enum(["IMAGE", "VIDEO", "AUDIO", "FILE"]).optional(),
     templateName: z.string().max(512).optional(),
-    templateParameters: z.record(z.string().max(1024)).optional(),
+    templateParameters: z.record(z.string(), z.string().max(1024)).optional(),
     replyToMessageId: z.string().max(200).optional(),
     idempotency_key: z.string().max(200).optional(),
     client_message_id: z.string().max(100).optional(),

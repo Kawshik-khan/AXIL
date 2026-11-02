@@ -19,7 +19,7 @@ const ChannelPatch = z
       })
       .partial()
       .strict(),
-    credentials: z.record(z.string().max(4096)),
+    credentials: z.record(z.string(), z.string().max(4096)),
   })
   .partial()
   .strict();

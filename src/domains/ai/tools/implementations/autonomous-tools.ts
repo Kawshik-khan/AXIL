@@ -217,7 +217,7 @@ export class CreateBusinessObjectiveTool implements IAgentTool<z.infer<typeof Cr
 const SimulateObjectiveStrategyInputSchema = z.object({
   objective_id: z.string().describe("Target business objective ID"),
   strategy_name: z.string().describe("Strategy title to simulate"),
-  parameters: z.record(z.unknown()).optional().default({}),
+  parameters: z.record(z.string(), z.unknown()).optional().default({}),
 });
 
 export class SimulateObjectiveStrategyTool implements IAgentTool<z.infer<typeof SimulateObjectiveStrategyInputSchema>> {
@@ -294,7 +294,7 @@ const EvaluateGlobalDecisionInputSchema = z.object({
     id: z.string(),
     name: z.string(),
     description: z.string(),
-    expected_impact: z.record(z.number()),
+    expected_impact: z.record(z.string(), z.number()),
     estimated_cost_bdt: z.number().default(0),
     risk_score: z.number().default(20),
   })).min(1),

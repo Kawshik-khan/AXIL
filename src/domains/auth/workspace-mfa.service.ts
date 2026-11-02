@@ -103,9 +103,9 @@ export class WorkspaceMfaService {
     return true;
   }
 
-  /** A 5-minute workspace step-up token for this user, bound to their current session version. */
-  public static async issueStepUpToken(userId: string, action = "PRIVILEGED_ACTION"): Promise<string> {
+  /** A 5-minute workspace step-up token for this user and workspace, bound to their current session version and to one action. */
+  public static async issueStepUpToken(userId: string, action: string, tenantId: string): Promise<string> {
     const user = activeUser(userId);
-    return signStepUpToken(userId, `${WORKSPACE_STEP_UP_PREFIX}${action}`, user.session_version ?? 1);
+    return signStepUpToken(userId, `${WORKSPACE_STEP_UP_PREFIX}${action}`, user.session_version ?? 1, tenantId);
   }
 }

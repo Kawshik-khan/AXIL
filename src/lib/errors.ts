@@ -122,8 +122,9 @@ export class TenantStateInvalidError extends AppError {
 }
 
 export class StepUpRequiredError extends AppError {
-  constructor(message = "This privileged operation requires step-up authentication (MFA/WebAuthn).") {
-    super("STEP_UP_REQUIRED", message, 403);
+  /** `action` tells the client which action to request a step-up token for (POST /api/v1/auth/step-up). */
+  constructor(message = "This privileged operation requires step-up authentication (MFA/WebAuthn).", action?: string) {
+    super("STEP_UP_REQUIRED", message, 403, action ? { action } : undefined);
   }
 }
 

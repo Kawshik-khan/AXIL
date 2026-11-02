@@ -16,9 +16,14 @@ export function stepUpEnforced(now = Date.now(), env: NodeJS.ProcessEnv = proces
   return Number.isFinite(from) && now >= from;
 }
 
+/** A step-up token counts only for the action it was issued for (Stage 1 security review: no 5-minute reuse elsewhere). */
+function hasStepUpFor(context: RequestContext, action: string): boolean {
+  return context.stepUpVerified === true && context.stepUpAction === action;
+}
+
 /** Requires a fresh authenticator code (a workspace step-up token) for this request, once enforcement has started. */
 export function requireStepUp(context: RequestContext, action: string): void {
-  if (context.stepUpVerified) return;
+  if (hasStepUpFor(context, action)) return;
   if (!stepUpEnforced()) {
     logger.info("workspace_step_up.not_enforced", { tenant_id: context.tenant.id, user_id: context.user.id, action });
     return;
@@ -27,7 +32,7 @@ export function requireStepUp(context: RequestContext, action: string): void {
   if (!user?.mfa_enabled) {
     throw new AppError("MFA_ENROLLMENT_REQUIRED", "Set up an authenticator app (Settings → Security) before doing this.", 403, { action });
   }
-  throw new StepUpRequiredError("Enter a code from your authenticator app to confirm this action.");
+  throw new StepUpRequiredError("Enter a code from your authenticator app to confirm this action.", action);
 }
 
 /**
@@ -35,10 +40,10 @@ export function requireStepUp(context: RequestContext, action: string): void {
  * authenticator code, whatever WORKSPACE_STEP_UP_ENFORCED_FROM says.
  */
 export function requireStepUpAlways(context: RequestContext, action: string): void {
-  if (context.stepUpVerified) return;
+  if (hasStepUpFor(context, action)) return;
   const user = db.findUserById(context.user.id);
   if (!user?.mfa_enabled) {
     throw new AppError("MFA_ENROLLMENT_REQUIRED", "Set up an authenticator app (Settings → Security) before doing this.", 403, { action });
   }
-  throw new StepUpRequiredError("Enter a code from your authenticator app to confirm this action.");
+  throw new StepUpRequiredError("Enter a code from your authenticator app to confirm this action.", action);
 }

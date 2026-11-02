@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import styles from "./Marketing.module.css";
 import { LoadingSkeleton, EmptyState, ErrorState } from "@/components/ui/States/States";
+import { fetchWithStepUp } from "@/lib/step-up-client";
 
 type TabKey = "overview" | "recovery" | "audiences" | "broadcasts" | "attribution";
 
@@ -157,10 +158,14 @@ export default function MarketingPage() {
   const handleApproveCampaign = async (campaignId: string) => {
     setActionLoading(`appr_${campaignId}`);
     try {
-      const res = await fetch(`/api/v1/marketing/broadcasts/${campaignId}/approve`, {
+      // Approving asks for an authenticator code when the workspace requires it
+      const res = await fetchWithStepUp(`/api/v1/marketing/broadcasts/${campaignId}/approve`, {
         method: "POST",
       });
-      if (!res.ok) throw new Error("Approval gate execution failed");
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        throw new Error(json.error?.message || "Approval gate execution failed");
+      }
       showFeedback("success", "Campaign approved by merchant. Ready for rate-limited broadcast.");
       await loadData();
     } catch (err: any) {
@@ -211,12 +216,16 @@ export default function MarketingPage() {
   const handleToggleKillSwitch = async () => {
     try {
       const currentState = overview?.kill_switch_active;
-      const res = await fetch("/api/v1/marketing/broadcasts/kill-switch", {
+      // Turning sends back on asks for an authenticator code; engaging the stop never does
+      const res = await fetchWithStepUp("/api/v1/marketing/broadcasts/kill-switch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ active: !currentState }),
       });
-      if (!res.ok) throw new Error("Failed to toggle kill switch");
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        throw new Error(json.error?.message || "Failed to toggle kill switch");
+      }
       showFeedback("success", !currentState ? "🚨 Emergency Kill Switch ENGAGED. Outbound messages paused." : "Emergency Kill Switch disengaged.");
       await loadData();
     } catch (err: any) {

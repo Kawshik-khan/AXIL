@@ -10,25 +10,33 @@ import {
   UserProfileResult,
 } from "../channel-provider.interface";
 
+/** Unix-seconds timestamp header that server-to-server website requests sign together with the body. */
+export const WEBSITE_TIMESTAMP_HEADER = "x-commerceos-timestamp";
+const WEBSITE_MAX_SKEW_SECONDS = 300;
+
 export class WebsiteChatAdapter implements IChannelProvider {
   public readonly channelType: ChannelType = "WEBSITE_CHAT";
 
   public verifyWebhook(
     payload: string | Buffer,
     signature: string | null,
-    _headers: Record<string, string | string[] | undefined>,
-    credentials: ChannelCredentials
+    headers: Record<string, string | string[] | undefined>,
+    credentials: ChannelCredentials,
+    now = Date.now()
   ): boolean {
     // Server-to-server website ingress must be signed with the channel's webhook secret (audit H5).
     // The public browser widget does not come through here; it uses WebhookIngressService's unsigned-widget path.
     if (!credentials.webhookSecret || !signature) return false;
+    // The signature covers "<timestamp>.<raw body>" and the timestamp must be within 300 s, so a captured request
+    // can't be replayed later (it used to cover the body alone).
+    const rawTs = headers[WEBSITE_TIMESTAMP_HEADER];
+    const ts = Array.isArray(rawTs) ? rawTs[0] : rawTs;
+    if (!ts || !/^\d{10}$/.test(ts)) return false; // unix seconds
+    if (Math.abs(now / 1000 - Number(ts)) > WEBSITE_MAX_SKEW_SECONDS) return false;
     const bodyStr = typeof payload === "string" ? payload : payload.toString("utf8");
-    const hmac = crypto.createHmac("sha256", credentials.webhookSecret).update(bodyStr).digest("hex");
-    try {
-      return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(hmac));
-    } catch {
-      return false;
-    }
+    const expected = Buffer.from(crypto.createHmac("sha256", credentials.webhookSecret).update(`${ts}.${bodyStr}`).digest("hex"));
+    const given = Buffer.from(signature.trim().toLowerCase());
+    return given.length === expected.length && crypto.timingSafeEqual(given, expected);
   }
 
   public normalizeIncomingEvent(

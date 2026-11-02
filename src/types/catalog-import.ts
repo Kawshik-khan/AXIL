@@ -65,7 +65,7 @@ export interface BulkImportResult {
  */
 export const BulkProductRowSchema = z.object({
   title: z
-    .string({ required_error: "Product title/name is required" })
+    .string({ error: (issue) => (issue.input === undefined ? "Product title/name is required" : undefined) })
     .trim()
     .min(1, "Product title cannot be empty"),
   sku: z
@@ -73,7 +73,7 @@ export const BulkProductRowSchema = z.object({
     .trim()
     .optional(),
   base_price: z
-    .number({ required_error: "Base price is required" })
+    .number({ error: (issue) => (issue.input === undefined ? "Base price is required" : undefined) })
     .nonnegative("Price must be a non-negative number (>= 0)"),
   compare_at_price: z
     .number()
@@ -110,7 +110,7 @@ export const BulkProductRowSchema = z.object({
     .optional()
     .default([]),
   attributes: z
-    .record(z.string())
+    .record(z.string(), z.string())
     .optional()
     .default({}),
   status: z
@@ -137,6 +137,6 @@ export const BulkImportPayloadSchema = z.object({
       auto_generate_sku_if_missing: z.boolean().optional().default(true),
     })
     .optional()
-    .default({}),
-  products: z.array(z.record(z.any())).min(1, "Products array cannot be empty"),
+    .prefault({}), // v4: parsed, so the inner defaults apply (`.default({})` would return {} as is)
+  products: z.array(z.record(z.string(), z.any())).min(1, "Products array cannot be empty"),
 });

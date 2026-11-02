@@ -40,6 +40,9 @@ export interface WebhookVerificationResult {
 
 export const WEBHOOK_INGESTION_OPERATION = "WEBHOOK_INGESTION";
 
+/** Domain separator for per-endpoint webhook secrets (see `endpointSecret`); changing it changes every endpoint's secret. */
+export const ENDPOINT_SECRET_CONTEXT = "commerceos:webhook-endpoint:v1:";
+
 export class WebhookGatewayService {
   private static readonly MAX_TIMESTAMP_DRIFT_SECONDS = 300; // 5 minutes
 
@@ -59,6 +62,21 @@ export class WebhookGatewayService {
       );
     }
     return value;
+  }
+
+  /**
+   * The signing secret of one endpoint: HMAC-SHA256 of the endpoint id under the master secret named by
+   * `secret_reference`. Endpoints that share a master (every tenant's Steadfast endpoint, say) still each have their
+   * own secret, so a party holding one endpoint's secret can't sign for another, and the key covers the `wh` id.
+   * Tenant and provider are part of the input, so two rows that share an id never share a key. The platform operator
+ * hands each endpoint's value to whoever sends to it; it is never stored.
+   */
+  public static endpointSecret(webhook: Pick<AutomationWebhook, "id" | "secret_reference" | "tenant_id" | "provider">): string {
+    const master = this.resolveWebhookSecret(webhook.secret_reference);
+    return crypto
+      .createHmac("sha256", master)
+      .update(`${ENDPOINT_SECRET_CONTEXT}${webhook.tenant_id}:${webhook.provider}:${webhook.id}`)
+      .digest("hex");
   }
 
   /** Whether the secret named by `secret_reference` is usable. Never returns or logs the value. */
@@ -186,7 +204,7 @@ export class WebhookGatewayService {
 
     let secret: string;
     try {
-      secret = this.resolveWebhookSecret(webhook.secret_reference);
+      secret = this.endpointSecret(webhook); // per endpoint, never the shared master itself
     } catch {
       logger.error("webhook.secret_missing", { tenant_id: tenantId, webhook_id: webhook.id, secret_reference: webhook.secret_reference });
       return rejectDelivery("UNKNOWN_WEBHOOK", "Webhook secret is not configured.");

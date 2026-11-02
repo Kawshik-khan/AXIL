@@ -146,7 +146,7 @@ export class GetProductTool implements IAgentTool<z.infer<typeof GetProductInput
 const CheckInventoryInputSchema = z.object({
   product_query: z.string().optional().describe("Product name or SKU to inspect"),
   product_id: z.string().optional().describe("Canonical product ID if known"),
-  variant_attributes: z.record(z.string()).optional().describe("Attributes like size, color (e.g. { size: 'XL' })"),
+  variant_attributes: z.record(z.string(), z.string()).optional().describe("Attributes like size, color (e.g. { size: 'XL' })"),
 });
 
 export class CheckInventoryTool implements IAgentTool<z.infer<typeof CheckInventoryInputSchema>> {

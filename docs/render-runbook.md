@@ -27,6 +27,47 @@ runs inside the web process (`CUSTOMER_AGENT_WORKER`); scheduled jobs are trigge
 > Oregon ↔ Ohio adds a coast-to-coast round trip (tens of ms) to every database call. Render's `ohio` region would remove
 > it; the region was kept as chosen. Revisit if write latency matters.
 
+## What is actually running (checked 2026-11-02)
+
+The live services were created in the dashboard, not from this blueprint, and differ from it:
+
+| | Production `AXIL` (axil.onrender.com) | Staging `commerceos-staging` (commerceos-staging.onrender.com) | Blueprint |
+|---|---|---|---|
+| Plan | **Free** (sleeps when idle, drops webhooks while asleep) | Free (fine for rehearsals) | starter |
+| Region | oregon (Neon is us-east-2) | **ohio**, next to its database | oregon |
+| Health check path | **none** | none (Free plan) | `/health/ready?scope=core` |
+| Pre-deploy migrations | no | in the start command (`npm run db:migrate && npm run start`; Free has no pre-deploy) | `npm run db:migrate` |
+| Database | Neon project CommercesOS, branch `production`, database `neondb` (migrations 006–012 applied) | Neon project **CommerceOS-staging** (its own project, empty, never copied from production) | |
+| Auto-deploy | off | off | |
+
+Owner actions for production, decided "not now" on 2026-11-02: move to a paid plan (Starter), set the health check path
+to `/health/ready?scope=core` (Settings → Health Check Path), and move to Ohio (a new service and URL: re-register the
+Telegram webhooks, update `APP_URL` and the Meta OAuth redirect).
+
+First staging deploy (2026-11-02): build 2 min, all 7 migrations applied to the empty database, ready in 1.6 s,
+store loaded from Postgres in 430 ms. Staging has `NODE_OPTIONS=--max-old-space-size=1536` as an env var because its
+start command was set when it was created; to match the blueprint, set its Start Command in the dashboard to
+`npm run db:migrate && NODE_OPTIONS=--max-old-space-size=384 npm run start` and delete the `NODE_OPTIONS` env var.
+
+Staging runs with `AI_DEMO_MODE=1`, `CSP_ENFORCE=1` and `WORKSPACE_STEP_UP_ENFORCED_FROM` set, so it shows what
+production will do once those are switched on. For the customer-agent rehearsal, add a test Telegram bot to a staging
+workspace (Connectors page) and, to rehearse the provider kill switch with a real model, `LLM_BASE_URL` / `LLM_API_KEY` /
+`LLM_PROVIDER_NAME` / `LLM_MODEL_*` in the staging service's environment.
+
+## Monitoring and alerts (O6)
+
+- **Ops alerts:** the `monitoring` job (every 5 minutes, run by `.github/workflows/scheduled-jobs.yml`) sends problems to
+  the Telegram chat in `OPS_ALERTS_CHAT_ID` through the alerts bot (`TELEGRAM_ALERTS_BOT_TOKEN`): agent-health alerts,
+  customer messages nobody answered, and `OPS_ALERT_5XX_THRESHOLD` (default 5) or more unhandled 500s in 5 minutes on
+  the server that ran the job. One message when issues appear or change, a reminder each hour while they last, one
+  "all clear" when they end. Without the chat id the job result says `ops_alert: NOT_CONFIGURED`. To get the id: add
+  the bot to a group (or press Start in a private chat), send it a message, then open
+  `https://api.telegram.org/bot<token>/getUpdates` and copy `message.chat.id`.
+- **Uptime:** a free external monitor (UptimeRobot, Better Stack, or similar) on
+  `https://axil.onrender.com/health/ready?scope=core` every 5 minutes, alerting by email. If the app is down the ops
+  alert can't fire, so this is the check that covers it. The scheduled-jobs workflow also fails (and GitHub emails
+  the repository owner) when the app can't be reached.
+
 ## First deploy (staging first)
 
 1. Create the GitHub repo, push, then in Render: **New → Blueprint**, pick the repo. Render reads `render.yaml`.

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { WebhookIngressService } from "@/domains/social/webhooks/webhook-ingress.service";
 import { withStore } from "@/lib/store-unit";
+import { logger } from "@/lib/logger";
 
 /**
  * Meta Webhook Verification (hub.challenge)
@@ -41,7 +42,7 @@ async function handlePOST(request: Request) {
 
     return NextResponse.json({ status: "EVENT_RECEIVED", result }, { status: 200 });
   } catch (err) {
-    console.error("Facebook Webhook Ingress Error:", err);
+    logger.error("social_webhook.ingress_failed", { channel: "FACEBOOK_MESSENGER", error: err instanceof Error ? err.message : String(err) });
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Webhook processing failed" },
       { status: 200 } // Meta requires 200 OK to prevent webhook spam retries on non-recoverable errors

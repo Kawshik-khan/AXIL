@@ -12,6 +12,7 @@ import { LoadingSkeleton, PermissionDenied } from "@/components/ui/States/States
 import styles from "./settings.module.css";
 import { NotificationsPanel } from "@/components/settings/NotificationsPanel";
 import { ProductCardsPanel } from "@/components/settings/ProductCardsPanel";
+import { AuthenticatorPanel } from "@/components/security/AuthenticatorPanel";
 import dashStyles from "../dashboard.module.css";
 
 export default function SettingsPage() {
@@ -564,7 +565,8 @@ export default function SettingsPage() {
 
       {/* Tab 3: Security & Audit Logs */}
       {activeTab === "security" && (
-        <>
+        <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+          <AuthenticatorPanel impersonating={Boolean(session?.impersonation)} />
           {!canReadAudit ? (
             <PermissionDenied resource="audit logs" requiredPermission="audit.read" />
           ) : (
@@ -619,7 +621,7 @@ export default function SettingsPage() {
               </div>
             </div>
           )}
-        </>
+        </div>
       )}
 
       {/* Invite Member Modal */}

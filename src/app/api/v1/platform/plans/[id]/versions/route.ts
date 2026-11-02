@@ -12,7 +12,7 @@ const Body = z
     annual_price_bdt: Price,
     trial_days: z.number().int().min(0).max(365).nullable(),
     setup_fee_bdt: Price,
-    features: z.record(z.union([z.number(), z.boolean(), z.null()])),
+    features: z.record(z.string(), z.union([z.number(), z.boolean(), z.null()])),
     change_note: z.string().trim().max(500).optional(),
   })
   .strict();

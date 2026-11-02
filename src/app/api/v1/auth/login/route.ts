@@ -12,15 +12,15 @@ import { isAppError, ValidationError } from "@/lib/errors";
 const LoginBody = z
   .object({
     email: z
-      .string({ required_error: "Email is required.", invalid_type_error: "Email is required." })
+      .string({ error: "Email is required." })
       .trim()
       .min(1, "Email is required.")
       .max(254, "Email must be at most 254 characters."),
     password: z
-      .string({ required_error: "Password is required.", invalid_type_error: "Password is required." })
+      .string({ error: "Password is required." })
       .min(1, "Password is required.")
       .max(200, "Password must be at most 200 characters."),
-    tenantId: z.string({ invalid_type_error: "tenantId must be a string." }).max(100).optional(),
+    tenantId: z.string({ error: "tenantId must be a string." }).max(100).optional(),
   })
   .strict();
 

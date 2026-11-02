@@ -339,14 +339,17 @@ export interface StepUpPayload {
   scope: "STEP_UP";
   action: string;
   verifiedAt: string;
+  /** Workspace the token was issued in (workspace step-up only); the request context refuses it in any other. */
+  tenantId?: string;
 }
 
 /** Action prefix of workspace step-up tokens (FX-97 Part A); the platform console refuses them, the workspace requires it. */
 export const WORKSPACE_STEP_UP_PREFIX = "WORKSPACE:";
 
-export async function signStepUpToken(userId: string, action = "PRIVILEGED_ACTION", sv = 1): Promise<string> {
+export async function signStepUpToken(userId: string, action = "PRIVILEGED_ACTION", sv = 1, tenantId?: string): Promise<string> {
   return new SignJWT({
     userId,
+    ...(tenantId ? { tid: tenantId } : {}),
     sv, // bound to the session version, so "sign out everywhere" also cancels step-up
     scope: "STEP_UP",
     action,
@@ -377,6 +380,7 @@ export async function verifyStepUpToken(token: string, userId?: string, sv?: num
       scope: "STEP_UP",
       action: claims.action as string,
       verifiedAt: claims.verifiedAt as string,
+      ...(typeof claims.tid === "string" ? { tenantId: claims.tid } : {}),
     };
   } catch {
     return null;

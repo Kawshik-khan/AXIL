@@ -4,6 +4,7 @@ import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response"
 import { globalDecisionEngineService } from "@/domains/autonomous/services";
 import { withStore } from "@/lib/store-unit";
 import { OPERATIONS_COLLECTIONS } from "@/infrastructure/db/tenant-rows";
+import { requireStepUp } from "@/lib/step-up";
 
 async function handlePOST(
   request: Request,
@@ -12,6 +13,7 @@ async function handlePOST(
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.DECISIONS_APPROVE);
+    requireStepUp(context, "APPROVE_DECISION"); // a fresh authenticator code (Stage 1 security review)
     const { id } = await Promise.resolve(params);
     const approved = globalDecisionEngineService.approveDecision(
       context.tenant.id,

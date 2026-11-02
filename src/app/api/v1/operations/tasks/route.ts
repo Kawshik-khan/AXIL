@@ -5,6 +5,7 @@ import { db } from "@/infrastructure/db";
 import { operationsWorkflowService } from "@/domains/operations/services/operations-workflow.service";
 import { withStore } from "@/lib/store-unit";
 import { OPERATIONS_COLLECTIONS } from "@/infrastructure/db/tenant-rows";
+import { requireStepUp } from "@/lib/step-up";
 
 async function handleGET(request: Request) {
   try {
@@ -35,10 +36,14 @@ async function handlePOST(request: Request) {
     switch (workflow_type) {
       case "LOW_STOCK_REPLENISHMENT":
       case "STOCKOUT_REORDER":
+        // Can approve and send a purchase order up to ৳30,000 on its own (Stage 1 security review)
+        requireStepUp(context, "RUN_REPLENISHMENT");
         result = await operationsWorkflowService.executeLowStockReplenishment(tenantId);
         break;
       case "STOCKOUT_PREVENTION":
       case "WAREHOUSE_BALANCING":
+        // Falls back to replenishment (which can approve and send a PO) when no warehouse transfer is possible
+        requireStepUp(context, "RUN_REPLENISHMENT");
         result = await operationsWorkflowService.executeStockoutPrevention(tenantId);
         break;
       case "DELAYED_SHIPMENT_FAILOVER":

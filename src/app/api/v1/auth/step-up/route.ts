@@ -11,13 +11,15 @@ const Body = z
   .object({
     // A 6-digit authenticator code, or one of the recovery codes (XXXXX-XXXXX)
     code: z.string().trim().min(6).max(20),
-    action: z.string().regex(/^[A-Z0-9_]{1,60}$/).optional(),
+    // The action this code confirms; the token is accepted only for that action, in this workspace
+    action: z.string().regex(/^[A-Z0-9_]{1,60}$/),
   })
   .strict();
 
 /**
  * Workspace step-up (FX-97 Part A): a fresh authenticator code (or a recovery code) buys a 5-minute token that the
- * dashboard sends as `x-step-up-token` with a privileged request. Bound to this user and their current session.
+ * dashboard sends as `x-step-up-token` with a privileged request. Bound to this user, their current session, this
+ * workspace and the one action named in the body.
  */
 async function handlePOST(request: Request) {
   try {
@@ -32,8 +34,8 @@ async function handlePOST(request: Request) {
       logger.warn("workspace.step_up_failed", { tenant_id: context.tenant.id, user_id: context.user.id });
       throw new AppError("INVALID_MFA_CODE", "The code is not valid.", 400);
     }
-    const stepUpToken = await WorkspaceMfaService.issueStepUpToken(context.user.id, action);
-    logger.info("workspace.step_up_granted", { tenant_id: context.tenant.id, user_id: context.user.id, action: action ?? "PRIVILEGED_ACTION" });
+    const stepUpToken = await WorkspaceMfaService.issueStepUpToken(context.user.id, action, context.tenant.id);
+    logger.info("workspace.step_up_granted", { tenant_id: context.tenant.id, user_id: context.user.id, action });
     const response = apiSuccess({ stepUpToken, expires_in: 300 });
     response.headers.set("Cache-Control", "no-store");
     return response;

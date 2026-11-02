@@ -27,7 +27,7 @@ async function handleGET(request: Request) {
 const Body = z
   .object({
     action_key: z.string().min(1).max(100),
-    payload: z.record(z.unknown()),
+    payload: z.record(z.string(), z.unknown()),
     reason: z.string().trim().min(10).max(1000),
     ticket_ref: z.string().trim().min(1).max(100).optional(),
   })
