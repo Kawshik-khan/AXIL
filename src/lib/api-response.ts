@@ -25,6 +25,7 @@ import {
   PLATFORM_ROLE_PERMISSIONS,
 } from "@/lib/permissions";
 import { loadTenantRows } from "@/infrastructure/db/tenant-rows";
+import { recordServerError } from "@/lib/ops-signals";
 
 export function apiSuccess<T>(data: T, meta?: Record<string, unknown>, status = 200) {
   return NextResponse.json(
@@ -81,6 +82,7 @@ export function apiError(error: unknown, requestId?: string) {
 
   // Unexpected failures: details go to the log only; the client gets a generic message and the request id to quote
   // (FX-17, audit L1). Internal messages used to reach clients, including configuration errors.
+  recordServerError(); // counted for the monitoring job's ops alert (O6)
   logger.error("api.unhandled_error", {
     request_id: reqId,
     error: error instanceof Error ? error.message : String(error),

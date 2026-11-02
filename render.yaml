@@ -21,7 +21,9 @@ services:
     # Runs once per deploy in the build environment, before the new version starts. A failure cancels the deploy and the
     # running version keeps serving. Migrations must be backward compatible (docs/render-runbook.md, "Migrations").
     preDeployCommand: npm run db:migrate
-    startCommand: npm run start
+    # The heap cap is set here, not as an env var: env vars also apply to the build, and `next build` needs more than
+    # 384 MB to type-check (a staging build ran out of memory with it on 2026-11-02).
+    startCommand: NODE_OPTIONS=--max-old-space-size=384 npm run start
     # Store and database only. The full check (GET /health/ready) also reports Qdrant, Redis and the LLM provider; it must not
     # be the restart trigger, or a provider outage would restart a healthy instance in a loop.
     healthCheckPath: /health/ready?scope=core
@@ -32,9 +34,7 @@ services:
         value: "22"
       - key: NODE_ENV
         value: production
-      # The store loads all data into memory: keep the V8 heap below the instance RAM (512 MB on starter). Raise both together.
-      - key: NODE_OPTIONS
-        value: --max-old-space-size=384
+      # The V8 heap cap for the running server (below the instance RAM, 512 MB on starter) is in startCommand.
       # Next.js's own SIGTERM handler exits as soon as connections close, which can beat the store's flush (its handler is in
       # src/infrastructure/db/index.ts). With this set only the store's handler runs: flush pending writes, then exit.
       - key: NEXT_MANUAL_SIG_HANDLE
@@ -160,6 +160,9 @@ services:
       # Merchant alerts (Settings → Notifications): one platform bot token from @BotFather
       - key: TELEGRAM_ALERTS_BOT_TOKEN
         sync: false
+      # Ops alerts (O6): the monitoring job's problems go to this Telegram chat through the alerts bot
+      - key: OPS_ALERTS_CHAT_ID
+        sync: false
       # Deliberately absent: DEV_AUTH_BYPASS, AI_DEMO_MODE, COMMERCEOS_FORCE_LOCK, SEED_ADMIN_PASSWORD.
   # Scheduled jobs (FX-99 Part B) run from GitHub Actions for free (.github/workflows/scheduled-jobs.yml), not from a
   # paid Render Cron Job: set JOBS_TOKEN_SHA256 below, and JOBS_TOKEN + APP_URL as repository secrets.
@@ -179,7 +182,9 @@ services:
     # Runs once per deploy in the build environment, before the new version starts. A failure cancels the deploy and the
     # running version keeps serving. Migrations must be backward compatible (docs/render-runbook.md, "Migrations").
     preDeployCommand: npm run db:migrate
-    startCommand: npm run start
+    # The heap cap is set here, not as an env var: env vars also apply to the build, and `next build` needs more than
+    # 384 MB to type-check (a staging build ran out of memory with it on 2026-11-02).
+    startCommand: NODE_OPTIONS=--max-old-space-size=384 npm run start
     # Store and database only. The full check (GET /health/ready) also reports Qdrant, Redis and the LLM provider; it must not
     # be the restart trigger, or a provider outage would restart a healthy instance in a loop.
     healthCheckPath: /health/ready?scope=core
@@ -190,9 +195,7 @@ services:
         value: "22"
       - key: NODE_ENV
         value: production
-      # The store loads all data into memory: keep the V8 heap below the instance RAM (512 MB on starter). Raise both together.
-      - key: NODE_OPTIONS
-        value: --max-old-space-size=384
+      # The V8 heap cap for the running server (below the instance RAM, 512 MB on starter) is in startCommand.
       # Next.js's own SIGTERM handler exits as soon as connections close, which can beat the store's flush (its handler is in
       # src/infrastructure/db/index.ts). With this set only the store's handler runs: flush pending writes, then exit.
       - key: NEXT_MANUAL_SIG_HANDLE

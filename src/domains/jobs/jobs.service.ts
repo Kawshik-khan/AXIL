@@ -29,6 +29,8 @@ import { findSilentDrops } from "@/domains/ai/customer-agent/silent-drops";
 import { reconcileTelegramWebhooks } from "@/domains/connectors/telegram-webhook-reconciler";
 import { runWebhookCanary } from "@/domains/connectors/webhook-canary";
 import { runDeliveriesOnce } from "@/domains/social/outbound/outbound-delivery";
+import { reportOpsIssues, type OpsIssue } from "@/domains/notifications/ops-alerts";
+import { serverErrorsSince } from "@/lib/ops-signals";
 
 export { localHour };
 
@@ -180,7 +182,7 @@ export const JOBS: Record<string, JobDefinition> = {
     },
   },
 
-  /** Every 5 minutes: platform health for the owner's Telegram (no customer data). */
+  /** Every 5 minutes: platform health, sent to the ops Telegram chat when something is wrong (no customer data). */
   monitoring: {
     cadenceMs: 5 * MINUTE,
     async run(now) {
@@ -189,11 +191,27 @@ export const JOBS: Record<string, JobDefinition> = {
       // Customer messages the agent should have answered and nothing did (messaging reliability MR1)
       const drops = await findSilentDrops(dueTenants(), now);
       if (drops.silent) logger.error("messaging.silent_drop", { silent: drops.silent, tenants: drops.tenants });
+      // Unhandled 500s answered by this server in the last 5 minutes (O6)
+      const serverErrors = serverErrorsSince(now - 5 * MINUTE);
+      const threshold = Math.max(1, Number(process.env.OPS_ALERT_5XX_THRESHOLD) || 5);
+      const issues: OpsIssue[] = [
+        ...alerts.map((a) => ({
+          key: `agent:${a.title}`,
+          title: a.title,
+          severity: a.severity === "SEV2" ? ("critical" as const) : ("warning" as const),
+          detail: a.detail,
+        })),
+        ...(drops.silent ? [{ key: "messaging:silent_drop", title: "Customer messages left unanswered", severity: "critical" as const, detail: `${drops.silent} message(s)` }] : []),
+        ...(serverErrors >= threshold ? [{ key: "api:5xx", title: "Server errors", severity: "critical" as const, detail: `${serverErrors} in the last 5 minutes` }] : []),
+      ];
+      const opsAlert = await reportOpsIssues(issues, now);
       return {
         agent_alerts: alerts.map((a) => ({ title: a.title, severity: a.severity, detail: a.detail })),
         csp: CspReportService.summary(now),
         messaging: drops,
-        healthy: alerts.length === 0 && drops.silent === 0,
+        server_errors_5m: serverErrors,
+        ops_alert: opsAlert,
+        healthy: issues.length === 0,
       };
     },
   },

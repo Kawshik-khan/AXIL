@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { WebhookIngressService } from "@/domains/social/webhooks/webhook-ingress.service";
 import { withStore } from "@/lib/store-unit";
+import { logger } from "@/lib/logger";
 
 async function handleGET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -35,7 +36,7 @@ async function handlePOST(request: Request) {
 
     return NextResponse.json({ status: "EVENT_RECEIVED", result }, { status: 200 });
   } catch (err) {
-    console.error("Instagram Webhook Ingress Error:", err);
+    logger.error("social_webhook.ingress_failed", { channel: "INSTAGRAM", error: err instanceof Error ? err.message : String(err) });
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Webhook processing failed" },
       { status: 200 }

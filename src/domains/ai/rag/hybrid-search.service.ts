@@ -9,6 +9,7 @@ import { db } from "@/infrastructure/db";
 import { KnowledgeChunk, HybridSearchResult, VectorSearchResultItem, BM25SearchResult, HybridSearchDiagnostics, RetrievalChannelTrace } from "@/types/ai";
 import { BM25Service } from "./bm25.service";
 import { EmbeddingService } from "./embedding.service";
+import { logger } from "@/lib/logger";
 
 export interface HybridSearchOptions {
   topK?: number;           // Final number of fused candidates to return (default: 20)
@@ -201,7 +202,7 @@ export class HybridSearchService {
       } catch (pcErr) {
         const error = pcErr as Error;
         // A Qdrant failure is observable, while compatible local vectors remain a valid dense fallback.
-        console.warn("[HybridSearch] Qdrant search failed; using local vectors:", error.message);
+        logger.warn("hybrid_search.qdrant_failed", { fallback: "local_vectors", error: error instanceof Error ? error.message : String(error) });
       }
 
       // 2. Local pgvector / in-memory vector search fallback
@@ -223,7 +224,7 @@ export class HybridSearchService {
       const hasIndexedChunks = activeVersionChunks.some((chunk) => chunk.embedding?.length > 0);
       return { items: [], status: hasIndexedChunks ? "EMPTY" : "INCOMPATIBLE_INDEX", latencyMs: Date.now() - start, profile, queryEmbedding: hasIndexedChunks ? queryEmbedding : undefined };
     } catch (err) {
-      console.warn("[HybridSearch] Dense search unavailable:", (err as Error).message);
+      logger.warn("hybrid_search.dense_unavailable", { error: (err as Error).message });
       return { items: [], status: "UNAVAILABLE", latencyMs: Date.now() - start, errorCode: (err as { code?: string }).code || "EMBEDDING_OR_VECTOR_SEARCH_FAILED" };
     }
   }
@@ -251,7 +252,7 @@ export class HybridSearchService {
       const items = BM25Service.search(tenantId, query, allChunks, limit);
       return { items, status: items.length ? "SUCCESS" : "EMPTY", latencyMs: Date.now() - start };
     } catch (err) {
-      console.warn("[HybridSearch] Sparse BM25 search unavailable:", (err as Error).message);
+      logger.warn("hybrid_search.sparse_unavailable", { error: (err as Error).message });
       return { items: [], status: "UNAVAILABLE", latencyMs: Date.now() - start, errorCode: "BM25_SEARCH_FAILED" };
     }
   }

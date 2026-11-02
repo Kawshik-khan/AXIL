@@ -6,6 +6,7 @@
 import { AgentType } from "@/types/ai";
 import { WorkflowPlanStep, ActionRiskLevel } from "@/types/orchestration";
 import { planValidator } from "@/domains/ai/orchestration/planning/plan-validator";
+import { logger } from "@/lib/logger";
 
 export interface GrowthPlanRequest {
   objective: string;
@@ -170,7 +171,7 @@ export class GrowthSupervisorAgent {
     }));
     const result = planValidator.validate(definitions);
     if (!result.isValid) {
-      console.warn("[GrowthSupervisorAgent] DAG validation warnings/errors:", result.errors);
+      logger.warn("supervisor.plan_validation_warnings", { agent: "GrowthSupervisorAgent", errors: result.errors });
     }
     return steps;
   }
