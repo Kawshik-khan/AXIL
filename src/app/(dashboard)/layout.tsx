@@ -9,6 +9,7 @@ import { ProgressiveBlur } from "@/components/navigation/ProgressiveBlur";
 import { PlatformNotices } from "@/components/navigation/PlatformNotices";
 import { LoadingSkeleton } from "@/components/ui/States/States";
 import { MerchantThemeProvider } from "@/components/navigation/merchant-theme";
+import { StepUpHost } from "@/components/security/StepUpHost";
 import styles from "@/components/navigation/Shell.module.css";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -130,6 +131,8 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
           {children}
         </main>
       </div>
+
+      <StepUpHost />
 
       <CommandPalette
         isOpen={isCommandPaletteOpen}

@@ -301,6 +301,44 @@ async function main() {
     assert.notStrictEqual(res.status, 200);
   });
 
+  await runTest("dashboard client: a STEP_UP_REQUIRED answer asks for a code and retries once with the token; cancelling returns the refusal", async () => {
+    const { fetchWithStepUp, registerStepUpPrompt } = await import("@/lib/step-up-client");
+    const realFetch = globalThis.fetch;
+    const seen: Array<string | null> = [];
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const token = new Headers(init?.headers).get("x-step-up-token");
+      seen.push(token);
+      return token === "tok_ok"
+        ? new Response(JSON.stringify({ data: { ok: true } }), { status: 200 })
+        : new Response(JSON.stringify({ error: { code: "STEP_UP_REQUIRED", message: "code please", details: { action: "APPROVE_BROADCAST" } } }), { status: 403 });
+    }) as typeof fetch;
+    try {
+      const asked: string[] = [];
+      registerStepUpPrompt(async (req) => {
+        asked.push(`${req.reason}:${req.action}`);
+        return "tok_ok";
+      });
+      const ok = await fetchWithStepUp("/api/v1/marketing/broadcasts/b1/approve", { method: "POST", headers: { "content-type": "application/json" } });
+      assert.strictEqual(ok.status, 200);
+      assert.deepStrictEqual(asked, ["STEP_UP_REQUIRED:APPROVE_BROADCAST"]);
+      assert.deepStrictEqual(seen, [null, "tok_ok"]);
+
+      seen.length = 0;
+      registerStepUpPrompt(async () => null); // the person cancels
+      const cancelled = await fetchWithStepUp("/x", { method: "POST" });
+      assert.strictEqual(cancelled.status, 403);
+      assert.deepStrictEqual(seen, [null], "no second request");
+
+      seen.length = 0;
+      registerStepUpPrompt(null); // no dialog mounted
+      assert.strictEqual((await fetchWithStepUp("/x", { method: "POST" })).status, 403);
+      assert.deepStrictEqual(seen, [null]);
+    } finally {
+      globalThis.fetch = realFetch;
+      registerStepUpPrompt(null);
+    }
+  });
+
   console.log(`\n  Tests Passed: ${passed} | Tests Failed: ${failed}\n`);
   if (failed > 0) process.exit(1);
 }
