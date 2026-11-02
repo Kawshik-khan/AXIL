@@ -237,7 +237,9 @@ async function main() {
     const webhookId = process.env.SMOKE_WEBHOOK_ID || SEED_WEBHOOK_ID;
     await check("P3", "A correctly signed courier webhook is accepted", async () => {
       const timestamp = Date.now().toString();
-      const signature = crypto.createHmac("sha256", process.env.SMOKE_WEBHOOK_SECRET).update(`${timestamp}.${courierBody}`).digest("hex");
+      // SMOKE_WEBHOOK_SECRET is the master secret; each endpoint signs with its own key derived from it
+      const endpointKey = crypto.createHmac("sha256", process.env.SMOKE_WEBHOOK_SECRET).update(`commerceos:webhook-endpoint:v1:${webhookId}`).digest("hex");
+      const signature = crypto.createHmac("sha256", endpointKey).update(`${timestamp}.${courierBody}`).digest("hex");
       const res = await call("POST", `/api/v1/automation/webhooks/steadfast?wh=${webhookId}`, {
         headers: { "x-webhook-signature": signature, "x-webhook-timestamp": timestamp },
         body: courierBody,

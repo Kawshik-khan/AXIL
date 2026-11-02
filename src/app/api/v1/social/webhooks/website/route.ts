@@ -5,8 +5,10 @@ import { withStore } from "@/lib/store-unit";
 
 /**
  * Server-to-server website chat ingress (audit H5, FX-07).
- * The caller names the channel with `?channel_id=<id>` and signs the raw body with that channel's webhook secret
- * (hex HMAC-SHA256 in `x-commerceos-signature`). Unknown channels are ignored; unsigned requests are rejected.
+ * The caller names the channel with `?channel_id=<id>`, sends the current unix time in seconds as
+ * `x-commerceos-timestamp`, and signs "<timestamp>.<raw body>" with that channel's webhook secret (hex HMAC-SHA256 in
+ * `x-commerceos-signature`). A timestamp more than 300 s off is refused. Unknown channels are ignored; unsigned
+ * requests are rejected.
  * Browser widgets use /api/v1/social/widget/message instead.
  */
 async function handlePOST(request: Request) {
