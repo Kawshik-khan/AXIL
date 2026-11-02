@@ -225,14 +225,14 @@ export const SaveConnectorSchema = z.object({
   name: z.string().optional(),
   endpoint_url: z.string().url("Invalid endpoint URL").optional().or(z.literal("")),
   default_model: z.string().optional(),
-  credentials: z.record(z.unknown()),
-  configuration: z.record(z.unknown()).optional(),
+  credentials: z.record(z.string(), z.unknown()),
+  configuration: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const TestConnectionSchema = z.object({
   provider_id: z.string().min(1, "Provider ID is required"),
   endpoint_url: z.string().optional().or(z.literal("")),
   default_model: z.string().optional(),
-  credentials: z.record(z.unknown()),
-  configuration: z.record(z.unknown()).optional(),
+  credentials: z.record(z.string(), z.unknown()),
+  configuration: z.record(z.string(), z.unknown()).optional(),
 });

@@ -40,7 +40,7 @@ const QueryBody = z
     entity_type: z.enum(["ORGANIZATION", "BUSINESS_UNIT", "BRAND", "STORE"]).optional(),
     entity_id: z.string().min(1).optional(),
     time_grain: z.enum(["HOUR", "DAY", "WEEK", "MONTH", "QUARTER", "YEAR"]).optional(),
-    dimensions: z.record(z.string()).optional(),
+    dimensions: z.record(z.string(), z.string()).optional(),
   })
   .strict();
 

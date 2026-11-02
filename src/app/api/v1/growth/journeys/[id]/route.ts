@@ -15,7 +15,7 @@ const JourneyPatch = z
     name: z.string().trim().min(1).max(200),
     description: z.string().max(2000),
     trigger_event: z.string().trim().min(1).max(100),
-    steps: z.array(z.record(z.unknown())).max(100),
+    steps: z.array(z.record(z.string(), z.unknown())).max(100),
   })
   .partial()
   .strict();
