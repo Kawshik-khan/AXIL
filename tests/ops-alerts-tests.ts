@@ -4,6 +4,7 @@
  * and nothing is sent (or claimed) when the chat isn't configured.
  */
 import assert from "assert";
+import crypto from "crypto";
 import { reportOpsIssues, resetOpsAlertsForTesting, opsAlertsConfigured, type OpsIssue } from "@/domains/notifications/ops-alerts";
 import { recordServerError, serverErrorsSince, resetOpsSignalsForTesting } from "@/lib/ops-signals";
 import { apiError } from "@/lib/api-response";
@@ -44,7 +45,7 @@ async function main() {
     return reply(200, { ok: true, result: true });
   });
 
-  const env = { TELEGRAM_ALERTS_BOT_TOKEN: "123456:ABCdefGhIJKlmNoPQRstuVWxyz0123456789", OPS_ALERTS_CHAT_ID: "-1001234567890", APP_URL: "https://shop.example" } as NodeJS.ProcessEnv;
+  const env = { TELEGRAM_ALERTS_BOT_TOKEN: `${100000 + Math.floor(Math.random() * 899999)}:${crypto.randomBytes(18).toString("base64url")}`, OPS_ALERTS_CHAT_ID: "-1001234567890", APP_URL: "https://shop.example" } as NodeJS.ProcessEnv;
   process.env.TELEGRAM_ALERTS_BOT_TOKEN = env.TELEGRAM_ALERTS_BOT_TOKEN; // the bot call reads the process environment
   const issue = (key: string, severity: OpsIssue["severity"] = "critical"): OpsIssue => ({ key, title: `Problem ${key}`, severity, detail: "details" });
   const t0 = Date.parse("2026-11-02T10:00:00Z");
