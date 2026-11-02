@@ -42,6 +42,8 @@ async function handlePOST(request: Request) {
         break;
       case "STOCKOUT_PREVENTION":
       case "WAREHOUSE_BALANCING":
+        // Falls back to replenishment (which can approve and send a PO) when no warehouse transfer is possible
+        requireStepUp(context, "RUN_REPLENISHMENT");
         result = await operationsWorkflowService.executeStockoutPrevention(tenantId);
         break;
       case "DELAYED_SHIPMENT_FAILOVER":

@@ -244,6 +244,9 @@ async function main() {
       await refused(await post("operations/autonomy/kill-switch", { action: "CLEAR" }), "CLEAR_AUTONOMY_KILL_SWITCH");
       await refused(await post("operations/tasks", { workflow_type: "LOW_STOCK_REPLENISHMENT" }), "RUN_REPLENISHMENT");
       await refused(await post("operations/tasks", { workflow_type: "STOCKOUT_REORDER" }), "RUN_REPLENISHMENT");
+      // These fall back to replenishment when no warehouse transfer is possible (security review)
+      await refused(await post("operations/tasks", { workflow_type: "STOCKOUT_PREVENTION" }), "RUN_REPLENISHMENT");
+      await refused(await post("operations/tasks", { workflow_type: "WAREHOUSE_BALANCING" }), "RUN_REPLENISHMENT");
       // Stopping is never slowed down by step-up
       assert.strictEqual((await post("marketing/broadcasts/kill-switch", { active: true })).status, 200);
       assert.strictEqual((await post("operations/autonomy/kill-switch", { action: "TRIGGER", reason: "test" })).status, 200);

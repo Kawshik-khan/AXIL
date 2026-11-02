@@ -30,6 +30,8 @@ interface ErrorBody {
 export async function fetchWithStepUp(input: string, init: RequestInit = {}): Promise<Response> {
   const response = await fetch(input, init);
   if (response.status !== 403 || !activePrompt) return response;
+  // A token only ever goes back to this app's own origin
+  if (typeof window !== "undefined" && new URL(input, window.location.origin).origin !== window.location.origin) return response;
 
   let body: ErrorBody;
   try {

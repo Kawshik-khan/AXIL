@@ -325,6 +325,7 @@ export async function runOperationsTests() {
       new_price: 2350,
       margin_percent: 36.2,
       reason: "COMPETITIVE_MATCH",
+      requested_by: "usr_someone_else",
       status: "PENDING_APPROVAL",
       created_at: new Date().toISOString(),
     });
@@ -356,6 +357,18 @@ export async function runOperationsTests() {
     const execution = pricingOperationsService.executePriceChange(tenantId, req.id, "usr_approver", { actorType: "USER", approvedNow: true });
     assert.strictEqual(execution.new_price, 1600);
     pricingOperationsService.rollbackPriceChange(tenantId, execution.id, "usr_approver");
+    assert.strictEqual(db.findVariantById(tenantId, var1.id)?.price, 2500);
+  });
+
+  await runTest("F30: a waiting price change that doesn't record who asked can't be approved (fail closed)", () => {
+    const req = db.createPriceChangeRequest({
+      id: `pcr_noreq_${Date.now()}`, tenant_id: tenantId, product_variant_id: var1.id, sku: var1.sku,
+      old_price: 2500, new_price: 1600, margin_percent: 6.25, reason: "LEGACY_ROW", status: "PENDING_APPROVAL", created_at: new Date().toISOString(),
+    });
+    assert.throws(
+      () => pricingOperationsService.executePriceChange(tenantId, req.id, "usr_approver", { actorType: "USER", approvedNow: true }),
+      (err: { code?: string }) => err.code === "FORBIDDEN"
+    );
     assert.strictEqual(db.findVariantById(tenantId, var1.id)?.price, 2500);
   });
 

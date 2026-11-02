@@ -68,11 +68,15 @@ export class WebhookGatewayService {
    * The signing secret of one endpoint: HMAC-SHA256 of the endpoint id under the master secret named by
    * `secret_reference`. Endpoints that share a master (every tenant's Steadfast endpoint, say) still each have their
    * own secret, so a party holding one endpoint's secret can't sign for another, and the key covers the `wh` id.
-   * The platform operator hands each endpoint's value to whoever sends to it; it is never stored.
+   * Tenant and provider are part of the input, so two rows that share an id never share a key. The platform operator
+ * hands each endpoint's value to whoever sends to it; it is never stored.
    */
-  public static endpointSecret(webhook: Pick<AutomationWebhook, "id" | "secret_reference">): string {
+  public static endpointSecret(webhook: Pick<AutomationWebhook, "id" | "secret_reference" | "tenant_id" | "provider">): string {
     const master = this.resolveWebhookSecret(webhook.secret_reference);
-    return crypto.createHmac("sha256", master).update(`${ENDPOINT_SECRET_CONTEXT}${webhook.id}`).digest("hex");
+    return crypto
+      .createHmac("sha256", master)
+      .update(`${ENDPOINT_SECRET_CONTEXT}${webhook.tenant_id}:${webhook.provider}:${webhook.id}`)
+      .digest("hex");
   }
 
   /** Whether the secret named by `secret_reference` is usable. Never returns or logs the value. */

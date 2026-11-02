@@ -394,7 +394,8 @@ async function main() {
   db.createAutomationWebhook({ id: tokenWebhookId, tenant_id: tenantA.tenant.id, provider: "PATHAO", endpoint_path: "/api/v1/automation/webhooks/pathao", secret_reference: "SECURITY_TEST_STEADFAST_SECRET", signature_algorithm: "TOKEN", is_active: true, created_at: nowIso, updated_at: nowIso });
 
   // Senders sign with their endpoint's own secret, derived from the shared master (STATUS Low: per-endpoint secrets)
-  const endpointKey = (webhookId: string) => hmacHex(webhookSecret, `commerceos:webhook-endpoint:v1:${webhookId}`);
+  const endpointKey = (webhookId: string, tenantId = tenantA.tenant.id, provider = "STEADFAST") =>
+    hmacHex(webhookSecret, `commerceos:webhook-endpoint:v1:${tenantId}:${provider}:${webhookId}`);
   const steadfastKey = endpointKey(hmacWebhookId);
   const courierBody = JSON.stringify({ event_id: `evt_${crypto.randomUUID()}`, tracking_number: "TRK-SEC-NOT-A-REAL-PARCEL", status: "delivered" });
   const courierUrl = (provider: string, query: string) => `${BASE}/api/v1/automation/webhooks/${provider}?${query}`;
@@ -464,13 +465,13 @@ async function main() {
       return { "x-webhook-signature": hmacHex(key, `${timestamp}.${body}`), "x-webhook-timestamp": timestamp };
     };
     assert.strictEqual((await postCourier("steadfast", `wh=${hmacWebhookId}`, signed(webhookSecret), body)).status, 401, "the shared master secret");
-    const otherKey = endpointKey(otherTenantWebhookId);
+    const otherKey = endpointKey(otherTenantWebhookId, tenantB.tenant.id);
     assert.strictEqual((await postCourier("steadfast", `wh=${hmacWebhookId}`, signed(otherKey), body)).status, 401, "tenant B's endpoint secret on tenant A's endpoint");
     const before = db.getAutomationWebhookDeliveries(tenantB.tenant.id).filter((d) => d.status === "VERIFIED").length;
     const own = await postCourier("steadfast", `wh=${otherTenantWebhookId}`, signed(otherKey), body);
     assert.strictEqual(own.status, 200, "each endpoint's own secret works");
     assert.strictEqual(db.getAutomationWebhookDeliveries(tenantB.tenant.id).filter((d) => d.status === "VERIFIED").length, before + 1);
-    assert.strictEqual(WebhookGatewayService.endpointSecret({ id: hmacWebhookId, secret_reference: "SECURITY_TEST_STEADFAST_SECRET" }), steadfastKey);
+    assert.strictEqual(WebhookGatewayService.endpointSecret({ id: hmacWebhookId, secret_reference: "SECURITY_TEST_STEADFAST_SECRET", tenant_id: tenantA.tenant.id, provider: "STEADFAST" }), steadfastKey);
   });
 
   await runTest("C4: there is no predictable fallback webhook secret", () => {

@@ -116,8 +116,8 @@ async function sendJson(route: string, id: string, method: "PATCH" | "PUT", toke
 }
 
 /** The per-endpoint signing secret a sender uses (WebhookGatewayService.endpointSecret). */
-function endpointSecret(master: string, webhookId: string): string {
-  return crypto.createHmac("sha256", master).update(`commerceos:webhook-endpoint:v1:${webhookId}`).digest("hex");
+function endpointSecret(master: string, webhookId: string, tenantId: string, provider: string): string {
+  return crypto.createHmac("sha256", master).update(`commerceos:webhook-endpoint:v1:${tenantId}:${provider}:${webhookId}`).digest("hex");
 }
 
 async function main() {
@@ -691,7 +691,7 @@ ${ANSI_BOLD}[FX-18] Service tokens retired with the automation hub; webhook dupl
     };
     const body = JSON.stringify({ tracking_number: "TRK-P1-NOT-REAL", status: "in_transit" });
     const ts = Date.now().toString();
-    const sig = crypto.createHmac("sha256", endpointSecret(secret, whId)).update(`${ts}.${body}`).digest("hex");
+    const sig = crypto.createHmac("sha256", endpointSecret(secret, whId, tenantId, "STEADFAST")).update(`${ts}.${body}`).digest("hex");
     const send = () => route.POST(new Request(`${BASE}/automation/webhooks/steadfast?wh=${whId}`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-webhook-timestamp": ts, "x-webhook-signature": sig, "x-request-id": uid("rq") },
@@ -834,7 +834,7 @@ ${ANSI_BOLD}[FX-18] Service tokens retired with the automation hub; webhook dupl
     };
     const body = JSON.stringify({ tracking_number: "TRK-P1-CASE", status: "in_transit" });
     const ts = Date.now().toString();
-    const sig = crypto.createHmac("sha256", endpointSecret(secret, whId)).update(`${ts}.${body}`).digest("hex");
+    const sig = crypto.createHmac("sha256", endpointSecret(secret, whId, tenantId, "PATHAO")).update(`${ts}.${body}`).digest("hex");
     const send = (s: string) => route.POST(new Request(`${BASE}/automation/webhooks/pathao?wh=${whId}`, {
       method: "POST", headers: { "content-type": "application/json", "x-webhook-timestamp": ts, "x-webhook-signature": s }, body,
     }), { params: { provider: "pathao" } });

@@ -154,7 +154,7 @@ export class PricingOperationsService {
       reason: string;
       scheduledAt?: string;
       /** The user or agent asking; they can't approve their own request (F30). */
-      requestedBy?: string;
+      requestedBy: string;
     }
   ): PriceChangeRequest {
     const simulation = this.simulatePriceChange(tenantId, params.variantId, params.newPrice);
@@ -173,7 +173,7 @@ export class PricingOperationsService {
       margin_percent: simulation.proposed_margin_percent,
       reason: params.reason,
       scheduled_at: params.scheduledAt,
-      ...(params.requestedBy ? { requested_by: params.requestedBy } : {}),
+      requested_by: params.requestedBy,
       status,
       created_at: new Date().toISOString(),
       rollback_price: variant.price,
@@ -225,9 +225,15 @@ export class PricingOperationsService {
     }
     const request = db.getPriceChangeRequests(tenantId).find((r) => r.id === requestId);
     if (!request) throw new AppError("NOT_FOUND", `Price change request not found: ${requestId}`, 404);
-    // Four eyes (F30): whoever asked for a change that needs approval can't approve it
-    if (request.status === "PENDING_APPROVAL" && options.approvedNow === true && request.requested_by === actor) {
-      throw new ForbiddenError("You asked for this price change, so someone else has to approve it.");
+    // Four eyes (F30): whoever asked for a change that needs approval can't approve it. A request that doesn't say who
+    // asked can't be checked, so it isn't approved at all (fail closed).
+    if (request.status === "PENDING_APPROVAL" && options.approvedNow === true) {
+      if (!request.requested_by) {
+        throw new ForbiddenError("This price change doesn't record who asked for it, so it can't be approved. Ask for it again.");
+      }
+      if (request.requested_by === actor) {
+        throw new ForbiddenError("You asked for this price change, so someone else has to approve it.");
+      }
     }
     const runnable = request.status === "SCHEDULED" || (request.status === "PENDING_APPROVAL" && options.approvedNow === true);
     if (!runnable) {
