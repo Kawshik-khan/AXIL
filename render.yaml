@@ -321,5 +321,8 @@ services:
       # Its own bot from @BotFather, never production's: a bot has one webhook
       - key: TELEGRAM_ALERTS_BOT_TOKEN
         sync: false
+      # Ops alerts (O6): a staging chat, not production's
+      - key: OPS_ALERTS_CHAT_ID
+        sync: false
       # Deliberately absent: DEV_AUTH_BYPASS, AI_DEMO_MODE, COMMERCEOS_FORCE_LOCK, SEED_ADMIN_PASSWORD.
 # Background worker and cron entries are added in R1b (job queue); nothing runs out of process yet.
