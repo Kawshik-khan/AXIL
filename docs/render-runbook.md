@@ -44,6 +44,11 @@ Owner actions for production, decided "not now" on 2026-11-02: move to a paid pl
 to `/health/ready?scope=core` (Settings → Health Check Path), and move to Ohio (a new service and URL: re-register the
 Telegram webhooks, update `APP_URL` and the Meta OAuth redirect).
 
+First staging deploy (2026-11-02): build 2 min, all 7 migrations applied to the empty database, ready in 1.6 s,
+store loaded from Postgres in 430 ms. Staging has `NODE_OPTIONS=--max-old-space-size=1536` as an env var because its
+start command was set when it was created; to match the blueprint, set its Start Command in the dashboard to
+`npm run db:migrate && NODE_OPTIONS=--max-old-space-size=384 npm run start` and delete the `NODE_OPTIONS` env var.
+
 Staging runs with `AI_DEMO_MODE=1`, `CSP_ENFORCE=1` and `WORKSPACE_STEP_UP_ENFORCED_FROM` set, so it shows what
 production will do once those are switched on. For the customer-agent rehearsal, add a test Telegram bot to a staging
 workspace (Connectors page) and, to rehearse the provider kill switch with a real model, `LLM_BASE_URL` / `LLM_API_KEY` /
