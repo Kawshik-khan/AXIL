@@ -451,6 +451,39 @@ async function main() {
     for (const r of rows) assert.ok(Object.values(r.input_arguments).every((v) => v === "[redacted]"), JSON.stringify(r.input_arguments));
   });
 
+  await runTest("an order limit hands the chat to a person; no order is placed", async () => {
+    const tenant = db.findTenantById(tenantId)!;
+    const saved = tenant.settings;
+    try {
+      // The same phone already ordered in rt_chat today; one order per customer per day here
+      db.updateTenant(tenantId, { settings: { ...(saved ?? {}), customer_agent_order_limits: { per_customer_per_day: 1, per_workspace_per_day: 1000 } } } as never);
+      const convo = await inbound("limit_chat", "amar naam Rahim Uddin, 01711000001, House 12 Road 5 Mirpur 10, Dhaka. L size black tshirt nibo");
+      const pr2 = principalFor(tenantId, convo.id)!;
+      let q2 = "";
+      scripted.steps = [
+        call("search_products", () => ({ query: "black t-shirt" })),
+        call("quote_order", (m) => ({ items: [{ variant_id: (lastTool(m).results[0].variants as R[]).find((v) => v.size === "L")!.variant_id, quantity: 1 }], district: "Dhaka" })),
+        call("place_order", (m) => {
+          q2 = lastTool(m).quote_id;
+          return { quote_id: q2, customer_name: "Rahim Uddin", phone: "01711000001", address_line: "House 12 Road 5 Mirpur 10", payment_method: "COD" };
+        }),
+        say("Ei order ta confirm korben?"),
+      ];
+      await runCustomerTurn(pr2);
+      db.updateQuote(tenantId, q2, { shown_message_id: "msg_delivered_limit", customer_msg_count_at_quote: customerMessages(tenantId, pr2.conversationId).length });
+      await inbound("limit_chat", "yes");
+      const before = db.getAllOrders(tenantId).length;
+      scripted.steps = [call("place_order", () => ({ quote_id: q2, customer_name: "Rahim Uddin", phone: "01711000001", address_line: "House 12 Road 5 Mirpur 10", payment_method: "COD" }))];
+      const turn = await runCustomerTurn(pr2);
+      assert.ok(turn.guards.includes("order_limit_handoff"), turn.guards.join(","));
+      assert.strictEqual(turn.handoff, true);
+      assert.strictEqual(db.getAllOrders(tenantId).length, before, "nothing placed");
+      assert.notStrictEqual(db.findQuote(tenantId, pr2.conversationId, q2)?.status, "PLACED");
+    } finally {
+      db.updateTenant(tenantId, { settings: saved } as never);
+    }
+  });
+
   // A refused tool call the model recovered from, or a refusal that is the expected answer, must not pause the chat
   // (live eval G28, run 39468142400: place_order INVALID_ARGS, retried and placed, yet the chat went to HITL)
   // (the autonomous flag is off here, so ingress leaves mode HUMAN; an escalation is what sets automation_paused)
