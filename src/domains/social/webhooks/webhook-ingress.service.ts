@@ -12,9 +12,7 @@ import { AssignmentService } from "../assignments/assignment.service";
 import { SocialEventService } from "../events/social-event.service";
 import { BadRequestError, AuthenticationError } from "@/lib/errors";
 import { enqueueCustomerTurn } from "@/domains/ai/customer-agent/jobs";
-
-/** A signed website request is accepted once in this window (longer than the adapter's ±300 s timestamp window). */
-const WEBSITE_REPLAY_WINDOW_MS = 10 * MINUTE;
+import { WEBSITE_TIMESTAMP_HEADER } from "../channels/adapters/website-chat.adapter";
 import { CommentTriggerService } from "../comment-triggers/comment-trigger.service";
 
 export interface WebhookIngressResult {
@@ -95,7 +93,6 @@ export class WebhookIngressService {
     //    platform-level secret such as META_APP_SECRET). The only exception is the public browser widget, which by
     //    design cannot hold a secret (restricted to active WEBSITE_CHAT channels and validated/capped by its route).
     const verified: typeof targets = [];
-    let replays = 0;
     for (const target of targets) {
       const { channel } = target;
       if (options.unsignedWidget && channelType === "WEBSITE_CHAT") {
@@ -130,20 +127,17 @@ export class WebhookIngressService {
         logger.warn("social_webhook.signature_rejected", { tenant_id: channel.tenant_id, channel_id: channel.id });
         continue;
       }
-      // A signed server-to-server website request is accepted once: the same signature again within its time window is
-      // a replay (or a retry of a request that already arrived) and is ignored, even without a client_message_id
-      if (channelType === "WEBSITE_CHAT" && signature) {
-        const sigKey = crypto.createHash("sha256").update(signature).digest("hex");
-        if (!(await checkRateLimit(`website-signed:${channel.id}:${sigKey}`, 1, WEBSITE_REPLAY_WINDOW_MS)).allowed) {
-          logger.warn("social_webhook.replay_ignored", { tenant_id: channel.tenant_id, channel_id: channel.id });
-          replays++;
-          continue;
-        }
+      // A signed server-to-server website request is processed once (security review 2026-11-03). Its message id is
+      // derived from what was signed (timestamp and raw body), so a replay, however the signature is spelled, is the
+      // same message and the duplicate check below drops it inside the request's unit of work; a request that failed
+      // leaves nothing behind, so the sender's retry is processed. A sender's own client_message_id still wins.
+      if (channelType === "WEBSITE_CHAT" && signature && target.payload.client_message_id === undefined) {
+        const rawTs = headers[WEBSITE_TIMESTAMP_HEADER];
+        const ts = Array.isArray(rawTs) ? rawTs[0] : rawTs;
+        const signedId = crypto.createHash("sha256").update(`${ts ?? ""}.${rawBody}`).digest("hex").slice(0, 40);
+        target.payload = { ...target.payload, client_message_id: `web_signed_${signedId}` };
       }
       if (await withinChannelLimit(channel)) verified.push(target);
-    }
-    if (verified.length === 0 && replays > 0) {
-      return { success: false, messagesProcessed: 0, receiptsProcessed: 0 };
     }
     if (verified.length === 0) {
       throw new AuthenticationError("Webhook signature verification failed.");

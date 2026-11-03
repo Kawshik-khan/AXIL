@@ -622,7 +622,7 @@ async function main() {
     assert.strictEqual(db.getCustomerIdentities(tenantA.tenant.id, known.id).length, linkedBefore, "no identity may be linked to the known customer");
   });
 
-  await runTest("website server-to-server: a signed request is accepted once; the same request replayed is ignored", async () => {
+  await runTest("website server-to-server: a signed request is processed once; replays (any signature casing) add nothing", async () => {
     const secret = crypto.randomBytes(24).toString("hex");
     const now = new Date().toISOString();
     const channel = db.createConnectedChannel({
@@ -647,8 +647,16 @@ async function main() {
     assert.strictEqual(count(), 1);
     const replay = await send(ts);
     assert.strictEqual(replay.status, 200);
-    assert.strictEqual(((await replay.json()) as { status: string }).status, "IGNORED");
     assert.strictEqual(count(), 1, "the replay added no message");
+    // The adapter accepts the signature in any letter case; the replay is still the same message
+    const sig = hmacHex(secret, `${ts}.${body}`);
+    const upper = await POST(new Request(`${BASE}/api/v1/social/webhooks/website?channel_id=${channel.id}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-commerceos-timestamp": ts, "x-commerceos-signature": ` ${sig.toUpperCase()} ` },
+      body,
+    }));
+    assert.strictEqual(upper.status, 200);
+    assert.strictEqual(count(), 1, "a re-cased signature is the same request");
     const later = await send(String(Number(ts) + 1)); // the sender's own new request (new timestamp, new signature)
     assert.strictEqual(((await later.json()) as { status: string }).status, "MESSAGE_RECEIVED");
   });

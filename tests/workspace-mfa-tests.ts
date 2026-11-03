@@ -424,8 +424,11 @@ async function main() {
     db.createMembership({ id: `mem_${shared}_b`, tenant_id: "ten_other_workspace", user_id: shared, role: "SALES", created_at: at, updated_at: at });
     const reset = async (target: string, body: unknown, as: { userId: string; role: "OWNER" | "ADMIN" } = { userId, role: "OWNER" }) => {
       const mod = (await import("@/app/api/v1/users/[id]/mfa/reset/route")) as { POST: (r: Request, c: { params: Promise<{ id: string }> }) => Promise<Response> };
-      const token = await signSessionToken({ userId: as.userId, tenantId, role: as.role, email: "x@example.com", name: "x", sv: db.findUserById(as.userId)?.session_version ?? 1 });
-      return mod.POST(new Request(`${BASE}/users/${target}/mfa/reset`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(body) }), { params: Promise.resolve({ id: target }) });
+      const sv = db.findUserById(as.userId)?.session_version ?? 1;
+      const token = await signSessionToken({ userId: as.userId, tenantId, role: as.role, email: "x@example.com", name: "x", sv });
+      // A fresh, single-use code of the owner's own for each attempt (the reset always needs one)
+      const stepUp = await signStepUpToken(as.userId, `${WORKSPACE_STEP_UP_PREFIX}RESET_MEMBER_MFA`, sv, tenantId);
+      return mod.POST(new Request(`${BASE}/users/${target}/mfa/reset`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "x-step-up-token": stepUp }, body: JSON.stringify(body) }), { params: Promise.resolve({ id: target }) });
     };
     const code = async (res: Response) => ((await res.json()) as { error?: { code: string } }).error?.code;
     // An ADMIN can't, even with user.update
@@ -433,7 +436,9 @@ async function main() {
     assert.strictEqual((await reset(shared, { reason: "lost phone" }, { userId: admin, role: "ADMIN" })).status, 403);
     assert.strictEqual(await code(await reset(userId, { reason: "lost phone" })), "VALIDATION_ERROR", "not on yourself");
     assert.strictEqual((await reset(member, {})).status, 400, "a reason is required");
-    assert.strictEqual(await code(await reset(shared, { reason: "lost phone" })), "CONFLICT", "a member of another workspace");
+    const sharedRes = await reset(shared, { reason: "lost phone" });
+    assert.strictEqual(sharedRes.status, 409, "a member of another workspace");
+    assert.ok(!/another workspace/i.test(((await sharedRes.json()) as { error?: { message: string } }).error?.message ?? ""), "the refusal doesn't say why");
     assert.strictEqual((await reset("usr_nobody", { reason: "lost phone" })).status, 404);
     const svBefore = db.findUserById(member)?.session_version ?? 1;
     const ok = await reset(member, { reason: "lost phone" });
@@ -445,11 +450,21 @@ async function main() {
     assert.strictEqual(after?.session_version, svBefore + 1, "signed out everywhere");
     const row = auditLogs(tenantId).find((l) => l.action === "MFA_RESET_BY_OWNER" && l.resource_id === member);
     assert.strictEqual(row?.metadata.reason, "lost phone");
-    assert.strictEqual(await code(await reset(member, { reason: "again" })), "CONFLICT", "nothing left to reset");
+    assert.strictEqual((await reset(member, { reason: "short" })).status, 400, "a reason of at least 10 characters");
+    assert.strictEqual(await code(await reset(member, { reason: "phone lost again" })), "CONFLICT", "nothing left to reset");
+    // A platform operator who is a member here only: never reset from a workspace (their sessions are shared)
+    const operator = await mkUser("operator");
+    db.savePlatformMembership({ id: `pm_op_${stamp}`, user_id: operator, role: "PLATFORM_SUPPORT", mfa_enabled: false, is_active: true, created_at: at, updated_at: at } as never);
+    const opSv = db.findUserById(operator)?.session_version;
+    const opRes = await reset(operator, { reason: "lost phone today" });
+    assert.strictEqual(opRes.status, 409);
+    assert.strictEqual(((await opRes.json()) as { error?: { message: string } }).error?.message, "This member's authenticator can't be reset from here. Contact support.");
+    assert.strictEqual(db.findUserById(operator)?.session_version, opSv, "the operator is not signed out");
+    assert.strictEqual(db.findUserById(operator)?.mfa_enabled, true);
   });
 
-  await runTest("enforced: the owner reset needs the owner's own step-up for RESET_MEMBER_MFA", async () => {
-    await withEnforcement("2020-01-01", async () => {
+  await runTest("the owner reset always needs the owner's own step-up for RESET_MEMBER_MFA, enforcement date or not", async () => {
+    await withEnforcement(undefined, async () => {
       const at = new Date().toISOString();
       const id = `usr_enf_${stamp}`;
       db.createUser({ id, email: `enf-${stamp}@example.com`, name: "enf", password_hash: "x", status: "ACTIVE", created_at: at, updated_at: at } as never);

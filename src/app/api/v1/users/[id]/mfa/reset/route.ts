@@ -7,19 +7,20 @@ import { db } from "@/infrastructure/db";
 import { PERMISSIONS } from "@/lib/permissions";
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "@/lib/errors";
 import { parseOrThrow, readJson } from "@/lib/validation";
-import { requireStepUp } from "@/lib/step-up";
+import { requireStepUpAlways } from "@/lib/step-up";
 import { withStore } from "@/lib/store-unit";
 
-const Body = z.object({ reason: z.string().trim().min(3).max(300) }).strict();
+const Body = z.object({ reason: z.string().trim().min(10).max(300) }).strict(); // privileged actions: a real reason
 
 /**
  * An owner removes a team member's authenticator (lost phone, no recovery codes left): the member is signed out
  * everywhere and sets one up again (Stage 1 security review: "no admin reset").
  *
- * - Owners only, never on themselves (their own recovery codes are for that), with a reason, and with a fresh
- *   authenticator code of their own once step-up is enforced.
- * - The authenticator belongs to the account, which can be in several workspaces. An owner of this workspace must not
- *   weaken the account's protection in another one, so a member who also belongs elsewhere is refused (409).
+ * - Owners only, never on themselves (their own recovery codes are for that), with a reason, and always with a fresh
+ *   authenticator code of their own (no grace period: a stolen owner session alone can't sign every member out).
+ * - The authenticator belongs to the account, which can be in several workspaces or be a platform operator's. An owner
+ *   of this workspace must not weaken it anywhere else, so such members are refused, with one neutral message that
+ *   doesn't say why (no hint about memberships elsewhere).
  * - Never through a support session: the operator isn't the owner.
  */
 async function handlePOST(request: Request, { params: rawParams }: { params: Promise<{ id: string }> }) {
@@ -35,15 +36,16 @@ async function handlePOST(request: Request, { params: rawParams }: { params: Pro
       throw new ValidationError("You can't reset your own authenticator here. Use one of your recovery codes instead.");
     }
     if (!db.findMembership(context.tenant.id, targetUserId)) throw new NotFoundError("Team member", targetUserId);
-    const elsewhere = db.findMembershipsByUserId(targetUserId).some((m) => m.tenant_id !== context.tenant.id);
-    if (elsewhere) {
-      throw new ConflictError("This person also belongs to another workspace, so their authenticator can't be reset from here. Contact support.");
+    await requireStepUpAlways(context, "RESET_MEMBER_MFA");
+    const elsewhere =
+      db.findMembershipsByUserId(targetUserId).some((m) => m.tenant_id !== context.tenant.id) ||
+      Boolean(db.findPlatformMembershipByUserId(targetUserId));
+    if (elsewhere || !WorkspaceMfaService.isEnrolled(targetUserId)) {
+      throw new ConflictError("This member's authenticator can't be reset from here. Contact support.");
     }
-    if (!WorkspaceMfaService.isEnrolled(targetUserId)) {
-      throw new ConflictError("This member has no authenticator set up.");
-    }
-    await requireStepUp(context, "RESET_MEMBER_MFA");
 
+    const before = db.findUserById(targetUserId);
+    const codesLeftBefore = WorkspaceMfaService.recoveryCodesLeft(targetUserId);
     WorkspaceMfaService.reset(targetUserId);
     AuditService.log({
       tenantId: context.tenant.id,
@@ -51,7 +53,7 @@ async function handlePOST(request: Request, { params: rawParams }: { params: Pro
       action: "MFA_RESET_BY_OWNER",
       resourceType: "user",
       resourceId: targetUserId,
-      metadata: { reason, step_up: Boolean(context.stepUpVerified) },
+      metadata: { reason, enrolled_at: before?.mfa_enrolled_at ?? null, recovery_codes_left: codesLeftBefore },
     });
     return apiSuccess({ user_id: targetUserId, mfa_enabled: false, signed_out: true });
   } catch (err) {
