@@ -13,7 +13,7 @@ async function handlePOST(
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.DECISIONS_APPROVE);
-    requireStepUp(context, "APPROVE_DECISION"); // a fresh authenticator code (Stage 1 security review)
+    await requireStepUp(context, "APPROVE_DECISION"); // a fresh authenticator code (Stage 1 security review)
     const { id } = await Promise.resolve(params);
     const approved = globalDecisionEngineService.approveDecision(
       context.tenant.id,

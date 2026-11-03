@@ -151,6 +151,7 @@ async function main() {
     requestId: "r", traceId: "t", user: { id: user, email: "x@example.com", name: "x", status: "ACTIVE" },
     tenant: { id: tenantId, name: "t", slug: "t", currency: "BDT", timezone: "Asia/Dhaka", language: "en", status: "ACTIVE" },
     role: "OWNER", permissions: Object.values(PERMISSIONS), timestamp: new Date().toISOString(), stepUpVerified, stepUpAction,
+    stepUpJti: stepUpVerified ? `jti_${Math.random().toString(36).slice(2)}` : undefined,
   });
   const withEnforcement = async (from: string | undefined, fn: () => Promise<void> | void) => {
     const saved = process.env.WORKSPACE_STEP_UP_ENFORCED_FROM;
@@ -163,9 +164,9 @@ async function main() {
       else process.env.WORKSPACE_STEP_UP_ENFORCED_FROM = saved;
     }
   };
-  const code = (fn: () => void) => {
+  const code = async (fn: () => Promise<void> | void) => {
     try {
-      fn();
+      await fn();
       return "ALLOWED";
     } catch (err) {
       return err instanceof AppError ? err.code : String(err);
@@ -173,32 +174,56 @@ async function main() {
   };
 
   await runTest("before the enforcement date (or with none set) a missing step-up is allowed and logged", async () => {
-    await withEnforcement(undefined, () => {
+    await withEnforcement(undefined, async () => {
       assert.strictEqual(stepUpEnforced(), false);
-      assert.strictEqual(code(() => requireStepUp(ctx(false), "TEST")), "ALLOWED");
+      assert.strictEqual(await code(() => requireStepUp(ctx(false), "TEST")), "ALLOWED");
     });
-    await withEnforcement("2999-01-01", () => assert.strictEqual(code(() => requireStepUp(ctx(false), "TEST")), "ALLOWED"));
+    await withEnforcement("2999-01-01", async () => assert.strictEqual(await code(() => requireStepUp(ctx(false), "TEST")), "ALLOWED"));
   });
 
   await runTest("after it: no authenticator → MFA_ENROLLMENT_REQUIRED; enrolled without step-up → STEP_UP_REQUIRED; with → allowed", async () => {
     const other = await AuthService.registerTenantWithOwner({ workspaceName: `MFA Other ${stamp}`, name: "No MFA", email: `nomfa-${stamp}@example.com`, password, currency: "BDT" });
-    await withEnforcement("2020-01-01", () => {
-      assert.strictEqual(code(() => requireStepUp(ctx(false, other.user.id), "TEST")), "MFA_ENROLLMENT_REQUIRED");
-      assert.strictEqual(code(() => requireStepUp(ctx(false), "TEST")), "STEP_UP_REQUIRED");
-      assert.strictEqual(code(() => requireStepUp(ctx(true), "TEST")), "ALLOWED");
+    await withEnforcement("2020-01-01", async () => {
+      assert.strictEqual(await code(() => requireStepUp(ctx(false, other.user.id), "TEST")), "MFA_ENROLLMENT_REQUIRED");
+      assert.strictEqual(await code(() => requireStepUp(ctx(false), "TEST")), "STEP_UP_REQUIRED");
+      assert.strictEqual(await code(() => requireStepUp(ctx(true), "TEST")), "ALLOWED");
     });
   });
 
   await runTest("a step-up for one action doesn't confirm another, and the refusal names the action to ask for", async () => {
-    await withEnforcement("2020-01-01", () => {
-      assert.strictEqual(code(() => requireStepUp(ctx(true, userId, "APPROVE_PRICE_CHANGE"), "APPROVE_CAMPAIGN")), "STEP_UP_REQUIRED");
+    await withEnforcement("2020-01-01", async () => {
+      assert.strictEqual(await code(() => requireStepUp(ctx(true, userId, "APPROVE_PRICE_CHANGE"), "APPROVE_CAMPAIGN")), "STEP_UP_REQUIRED");
       try {
-        requireStepUp(ctx(false), "APPROVE_CAMPAIGN");
+        await requireStepUp(ctx(false), "APPROVE_CAMPAIGN");
         assert.fail("expected a refusal");
       } catch (err) {
         assert.ok(err instanceof AppError);
         assert.deepStrictEqual(err.details, { action: "APPROVE_CAMPAIGN" });
       }
+    });
+  });
+
+  await runTest("a step-up token confirms one action once: a second use is refused and asks for a new code", async () => {
+    await withEnforcement("2020-01-01", async () => {
+      const token = await signStepUpToken(userId, `${WORKSPACE_STEP_UP_PREFIX}APPROVE_CAMPAIGN`, db.findUserById(userId)?.session_version ?? 1, tenantId);
+      const mod = (await import("@/app/api/v1/growth/campaigns/[id]/approve/route")) as {
+        POST: (r: Request, c: { params: Promise<{ id: string }> }) => Promise<Response>;
+      };
+      const approve = async (id: string) =>
+        mod.POST(
+          new Request(`${BASE}/growth/campaigns/${id}/approve`, { method: "POST", headers: { authorization: `Bearer ${await session()}`, "x-step-up-token": token } }),
+          { params: Promise.resolve({ id }) }
+        );
+      assert.strictEqual((await approve("cmp_first")).status, 404, "the first use passes step-up (no such campaign)");
+      const second = await approve("cmp_second");
+      assert.strictEqual(second.status, 403, "a second item with the same code is refused");
+      const body = (await second.json()) as { error?: { code: string; message: string; details?: { action?: string } } };
+      assert.strictEqual(body.error?.code, "STEP_UP_REQUIRED");
+      assert.strictEqual(body.error?.details?.action, "APPROVE_CAMPAIGN");
+      assert.ok(/already used/.test(body.error?.message ?? ""), body.error?.message);
+      // A token without an id (issued before this change) is never accepted
+      const ctxNoJti = { ...ctx(true, userId, "APPROVE_CAMPAIGN"), stepUpJti: undefined };
+      assert.strictEqual(await code(() => requireStepUp(ctxNoJti, "APPROVE_CAMPAIGN")), "STEP_UP_REQUIRED");
     });
   });
 

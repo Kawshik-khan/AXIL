@@ -42,7 +42,7 @@ async function handlePOST(request: Request, { params: rawParams }: { params: Pro
     if (!WorkspaceMfaService.isEnrolled(targetUserId)) {
       throw new ConflictError("This member has no authenticator set up.");
     }
-    requireStepUp(context, "RESET_MEMBER_MFA");
+    await requireStepUp(context, "RESET_MEMBER_MFA");
 
     WorkspaceMfaService.reset(targetUserId);
     AuditService.log({

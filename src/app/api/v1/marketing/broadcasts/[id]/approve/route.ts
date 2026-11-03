@@ -14,7 +14,7 @@ async function handlePOST(
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.MARKETING_APPROVE);
-    requireStepUp(context, "APPROVE_BROADCAST"); // a fresh authenticator code (Stage 1 security review)
+    await requireStepUp(context, "APPROVE_BROADCAST"); // a fresh authenticator code (Stage 1 security review)
     const campaign = marketingService.approveCampaign(
       context.tenant.id,
       params.id,

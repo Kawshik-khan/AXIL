@@ -148,6 +148,7 @@ export async function extractRequestContext(request: Request): Promise<RequestCo
     if (claims?.action?.startsWith(WORKSPACE_STEP_UP_PREFIX) && claims.tenantId === context.tenant.id) {
       context.stepUpVerified = true;
       context.stepUpAction = claims.action.slice(WORKSPACE_STEP_UP_PREFIX.length);
+      context.stepUpJti = claims.jti;
     } else {
       context.stepUpVerified = false;
     }

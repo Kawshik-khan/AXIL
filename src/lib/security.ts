@@ -351,6 +351,8 @@ export interface StepUpPayload {
   verifiedAt: string;
   /** Workspace the token was issued in (workspace step-up only); the request context refuses it in any other. */
   tenantId?: string;
+  /** Unique token id: a workspace step-up token is used up by the first action it confirms. */
+  jti?: string;
 }
 
 /** Action prefix of workspace step-up tokens (FX-97 Part A); the platform console refuses them, the workspace requires it. */
@@ -368,6 +370,7 @@ export async function signStepUpToken(userId: string, action = "PRIVILEGED_ACTIO
     .setProtectedHeader({ alg: "HS256" })
     .setIssuer(TOKEN_ISSUER)
     .setAudience(TOKEN_AUDIENCE.stepUp)
+    .setJti(crypto.randomBytes(16).toString("base64url"))
     .setIssuedAt()
     .setExpirationTime("5m")
     .sign(jwtKey());
@@ -391,6 +394,7 @@ export async function verifyStepUpToken(token: string, userId?: string, sv?: num
       action: claims.action as string,
       verifiedAt: claims.verifiedAt as string,
       ...(typeof claims.tid === "string" ? { tenantId: claims.tid } : {}),
+      ...(typeof claims.jti === "string" ? { jti: claims.jti } : {}),
     };
   } catch {
     return null;

@@ -32,6 +32,8 @@ export interface RequestContext {
   /** The action that step-up token was issued for (without the "WORKSPACE:" prefix); `requireStepUp` accepts it only
    * for that action, so one code can't approve something else (Stage 1 security review). */
   stepUpAction?: string;
+  /** That token's id; `requireStepUp` uses it up, so one code confirms one action. */
+  stepUpJti?: string;
   /** Set when a platform operator is serving this request through a support session (FX-34); `user` is the operator. */
   impersonation?: {
     session_id: string;
