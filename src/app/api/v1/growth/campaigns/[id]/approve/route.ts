@@ -13,7 +13,7 @@ async function handlePOST(
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.MARKETING_APPROVE);
-    requireStepUp(context, "APPROVE_CAMPAIGN"); // a fresh authenticator code (Stage 1 security review)
+    await requireStepUp(context, "APPROVE_CAMPAIGN"); // a fresh authenticator code (Stage 1 security review)
     const { id } = await params;
     // The approver is always the signed-in user; a body field never names someone else (FX-10 step 3).
     const approvedBy = context.user.id;

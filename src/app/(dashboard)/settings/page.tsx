@@ -14,6 +14,7 @@ import { NotificationsPanel } from "@/components/settings/NotificationsPanel";
 import { ProductCardsPanel } from "@/components/settings/ProductCardsPanel";
 import { AuthenticatorPanel } from "@/components/security/AuthenticatorPanel";
 import dashStyles from "../dashboard.module.css";
+import { fetchWithStepUp } from "@/lib/step-up-client";
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<"workspace" | "users" | "notifications" | "product-cards" | "security">("workspace");
@@ -42,6 +43,10 @@ export default function SettingsPage() {
   const [inviteRole, setInviteRole] = useState("SALES");
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [isInviting, setIsInviting] = useState(false);
+  const [resetTarget, setResetTarget] = useState<{ id: string; name: string } | null>(null);
+  const [resetReason, setResetReason] = useState("");
+  const [resetBusy, setResetBusy] = useState(false);
+  const [resetError, setResetError] = useState<string | null>(null);
 
   useEffect(() => {
     if (typeof window !== "undefined" && window.location.hash) {
@@ -180,6 +185,33 @@ export default function SettingsPage() {
       loadAllData();
     } catch {
       alert("Network error.");
+    }
+  };
+
+  const handleResetMfa = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!resetTarget) return;
+    setResetBusy(true);
+    setResetError(null);
+    try {
+      // Asks for the owner's own authenticator code first when step-up is enforced
+      const res = await fetchWithStepUp(`/api/v1/users/${resetTarget.id}/mfa/reset`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: resetReason.trim() }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setResetError(err.error?.message || "The authenticator couldn't be reset.");
+        return;
+      }
+      setResetTarget(null);
+      setResetReason("");
+      loadAllData();
+    } catch {
+      setResetError("Couldn't reach the server. Check your connection and try again.");
+    } finally {
+      setResetBusy(false);
     }
   };
 
@@ -486,6 +518,18 @@ export default function SettingsPage() {
                                   Suspend
                                 </button>
                               )}
+                              {session?.role === "OWNER" && u.mfa_enabled && (
+                                <button
+                                  onClick={() => {
+                                    setResetTarget({ id: u.id, name: u.name });
+                                    setResetReason("");
+                                    setResetError(null);
+                                  }}
+                                  style={{ color: "var(--color-text-secondary)", fontSize: "11px", fontWeight: 500 }}
+                                >
+                                  Reset authenticator
+                                </button>
+                              )}
                             </div>
                           )}
                         </td>
@@ -623,6 +667,38 @@ export default function SettingsPage() {
           )}
         </div>
       )}
+
+      {/* Reset a member's authenticator (owners only) */}
+      <Modal isOpen={resetTarget !== null} onClose={() => setResetTarget(null)} title="Reset authenticator">
+        <form onSubmit={handleResetMfa} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+          <p style={{ fontSize: "13px", color: "var(--color-text-secondary)", margin: 0 }}>
+            {resetTarget?.name} will be signed out everywhere and asked to set up their authenticator again. Do this only
+            after confirming who they are, for example by phone.
+          </p>
+          {resetError && (
+            <div role="alert" style={{ padding: "8px 12px", backgroundColor: "var(--color-danger-bg)", color: "var(--color-danger)", borderRadius: "var(--radius-control)", fontSize: "12px" }}>
+              {resetError}
+            </div>
+          )}
+          <Input
+            id="mfa-reset-reason"
+            label="Reason (kept in the audit log)"
+            placeholder="Lost phone, confirmed by call"
+            value={resetReason}
+            onChange={(e) => setResetReason(e.target.value)}
+            maxLength={300}
+            required
+          />
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+            <Button type="button" variant="ghost" onClick={() => setResetTarget(null)}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="danger" isLoading={resetBusy} disabled={resetReason.trim().length < 3}>
+              Reset authenticator
+            </Button>
+          </div>
+        </form>
+      </Modal>
 
       {/* Invite Member Modal */}
       <Modal isOpen={isInviteOpen} onClose={() => setIsInviteOpen(false)} title="Invite Team Member">

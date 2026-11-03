@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import { db } from "@/infrastructure/db";
 import { ChannelType, ConnectedChannel, NormalizedIncomingMessage } from "@/types/social";
 import { ChannelService, PROVIDER_ROUTED_TYPES } from "../channels/channel.service";
@@ -11,6 +12,7 @@ import { AssignmentService } from "../assignments/assignment.service";
 import { SocialEventService } from "../events/social-event.service";
 import { BadRequestError, AuthenticationError } from "@/lib/errors";
 import { enqueueCustomerTurn } from "@/domains/ai/customer-agent/jobs";
+import { WEBSITE_TIMESTAMP_HEADER } from "../channels/adapters/website-chat.adapter";
 import { CommentTriggerService } from "../comment-triggers/comment-trigger.service";
 
 export interface WebhookIngressResult {
@@ -124,6 +126,16 @@ export class WebhookIngressService {
       if (!ok) {
         logger.warn("social_webhook.signature_rejected", { tenant_id: channel.tenant_id, channel_id: channel.id });
         continue;
+      }
+      // A signed server-to-server website request is processed once (security review 2026-11-03). Its message id is
+      // derived from what was signed (timestamp and raw body), so a replay, however the signature is spelled, is the
+      // same message and the duplicate check below drops it inside the request's unit of work; a request that failed
+      // leaves nothing behind, so the sender's retry is processed. A sender's own client_message_id still wins.
+      if (channelType === "WEBSITE_CHAT" && signature && target.payload.client_message_id === undefined) {
+        const rawTs = headers[WEBSITE_TIMESTAMP_HEADER];
+        const ts = Array.isArray(rawTs) ? rawTs[0] : rawTs;
+        const signedId = crypto.createHash("sha256").update(`${ts ?? ""}.${rawBody}`).digest("hex").slice(0, 40);
+        target.payload = { ...target.payload, client_message_id: `web_signed_${signedId}` };
       }
       if (await withinChannelLimit(channel)) verified.push(target);
     }

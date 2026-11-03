@@ -7513,6 +7513,13 @@ export class CommerceDatabase {
     return this.data.quotes.filter((q) => q.tenant_id === tenantId && q.conversation_id === conversationId);
   }
 
+  /** Quotes of one workspace that are placed or being placed since `sinceIso` (customer-agent order limits). */
+  public getRecentPlacedQuotes(tenantId: string, sinceIso: string): CustomerQuote[] {
+    return this.data.quotes.filter(
+      (q) => q.tenant_id === tenantId && (q.status === "PLACED" || q.status === "PLACING") && q.updated_at >= sinceIso
+    );
+  }
+
   public createQuote(quote: CustomerQuote): CustomerQuote {
     this.data.quotes.push(quote);
     this.persist(["quotes"]);

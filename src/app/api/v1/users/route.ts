@@ -40,6 +40,8 @@ async function handleGET(request: Request) {
           role: m.role,
           last_login_at: user.last_login_at,
           joined_at: m.created_at,
+          // Whether an authenticator is set up (a yes/no only); owners can reset it from the team list
+          mfa_enabled: user.mfa_enabled === true && Boolean(user.mfa_secret_encrypted),
         };
       })
       .filter(Boolean);

@@ -597,6 +597,12 @@ export async function runCustomerTurn(pr: CustomerAgentPrincipal, opts: { budget
         messages.push({ role: "tool", name: tc.name, tool_call_id: tc.id, content: JSON.stringify(outcome.result) });
       }
 
+      // An order limit means a person takes over, whatever the model does next (order limits, Stage 2 follow-up)
+      if (!handoff && toolResults.slice(-res.tool_calls.length).some((r) => r?.error === "ORDER_LIMIT_REACHED")) {
+        guards.push("order_limit_handoff");
+        await handOff("other", "Order limit reached for this customer or workspace today; the agent placed no order.");
+      }
+
       // ---- replies the server writes itself, so the turn ends without another model call (its text would only be
       // replaced by the same layout, or restate a fixed acknowledgement). Each still goes through the output pipeline.
       const step = toolCalls.slice(-res.tool_calls.length);

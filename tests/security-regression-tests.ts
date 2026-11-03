@@ -622,6 +622,45 @@ async function main() {
     assert.strictEqual(db.getCustomerIdentities(tenantA.tenant.id, known.id).length, linkedBefore, "no identity may be linked to the known customer");
   });
 
+  await runTest("website server-to-server: a signed request is processed once; replays (any signature casing) add nothing", async () => {
+    const secret = crypto.randomBytes(24).toString("hex");
+    const now = new Date().toISOString();
+    const channel = db.createConnectedChannel({
+      id: `chn_sec_web_${crypto.randomUUID().slice(0, 8)}`, tenant_id: tenantA.tenant.id, type: "WEBSITE_CHAT", name: "Signed site",
+      status: "ACTIVE", provider_account_id: `web_signed_${crypto.randomUUID().slice(0, 8)}`,
+      credentials_encrypted: encryptCredential({ webhookSecret: secret }), configuration: { auto_reply_enabled: false }, created_at: now, updated_at: now,
+    });
+    const { POST } = await import("@/app/api/v1/social/webhooks/website/route");
+    // No client_message_id: the replay check is what stops the duplicate
+    const body = JSON.stringify({ visitor_id: `v_${crypto.randomUUID().slice(0, 8)}`, text: `replay probe ${crypto.randomUUID()}` });
+    const send = (ts: string) =>
+      POST(new Request(`${BASE}/api/v1/social/webhooks/website?channel_id=${channel.id}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-commerceos-timestamp": ts, "x-commerceos-signature": hmacHex(secret, `${ts}.${body}`) },
+        body,
+      }));
+    const count = () => messageTexts(tenantA.tenant.id).filter((t) => t === JSON.parse(body).text).length;
+    const ts = Math.floor(Date.now() / 1000).toString();
+    const first = await send(ts);
+    assert.strictEqual(first.status, 200);
+    assert.strictEqual(((await first.json()) as { status: string }).status, "MESSAGE_RECEIVED");
+    assert.strictEqual(count(), 1);
+    const replay = await send(ts);
+    assert.strictEqual(replay.status, 200);
+    assert.strictEqual(count(), 1, "the replay added no message");
+    // The adapter accepts the signature in any letter case; the replay is still the same message
+    const sig = hmacHex(secret, `${ts}.${body}`);
+    const upper = await POST(new Request(`${BASE}/api/v1/social/webhooks/website?channel_id=${channel.id}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-commerceos-timestamp": ts, "x-commerceos-signature": ` ${sig.toUpperCase()} ` },
+      body,
+    }));
+    assert.strictEqual(upper.status, 200);
+    assert.strictEqual(count(), 1, "a re-cased signature is the same request");
+    const later = await send(String(Number(ts) + 1)); // the sender's own new request (new timestamp, new signature)
+    assert.strictEqual(((await later.json()) as { status: string }).status, "MESSAGE_RECEIVED");
+  });
+
   await runTest("H5: the widget session endpoint never returns another visitor's IP address or user agent", async () => {
     const { POST } = await import("@/app/api/v1/social/widget/session/route");
     const anonymousId = `anon_${crypto.randomUUID()}`;

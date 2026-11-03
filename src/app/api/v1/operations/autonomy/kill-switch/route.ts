@@ -17,7 +17,7 @@ async function handlePOST(request: Request) {
     let budget;
     if (action === "CLEAR") {
       // Stopping is never slowed down; clearing the stop needs a fresh authenticator code (Stage 1 security review)
-      requireStepUp(context, "CLEAR_AUTONOMY_KILL_SWITCH");
+      await requireStepUp(context, "CLEAR_AUTONOMY_KILL_SWITCH");
       budget = operationalBudgetService.clearKillSwitch(tenantId);
     } else {
       budget = operationalBudgetService.triggerKillSwitch(

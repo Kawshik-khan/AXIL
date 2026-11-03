@@ -17,7 +17,7 @@ async function handlePOST(request: Request) {
     const body = await request.json();
     const validated = KillSwitchSchema.parse(body);
     // Stopping is never slowed down; resuming sends needs a fresh authenticator code (Stage 1 security review)
-    if (!validated.active) requireStepUp(context, "RESUME_BROADCASTS");
+    if (!validated.active) await requireStepUp(context, "RESUME_BROADCASTS");
 
     const result = marketingService.toggleKillSwitch(context.tenant.id, validated.active);
     return apiSuccess(result);
