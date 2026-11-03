@@ -421,7 +421,9 @@ async function main() {
     };
     const member = await mkUser("member");
     const shared = await mkUser("shared");
-    db.createMembership({ id: `mem_${shared}_b`, tenant_id: "ten_other_workspace", user_id: shared, role: "SALES", created_at: at, updated_at: at });
+    // A real second workspace: Postgres refuses a membership in one that doesn't exist (tenant foreign keys)
+    const otherShop = await AuthService.registerTenantWithOwner({ workspaceName: `MFA Elsewhere ${stamp}`, name: "Other Owner", email: `elsewhere-${stamp}@example.com`, password, currency: "BDT" });
+    db.createMembership({ id: `mem_${shared}_b`, tenant_id: otherShop.tenant.id, user_id: shared, role: "SALES", created_at: at, updated_at: at });
     const reset = async (target: string, body: unknown, as: { userId: string; role: "OWNER" | "ADMIN" } = { userId, role: "OWNER" }) => {
       const mod = (await import("@/app/api/v1/users/[id]/mfa/reset/route")) as { POST: (r: Request, c: { params: Promise<{ id: string }> }) => Promise<Response> };
       const sv = db.findUserById(as.userId)?.session_version ?? 1;
