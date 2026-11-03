@@ -4,6 +4,7 @@
  * never stand in for each other; enforcement starts on WORKSPACE_STEP_UP_ENFORCED_FROM.
  */
 import assert from "assert";
+import crypto from "crypto";
 import { db } from "@/infrastructure/db";
 import { AuthService } from "@/domains/auth/service";
 import { WorkspaceMfaService } from "@/domains/auth/workspace-mfa.service";
@@ -340,6 +341,106 @@ async function main() {
       globalThis.fetch = realFetch;
       registerStepUpPrompt(null);
     }
+  });
+
+  // ---- MFA hardening (Stage 1 security review follow-ups) ----
+  const auditLogs = (t: string) => db.getAuditLogsByTenant(t, 1000).logs;
+  await runTest("recovery codes are stored as keyed digests; a code stored the old (unkeyed) way still works once", async () => {
+    const hashes = db.findUserById(userId)?.mfa_recovery_hashes ?? [];
+    assert.ok(hashes.length > 0 && hashes.every((h) => h.startsWith("h1:")), "new codes are keyed");
+    const legacyCode = "ABCDE-12345";
+    const legacy = crypto.createHash("sha256").update("ABCDE12345").digest("hex");
+    db.updateUser(userId, { mfa_recovery_hashes: [...hashes, legacy] });
+    assert.strictEqual(WorkspaceMfaService.verifyCodeMethod(userId, legacyCode), "RECOVERY_CODE");
+    assert.strictEqual(WorkspaceMfaService.verifyCodeMethod(userId, legacyCode), null, "once only");
+    assert.strictEqual(db.findUserById(userId)?.mfa_recovery_hashes?.length, hashes.length);
+  });
+
+  await runTest("step-up attempts are in the workspace audit log: a failure is kept, a recovery-code grant is marked", async () => {
+    const before = auditLogs(tenantId).length;
+    const bad = await call("auth/step-up", "POST", { code: "000000", action: "APPROVE_BROADCAST" });
+    assert.strictEqual(bad.status, 400);
+    const failedRow = auditLogs(tenantId).find((l) => l.action === "STEP_UP_FAILED");
+    assert.ok(failedRow, "the failed attempt is kept although the request failed");
+    assert.strictEqual(failedRow.metadata.for_action, "APPROVE_BROADCAST");
+    const sv = db.findUserById(userId)?.mfa_recovery_hashes ?? [];
+    assert.ok(sv.length > 0);
+    const ok = await call("auth/step-up", "POST", { code: recovery[5], action: "APPROVE_BROADCAST" });
+    assert.strictEqual(ok.status, 200);
+    const granted = auditLogs(tenantId).find((l) => l.action === "STEP_UP_GRANTED_WITH_RECOVERY_CODE");
+    assert.ok(granted);
+    assert.strictEqual(typeof granted.metadata.recovery_codes_left, "number");
+    assert.ok(auditLogs(tenantId).length >= before + 2);
+  });
+
+  await runTest("turning the authenticator on is in the audit log", async () => {
+    const other = await AuthService.registerTenantWithOwner({ workspaceName: `MFA Audit ${stamp}`, name: "Audit Owner", email: `mfa-audit-${stamp}@example.com`, password, currency: "BDT" });
+    const s = await signSessionToken({ userId: other.user.id, tenantId: other.tenant.id, role: "OWNER", email: other.user.email, name: other.user.name, sv: 1 });
+    const post = async (path: string, body: unknown) => {
+      const mod = (await import(`@/app/api/v1/${path}/route`)) as { POST: Handler };
+      return mod.POST(new Request(`${BASE}/${path}`, { method: "POST", headers: { authorization: `Bearer ${s}`, "content-type": "application/json" }, body: JSON.stringify(body) }));
+    };
+    const secretB = String((await json(await post("auth/mfa/enroll", { password }))).data?.secret);
+    assert.strictEqual((await post("auth/mfa/confirm", { code: generateTotp(secretB) })).status, 200);
+    assert.ok(auditLogs(other.tenant.id).some((l) => l.action === "MFA_ENABLED" && l.resource_id === other.user.id));
+  });
+
+  await runTest("owner reset of a member's authenticator: owners only, not themselves, not a member of another workspace; signs them out", async () => {
+    const at = new Date().toISOString();
+    const mkUser = async (label: string) => {
+      const id = `usr_${label}_${stamp}`;
+      db.createUser({ id, email: `${label}-${stamp}@example.com`, name: label, password_hash: "x", status: "ACTIVE", created_at: at, updated_at: at } as never);
+      db.createMembership({ id: `mem_${id}`, tenant_id: tenantId, user_id: id, role: "ADMIN", created_at: at, updated_at: at });
+      db.updateUser(id, { mfa_enabled: true, mfa_secret_encrypted: db.findUserById(userId)?.mfa_secret_encrypted, mfa_recovery_hashes: ["h1:x"] });
+      return id;
+    };
+    const member = await mkUser("member");
+    const shared = await mkUser("shared");
+    db.createMembership({ id: `mem_${shared}_b`, tenant_id: "ten_other_workspace", user_id: shared, role: "SALES", created_at: at, updated_at: at });
+    const reset = async (target: string, body: unknown, as: { userId: string; role: "OWNER" | "ADMIN" } = { userId, role: "OWNER" }) => {
+      const mod = (await import("@/app/api/v1/users/[id]/mfa/reset/route")) as { POST: (r: Request, c: { params: Promise<{ id: string }> }) => Promise<Response> };
+      const token = await signSessionToken({ userId: as.userId, tenantId, role: as.role, email: "x@example.com", name: "x", sv: db.findUserById(as.userId)?.session_version ?? 1 });
+      return mod.POST(new Request(`${BASE}/users/${target}/mfa/reset`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(body) }), { params: Promise.resolve({ id: target }) });
+    };
+    const code = async (res: Response) => ((await res.json()) as { error?: { code: string } }).error?.code;
+    // An ADMIN can't, even with user.update
+    const admin = member;
+    assert.strictEqual((await reset(shared, { reason: "lost phone" }, { userId: admin, role: "ADMIN" })).status, 403);
+    assert.strictEqual(await code(await reset(userId, { reason: "lost phone" })), "VALIDATION_ERROR", "not on yourself");
+    assert.strictEqual((await reset(member, {})).status, 400, "a reason is required");
+    assert.strictEqual(await code(await reset(shared, { reason: "lost phone" })), "CONFLICT", "a member of another workspace");
+    assert.strictEqual((await reset("usr_nobody", { reason: "lost phone" })).status, 404);
+    const svBefore = db.findUserById(member)?.session_version ?? 1;
+    const ok = await reset(member, { reason: "lost phone" });
+    assert.strictEqual(ok.status, 200);
+    const after = db.findUserById(member);
+    assert.strictEqual(after?.mfa_enabled, false);
+    assert.strictEqual(after?.mfa_secret_encrypted, undefined);
+    assert.deepStrictEqual(after?.mfa_recovery_hashes, []);
+    assert.strictEqual(after?.session_version, svBefore + 1, "signed out everywhere");
+    const row = auditLogs(tenantId).find((l) => l.action === "MFA_RESET_BY_OWNER" && l.resource_id === member);
+    assert.strictEqual(row?.metadata.reason, "lost phone");
+    assert.strictEqual(await code(await reset(member, { reason: "again" })), "CONFLICT", "nothing left to reset");
+  });
+
+  await runTest("enforced: the owner reset needs the owner's own step-up for RESET_MEMBER_MFA", async () => {
+    await withEnforcement("2020-01-01", async () => {
+      const at = new Date().toISOString();
+      const id = `usr_enf_${stamp}`;
+      db.createUser({ id, email: `enf-${stamp}@example.com`, name: "enf", password_hash: "x", status: "ACTIVE", created_at: at, updated_at: at } as never);
+      db.createMembership({ id: `mem_${id}`, tenant_id: tenantId, user_id: id, role: "SALES", created_at: at, updated_at: at });
+      db.updateUser(id, { mfa_enabled: true, mfa_secret_encrypted: db.findUserById(userId)?.mfa_secret_encrypted });
+      const mod = (await import("@/app/api/v1/users/[id]/mfa/reset/route")) as { POST: (r: Request, c: { params: Promise<{ id: string }> }) => Promise<Response> };
+      const send = async (headers: Record<string, string> = {}) =>
+        mod.POST(new Request(`${BASE}/users/${id}/mfa/reset`, { method: "POST", headers: { authorization: `Bearer ${await session()}`, "content-type": "application/json", ...headers }, body: JSON.stringify({ reason: "lost phone" }) }), { params: Promise.resolve({ id }) });
+      const refused = await send();
+      assert.strictEqual(refused.status, 403);
+      assert.strictEqual(((await refused.json()) as { error?: { details?: { action?: string } } }).error?.details?.action, "RESET_MEMBER_MFA");
+      assert.strictEqual(db.findUserById(id)?.mfa_enabled, true, "nothing changed");
+      const token = await signStepUpToken(userId, `${WORKSPACE_STEP_UP_PREFIX}RESET_MEMBER_MFA`, db.findUserById(userId)?.session_version ?? 1, tenantId);
+      assert.strictEqual((await send({ "x-step-up-token": token })).status, 200);
+      assert.strictEqual(db.findUserById(id)?.mfa_enabled, false);
+    });
   });
 
   console.log(`\n  Tests Passed: ${passed} | Tests Failed: ${failed}\n`);

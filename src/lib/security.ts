@@ -81,6 +81,16 @@ function encryptionKey(): Buffer {
   return encryptionKeyCache;
 }
 
+/**
+ * A keyed digest (HMAC-SHA256, hex) for values that are stored only to be compared later, such as MFA recovery codes.
+ * The key comes from CREDENTIALS_ENCRYPTION_KEY with a per-purpose label, so a copy of the database alone can't be
+ * brute-forced offline the way a plain SHA-256 of a short code can.
+ */
+export function keyedDigest(purpose: string, value: string): string {
+  const key = crypto.createHmac("sha256", encryptionKey()).update(`commerceos:keyed-digest:${purpose}`).digest();
+  return crypto.createHmac("sha256", key).update(value).digest("hex");
+}
+
 async function verifyToken(token: string, audience: string) {
   const { payload } = await jwtVerify(token, jwtKey(), {
     algorithms: ["HS256"],

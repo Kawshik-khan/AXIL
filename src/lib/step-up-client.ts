@@ -63,4 +63,5 @@ export const STEP_UP_ACTION_LABELS: Record<string, string> = {
   CLEAR_AUTONOMY_KILL_SWITCH: "turn automatic operations back on",
   RUN_REPLENISHMENT: "run replenishment (it can send a purchase order)",
   CUSTOMER_ERASE: "erase this customer's data",
+  RESET_MEMBER_MFA: "reset this member's authenticator",
 };
