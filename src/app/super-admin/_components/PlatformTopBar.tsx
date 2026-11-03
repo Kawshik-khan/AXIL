@@ -16,6 +16,9 @@ export interface PlatformTopBarProps {
   onSignOutEverywhere: () => void;
   /** Pending approval requests from the approvals API; null while unknown or not permitted. */
   pendingApprovals: number | null;
+  /** The operator has an authenticator set up; when false the menu offers setup. */
+  mfaEnrolled: boolean;
+  onSetUpAuthenticator: () => void;
 }
 
 function initialsOf(text: string): string {
@@ -32,6 +35,8 @@ export const PlatformTopBar: React.FC<PlatformTopBarProps> = ({
   onSignOut,
   onSignOutEverywhere,
   pendingApprovals,
+  mfaEnrolled,
+  onSetUpAuthenticator,
 }) => {
   const { session, stepUp } = usePlatformSession();
   const { theme, toggle: toggleTheme } = useConsoleTheme();
@@ -128,6 +133,24 @@ export const PlatformTopBar: React.FC<PlatformTopBarProps> = ({
                 {session.mfaVerified ? <ShieldCheck size={16} /> : <ShieldAlert size={16} />}
                 <span>{session.mfaVerified ? "Signed in with MFA" : "Signed in without MFA"}</span>
               </div>
+              {mfaEnrolled ? (
+                <div className={styles.dropdownItem} role="presentation">
+                  <ShieldCheck size={16} />
+                  <span>Authenticator is set up</span>
+                </div>
+              ) : (
+                <button
+                  className={styles.dropdownItem}
+                  onClick={() => {
+                    setOpen(false);
+                    onSetUpAuthenticator();
+                  }}
+                  role="menuitem"
+                >
+                  <ShieldAlert size={16} />
+                  <span>Set up authenticator</span>
+                </button>
+              )}
               <div className={styles.dropdownItem} role="presentation">
                 <KeyRound size={16} />
                 <span>Role: {humanize(session.role)}</span>
