@@ -22,6 +22,8 @@ import consoleStyles from "../super-admin.module.css";
 import { ConsoleThemeProvider } from "../_lib/console-theme";
 import { PlatformCommandPalette } from "../_components/PlatformCommandPalette";
 import { ConsoleBanners } from "../_components/ConsoleBanners";
+import { AuthenticatorSetupDialog } from "../_components/AuthenticatorSetupDialog";
+import { Button } from "@/components/ui/Button/Button";
 import { usePendingApprovals } from "../_lib/use-pending-approvals";
 
 type LoadState =
@@ -104,6 +106,9 @@ function ConsoleLoader({ children }: { children: React.ReactNode }) {
 
 function ConsoleFrame({ session, children }: { session: PlatformSession; children: React.ReactNode }) {
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [authenticatorOpen, setAuthenticatorOpen] = useState(false);
+  // From the session; turned on locally once setup succeeds in this tab
+  const [mfaEnrolled, setMfaEnrolled] = useState(session.mfaEnrolled);
   const pendingApprovals = usePendingApprovals(session.permissions.includes(PLATFORM_PERMISSIONS.PLATFORM_READ));
 
   useEffect(() => {
@@ -144,13 +149,31 @@ function ConsoleFrame({ session, children }: { session: PlatformSession; childre
           onSignOut={signOut}
           onSignOutEverywhere={signOutEverywhere}
           pendingApprovals={pendingApprovals}
+          mfaEnrolled={mfaEnrolled}
+          onSetUpAuthenticator={() => setAuthenticatorOpen(true)}
         />
         <main className={shell.mainContent}>
+          {!mfaEnrolled && (
+            <div className={`${consoleStyles.banner} ${consoleStyles.bannerWarning}`} role="status">
+              <span>
+                Your account has no authenticator. Anyone with your password can sign in, and high-risk actions will ask
+                you to set one up first.
+              </span>
+              <Button size="sm" onClick={() => setAuthenticatorOpen(true)}>
+                Set up authenticator
+              </Button>
+            </div>
+          )}
           <ConsoleBanners permissions={session.permissions} />
           {children}
         </main>
       </div>
       <PlatformCommandPalette isOpen={paletteOpen} onClose={() => setPaletteOpen(false)} permissions={session.permissions} />
+      <AuthenticatorSetupDialog
+        open={authenticatorOpen}
+        onClose={() => setAuthenticatorOpen(false)}
+        onEnrolled={() => setMfaEnrolled(true)}
+      />
     </div>
   );
 }

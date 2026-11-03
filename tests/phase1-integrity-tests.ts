@@ -529,6 +529,25 @@ async function main() {
     assert.strictEqual((await postPlatform("step-up", { code: nextCode }, cookie)).status, 400, "replayed code refused");
   });
 
+  await runTest("the platform session says whether the operator has an authenticator (console setup prompt)", async () => {
+    const op = await newOperator("Operator-Status-Pass-6654!");
+    const cookie = cookieFrom(await postPlatform("login", { email: op.email, password: "Operator-Status-Pass-6654!" }));
+    assert.ok(cookie);
+    const sessionRoute = (await import("@/app/api/v1/platform/auth/session/route")) as { GET: (r: Request) => Promise<Response> };
+    const enrolled = async () => {
+      const res = await sessionRoute.GET(new Request(`${BASE}/platform/auth/session`, { headers: { cookie: cookie! } }));
+      assert.strictEqual(res.status, 200);
+      return ((await res.json()) as { data: { mfaEnrolled: unknown } }).data.mfaEnrolled;
+    };
+    assert.strictEqual(await enrolled(), false);
+    const enroll = await postPlatform("mfa/enroll", { password: "Operator-Status-Pass-6654!" }, cookie);
+    const { secret } = ((await enroll.json()) as { data: { secret: string } }).data;
+    assert.strictEqual(await enrolled(), false, "a started but unconfirmed setup is not enrolled");
+    assert.strictEqual((await postPlatform("mfa/confirm", { code: generateTotp(secret) }, cookie)).status, 200);
+    assert.strictEqual(await enrolled(), true);
+    assert.strictEqual((await postPlatform("mfa/enroll", { password: "Operator-Status-Pass-6654!" }, cookie)).status, 409, "no second setup over an active one");
+  });
+
   await runTest("an operator with MFA needs a TOTP code to sign in; only then is the session MFA-verified", async () => {
     const op = await newOperator("Operator-Login-Pass-4432!");
     const first = await postPlatform("login", { email: op.email, password: "Operator-Login-Pass-4432!" });

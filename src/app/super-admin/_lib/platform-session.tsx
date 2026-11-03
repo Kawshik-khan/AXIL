@@ -15,6 +15,8 @@ export interface PlatformSession {
   role: string;
   permissions: string[];
   mfaVerified: boolean;
+  /** An authenticator is set up for this operator (sign-in and step-up ask for its codes). */
+  mfaEnrolled: boolean;
   stepUpVerified: boolean;
   scope: string;
 }
@@ -96,6 +98,7 @@ export function parsePlatformSession(data: unknown): PlatformSession | null {
     role: d.role,
     permissions: d.permissions.filter((p): p is string => typeof p === "string"),
     mfaVerified: d.mfaVerified === true,
+    mfaEnrolled: d.mfaEnrolled === true,
     stepUpVerified: d.stepUpVerified === true,
     scope: typeof d.scope === "string" ? d.scope : "",
   };
