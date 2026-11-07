@@ -29,6 +29,10 @@ export interface NotificationSettingsRecord {
   id: string;
   tenant_id: string;
   alerts: NotificationAlerts;
+  /** Optional workspace-configured alerts bot token (encrypted with CREDENTIALS_ENCRYPTION_KEY). */
+  bot_token_encrypted?: string;
+  /** Verified @username of the workspace-configured alerts bot. */
+  bot_username?: string;
   /** The Telegram chat the alerts go to (a person or a group), linked by pressing Start on the alerts bot. */
   telegram?: {
     chat_id: string;

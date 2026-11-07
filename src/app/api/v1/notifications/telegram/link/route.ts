@@ -14,4 +14,16 @@ async function handlePOST(request: Request) {
   }
 }
 
+/** Polls Telegram getUpdates for a pending `/start <code>` when a webhook cannot reach this server (e.g. localhost). */
+async function handlePUT(request: Request) {
+  try {
+    const context = await extractRequestContext(request);
+    await enforceRateLimit(`notifications:link-poll:${context.tenant.id}`, 30, MINUTE);
+    return apiSuccess(await NotificationService.pollPendingLink(context));
+  } catch (err) {
+    return apiError(err);
+  }
+}
+
 export const POST = withStore("POST", handlePOST);
+export const PUT = withStore("PUT", handlePUT);

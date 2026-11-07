@@ -18,6 +18,7 @@ import {
 import { BentoGrid } from "@/components/bento/BentoGrid";
 import { BentoCard } from "@/components/bento/BentoCard";
 import { Button } from "@/components/ui/Button/Button";
+import { Input } from "@/components/ui/Input/Input";
 import { Modal } from "@/components/ui/Modal/Modal";
 import { Switch } from "@/components/ui/Switch/Switch";
 import { ErrorState, LoadingSkeleton, PermissionDenied } from "@/components/ui/States/States";
@@ -104,9 +105,11 @@ export function NotificationsPanel() {
   const [saving, setSaving] = useState<AlertKey | null>(null);
   const [waiting, setWaiting] = useState<{ url: string; expiresAt: string } | null>(null);
   const [countdown, setCountdown] = useState(0);
-  const [action, setAction] = useState<"connect" | "group" | "test" | "disconnect" | null>(null);
+  const [action, setAction] = useState<"connect" | "group" | "test" | "disconnect" | "bot" | null>(null);
   const [notice, setNotice] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
+  const [botTokenInput, setBotTokenInput] = useState("");
+  const [editingBot, setEditingBot] = useState(false);
   const wasConnected = useRef(false);
 
   const load = useCallback(async (quiet = false) => {
@@ -128,11 +131,15 @@ export function NotificationsPanel() {
     void load();
   }, [load]);
 
-  // While waiting for Start in Telegram: check every few seconds, and count down the link's lifetime
+  // While waiting for Start in Telegram: check every few seconds (polling getUpdates first for localhost), and count down the link's lifetime
   useEffect(() => {
     if (!waiting) return;
     setCountdown(secondsLeft(waiting.expiresAt));
-    const poll = setInterval(() => void load(true), POLL_MS);
+    const poll = setInterval(() => {
+      void call("/api/v1/notifications/telegram/link", { method: "PUT" })
+        .catch(() => null)
+        .finally(() => void load(true));
+    }, POLL_MS);
     const tick = setInterval(() => {
       const left = secondsLeft(waiting.expiresAt);
       setCountdown(left);
@@ -146,6 +153,31 @@ export function NotificationsPanel() {
       clearInterval(tick);
     };
   }, [waiting, load]);
+
+  const saveBotToken = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const token = botTokenInput.trim();
+    if (!token) return;
+    setAction("bot");
+    setNotice(null);
+    try {
+      const data = await call<{ bot: { configured: boolean; username: string | null } }>("/api/v1/notifications/settings", {
+        method: "PATCH",
+        body: JSON.stringify({ bot_token: token }),
+      });
+      setBotTokenInput("");
+      setEditingBot(false);
+      setView((v) => (v ? { ...v, bot: data.bot } : v));
+      setNotice({
+        tone: "success",
+        text: `Telegram bot ${data.bot.username ? `@${data.bot.username}` : ""} verified and saved. Now tap Connect Telegram below.`,
+      });
+    } catch (err) {
+      setNotice({ tone: "error", text: asError(err).message });
+    } finally {
+      setAction(null);
+    }
+  };
 
   const connect = async (kind: "connect" | "group") => {
     setAction(kind);
@@ -265,11 +297,48 @@ export function NotificationsPanel() {
             </span>
           </div>
 
-          {!view.bot.configured ? (
-            <p className={styles.muted}>
-              Telegram alerts aren&apos;t set up on this CommerceOS server yet. Your platform administrator needs to add the alerts
-              bot; your choices below are saved and start working as soon as it is.
-            </p>
+          {(!view.bot.configured || editingBot) ? (
+            readOnly ? (
+              <p className={styles.muted}>
+                Telegram alerts aren&apos;t set up on this CommerceOS server yet. Ask a workspace owner or administrator to
+                add a Telegram bot token; your choices below are saved and start working as soon as it is.
+              </p>
+            ) : (
+              <form className={styles.botForm} onSubmit={(e) => void saveBotToken(e)}>
+                <p className={styles.muted}>
+                  Create a bot with <strong>@BotFather</strong> on Telegram (or paste your shop&apos;s Telegram bot token) to
+                  enable live phone alerts for this workspace. Your alert choices below are saved automatically.
+                </p>
+                <Input
+                  id="alerts-bot-token"
+                  label="Telegram bot token (from @BotFather)"
+                  type="password"
+                  placeholder="Paste your @BotFather token"
+                  value={botTokenInput}
+                  onChange={(e) => setBotTokenInput(e.target.value)}
+                  autoComplete="off"
+                  required
+                />
+                <div className={styles.actions}>
+                  <Button type="submit" variant="primary" disabled={action !== null || !botTokenInput.trim()}>
+                    {action === "bot" ? <Loader2 size={16} className={styles.spin} /> : <Send size={16} />}
+                    Save &amp; verify bot
+                  </Button>
+                  {editingBot && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() => {
+                        setEditingBot(false);
+                        setBotTokenInput("");
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                  )}
+                </div>
+              </form>
+            )
           ) : view.telegram.connected ? (
             <>
               <div className={styles.chatRow}>
@@ -278,6 +347,7 @@ export function NotificationsPanel() {
                   <div className={styles.chatName}>{view.telegram.chat_label}</div>
                   <div className={styles.chatMeta}>
                     Connected {formatDate(view.telegram.linked_at)}
+                    {view.bot.username ? ` via @${view.bot.username}` : ""}
                     {view.last_test_at ? ` · last test ${formatDate(view.last_test_at)}` : ""}
                   </div>
                 </div>
@@ -297,6 +367,9 @@ export function NotificationsPanel() {
                   <Button variant="ghost" onClick={() => setConfirmDisconnect(true)} disabled={action !== null}>
                     <Unplug size={16} />
                     Disconnect
+                  </Button>
+                  <Button variant="ghost" onClick={() => setEditingBot(true)} disabled={action !== null}>
+                    Change bot
                   </Button>
                 </div>
               )}
@@ -326,6 +399,18 @@ export function NotificationsPanel() {
             </div>
           ) : (
             <>
+              {view.bot.username && (
+                <div className={styles.botBadgeRow}>
+                  <span>
+                    Alerts bot: <strong>@{view.bot.username}</strong>
+                  </span>
+                  {!readOnly && (
+                    <Button variant="ghost" size="sm" onClick={() => setEditingBot(true)} disabled={action !== null}>
+                      Change bot
+                    </Button>
+                  )}
+                </div>
+              )}
               <ol className={styles.steps}>
                 <li>
                   <span className={styles.stepNo}>1</span>

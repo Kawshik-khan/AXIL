@@ -24,16 +24,26 @@ const AlertsPatch = z
         cod_weekly: z.boolean(),
       })
       .partial()
-      .strict(),
+      .strict()
+      .optional(),
+    bot_token: z.string().trim().max(200).nullable().optional(),
   })
-  .strict();
+  .strict()
+  .refine((b) => b.alerts !== undefined || b.bot_token !== undefined, {
+    message: "Provide alerts or bot_token.",
+  });
 
-/** Switches alerts on or off. */
+/** Switches alerts on or off, or sets/clears the workspace Telegram alerts bot token. */
 async function handlePATCH(request: Request) {
   try {
     const context = await extractRequestContext(request);
     const body = parseOrThrow(AlertsPatch, await readJson(request));
-    return apiSuccess({ alerts: NotificationService.updateAlerts(context, body.alerts) });
+    const bot = body.bot_token !== undefined ? await NotificationService.configureBot(context, body.bot_token) : undefined;
+    const alerts = body.alerts !== undefined ? NotificationService.updateAlerts(context, body.alerts) : undefined;
+    return apiSuccess({
+      ...(alerts !== undefined ? { alerts } : {}),
+      ...(bot !== undefined ? { bot } : {}),
+    });
   } catch (err) {
     return apiError(err);
   }

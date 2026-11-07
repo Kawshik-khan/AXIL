@@ -15,6 +15,8 @@ import { PERMISSIONS, ROLE_PERMISSIONS } from "@/lib/permissions";
 import { AppError, BadRequestError } from "@/lib/errors";
 import { logger } from "@/lib/logger";
 import { checkRateLimit, MINUTE } from "@/lib/rate-limit";
+import { encryptCredential } from "@/lib/security";
+import { telegramCall } from "@/domains/social/channels/adapters/telegram.adapter";
 import type { RequestContext } from "@/lib/context";
 import {
   DEFAULT_NOTIFICATION_ALERTS,
@@ -78,9 +80,9 @@ async function replyAllowed(chatId: string): Promise<boolean> {
   return (await checkRateLimit(`notifications:tg-reply:${chatId}`, 3, MINUTE)).allowed;
 }
 
-async function sendTo(chatId: string, text: string): Promise<NotificationDeliveryResult> {
+async function sendTo(chatId: string, text: string, tenantId?: string): Promise<NotificationDeliveryResult> {
   try {
-    await alertsBotCall("sendMessage", { chat_id: chatId, text, disable_web_page_preview: true });
+    await alertsBotCall("sendMessage", { chat_id: chatId, text, disable_web_page_preview: true }, tenantId);
     return { status: "SENT" };
   } catch (err) {
     if (err instanceof AlertsBotNotConfiguredError) return { status: "NOT_SENT", reason: "Telegram alerts aren't set up on this server yet." };
@@ -94,10 +96,12 @@ export class NotificationService {
   /** What the Notifications settings page shows. Read-only: nothing is stored here (GETs never write). */
   public static async getSettings(context: RequestContext): Promise<NotificationSettingsView> {
     RbacService.assertCan(context, PERMISSIONS.SETTINGS_READ);
-    const record = recordFor(context.tenant.id);
+    const tenantId = context.tenant.id;
+    const record = recordFor(tenantId);
     const pending = record.link && Date.parse(record.link.expires_at) > Date.now() ? record.link.expires_at : null;
+    const configured = alertsBotConfigured(process.env, tenantId);
     return {
-      bot: { configured: alertsBotConfigured(), username: alertsBotConfigured() ? await alertsBotUsername() : null },
+      bot: { configured, username: configured ? await alertsBotUsername(tenantId) : null },
       telegram: {
         connected: Boolean(record.telegram),
         chat_label: record.telegram?.chat_label ?? null,
@@ -128,18 +132,68 @@ export class NotificationService {
   }
 
   /**
+   * Configures or clears a workspace-specific Telegram alerts bot token from Settings → Notifications.
+   * Validates the token live via Telegram's `getMe` before storing it encrypted at rest.
+   */
+  public static async configureBot(
+    context: RequestContext,
+    botTokenInput: string | null
+  ): Promise<{ configured: boolean; username: string | null }> {
+    RbacService.assertCan(context, PERMISSIONS.SETTINGS_UPDATE);
+    const tenantId = context.tenant.id;
+    const record = recordFor(tenantId);
+    const trimmed = typeof botTokenInput === "string" ? botTokenInput.trim() : "";
+
+    if (!trimmed) {
+      save({ ...record, bot_token_encrypted: undefined, bot_username: undefined });
+      AuditService.log({
+        tenantId,
+        actorUserId: context.user.id,
+        action: "NOTIFICATION_ALERTS_BOT_REMOVED",
+        resourceType: "notification_settings",
+        resourceId: record.id,
+        metadata: {},
+      });
+      const configured = alertsBotConfigured(process.env, tenantId);
+      return { configured, username: configured ? await alertsBotUsername(tenantId) : null };
+    }
+
+    const me = await telegramCall({ bot_token: trimmed }, "getMe", {});
+    const username = typeof me.username === "string" ? me.username : null;
+    if (!username) {
+      throw new BadRequestError("Telegram did not return a bot username for this token.");
+    }
+
+    save({
+      ...record,
+      bot_token_encrypted: encryptCredential({ bot_token: trimmed }),
+      bot_username: username,
+    });
+    AuditService.log({
+      tenantId,
+      actorUserId: context.user.id,
+      action: "NOTIFICATION_ALERTS_BOT_CONFIGURED",
+      resourceType: "notification_settings",
+      resourceId: record.id,
+      metadata: { bot_username: username },
+    });
+    return { configured: true, username };
+  }
+
+  /**
    * A one-time link to the alerts bot: opening it and pressing Start links that chat to this workspace. Replaces any
    * earlier pending link. `group_url` adds the bot to a Telegram group instead (alerts for a whole team).
    */
   public static async createTelegramLink(context: RequestContext): Promise<{ url: string; group_url: string; expires_at: string }> {
     RbacService.assertCan(context, PERMISSIONS.SETTINGS_UPDATE);
-    if (!alertsBotConfigured()) throw new AlertsBotNotConfiguredError("TELEGRAM_ALERTS_BOT_TOKEN is not set");
-    const username = await alertsBotUsername();
+    const tenantId = context.tenant.id;
+    if (!alertsBotConfigured(process.env, tenantId)) throw new AlertsBotNotConfiguredError("TELEGRAM_ALERTS_BOT_TOKEN is not set");
+    const username = await alertsBotUsername(tenantId);
     if (!username) throw new AppError("TELEGRAM_UNREACHABLE", "Telegram could not be reached. Try again in a moment.", 502);
-    await ensureAlertsWebhook();
+    await ensureAlertsWebhook(tenantId);
     const code = crypto.randomBytes(18).toString("base64url");
     const expiresAt = new Date(Date.now() + LINK_TTL_MS).toISOString();
-    const record = recordFor(context.tenant.id);
+    const record = recordFor(tenantId);
     save({ ...record, link: { code_hash: hashCode(code), expires_at: expiresAt, requested_by_user_id: context.user.id } });
     return {
       url: `https://t.me/${username}?start=${code}`,
@@ -148,15 +202,68 @@ export class NotificationService {
     };
   }
 
+  /**
+   * Polls Telegram `getUpdates` for a pending `/start <code>` when a webhook cannot reach this server (e.g. localhost
+   * HTTP development). Called by `PUT /api/v1/notifications/telegram/link` while the UI waits for Start.
+   */
+  public static async pollPendingLink(context: RequestContext): Promise<{ linked: boolean; chat_label: string | null }> {
+    RbacService.assertCan(context, PERMISSIONS.SETTINGS_READ);
+    const tenantId = context.tenant.id;
+    const record = db.findNotificationSettings(tenantId);
+    if (record?.telegram) return { linked: true, chat_label: record.telegram.chat_label };
+    if (!record?.link || Date.parse(record.link.expires_at) <= Date.now() || !alertsBotConfigured(process.env, tenantId)) {
+      return { linked: false, chat_label: null };
+    }
+    try {
+      const raw = await alertsBotCall("getUpdates", { allowed_updates: ["message"], limit: 25 }, tenantId);
+      const updates = Array.isArray(raw) ? (raw as Array<Record<string, unknown>>) : [];
+      for (const update of updates) {
+        const message = update.message as { text?: unknown } | undefined;
+        const text = typeof message?.text === "string" ? message.text.trim() : "";
+        const start = START_COMMAND.exec(text);
+        if (start && hashCode(start[1]) === record.link.code_hash) {
+          await NotificationService.handleTelegramUpdate(update);
+          if (typeof update.update_id === "number") {
+            await alertsBotCall("getUpdates", { offset: update.update_id + 1, limit: 1 }, tenantId).catch(() => undefined);
+          }
+          break;
+        }
+      }
+    } catch {
+      // If a webhook is active on Telegram (409 Conflict) or network fails, rely on the webhook path
+    }
+    const updated = db.findNotificationSettings(tenantId);
+    return { linked: Boolean(updated?.telegram), chat_label: updated?.telegram?.chat_label ?? null };
+  }
+
+  /** Whether an incoming Telegram update is a `/start <code>` for a pending notification link or `/stop` for a linked alert chat. */
+  public static isNotificationCommand(update: unknown): boolean {
+    const message = (update as { message?: Record<string, unknown> } | null)?.message;
+    const chat = message?.chat as { id?: number | string } | undefined;
+    const text = typeof message?.text === "string" ? message.text.trim() : "";
+    if (!chat || chat.id === undefined || chat.id === null) return false;
+    const start = START_COMMAND.exec(text);
+    if (start) {
+      const codeHash = hashCode(start[1]);
+      return db.getAllNotificationSettings().some((r) => r.link?.code_hash === codeHash);
+    }
+    if (STOP_COMMAND.test(text)) {
+      const chatId = String(chat.id);
+      return db.getAllNotificationSettings().some((r) => r.telegram?.chat_id === chatId);
+    }
+    return false;
+  }
+
   public static async disconnectTelegram(context: RequestContext): Promise<void> {
     RbacService.assertCan(context, PERMISSIONS.SETTINGS_UPDATE);
-    const record = db.findNotificationSettings(context.tenant.id);
+    const tenantId = context.tenant.id;
+    const record = db.findNotificationSettings(tenantId);
     if (!record || (!record.telegram && !record.link)) return;
     const chatId = record.telegram?.chat_id;
     // A pending link is cancelled too, so a code pasted into the wrong chat stops working at once
     save({ ...record, telegram: undefined, link: undefined });
     AuditService.log({
-      tenantId: context.tenant.id,
+      tenantId,
       actorUserId: context.user.id,
       action: chatId ? "NOTIFICATION_TELEGRAM_DISCONNECTED" : "NOTIFICATION_TELEGRAM_LINK_CANCELLED",
       resourceType: "notification_settings",
@@ -165,17 +272,19 @@ export class NotificationService {
     });
     if (!chatId) return;
     // Courtesy message; the disconnect stands whether or not Telegram takes it
-    await sendTo(chatId, `This chat will no longer get ${context.tenant.name} alerts from CommerceOS.`);
+    await sendTo(chatId, `This chat will no longer get ${context.tenant.name} alerts from CommerceOS.`, tenantId);
   }
 
   /** Sends a test message to the connected chat, whatever the alert switches say. */
   public static async sendTest(context: RequestContext): Promise<NotificationDeliveryResult> {
     RbacService.assertCan(context, PERMISSIONS.SETTINGS_UPDATE);
-    const record = db.findNotificationSettings(context.tenant.id);
+    const tenantId = context.tenant.id;
+    const record = db.findNotificationSettings(tenantId);
     if (!record?.telegram) throw new BadRequestError("Connect Telegram first.");
     const result = await sendTo(
       record.telegram.chat_id,
-      `✅ Test from CommerceOS: ${context.tenant.name} alerts will arrive in this chat.`
+      `✅ Test from CommerceOS: ${context.tenant.name} alerts will arrive in this chat.`,
+      tenantId
     );
     if (result.status === "SENT") save({ ...record, last_test_at: new Date().toISOString() });
     return result;
@@ -190,7 +299,7 @@ export class NotificationService {
     if (!record?.telegram) return { status: "NOT_SENT", reason: "Telegram is not connected" };
     if (!{ ...DEFAULT_NOTIFICATION_ALERTS, ...record.alerts }[alert]) return { status: "NOT_SENT", reason: "This alert is switched off" };
     if (!linkerStillAllowed(record)) return { status: "NOT_SENT", reason: "The person who connected this chat no longer has access; reconnect it" };
-    return sendTo(record.telegram.chat_id, text);
+    return sendTo(record.telegram.chat_id, text, tenantId);
   }
 
   /** Whether a workspace wants this alert and has somewhere to receive it (the jobs skip the rest). */
@@ -217,7 +326,7 @@ export class NotificationService {
       const codeHash = hashCode(start[1]);
       const record = db.getAllNotificationSettings().find((r) => r.link?.code_hash === codeHash);
       if (!record || !record.link || Date.parse(record.link.expires_at) <= Date.now()) {
-        if (await replyAllowed(chatId)) await sendTo(chatId, "This link has expired or was already used. Open Settings → Notifications in CommerceOS and press Connect Telegram again.");
+        if (await replyAllowed(chatId)) await sendTo(chatId, "This link has expired or was already used. Open Settings → Notifications in CommerceOS and press Connect Telegram again.", record?.tenant_id);
         return { handled: "LINK_INVALID" };
       }
       const label = chat.title ? chat.title : chat.username ? `@${chat.username}` : from?.username ? `@${from.username}` : chat.first_name || from?.first_name || "Telegram chat";
@@ -238,13 +347,15 @@ export class NotificationService {
       const on = (Object.keys(ALERT_LABELS) as NotificationAlertKey[]).filter((k) => ({ ...DEFAULT_NOTIFICATION_ALERTS, ...record.alerts })[k]);
       await sendTo(
         chatId,
-        `✅ Connected to ${tenant?.name ?? "your shop"} on CommerceOS.\n\nYou'll get:\n${on.map((k) => `• ${ALERT_LABELS[k]}`).join("\n") || "• (no alerts are on yet)"}\n\nChange them anytime in Settings → Notifications. Send /stop to turn alerts off here.`
+        `✅ Connected to ${tenant?.name ?? "your shop"} on CommerceOS.\n\nYou'll get:\n${on.map((k) => `• ${ALERT_LABELS[k]}`).join("\n") || "• (no alerts are on yet)"}\n\nChange them anytime in Settings → Notifications. Send /stop to turn alerts off here.`,
+        record.tenant_id
       );
       return { handled: "LINKED" };
     }
 
     if (STOP_COMMAND.test(text)) {
       const linked = db.getAllNotificationSettings().filter((r) => r.telegram?.chat_id === chatId);
+      const firstTenantId = linked[0]?.tenant_id;
       for (const record of linked) {
         save({ ...record, telegram: undefined });
         AuditService.log({
@@ -256,7 +367,7 @@ export class NotificationService {
           metadata: { via: "telegram_stop", chat_type: chat.type ?? "unknown" },
         });
       }
-      await sendTo(chatId, linked.length ? "Alerts are off for this chat. Reconnect anytime from Settings → Notifications." : "This chat isn't connected to any shop.");
+      await sendTo(chatId, linked.length ? "Alerts are off for this chat. Reconnect anytime from Settings → Notifications." : "This chat isn't connected to any shop.", firstTenantId);
       return { handled: linked.length ? "UNLINKED" : "NOT_LINKED" };
     }
 

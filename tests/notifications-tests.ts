@@ -38,7 +38,7 @@ type R = Record<string, any>;
 type Handler = (r: Request, ctx?: unknown) => Promise<Response>;
 
 /** What the fake Telegram received, and what it should answer next. */
-const telegram = { calls: [] as Array<{ method: string; params: R }>, failSend: 0 };
+const telegram = { calls: [] as Array<{ method: string; params: R }>, failSend: 0, updates: [] as R[] };
 function fakeTelegram() {
   setOutboundTransportForTesting(async (url, options) => {
     const method = url.pathname.split("/").pop() ?? "";
@@ -46,6 +46,12 @@ function fakeTelegram() {
     telegram.calls.push({ method, params });
     const reply = (status: number, body: R) => ({ status, headers: {}, body: JSON.stringify(body), truncated: false, durationMs: 1 });
     if (method === "getMe") return reply(200, { ok: true, result: { id: 1, is_bot: true, username: "cos_alerts_bot" } });
+    if (method === "getUpdates") {
+      const offset = typeof params.offset === "number" ? params.offset : 0;
+      const pending = telegram.updates.filter((u) => (u.update_id ?? 0) >= offset);
+      if (offset > 0) telegram.updates = pending;
+      return reply(200, { ok: true, result: pending });
+    }
     if (method === "sendMessage" && telegram.failSend > 0) {
       telegram.failSend--;
       return reply(403, { ok: false, error_code: 403, description: "Forbidden: bot was blocked by the user" });
@@ -281,6 +287,48 @@ async function main() {
     assert.strictEqual(telegram.calls.filter((c) => c.method === "sendMessage").length, 3, "at most 3 help replies per chat per minute");
     const big = await webhook(JSON.stringify({ update_id: 30, message: { chat: { id: 1, type: "private" }, text: "x".repeat(70_000) } }));
     assert.deepStrictEqual([big.status, big.json.handled], [200, undefined], "an oversized body is dropped unparsed");
+  });
+
+  await runTest("dynamic workspace bot setup: owner can configure a bot token from the UI when TELEGRAM_ALERTS_BOT_TOKEN is unset", async () => {
+    delete process.env.TELEGRAM_ALERTS_BOT_TOKEN;
+    resetAlertsBotForTesting();
+    assert.strictEqual((await call("notifications/settings", "GET", owner)).json.data.bot.configured, false);
+
+    // Malformed token is rejected with 400
+    assert.strictEqual((await call("notifications/settings", "PATCH", owner, { bot_token: "bad-token" })).status, 400);
+
+    // Valid token is verified with getMe, encrypted at rest, and enables alerts for this workspace only
+    const customToken = `987654321:${"B".repeat(35)}`;
+    const setRes = await call("notifications/settings", "PATCH", owner, { bot_token: customToken });
+    assert.strictEqual(setRes.status, 200, JSON.stringify(setRes.json));
+    assert.deepStrictEqual(setRes.json.data.bot, { configured: true, username: "cos_alerts_bot" });
+    assert.strictEqual((await call("notifications/settings", "GET", owner)).json.data.bot.configured, true);
+    assert.strictEqual((await call("notifications/settings", "GET", other.token)).json.data.bot.configured, false, "other workspace unaffected");
+
+    const stored = JSON.stringify(db.findNotificationSettings(T));
+    assert.ok(!stored.includes(customToken), "bot token is encrypted at rest, never stored in plaintext");
+  });
+
+  await runTest("localhost / non-HTTPS APP_URL: link creation succeeds and PUT polls getUpdates when Start is pressed", async () => {
+    process.env.APP_URL = "http://localhost:3000";
+    resetAlertsBotForTesting();
+    telegram.calls = [];
+    const linkRes = await call("notifications/telegram/link", "POST", owner);
+    assert.strictEqual(linkRes.status, 201, JSON.stringify(linkRes.json));
+    const localCode = new URL(linkRes.json.data.url).searchParams.get("start")!;
+
+    // Simulate the user pressing Start in Telegram while running on localhost (no webhook delivery)
+    telegram.updates = [startUpdate(444009, localCode)];
+    const pollRes = await call("notifications/telegram/link", "PUT", owner);
+    assert.strictEqual(pollRes.status, 200, JSON.stringify(pollRes.json));
+    assert.strictEqual(pollRes.json.data.linked, true);
+    assert.strictEqual(pollRes.json.data.chat_label, "@rahim_shop");
+    assert.strictEqual((await call("notifications/settings", "GET", owner)).json.data.telegram.connected, true);
+
+    // Clear workspace bot token and restore APP_URL
+    await call("notifications/telegram", "DELETE", owner);
+    await call("notifications/settings", "PATCH", owner, { bot_token: null });
+    process.env.APP_URL = "https://shop.test";
   });
 
   setOutboundTransportForTesting(null);

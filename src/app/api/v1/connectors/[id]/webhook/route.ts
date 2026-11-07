@@ -4,6 +4,7 @@ import { decryptCredential } from "@/lib/security";
 import { ChannelService } from "@/domains/social/channels/channel.service";
 import { WebhookIngressService } from "@/domains/social/webhooks/webhook-ingress.service";
 import { TelegramAdapter, TELEGRAM_SECRET_HEADER, telegramCall } from "@/domains/social/channels/adapters/telegram.adapter";
+import { NotificationService } from "@/domains/notifications/notification.service";
 import { BadRequestError, AuthenticationError, NotFoundError } from "@/lib/errors";
 import { apiError } from "@/lib/api-response";
 import { logger } from "@/lib/logger";
@@ -73,6 +74,16 @@ async function ingest(request: Request, id: string) {
     payload = JSON.parse(rawBody);
   } catch {
     throw new BadRequestError("Webhook payload is not valid JSON.");
+  }
+
+  // If this Telegram bot is also delivering owner alerts and the message is `/start <code>` for a pending alert link
+  // (or `/stop` for a linked alert chat), handle it as a notification command instead of a customer message.
+  if (channel.type === "TELEGRAM" && NotificationService.isNotificationCommand(payload)) {
+    const handled = await db.unit(
+      () => NotificationService.handleTelegramUpdate(payload),
+      () => true
+    );
+    return NextResponse.json({ status: "EVENT_RECEIVED", ...handled });
   }
 
   // 5. Normalize the event
