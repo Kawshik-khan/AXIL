@@ -18,6 +18,13 @@ export const ProductSearchModal: React.FC<ProductSearchModalProps> = ({
   onSelectProduct,
 }) => {
   const [query, setQuery] = useState("");
+
+  // ⚡ Bolt Performance Optimization:
+  // Debounce the search query to prevent unbounded API calls on every keystroke.
+  // Impact: Reduces backend load and network requests during rapid typing,
+  // only triggering a fetch after 300ms of user inactivity.
+  const debouncedQuery = useDebounce(query, 300);
+
   const [products, setProducts] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
