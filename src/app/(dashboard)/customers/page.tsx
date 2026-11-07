@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import {
   Users,
   Plus,
@@ -148,15 +148,17 @@ export default function CustomersPage() {
     }
   };
 
-  const filteredCustomers = customers.filter((c) => {
-    const query = searchQuery.toLowerCase();
-    return (
-      c.first_name.toLowerCase().includes(query) ||
-      c.last_name.toLowerCase().includes(query) ||
-      c.phone.includes(query) ||
-      (c.email && c.email.toLowerCase().includes(query))
-    );
-  });
+  const filteredCustomers = useMemo(() => {
+    const query = debouncedSearchQuery.toLowerCase();
+    return customers.filter((c) => {
+      return (
+        c.first_name.toLowerCase().includes(query) ||
+        c.last_name.toLowerCase().includes(query) ||
+        c.phone.includes(query) ||
+        (c.email && c.email.toLowerCase().includes(query))
+      );
+    });
+  }, [customers, debouncedSearchQuery]);
 
   return (
     <>

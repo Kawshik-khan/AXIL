@@ -480,6 +480,39 @@ type Claim =
 /** A claim older than this was left by a crash (placement and PLACED commit together), so it can be taken again. */
 const PLACING_TIMEOUT_MS = 2 * 60 * 1000;
 
+/** Defaults for the agent's order limits; a workspace can change them in settings.customer_agent_order_limits. */
+export const AGENT_ORDER_LIMIT_DEFAULTS = { per_customer_per_day: 3, per_workspace_per_day: 50 } as const;
+
+export function agentOrderLimits(tenantId: string): { per_customer_per_day: number; per_workspace_per_day: number } {
+  const raw = (db.findTenantById(tenantId)?.settings as Record<string, unknown> | undefined)?.customer_agent_order_limits as
+    | Record<string, unknown>
+    | undefined;
+  const pick = (v: unknown, fallback: number) => (Number.isInteger(v) && (v as number) >= 1 && (v as number) <= 1000 ? (v as number) : fallback);
+  return {
+    per_customer_per_day: pick(raw?.per_customer_per_day, AGENT_ORDER_LIMIT_DEFAULTS.per_customer_per_day),
+    per_workspace_per_day: pick(raw?.per_workspace_per_day, AGENT_ORDER_LIMIT_DEFAULTS.per_workspace_per_day),
+  };
+}
+
+const digitsOnly = (phone: string) => phone.replace(/\D/g, "").replace(/^880/, "0");
+
+/**
+ * Abuse limits on orders the agent places (Stage 2 follow-up): per customer (this chat, or the same phone number in
+ * any chat) and per workspace, over the last 24 hours. Counted inside the claim's unit of work, so two chats can't
+ * both slip past the last slot. Over a limit, nothing is placed and a person takes over.
+ */
+function orderLimitReached(pr: CustomerAgentPrincipal, quoteId: string, phone: string): "CUSTOMER" | "WORKSPACE" | null {
+  const limits = agentOrderLimits(pr.tenantId);
+  const since = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
+  const recent = db.getRecentPlacedQuotes(pr.tenantId, since).filter((q) => q.id !== quoteId);
+  if (recent.length >= limits.per_workspace_per_day) return "WORKSPACE";
+  const samePhone = digitsOnly(phone);
+  const mine = recent.filter(
+    (q) => q.conversation_id === pr.conversationId || (samePhone.length >= 10 && q.confirmation_details && digitsOnly(q.confirmation_details.phone) === samePhone)
+  );
+  return mine.length >= limits.per_customer_per_day ? "CUSTOMER" : null;
+}
+
 async function placeOrder(pr: CustomerAgentPrincipal, a: z.infer<typeof PlaceArgs>): Promise<ToolResult> {
   // Placement commits its own units of work. Inside someone else's unit a failure after the order was created couldn't
   // be undone cleanly, so it refuses there (the agent runs outside request units: FX-76).
@@ -520,6 +553,15 @@ async function placeOrder(pr: CustomerAgentPrincipal, a: z.infer<typeof PlaceArg
         ...(changed ? { customer_msg_count_at_quote: customerMessages(pr.tenantId, pr.conversationId).length } : {}),
       });
       return { kind: "confirm", quote: q, details };
+    }
+    const limit = orderLimitReached(pr, q.id, (q.confirmation_details ?? details).phone);
+    if (limit) {
+      logger.warn("customer_agent.order_limit_reached", { tenant_id: pr.tenantId, conversation_id: pr.conversationId, limit });
+      return {
+        kind: "error",
+        error: "ORDER_LIMIT_REACHED",
+        message: "No more orders can be placed in this chat today. Tell the customer the team will take it from here, and hand off.",
+      };
     }
     db.updateQuote(pr.tenantId, q.id, { status: "PLACING" });
     return { kind: "claimed", quote: q };

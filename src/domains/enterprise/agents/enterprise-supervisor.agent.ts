@@ -7,6 +7,7 @@
 import { AgentType } from "@/types/ai";
 import { WorkflowPlanStep } from "@/types/orchestration";
 import { planValidator } from "@/domains/ai/orchestration/planning/plan-validator";
+import { logger } from "@/lib/logger";
 
 export interface EnterprisePlanRequest {
   objective: string;
@@ -313,7 +314,7 @@ export class EnterpriseSupervisorAgent {
     }));
     const validation = planValidator.validate(definitions);
     if (!validation.isValid) {
-      console.warn("[EnterpriseSupervisorAgent] Plan validation warnings:", validation.errors);
+      logger.warn("supervisor.plan_validation_warnings", { agent: "EnterpriseSupervisorAgent", errors: validation.errors });
     }
     return steps;
   }

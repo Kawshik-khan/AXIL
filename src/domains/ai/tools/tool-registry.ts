@@ -386,7 +386,7 @@ export class ToolRegistry {
     const parseResult = tool.schema.safeParse(params.arguments);
     if (!parseResult.success) {
       const duration = Date.now() - startTime;
-      const errorMsg = parseResult.error.errors.map((e) => `${e.path.join(".")}: ${e.message}`).join(", ");
+      const errorMsg = parseResult.error.issues.map((e) => `${e.path.join(".")}: ${e.message}`).join(", ");
       db.createAgentToolCall({
         id: `tcall_${Date.now()}_${randomSuffix()}`,
         tenant_id: context.tenant.id,

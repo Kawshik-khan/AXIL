@@ -13,7 +13,7 @@ const Body = z.object({
   template_code: z.enum(["ABANDONED_CART_RECOVERY", "LOW_STOCK_RESTOCK", "DELIVERY_EXCEPTION_RESOLVE", "REFUND_REVIEW", "WHOLESALE_QUOTE"]).optional(),
   description: z.string().trim().max(2000).optional(),
   trigger_type: z.enum(["MANUAL", "EVENT", "SCHEDULE", "AGENT", "WEBHOOK", "SYSTEM"]).optional(),
-  context_entities: z.record(z.unknown()).optional(),
+  context_entities: z.record(z.string(), z.unknown()).optional(),
   budget: z.object({
     max_tokens: z.number().int().positive().max(1_000_000).optional(),
     max_cost_usd: z.number().finite().nonnegative().max(10_000).optional(),

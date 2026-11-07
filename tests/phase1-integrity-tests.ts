@@ -115,6 +115,11 @@ async function sendJson(route: string, id: string, method: "PATCH" | "PUT", toke
   );
 }
 
+/** The per-endpoint signing secret a sender uses (WebhookGatewayService.endpointSecret). */
+function endpointSecret(master: string, webhookId: string, tenantId: string, provider: string): string {
+  return crypto.createHmac("sha256", master).update(`commerceos:webhook-endpoint:v1:${tenantId}:${provider}:${webhookId}`).digest("hex");
+}
+
 async function main() {
   console.log(`\n${ANSI_BOLD}====================================================${ANSI_RESET}`);
   console.log(`${ANSI_BOLD}   COMMERCEOS PHASE 1: INTEGRITY (FX-11 … FX-19)      ${ANSI_RESET}`);
@@ -524,6 +529,25 @@ async function main() {
     assert.strictEqual((await postPlatform("step-up", { code: nextCode }, cookie)).status, 400, "replayed code refused");
   });
 
+  await runTest("the platform session says whether the operator has an authenticator (console setup prompt)", async () => {
+    const op = await newOperator("Operator-Status-Pass-6654!");
+    const cookie = cookieFrom(await postPlatform("login", { email: op.email, password: "Operator-Status-Pass-6654!" }));
+    assert.ok(cookie);
+    const sessionRoute = (await import("@/app/api/v1/platform/auth/session/route")) as { GET: (r: Request) => Promise<Response> };
+    const enrolled = async () => {
+      const res = await sessionRoute.GET(new Request(`${BASE}/platform/auth/session`, { headers: { cookie: cookie! } }));
+      assert.strictEqual(res.status, 200);
+      return ((await res.json()) as { data: { mfaEnrolled: unknown } }).data.mfaEnrolled;
+    };
+    assert.strictEqual(await enrolled(), false);
+    const enroll = await postPlatform("mfa/enroll", { password: "Operator-Status-Pass-6654!" }, cookie);
+    const { secret } = ((await enroll.json()) as { data: { secret: string } }).data;
+    assert.strictEqual(await enrolled(), false, "a started but unconfirmed setup is not enrolled");
+    assert.strictEqual((await postPlatform("mfa/confirm", { code: generateTotp(secret) }, cookie)).status, 200);
+    assert.strictEqual(await enrolled(), true);
+    assert.strictEqual((await postPlatform("mfa/enroll", { password: "Operator-Status-Pass-6654!" }, cookie)).status, 409, "no second setup over an active one");
+  });
+
   await runTest("an operator with MFA needs a TOTP code to sign in; only then is the session MFA-verified", async () => {
     const op = await newOperator("Operator-Login-Pass-4432!");
     const first = await postPlatform("login", { email: op.email, password: "Operator-Login-Pass-4432!" });
@@ -686,7 +710,7 @@ ${ANSI_BOLD}[FX-18] Service tokens retired with the automation hub; webhook dupl
     };
     const body = JSON.stringify({ tracking_number: "TRK-P1-NOT-REAL", status: "in_transit" });
     const ts = Date.now().toString();
-    const sig = crypto.createHmac("sha256", secret).update(`${ts}.${body}`).digest("hex");
+    const sig = crypto.createHmac("sha256", endpointSecret(secret, whId, tenantId, "STEADFAST")).update(`${ts}.${body}`).digest("hex");
     const send = () => route.POST(new Request(`${BASE}/automation/webhooks/steadfast?wh=${whId}`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-webhook-timestamp": ts, "x-webhook-signature": sig, "x-request-id": uid("rq") },
@@ -829,7 +853,7 @@ ${ANSI_BOLD}[FX-18] Service tokens retired with the automation hub; webhook dupl
     };
     const body = JSON.stringify({ tracking_number: "TRK-P1-CASE", status: "in_transit" });
     const ts = Date.now().toString();
-    const sig = crypto.createHmac("sha256", secret).update(`${ts}.${body}`).digest("hex");
+    const sig = crypto.createHmac("sha256", endpointSecret(secret, whId, tenantId, "PATHAO")).update(`${ts}.${body}`).digest("hex");
     const send = (s: string) => route.POST(new Request(`${BASE}/automation/webhooks/pathao?wh=${whId}`, {
       method: "POST", headers: { "content-type": "application/json", "x-webhook-timestamp": ts, "x-webhook-signature": s }, body,
     }), { params: { provider: "pathao" } });

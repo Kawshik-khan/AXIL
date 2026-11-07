@@ -20,7 +20,7 @@ import type { RequestContext } from "@/lib/context";
 import type { ChannelType, Message } from "@/types/social";
 import { principalFor, capabilityContext, canSeeOrder, type Capability, type CustomerAgentPrincipal } from "@/domains/ai/customer-agent/principal";
 import { customerMessages, isAffirmative } from "@/domains/ai/customer-agent/confirmation";
-import { CUSTOMER_TOOLS, CUSTOMER_TOOL_NAMES, runCustomerTool } from "@/domains/ai/customer-agent/tools";
+import { AGENT_ORDER_LIMIT_DEFAULTS, CUSTOMER_TOOLS, CUSTOMER_TOOL_NAMES, agentOrderLimits, runCustomerTool } from "@/domains/ai/customer-agent/tools";
 import { formatQuote, mixedScript, quoteToShow, synthesizeGroundedResponse } from "@/domains/ai/customer-agent/output";
 
 const GREEN = "\x1b[32m";
@@ -62,6 +62,8 @@ async function main() {
   db.ensureDefaultSeed(owner.tenant.id);
   const ownerCtx = ctxFor(owner.tenant, owner.user);
   const tenantId = owner.tenant.id;
+  // These tests place many orders from one test phone number; the order limits have their own test below
+  db.updateTenant(tenantId, { settings: { ...(db.findTenantById(tenantId)?.settings ?? {}), customer_agent_order_limits: { per_customer_per_day: 1000, per_workspace_per_day: 1000 } } } as never);
 
   const other = await AuthService.registerTenantWithOwner({ workspaceName: "Apex Footwear", name: "Apex", email: `apex-${stamp}@example.com`, password: "Stage1-Test-Pass-2026!", currency: "BDT" });
   db.ensureDefaultSeed(other.tenant.id);
@@ -777,6 +779,43 @@ async function main() {
     assert.ok(bangla.includes("নেই") && bangla.includes("Black Cotton T-Shirt (৳650)"), bangla);
     // Without suggestions the reply is unchanged
     assert.ok(/stock e nei/.test(synthesizeGroundedResponse([{ results: [] }], "latin")!));
+  });
+
+  await runTest("order limits: per customer (this chat or the same phone in another chat) and per workspace, over 24 hours", async () => {
+    const tenant = db.findTenantById(tenantId)!;
+    const saved = tenant.settings;
+    const placeOne = async (pr: CustomerAgentPrincipal, phone: string) => {
+      say(pr, "customer", "1 ta wallet chai, Sylhet");
+      const w = await variant(pr, "wallet", "Free");
+      const q = await run(pr, "quote_order", { items: [{ variant_id: w.variant_id, quantity: 1 }], district: "Sylhet" });
+      const args = { ...details, phone, quote_id: q.quote_id };
+      const first = await run(pr, "place_order", args);
+      if (first.status !== "CONFIRMATION_REQUIRED") return first;
+      say(pr, "customer", "yes confirm");
+      return run(pr, "place_order", args);
+    };
+    try {
+      db.updateTenant(tenantId, { settings: { ...(saved ?? {}), customer_agent_order_limits: { per_customer_per_day: 1, per_workspace_per_day: 1000 } } } as never);
+      const pr = await conversation(messenger, "FACEBOOK_MESSENGER");
+      assert.strictEqual((await placeOne(pr, "01911000101")).status, "PLACED");
+      const before = db.getAllOrders(tenantId).length;
+      assert.strictEqual((await placeOne(pr, "01911000102")).error, "ORDER_LIMIT_REACHED", "a second order in the same chat");
+      const samePhone = await conversation(messenger, "FACEBOOK_MESSENGER");
+      assert.strictEqual((await placeOne(samePhone, "+8801911000101")).error, "ORDER_LIMIT_REACHED", "the same phone in another chat");
+      assert.strictEqual(db.getAllOrders(tenantId).length, before, "nothing placed");
+      const someoneElse = await conversation(messenger, "FACEBOOK_MESSENGER");
+      assert.strictEqual((await placeOne(someoneElse, "01911000199")).status, "PLACED", "another customer is unaffected");
+
+      const recent = db.getRecentPlacedQuotes(tenantId, new Date(Date.now() - 24 * 60 * 60_000).toISOString()).length;
+      db.updateTenant(tenantId, { settings: { ...(saved ?? {}), customer_agent_order_limits: { per_customer_per_day: 5, per_workspace_per_day: recent } } } as never);
+      const fresh = await conversation(messenger, "FACEBOOK_MESSENGER");
+      assert.strictEqual((await placeOne(fresh, "01911000155")).error, "ORDER_LIMIT_REACHED", "the workspace's daily limit");
+      assert.deepStrictEqual(agentOrderLimits(tenantId), { per_customer_per_day: 5, per_workspace_per_day: recent });
+      db.updateTenant(tenantId, { settings: { ...(saved ?? {}), customer_agent_order_limits: { per_customer_per_day: -1, per_workspace_per_day: "x" } } } as never);
+      assert.deepStrictEqual(agentOrderLimits(tenantId), AGENT_ORDER_LIMIT_DEFAULTS, "bad settings fall back to the defaults");
+    } finally {
+      db.updateTenant(tenantId, { settings: saved } as never);
+    }
   });
 
   console.log(`\n  Tests Passed: ${passed} | Tests Failed: ${failed}\n`);

@@ -8,7 +8,7 @@ import { parseOrThrow, readJson } from "@/lib/validation";
 import { isAppError, ValidationError } from "@/lib/errors";
 
 /** A required string whose every error names the field, so the sign-up page can point at it. */
-const requiredText = (message: string) => z.string({ required_error: message, invalid_type_error: message }).trim();
+const requiredText = (message: string) => z.string({ error: message }).trim();
 
 // Strict (ADR-104): tenant_id, role, status and any other unknown key are rejected, never ignored.
 const RegisterBody = z
@@ -23,10 +23,10 @@ const RegisterBody = z
       .max(254, "Valid email address is required.")
       .email("Valid email address is required."),
     password: z
-      .string({ required_error: "Password must be at least 8 characters long.", invalid_type_error: "Password must be at least 8 characters long." })
+      .string({ error: "Password must be at least 8 characters long." })
       .min(8, "Password must be at least 8 characters long.")
       .max(200, "Password must be at most 200 characters long."),
-    currency: z.enum(["BDT", "USD", "EUR"], { errorMap: () => ({ message: "Currency must be BDT, USD or EUR." }) }).optional(),
+    currency: z.enum(["BDT", "USD", "EUR"], { error: "Currency must be BDT, USD or EUR." }).optional(),
   })
   .strict();
 

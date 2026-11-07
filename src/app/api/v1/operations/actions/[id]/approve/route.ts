@@ -30,7 +30,9 @@ async function handlePOST(
     const tenantId = context.tenant.id;
     const actionId = params.id;
     const { action_type, approved, reason } = parseOrThrow(Body, await readJson(request));
-    if (approved) requireStepUp(context, `APPROVE_${action_type}`); // a fresh authenticator code (FX-97 Part A)
+    // A price change also needs the pricing permission, not only operations approval (F30)
+    if (action_type === "PRICE_CHANGE") RbacService.assertCan(context, PERMISSIONS.PRICING_MANAGE);
+    if (approved) await requireStepUp(context, `APPROVE_${action_type}`); // a fresh authenticator code (FX-97 Part A)
 
     let result: unknown;
 

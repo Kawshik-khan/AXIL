@@ -61,6 +61,14 @@ async function main() {
       const r = await runCase(suite, c);
       results.push(r);
       console.log(`${c.id} ${r.pass ? "PASS" : "FAIL"} ${r.failures.join(" | ").slice(0, 220)}`);
+      // A failing case shows what the agent did and said, so the job log alone explains it (the results artifact isn't
+      // always reachable). Eval fixtures are synthetic: no customer data.
+      if (!r.pass) {
+        for (const [i, t] of r.turns.entries()) {
+          const tools = t.tools.map((x) => `${x.name}${x.ok ? "" : "!"}`).join(",") || "-";
+          console.log(`  turn ${i + 1} tools=[${tools}] reply=${JSON.stringify((t.response ?? "").slice(0, 400))}`);
+        }
+      }
       fs.writeFileSync(path.join(outDir, `agent-${suite}.json`), JSON.stringify({ meta, results }, null, 2));
       summary[`agent/${suite}`] = summarize(results);
       fs.writeFileSync(path.join(outDir, "summary.json"), JSON.stringify(summary, null, 2));

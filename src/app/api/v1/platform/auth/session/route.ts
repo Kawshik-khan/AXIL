@@ -1,5 +1,6 @@
 import { apiSuccess, apiError, extractPlatformContext } from "@/lib/api-response";
 import { withStore } from "@/lib/store-unit";
+import { PlatformMfaService } from "@/domains/platform/services/platform-mfa.service";
 
 export const dynamic = "force-dynamic";
 
@@ -11,6 +12,8 @@ async function handleGET(request: Request) {
       role: context.platformRole,
       permissions: context.permissions,
       mfaVerified: context.mfaVerified,
+      // Whether this operator has an authenticator set up (the console offers setup when false). Read-only.
+      mfaEnrolled: PlatformMfaService.isEnrolled(context.platformUser.id),
       stepUpVerified: context.stepUpVerified,
       scope: context.scope,
     });

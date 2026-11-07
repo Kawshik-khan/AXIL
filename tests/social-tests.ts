@@ -180,11 +180,30 @@ export async function runSocialCommerceTests() {
       true,
       "Valid WhatsApp signature must be verified"
     );
+    const ts = Math.floor(Date.now() / 1000).toString();
+    const webSig = crypto.createHmac("sha256", secret).update(`${ts}.${payload}`).digest("hex");
     assert.strictEqual(
-      webAdapter.verifyWebhook(payload, hmac, {}, { webhookSecret: secret }),
+      webAdapter.verifyWebhook(payload, webSig, { "x-commerceos-timestamp": ts }, { webhookSecret: secret }),
       true,
       "Valid Website Chat signature must be verified"
     );
+  });
+
+  await runTest("Website Chat: the signature covers a fresh timestamp, so a captured request can't be replayed", () => {
+    const webAdapter = new WebsiteChatAdapter();
+    const secret = "shared_webhook_secret_xyz";
+    const payload = JSON.stringify({ visitor_id: "v1", text: "Hello" });
+    const sign = (ts: string) => crypto.createHmac("sha256", secret).update(`${ts}.${payload}`).digest("hex");
+    const now = Math.floor(Date.now() / 1000);
+    const bodyOnly = crypto.createHmac("sha256", secret).update(payload).digest("hex");
+    assert.strictEqual(webAdapter.verifyWebhook(payload, bodyOnly, {}, { webhookSecret: secret }), false, "no timestamp");
+    assert.strictEqual(webAdapter.verifyWebhook(payload, bodyOnly, { "x-commerceos-timestamp": String(now) }, { webhookSecret: secret }), false, "body-only signature");
+    const stale = String(now - 600);
+    assert.strictEqual(webAdapter.verifyWebhook(payload, sign(stale), { "x-commerceos-timestamp": stale }, { webhookSecret: secret }), false, "10 minutes old");
+    const signedThen = String(now - 100);
+    assert.strictEqual(webAdapter.verifyWebhook(payload, sign(signedThen), { "x-commerceos-timestamp": String(now) }, { webhookSecret: secret }), false, "timestamp swapped after signing");
+    assert.strictEqual(webAdapter.verifyWebhook(payload, sign(String(now)), { "x-commerceos-timestamp": `${now}000` }, { webhookSecret: secret }), false, "milliseconds are refused");
+    assert.strictEqual(webAdapter.verifyWebhook(payload, sign(String(now)).toUpperCase(), { "x-commerceos-timestamp": String(now) }, { webhookSecret: secret }), true);
   });
 
   // -------------------------------------------------------------

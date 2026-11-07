@@ -25,6 +25,7 @@ import {
   PLATFORM_ROLE_PERMISSIONS,
 } from "@/lib/permissions";
 import { loadTenantRows } from "@/infrastructure/db/tenant-rows";
+import { recordServerError } from "@/lib/ops-signals";
 
 export function apiSuccess<T>(data: T, meta?: Record<string, unknown>, status = 200) {
   return NextResponse.json(
@@ -81,6 +82,7 @@ export function apiError(error: unknown, requestId?: string) {
 
   // Unexpected failures: details go to the log only; the client gets a generic message and the request id to quote
   // (FX-17, audit L1). Internal messages used to reach clients, including configuration errors.
+  recordServerError(); // counted for the monitoring job's ops alert (O6)
   logger.error("api.unhandled_error", {
     request_id: reqId,
     error: error instanceof Error ? error.message : String(error),
@@ -142,7 +144,14 @@ export async function extractRequestContext(request: Request): Promise<RequestCo
   if (stepUpHeader && !impersonated && context.role !== "SERVICE") {
     const user = db.findUserById(context.user.id);
     const claims = user ? await verifyStepUpToken(stepUpHeader, user.id, user.session_version ?? 1) : null;
-    context.stepUpVerified = Boolean(claims?.action?.startsWith(WORKSPACE_STEP_UP_PREFIX));
+    // Only a token issued in this workspace; the action it names is checked by requireStepUp
+    if (claims?.action?.startsWith(WORKSPACE_STEP_UP_PREFIX) && claims.tenantId === context.tenant.id) {
+      context.stepUpVerified = true;
+      context.stepUpAction = claims.action.slice(WORKSPACE_STEP_UP_PREFIX.length);
+      context.stepUpJti = claims.jti;
+    } else {
+      context.stepUpVerified = false;
+    }
   }
 
   // Enforced platform controls (FX-34): a paused workspace can still read, but changes nothing

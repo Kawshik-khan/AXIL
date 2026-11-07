@@ -8,14 +8,20 @@
  */
 import { createHash, randomBytes } from "crypto";
 import { db } from "@/infrastructure/db";
-import { decryptCredential, encryptCredential, signStepUpToken, verifyPassword, WORKSPACE_STEP_UP_PREFIX } from "@/lib/security";
+import { decryptCredential, encryptCredential, keyedDigest, signStepUpToken, verifyPassword, WORKSPACE_STEP_UP_PREFIX } from "@/lib/security";
 import { generateTotpSecret, otpauthUri, verifyTotp } from "@/lib/totp";
 import { AppError, ConflictError, NotFoundError } from "@/lib/errors";
 import { logger } from "@/lib/logger";
 
 const RECOVERY_CODE_COUNT = 10;
 
-const hashRecoveryCode = (code: string) => createHash("sha256").update(code.replace(/[\s-]/g, "").toUpperCase()).digest("hex");
+const normalizeRecoveryCode = (code: string) => code.replace(/[\s-]/g, "").toUpperCase();
+/** Stored form of a recovery code: a keyed digest, marked "h1:" (Stage 1 security review: no unkeyed hashes). */
+const hashRecoveryCode = (code: string) => `h1:${keyedDigest("mfa-recovery-code", normalizeRecoveryCode(code))}`;
+/** Codes issued before 2026-11-03 were stored as a plain SHA-256; they still work, once, like any recovery code. */
+const legacyRecoveryHash = (code: string) => createHash("sha256").update(normalizeRecoveryCode(code)).digest("hex");
+
+export type MfaMethod = "TOTP" | "RECOVERY_CODE";
 
 function readSecret(cipherText: string | undefined): string | null {
   if (!cipherText) return null;
@@ -81,31 +87,62 @@ export class WorkspaceMfaService {
    * Returns false on any mismatch; never says which part was wrong.
    */
   public static verifyCode(userId: string, code: string): boolean {
+    return WorkspaceMfaService.verifyCodeMethod(userId, code) !== null;
+  }
+
+  /** Like verifyCode, but says which kind of code was accepted (for the audit log), or null. */
+  public static verifyCodeMethod(userId: string, code: string): MfaMethod | null {
     const user = db.findUserById(userId);
-    if (!user || user.status !== "ACTIVE" || !user.mfa_enabled) return false;
+    if (!user || user.status !== "ACTIVE" || !user.mfa_enabled) return null;
     const given = String(code ?? "").trim();
     if (/^\d{6}$/.test(given)) {
       const secret = readSecret(user.mfa_secret_encrypted);
       if (!secret) {
         logger.error("workspace_mfa.secret_unreadable", { user_id: userId });
-        return false;
+        return null;
       }
       const step = verifyTotp(secret, given);
-      if (step === null || (user.mfa_last_step !== undefined && step <= user.mfa_last_step)) return false;
+      if (step === null || (user.mfa_last_step !== undefined && step <= user.mfa_last_step)) return null;
       db.updateUser(userId, { mfa_last_step: step });
-      return true;
+      return "TOTP";
     }
-    const hash = hashRecoveryCode(given);
+    if (!given) return null;
     const hashes = user.mfa_recovery_hashes ?? [];
-    if (!given || !hashes.includes(hash)) return false;
-    db.updateUser(userId, { mfa_recovery_hashes: hashes.filter((h) => h !== hash) });
+    const keyed = hashRecoveryCode(given);
+    const legacy = legacyRecoveryHash(given);
+    const match = hashes.includes(keyed) ? keyed : hashes.includes(legacy) ? legacy : null;
+    if (!match) return null;
+    db.updateUser(userId, { mfa_recovery_hashes: hashes.filter((h) => h !== match) });
     logger.warn("workspace_mfa.recovery_code_used", { user_id: userId, remaining: hashes.length - 1 });
-    return true;
+    return "RECOVERY_CODE";
   }
 
-  /** A 5-minute workspace step-up token for this user, bound to their current session version. */
-  public static async issueStepUpToken(userId: string, action = "PRIVILEGED_ACTION"): Promise<string> {
+  public static recoveryCodesLeft(userId: string): number {
+    const user = db.findUserById(userId);
+    return user?.mfa_enabled ? (user.mfa_recovery_hashes ?? []).length : 0;
+  }
+
+  /**
+   * Removes a user's authenticator and recovery codes and signs them out everywhere, so they set it up again on next
+   * sign-in. Only the owner-reset route calls this; it checks who may reset whom.
+   */
+  public static reset(userId: string): void {
+    activeUser(userId);
+    db.updateUser(userId, {
+      mfa_enabled: false,
+      mfa_secret_encrypted: undefined,
+      mfa_pending_secret_encrypted: undefined,
+      mfa_last_step: undefined,
+      mfa_enrolled_at: undefined,
+      mfa_recovery_hashes: [],
+    });
+    db.bumpSessionVersion(userId);
+    logger.warn("workspace_mfa.reset", { user_id: userId });
+  }
+
+  /** A 5-minute workspace step-up token for this user and workspace, bound to their current session version and to one action. */
+  public static async issueStepUpToken(userId: string, action: string, tenantId: string): Promise<string> {
     const user = activeUser(userId);
-    return signStepUpToken(userId, `${WORKSPACE_STEP_UP_PREFIX}${action}`, user.session_version ?? 1);
+    return signStepUpToken(userId, `${WORKSPACE_STEP_UP_PREFIX}${action}`, user.session_version ?? 1, tenantId);
   }
 }

@@ -1,0 +1,11 @@
+# Reviewed gitleaks false positives, one fingerprint per line: <commit>:<file>:<rule>:<line>.
+# A fingerprint silences one finding in one commit only; a new commit touching the same line is scanned again.
+# Every entry needs a comment saying who reviewed it, when, and why it is not a secret.
+# Never add a real secret here: rotate it, remove it, and follow docs/ci-setup.md ("Secret scan").
+
+# Reviewed 2026-11-02: the English words "launching/revoking" in a planning doc, matched by the entropy rule.
+9e811514797c60e06cccf167c45f7130dd77f9e8:docs/super-admin-ai-gateway-and-iam-forensics-plan.md:generic-api-key:26
+
+# Reviewed 2026-11-02: a truncated, made-up example key ("cos_live_sec_9942a...") in the API docs curl sample.
+# The page no longer exists on main.
+ef3ba547a65f29c0b279e750695b6a35c7ad9c25:src/app/(dashboard)/enterprise/developer/page.tsx:curl-auth-header:258

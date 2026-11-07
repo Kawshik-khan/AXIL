@@ -6,18 +6,22 @@ import { parseOrThrow, readJson } from "@/lib/validation";
 import { enforceRateLimit, MINUTE } from "@/lib/rate-limit";
 import { logger } from "@/lib/logger";
 import { withStore } from "@/lib/store-unit";
+import { AuditService } from "@/domains/audit/service";
+import { db } from "@/infrastructure/db";
 
 const Body = z
   .object({
     // A 6-digit authenticator code, or one of the recovery codes (XXXXX-XXXXX)
     code: z.string().trim().min(6).max(20),
-    action: z.string().regex(/^[A-Z0-9_]{1,60}$/).optional(),
+    // The action this code confirms; the token is accepted only for that action, in this workspace
+    action: z.string().regex(/^[A-Z0-9_]{1,60}$/),
   })
   .strict();
 
 /**
  * Workspace step-up (FX-97 Part A): a fresh authenticator code (or a recovery code) buys a 5-minute token that the
- * dashboard sends as `x-step-up-token` with a privileged request. Bound to this user and their current session.
+ * dashboard sends as `x-step-up-token` with a privileged request. Bound to this user, their current session, this
+ * workspace and the one action named in the body.
  */
 async function handlePOST(request: Request) {
   try {
@@ -28,12 +32,34 @@ async function handlePOST(request: Request) {
       throw new AppError("MFA_NOT_ENROLLED", "Set up an authenticator app before using step-up.", 409);
     }
     const { code, action } = parseOrThrow(Body, await readJson(request));
-    if (!WorkspaceMfaService.verifyCode(context.user.id, code)) {
+    const method = WorkspaceMfaService.verifyCodeMethod(context.user.id, code);
+    if (!method) {
       logger.warn("workspace.step_up_failed", { tenant_id: context.tenant.id, user_id: context.user.id });
+      // Kept although the request answers 400: failed attempts are what an owner reviewing the log needs to see
+      const failed = AuditService.log({
+        tenantId: context.tenant.id,
+        actorUserId: context.user.id,
+        action: "STEP_UP_FAILED",
+        resourceType: "user",
+        resourceId: context.user.id,
+        metadata: { for_action: action },
+      });
+      db.keepEvenIfRequestFails("audit_logs", failed.id);
       throw new AppError("INVALID_MFA_CODE", "The code is not valid.", 400);
     }
-    const stepUpToken = await WorkspaceMfaService.issueStepUpToken(context.user.id, action);
-    logger.info("workspace.step_up_granted", { tenant_id: context.tenant.id, user_id: context.user.id, action: action ?? "PRIVILEGED_ACTION" });
+    AuditService.log({
+      tenantId: context.tenant.id,
+      actorUserId: context.user.id,
+      action: method === "RECOVERY_CODE" ? "STEP_UP_GRANTED_WITH_RECOVERY_CODE" : "STEP_UP_GRANTED",
+      resourceType: "user",
+      resourceId: context.user.id,
+      metadata: {
+        for_action: action,
+        ...(method === "RECOVERY_CODE" ? { recovery_codes_left: WorkspaceMfaService.recoveryCodesLeft(context.user.id) } : {}),
+      },
+    });
+    const stepUpToken = await WorkspaceMfaService.issueStepUpToken(context.user.id, action, context.tenant.id);
+    logger.info("workspace.step_up_granted", { tenant_id: context.tenant.id, user_id: context.user.id, action });
     const response = apiSuccess({ stepUpToken, expires_in: 300 });
     response.headers.set("Cache-Control", "no-store");
     return response;

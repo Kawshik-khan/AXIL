@@ -9,6 +9,7 @@
 import { AgentType } from "@/types/ai";
 import { WorkflowPlanStep, ActionRiskLevel } from "@/types/orchestration";
 import { planValidator } from "@/domains/ai/orchestration/planning/plan-validator";
+import { logger } from "@/lib/logger";
 
 export interface AutonomousPlanRequest {
   objective: string;
@@ -298,7 +299,7 @@ export class AutonomousSupervisorAgent {
     }));
     const validation = planValidator.validate(definitions);
     if (!validation.isValid) {
-      console.warn("[AutonomousSupervisorAgent] Plan validation warnings:", validation.errors);
+      logger.warn("supervisor.plan_validation_warnings", { agent: "AutonomousSupervisorAgent", errors: validation.errors });
     }
     return steps;
   }

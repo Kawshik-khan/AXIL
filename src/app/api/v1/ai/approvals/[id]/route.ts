@@ -36,7 +36,7 @@ async function handlePOST(
     const action = body.action;
 
     if (action === "APPROVE") {
-      requireStepUp(context, "APPROVE_AI_ACTION"); // a fresh authenticator code (FX-97 Part A; audit F30)
+      await requireStepUp(context, "APPROVE_AI_ACTION"); // a fresh authenticator code (FX-97 Part A; audit F30)
       const result = await approvalEngine.approveAction(
         context.tenant.id,
         params.id,

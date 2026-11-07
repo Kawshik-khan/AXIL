@@ -4,6 +4,7 @@ import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response"
 import { marketingService } from "@/domains/marketing/marketing.service";
 import { withStore } from "@/lib/store-unit";
 import { COMMERCE_ANALYTICS_COLLECTIONS } from "@/infrastructure/db/tenant-rows";
+import { requireStepUp } from "@/lib/step-up";
 
 async function handlePOST(
   request: Request,
@@ -13,6 +14,7 @@ async function handlePOST(
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.MARKETING_APPROVE);
+    await requireStepUp(context, "APPROVE_BROADCAST"); // a fresh authenticator code (Stage 1 security review)
     const campaign = marketingService.approveCampaign(
       context.tenant.id,
       params.id,

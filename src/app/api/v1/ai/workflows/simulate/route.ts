@@ -9,7 +9,7 @@ import { parseOrThrow, readJson } from "@/lib/validation";
 const Body = z.object({
   objective: z.string().trim().min(1).max(2000),
   template_code: z.enum(["ABANDONED_CART_RECOVERY", "LOW_STOCK_RESTOCK", "DELIVERY_EXCEPTION_RESOLVE", "REFUND_REVIEW", "WHOLESALE_QUOTE"]).optional(),
-  context: z.record(z.unknown()).optional(),
+  context: z.record(z.string(), z.unknown()).optional(),
 }).strict();
 
 async function handlePOST(request: Request) {

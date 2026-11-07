@@ -17,6 +17,7 @@ import { CategoryService } from "./category.service";
 import { CsvParser } from "@/lib/csv-parser";
 import { assertWithinLimit } from "@/lib/safety-gate";
 import { loadTenantRows } from "@/infrastructure/db/tenant-rows";
+import { logger } from "@/lib/logger";
 
 export class BulkImportService {
   /**
@@ -131,7 +132,7 @@ export class BulkImportService {
               }
             }
           } catch (err: any) {
-            console.warn(`[BulkImport] Failed to auto-create category '${row.category}':`, err.message);
+            logger.warn("bulk_import.category_create_failed", { tenant_id: context.tenant.id, error: err instanceof Error ? err.message : String(err) });
           }
         }
         if (cat) {

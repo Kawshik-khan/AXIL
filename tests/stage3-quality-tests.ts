@@ -284,7 +284,7 @@ async function main() {
       new Request(`${BASE}/customers/${customerId}/erase`, { method: "POST", headers: { authorization: `Bearer ${await ownerSession()}`, "content-type": "application/json", ...extra }, body: JSON.stringify(body) }),
       { params: Promise.resolve({ id: customerId }) }
     );
-  const stepUp = async () => ({ "x-step-up-token": await signStepUpToken(reg.user.id, `${WORKSPACE_STEP_UP_PREFIX}CUSTOMER_ERASE`, db.findUserById(reg.user.id)?.session_version ?? 1) });
+  const stepUp = async () => ({ "x-step-up-token": await signStepUpToken(reg.user.id, `${WORKSPACE_STEP_UP_PREFIX}CUSTOMER_ERASE`, db.findUserById(reg.user.id)?.session_version ?? 1, reg.tenant.id) });
 
   await runTest("erasure always needs a fresh step-up (no grace period), the owner role, a reason and the typed confirmation", async () => {
     const o = await OrderService.createOrder(owner, { customer: { first_name: "Step", last_name: "Up", phone: "01933000003" }, delivery_address: { district: "Dhaka", address_line_1: "Road 1" }, items: [{ variant_id: variantId, quantity: 1 }], payment_method: "COD" } as never);

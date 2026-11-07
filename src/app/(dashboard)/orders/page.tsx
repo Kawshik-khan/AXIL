@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import { DistrictPicker, useDeliveryFees } from "@/components/orders/DistrictPicker";
 import Link from "next/link";
 import {
@@ -270,14 +270,16 @@ export default function OrdersPage() {
     }
   };
 
-  const filteredOrders = orders.filter((o) => {
-    const matchesSearch =
-      o.order_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      o.customer_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      o.customer_phone?.includes(searchQuery);
-    const matchesStatus = statusFilter === "ALL" || o.status === statusFilter;
-    return matchesSearch && matchesStatus;
-  });
+  const filteredOrders = useMemo(() => {
+    return orders.filter((o) => {
+      const matchesSearch =
+        o.order_number.toLowerCase().includes(debouncedSearchQuery.toLowerCase()) ||
+        o.customer_name?.toLowerCase().includes(debouncedSearchQuery.toLowerCase()) ||
+        o.customer_phone?.includes(debouncedSearchQuery);
+      const matchesStatus = statusFilter === "ALL" || o.status === statusFilter;
+      return matchesSearch && matchesStatus;
+    });
+  }, [orders, debouncedSearchQuery, statusFilter]);
 
   const getStatusBadge = (status: OrderStatus) => {
     switch (status) {

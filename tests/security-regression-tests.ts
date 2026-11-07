@@ -393,6 +393,10 @@ async function main() {
   db.createAutomationWebhook({ id: hmacWebhookId, tenant_id: tenantA.tenant.id, provider: "STEADFAST", endpoint_path: "/api/v1/automation/webhooks/steadfast", secret_reference: "SECURITY_TEST_STEADFAST_SECRET", signature_algorithm: "HMAC_SHA256", is_active: true, created_at: nowIso, updated_at: nowIso });
   db.createAutomationWebhook({ id: tokenWebhookId, tenant_id: tenantA.tenant.id, provider: "PATHAO", endpoint_path: "/api/v1/automation/webhooks/pathao", secret_reference: "SECURITY_TEST_STEADFAST_SECRET", signature_algorithm: "TOKEN", is_active: true, created_at: nowIso, updated_at: nowIso });
 
+  // Senders sign with their endpoint's own secret, derived from the shared master (STATUS Low: per-endpoint secrets)
+  const endpointKey = (webhookId: string, tenantId = tenantA.tenant.id, provider = "STEADFAST") =>
+    hmacHex(webhookSecret, `commerceos:webhook-endpoint:v1:${tenantId}:${provider}:${webhookId}`);
+  const steadfastKey = endpointKey(hmacWebhookId);
   const courierBody = JSON.stringify({ event_id: `evt_${crypto.randomUUID()}`, tracking_number: "TRK-SEC-NOT-A-REAL-PARCEL", status: "delivered" });
   const courierUrl = (provider: string, query: string) => `${BASE}/api/v1/automation/webhooks/${provider}?${query}`;
   const postCourier = (provider: string, query: string, headers: Record<string, string>, body = courierBody) =>
@@ -420,18 +424,18 @@ async function main() {
   });
 
   await runTest("C4: a signed request without a timestamp is rejected", async () => {
-    const res = await postCourier("steadfast", `wh=${hmacWebhookId}&tenant_id=${tenantA.tenant.id}`, { "x-webhook-signature": hmacHex(webhookSecret, courierBody) });
+    const res = await postCourier("steadfast", `wh=${hmacWebhookId}&tenant_id=${tenantA.tenant.id}`, { "x-webhook-signature": hmacHex(steadfastKey, courierBody) });
     assert.strictEqual(res.status, 401);
   });
 
   await runTest("C4: a stale timestamp (> 300 s) is rejected", async () => {
     const stale = (Date.now() - 10 * 60 * 1000).toString();
-    const res = await postCourier("steadfast", `wh=${hmacWebhookId}&tenant_id=${tenantA.tenant.id}`, { "x-webhook-signature": hmacHex(webhookSecret, `${stale}.${courierBody}`), "x-webhook-timestamp": stale });
+    const res = await postCourier("steadfast", `wh=${hmacWebhookId}&tenant_id=${tenantA.tenant.id}`, { "x-webhook-signature": hmacHex(steadfastKey, `${stale}.${courierBody}`), "x-webhook-timestamp": stale });
     assert.strictEqual(res.status, 401);
   });
 
   await runTest("C4: a body-only signature replayed with a fresh timestamp is rejected", async () => {
-    const res = await postCourier("steadfast", `wh=${hmacWebhookId}&tenant_id=${tenantA.tenant.id}`, { "x-webhook-signature": hmacHex(webhookSecret, courierBody), "x-webhook-timestamp": Date.now().toString() });
+    const res = await postCourier("steadfast", `wh=${hmacWebhookId}&tenant_id=${tenantA.tenant.id}`, { "x-webhook-signature": hmacHex(steadfastKey, courierBody), "x-webhook-timestamp": Date.now().toString() });
     assert.strictEqual(res.status, 401);
   });
 
@@ -440,7 +444,7 @@ async function main() {
     const before = db.getAutomationWebhookDeliveries(tenantB.tenant.id).length;
     const timestamp = Date.now().toString();
     const res = await postCourier("steadfast", `wh=${hmacWebhookId}&tenant_id=${tenantA.tenant.id}`, {
-      "x-webhook-signature": hmacHex(webhookSecret, `${timestamp}.${body}`),
+      "x-webhook-signature": hmacHex(steadfastKey, `${timestamp}.${body}`),
       "x-webhook-timestamp": timestamp,
       "x-tenant-id": tenantB.tenant.id,
     }, body);
@@ -449,6 +453,25 @@ async function main() {
     assert.strictEqual(json.verified, true);
     assert.strictEqual(db.getAutomationWebhookDeliveries(tenantB.tenant.id).length, before, "x-tenant-id header must be ignored");
     assert.ok(db.getAutomationWebhookDeliveries(tenantA.tenant.id).some((d) => d.webhook_id === hmacWebhookId && d.status === "VERIFIED"));
+  });
+
+  await runTest("per-endpoint webhook secrets: neither the shared master nor another endpoint's secret signs for this endpoint", async () => {
+    const otherTenantWebhookId = `wh_sec_b_${crypto.randomUUID().slice(0, 8)}`;
+    const now = new Date().toISOString();
+    db.createAutomationWebhook({ id: otherTenantWebhookId, tenant_id: tenantB.tenant.id, provider: "STEADFAST", endpoint_path: "/api/v1/automation/webhooks/steadfast", secret_reference: "SECURITY_TEST_STEADFAST_SECRET", signature_algorithm: "HMAC_SHA256", is_active: true, created_at: now, updated_at: now });
+    const body = JSON.stringify({ event_id: `evt_${crypto.randomUUID()}`, tracking_number: "TRK-SEC-NOT-A-REAL-PARCEL", status: "in_transit" });
+    const signed = (key: string) => {
+      const timestamp = Date.now().toString();
+      return { "x-webhook-signature": hmacHex(key, `${timestamp}.${body}`), "x-webhook-timestamp": timestamp };
+    };
+    assert.strictEqual((await postCourier("steadfast", `wh=${hmacWebhookId}`, signed(webhookSecret), body)).status, 401, "the shared master secret");
+    const otherKey = endpointKey(otherTenantWebhookId, tenantB.tenant.id);
+    assert.strictEqual((await postCourier("steadfast", `wh=${hmacWebhookId}`, signed(otherKey), body)).status, 401, "tenant B's endpoint secret on tenant A's endpoint");
+    const before = db.getAutomationWebhookDeliveries(tenantB.tenant.id).filter((d) => d.status === "VERIFIED").length;
+    const own = await postCourier("steadfast", `wh=${otherTenantWebhookId}`, signed(otherKey), body);
+    assert.strictEqual(own.status, 200, "each endpoint's own secret works");
+    assert.strictEqual(db.getAutomationWebhookDeliveries(tenantB.tenant.id).filter((d) => d.status === "VERIFIED").length, before + 1);
+    assert.strictEqual(WebhookGatewayService.endpointSecret({ id: hmacWebhookId, secret_reference: "SECURITY_TEST_STEADFAST_SECRET", tenant_id: tenantA.tenant.id, provider: "STEADFAST" }), steadfastKey);
   });
 
   await runTest("C4: there is no predictable fallback webhook secret", () => {
@@ -597,6 +620,45 @@ async function main() {
     }));
     assert.strictEqual(res.status, 200);
     assert.strictEqual(db.getCustomerIdentities(tenantA.tenant.id, known.id).length, linkedBefore, "no identity may be linked to the known customer");
+  });
+
+  await runTest("website server-to-server: a signed request is processed once; replays (any signature casing) add nothing", async () => {
+    const secret = crypto.randomBytes(24).toString("hex");
+    const now = new Date().toISOString();
+    const channel = db.createConnectedChannel({
+      id: `chn_sec_web_${crypto.randomUUID().slice(0, 8)}`, tenant_id: tenantA.tenant.id, type: "WEBSITE_CHAT", name: "Signed site",
+      status: "ACTIVE", provider_account_id: `web_signed_${crypto.randomUUID().slice(0, 8)}`,
+      credentials_encrypted: encryptCredential({ webhookSecret: secret }), configuration: { auto_reply_enabled: false }, created_at: now, updated_at: now,
+    });
+    const { POST } = await import("@/app/api/v1/social/webhooks/website/route");
+    // No client_message_id: the replay check is what stops the duplicate
+    const body = JSON.stringify({ visitor_id: `v_${crypto.randomUUID().slice(0, 8)}`, text: `replay probe ${crypto.randomUUID()}` });
+    const send = (ts: string) =>
+      POST(new Request(`${BASE}/api/v1/social/webhooks/website?channel_id=${channel.id}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-commerceos-timestamp": ts, "x-commerceos-signature": hmacHex(secret, `${ts}.${body}`) },
+        body,
+      }));
+    const count = () => messageTexts(tenantA.tenant.id).filter((t) => t === JSON.parse(body).text).length;
+    const ts = Math.floor(Date.now() / 1000).toString();
+    const first = await send(ts);
+    assert.strictEqual(first.status, 200);
+    assert.strictEqual(((await first.json()) as { status: string }).status, "MESSAGE_RECEIVED");
+    assert.strictEqual(count(), 1);
+    const replay = await send(ts);
+    assert.strictEqual(replay.status, 200);
+    assert.strictEqual(count(), 1, "the replay added no message");
+    // The adapter accepts the signature in any letter case; the replay is still the same message
+    const sig = hmacHex(secret, `${ts}.${body}`);
+    const upper = await POST(new Request(`${BASE}/api/v1/social/webhooks/website?channel_id=${channel.id}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-commerceos-timestamp": ts, "x-commerceos-signature": ` ${sig.toUpperCase()} ` },
+      body,
+    }));
+    assert.strictEqual(upper.status, 200);
+    assert.strictEqual(count(), 1, "a re-cased signature is the same request");
+    const later = await send(String(Number(ts) + 1)); // the sender's own new request (new timestamp, new signature)
+    assert.strictEqual(((await later.json()) as { status: string }).status, "MESSAGE_RECEIVED");
   });
 
   await runTest("H5: the widget session endpoint never returns another visitor's IP address or user agent", async () => {

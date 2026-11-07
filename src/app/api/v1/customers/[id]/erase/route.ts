@@ -18,7 +18,7 @@ async function handlePOST(request: Request, { params }: { params: Promise<{ id: 
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.CUSTOMERS_ERASE);
-    requireStepUpAlways(context, "CUSTOMER_ERASE");
+    await requireStepUpAlways(context, "CUSTOMER_ERASE");
     const { reason } = parseOrThrow(Body, await readJson(request));
     const { id } = await params;
     return apiSuccess(await CustomerErasureService.erase(context, id, reason));

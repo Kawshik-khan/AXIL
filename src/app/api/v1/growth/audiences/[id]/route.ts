@@ -15,7 +15,7 @@ const AudiencePatch = z
   .object({
     name: z.string().trim().min(1).max(200),
     description: z.string().max(2000),
-    rule_groups: z.array(z.record(z.unknown())).max(50),
+    rule_groups: z.array(z.record(z.string(), z.unknown())).max(50),
   })
   .partial()
   .strict();
