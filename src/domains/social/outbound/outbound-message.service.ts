@@ -1,7 +1,7 @@
 import { AppError, BadRequestError, NotFoundError, FeatureNotEntitledError } from "@/lib/errors";
 import { randomSuffix } from "@/lib/ids";
 import { db } from "@/infrastructure/db";
-import { CategoryChoice, Message, MessageType, ProductCard } from "@/types/social";
+import { ChoiceSet, Message, MessageType, ProductCard } from "@/types/social";
 import { RequestContext } from "@/lib/context";
 import { RbacService } from "@/domains/rbac/service";
 import { PERMISSIONS } from "@/lib/permissions";
@@ -23,8 +23,8 @@ export interface SendOutboundPayload {
   templateParameters?: Record<string, string>;
   /** Product cards (channels with sendProductCards only); `text` is their plain-text form for the inbox. */
   productCards?: ProductCard[];
-  /** Category buttons sent after the cards (Telegram only; other channels ignore them). */
-  categoryChoices?: CategoryChoice[];
+  /** Tap choices (channels with sendChoices draw them as buttons); `text` is their plain-text form, sent where they can't. */
+  choices?: ChoiceSet;
   replyToMessageId?: string;
   idempotency_key?: string;
   client_message_id?: string;
@@ -141,7 +141,7 @@ export class OutboundMessageService {
           channel_type: channel.type,
           ...(options.traceId ? { trace_id: options.traceId } : {}),
           ...(payload.productCards ? { product_cards: payload.productCards } : {}),
-          ...(payload.productCards && payload.categoryChoices?.length ? { category_choices: payload.categoryChoices } : {}),
+          ...(payload.choices && !payload.productCards ? { choices: payload.choices } : {}),
         },
         created_at: now,
         updated_at: now,

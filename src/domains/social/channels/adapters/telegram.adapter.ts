@@ -1,10 +1,10 @@
 import crypto from "crypto";
 import { BadRequestError, AppError } from "@/lib/errors";
 import { outboundRequest, OutboundBlockedError, OutboundNetworkError, OutboundTimeoutError } from "@/lib/outbound-http";
-import { CategoryChoice, ChannelType, NormalizedIncomingMessage, ProductCard } from "@/types/social";
-import { MAX_WHATSAPP_PRODUCT_CARDS, scriptOfCards, telegramCategoryMessage, telegramProductMessage } from "@/domains/social/outbound/product-cards";
-import { productTapText, telegramCategoryTapText, telegramTapPayload } from "@/domains/social/outbound/product-tap";
-import { logger } from "@/lib/logger";
+import { ChannelType, ChoiceSet, NormalizedIncomingMessage, ProductCard } from "@/types/social";
+import { MAX_WHATSAPP_PRODUCT_CARDS, scriptOfCards, telegramProductMessage } from "@/domains/social/outbound/product-cards";
+import { productTapText, telegramTapPayload } from "@/domains/social/outbound/product-tap";
+import { telegramChoiceTapText, telegramChoicesMessage } from "@/domains/social/outbound/choices";
 import {
   IChannelProvider,
   ChannelCredentials,
@@ -90,8 +90,8 @@ export class TelegramAdapter implements IChannelProvider {
 
   /**
    * Update -> message. A product card's "Order now" press (callback_query) becomes the customer's message
-   * "Order now: <title>", as on the other channels, and a category button's press the category's name; other button
-   * data is ignored.
+   * "Order now: <title>", as on the other channels, and a choice button's press the option's value (a category's
+   * name); other button data is ignored.
    */
   public normalizeIncomingEvent(rawPayload: Record<string, unknown>, channelId: string): NormalizedIncomingMessage[] {
     const updateId = rawPayload.update_id;
@@ -166,10 +166,10 @@ export class TelegramAdapter implements IChannelProvider {
       !(typeof chat.id === "string" || Number.isSafeInteger(chat.id))
     ) return [];
     // Only our buttons: a card's title is read back from the card we sent (photo caption, or text without a photo); a
-    // category button's name from the pressed button on our category message
+    // choice's value from the pressed button on our choices message
     const text =
       productTapText(telegramTapPayload(cb.data, cb.message?.caption ?? cb.message?.text) ?? undefined)?.text ??
-      telegramCategoryTapText(cb.data, cb.message?.reply_markup);
+      telegramChoiceTapText(cb.data, cb.message?.reply_markup);
     if (!text) return [];
     const name = [cb.from.first_name, cb.from.last_name].filter(Boolean).join(" ") || undefined;
     return [
@@ -225,16 +225,8 @@ export class TelegramAdapter implements IChannelProvider {
     return { externalMessageId: String(result.message_id ?? ""), status: "SENT", providerTimestamp: new Date().toISOString() };
   }
 
-  /**
-   * One message per card (photo with caption and an "Order now" button), then the category buttons when the shop
-   * overview listed categories; the first message's id is returned.
-   */
-  public async sendProductCards(
-    credentials: ChannelCredentials,
-    recipientId: string,
-    cards: ProductCard[],
-    options?: { categoryChoices?: CategoryChoice[] }
-  ): Promise<SendMessageResult> {
+  /** One message per card (photo with caption and an "Order now" button); the first message's id is returned. */
+  public async sendProductCards(credentials: ChannelCredentials, recipientId: string, cards: ProductCard[]): Promise<SendMessageResult> {
     const script = scriptOfCards(cards);
     const ids: string[] = [];
     for (const card of cards.slice(0, MAX_WHATSAPP_PRODUCT_CARDS)) {
@@ -256,21 +248,13 @@ export class TelegramAdapter implements IChannelProvider {
       }
     }
     if (!ids.length) throw new BadRequestError("No product card to send.");
-    // Best effort, and kept out of message_ids (they count cards): the cards are out, so a retry would repeat them
-    let categoryMessageId: string | undefined;
-    if (options?.categoryChoices && options.categoryChoices.length >= 2 && ids.length === Math.min(cards.length, MAX_WHATSAPP_PRODUCT_CARDS)) {
-      try {
-        categoryMessageId = String((await telegramCall(credentials, "sendMessage", telegramCategoryMessage(options.categoryChoices, recipientId, script))).message_id ?? "");
-      } catch (err) {
-        logger.warn("telegram.category_buttons_failed", { code: err instanceof AppError ? err.code : "ERROR" });
-      }
-    }
-    return {
-      externalMessageId: ids[0],
-      status: "SENT",
-      providerTimestamp: new Date().toISOString(),
-      rawResponse: { message_ids: ids, ...(categoryMessageId ? { category_message_id: categoryMessageId } : {}) },
-    };
+    return { externalMessageId: ids[0], status: "SENT", providerTimestamp: new Date().toISOString(), rawResponse: { message_ids: ids } };
+  }
+
+  /** The prompt with an inline keyboard; a press comes back as the option's value. */
+  public async sendChoices(credentials: ChannelCredentials, recipientId: string, choices: ChoiceSet): Promise<SendMessageResult> {
+    const result = await telegramCall(credentials, "sendMessage", telegramChoicesMessage(choices, recipientId));
+    return { externalMessageId: String(result.message_id ?? ""), status: "SENT", providerTimestamp: new Date().toISOString() };
   }
 
   public async sendTemplateMessage(): Promise<SendMessageResult> {

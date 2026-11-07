@@ -268,7 +268,8 @@ export async function runCustomerTurn(pr: CustomerAgentPrincipal, opts: { budget
     `<session_state source="server">\n${state}\n</session_state>`;
   const messages: LLMMessage[] = [
     { role: "system", content: systemPrompt() },
-    ...recent.slice(0, -1).map((m) => ({ role: (m.sender_type === "CUSTOMER" ? "user" : "assistant") as "user" | "assistant", content: cap(m.text, 1200) })),
+    // A choices message is buttons of merchant names: never history in the assistant's voice (the tap itself is)
+    ...recent.slice(0, -1).filter((m) => !m.metadata?.choices).map((m) => ({ role: (m.sender_type === "CUSTOMER" ? "user" : "assistant") as "user" | "assistant", content: cap(m.text, 1200) })),
     { role: "system", content: dynamic },
     { role: "user", content: current },
   ];

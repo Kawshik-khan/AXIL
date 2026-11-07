@@ -1,7 +1,7 @@
 import { IntegrationNotConfiguredError } from "@/lib/errors";
 import { randomSuffix } from "@/lib/ids";
 import crypto from "crypto";
-import { ChannelType, NormalizedIncomingMessage, ProductCard } from "@/types/social";
+import { ChannelType, ChoiceSet, NormalizedIncomingMessage, ProductCard } from "@/types/social";
 import {
   IChannelProvider,
   ChannelCredentials,
@@ -100,6 +100,11 @@ export class WebsiteChatAdapter implements IChannelProvider {
 
   /** The widget reads the cards from the stored message (metadata.product_cards); nothing leaves the server. */
   public async sendProductCards(_credentials: ChannelCredentials, _recipientId: string, _cards: ProductCard[]): Promise<SendMessageResult> {
+    return { externalMessageId: `web_out_${Date.now()}_${randomSuffix()}`, status: "DELIVERED", providerTimestamp: new Date().toISOString() };
+  }
+
+  /** The widget reads the choices from the stored message (metadata.choices); nothing leaves the server. */
+  public async sendChoices(_credentials: ChannelCredentials, _recipientId: string, _choices: ChoiceSet): Promise<SendMessageResult> {
     return { externalMessageId: `web_out_${Date.now()}_${randomSuffix()}`, status: "DELIVERED", providerTimestamp: new Date().toISOString() };
   }
 

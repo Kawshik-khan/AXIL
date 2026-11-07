@@ -3,7 +3,7 @@ import {
   NormalizedIncomingMessage,
   MessageStatus,
   ProductCard,
-  CategoryChoice,
+  ChoiceSet,
 } from "@/types/social";
 
 export interface ChannelCredentials {
@@ -103,13 +103,22 @@ export interface IChannelProvider {
 
   /**
    * Product cards (photo, title, price, an order button). Channels without it get no cards: the agent's text reply
-   * already names the products. `categoryChoices`: category buttons after the cards, where the channel has them.
+   * already names the products.
    */
   sendProductCards?(
     credentials: ChannelCredentials,
     recipientId: string,
-    cards: ProductCard[],
-    options?: { categoryChoices?: CategoryChoice[] }
+    cards: ProductCard[]
+  ): Promise<SendMessageResult>;
+
+  /**
+   * Tap choices as one message of buttons (choices.ts draws each channel's format). Channels without it get the
+   * message's plain-text form.
+   */
+  sendChoices?(
+    credentials: ChannelCredentials,
+    recipientId: string,
+    choices: ChoiceSet
   ): Promise<SendMessageResult>;
 
   /**

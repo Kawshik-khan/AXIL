@@ -382,6 +382,8 @@ async function main() {
     assert.strictEqual((overview.results as R[]).length, 3);
     assert.strictEqual(overview.total_products, 10);
     assert.ok(/Never say these products are the whole shop/.test(String(overview.note)), String(overview.note));
+    // Messenger draws 3 categories as quick replies, sent after the reply: the reply doesn't list them
+    assert.ok(/tap buttons/.test(String(overview.note)) && /do NOT list them/.test(String(overview.note)), String(overview.note));
     assert.ok(/Kon category/.test(synthesizeGroundedResponse([overview], "latin")!) && /Saree \(4 ta\)/.test(synthesizeGroundedResponse([overview], "latin")!));
 
     // The customer picks a category: only its products, any spelling of its name
@@ -394,6 +396,9 @@ async function main() {
     assert.ok(/already seen all 4 products in this category/.test(String(again.note)), String(again.note));
     // Named as the query, exactly, it is the category too; "Others" is the products without one
     assert.strictEqual((await run(pr, "search_products", { query: "Panjabi" })).category_untrusted, "Panjabi");
+    // A category button's tap passed on as it came ("Category: Saree", Bangla label too) is that category
+    assert.strictEqual((await run(pr, "search_products", { query: "Category: Saree" })).category_untrusted, "Saree");
+    assert.strictEqual((await run(pr, "search_products", { query: "all products", category: "ক্যাটাগরি: Panjabi" })).category_untrusted, "Panjabi");
     assert.deepStrictEqual(names(await run(pr, "search_products", { query: "all products", category: "Others" })).sort(), ["Gift Box", "Perfume Oil"]);
 
     // The next general ask after the overview is the paged list, past the examples, offering the categories

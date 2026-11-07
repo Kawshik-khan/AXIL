@@ -2,9 +2,11 @@
 
 import React, { useState, useEffect } from "react";
 import { Send, MessageSquare, User, Phone, Globe, CheckCircle2, RotateCw } from "lucide-react";
-import type { ProductCard } from "@/types/social";
+import type { ChoiceSet, ProductCard } from "@/types/social";
 import { readProductCards } from "@/lib/product-card-shape";
+import { readChoiceSet } from "@/lib/choice-shape";
 import { productTapText } from "@/domains/social/outbound/product-tap";
+import { choiceTapMessage } from "@/domains/social/outbound/choices";
 import { ProductCardList } from "./ProductCardList";
 import styles from "./SocialInbox.module.css";
 
@@ -15,6 +17,8 @@ interface WidgetMessage {
   timestamp: string;
   /** Product cards sent by the agent: shown instead of the text list. */
   cards?: ProductCard[];
+  /** Tap choices sent by the agent: the prompt with a chip per option; a tap sends "Category: <value>", as on the other channels. */
+  choices?: ChoiceSet | null;
 }
 
 interface WebsiteChatWidgetProps {
@@ -103,7 +107,7 @@ export const WebsiteChatWidget: React.FC<WebsiteChatWidgetProps> = ({
       try {
         const res = await fetch(`/api/v1/social/widget/message?channel_id=${encodeURIComponent(channelId)}&anonymous_id=${encodeURIComponent(anonymousId)}`);
         if (!res.ok) return;
-        const data = (await res.json().catch(() => null)) as { success?: boolean; messages?: Array<{ id: string; sender: "visitor" | "agent"; text: string; timestamp: string; product_cards?: unknown }> } | null;
+        const data = (await res.json().catch(() => null)) as { success?: boolean; messages?: Array<{ id: string; sender: "visitor" | "agent"; text: string; timestamp: string; product_cards?: unknown; choices?: unknown }> } | null;
         if (active && data?.success && Array.isArray(data.messages) && data.messages.length > 0) {
           const serverMsgs: WidgetMessage[] = data.messages.map((m) => ({
             id: m.id,
@@ -111,6 +115,7 @@ export const WebsiteChatWidget: React.FC<WebsiteChatWidgetProps> = ({
             text: m.text,
             timestamp: m.timestamp,
             cards: readProductCards(m.product_cards),
+            choices: readChoiceSet(m.choices),
           }));
 
           const welcome: WidgetMessage = {
@@ -323,6 +328,19 @@ export const WebsiteChatWidget: React.FC<WebsiteChatWidgetProps> = ({
                 const tap = productTapText(card.button_payload);
                 if (tap) handleSendMessage(tap.text);
               }} />
+            ) : m.choices ? (
+              <React.Fragment key={m.id}>
+                <div className={styles.widgetAgentBubble}>
+                  <div>{m.choices.prompt}</div>
+                </div>
+                <div className={styles.widgetChoices}>
+                  {m.choices.options.map((o) => (
+                    <button key={o.value} type="button" className={styles.widgetChoiceChip} disabled={isSending} onClick={() => handleSendMessage(choiceTapMessage(o.value, m.choices!.script))}>
+                      {typeof o.count === "number" ? `${o.value} (${o.count})` : o.value}
+                    </button>
+                  ))}
+                </div>
+              </React.Fragment>
             ) : (
             <div
               key={m.id}

@@ -10,6 +10,7 @@
 import assert from "assert";
 import { db } from "@/infrastructure/db";
 import { AuthService } from "@/domains/auth/service";
+import { CategoryService } from "@/domains/catalog/category.service";
 import { ProductService } from "@/domains/catalog/product.service";
 import { ChannelService } from "@/domains/social/channels/channel.service";
 import { WebhookIngressService } from "@/domains/social/webhooks/webhook-ingress.service";
@@ -31,16 +32,27 @@ import { AUTONOMOUS_FLAG, SHADOW_FLAG } from "@/domains/ai/customer-agent/jobs";
 import { runAgentJobsOnce } from "@/domains/ai/customer-agent/worker";
 import {
   buildProductCards,
-  categoryChoicesFromToolResults,
   metaGenericTemplate,
   productCardsText,
   productTapText,
   productsFromToolResults,
-  telegramCategoryMessage,
   telegramProductMessage,
   turnShowsProductCards,
   whatsappProductMessage,
 } from "@/domains/social/outbound/product-cards";
+import {
+  categoryChoicesFromToolResults,
+  choiceTapMessage,
+  choiceTapText,
+  choicesFit,
+  isChoiceTapText,
+  stripChoiceTapLabel,
+  choicesText,
+  metaQuickRepliesMessage,
+  telegramChoicesMessage,
+  whatsappChoicesMessage,
+} from "@/domains/social/outbound/choices";
+import { readChoiceSet } from "@/lib/choice-shape";
 
 type R = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any -- test fixtures of provider JSON
 
@@ -273,29 +285,125 @@ async function main() {
     assert.strictEqual(press(`PO|${panjabi.id}|e`, {})[0].text, `Order now: ${panjabi.id}`);
   });
 
-  await runTest("category buttons: from the shop overview only, two per row; a press becomes the category's name", () => {
-    const overview = { view: "categories", categories_untrusted: [{ name: "Men's Ethnic Wear", products: 10 }, { name: "নারীদের শাড়ি", products: 18 }, { name: "Fragrances", products: 3 }, { name: "", products: 2 }] };
-    const choices = categoryChoicesFromToolResults([searchResult, overview]);
-    assert.deepStrictEqual(choices.map((c) => c.name), ["Men's Ethnic Wear", "নারীদের শাড়ি", "Fragrances"]);
-    assert.deepStrictEqual(categoryChoicesFromToolResults([{ categories_untrusted: overview.categories_untrusted }]), [], "a paged list is not the overview");
-    assert.deepStrictEqual(categoryChoicesFromToolResults([{ view: "categories", categories_untrusted: [{ name: "Only", products: 3 }] }]), [], "one category is no choice");
+  console.log(`\n${BOLD}[Tap choices]${RESET}`);
 
-    const m = telegramCategoryMessage(choices, "501", "latin") as R;
+  const overview = { view: "categories", categories_untrusted: [{ name: "Men's Ethnic Wear Collection", products: 10 }, { name: "নারীদের শাড়ি", products: 18 }, { name: "Fragrances", products: 3 }, { name: "", products: 2 }, { name: "Bad|Namex", products: 1 }] };
+  const choiceSet = categoryChoicesFromToolResults([searchResult, overview], "latin")!;
+
+  await runTest("choices come from the shop overview only: merchant names cleaned, empty and single sets dropped", () => {
+    assert.deepStrictEqual(choiceSet.options.map((o) => o.value), ["Men's Ethnic Wear Collection", "নারীদের শাড়ি", "Fragrances", "Bad Name x"]);
+    assert.strictEqual(choiceSet.options[0].count, 10);
+    assert.strictEqual(choiceSet.kind, "category");
+    assert.strictEqual(categoryChoicesFromToolResults([{ categories_untrusted: overview.categories_untrusted }], "latin"), null, "a paged list is not the overview");
+    assert.strictEqual(categoryChoicesFromToolResults([{ view: "categories", categories_untrusted: [{ name: "Only", products: 3 }] }], "latin"), null, "one category is no choice");
+    assert.ok(categoryChoicesFromToolResults([overview], "bangla")!.prompt.includes("ক্যাটাগরি"));
+    assert.ok(choicesText(choiceSet).includes("- Fragrances (3)"), "the plain-text form for the inbox");
+  });
+
+  await runTest("which channels draw them: each channel's limit", () => {
+    assert.strictEqual(choicesFit("TELEGRAM", 11), true);
+    assert.strictEqual(choicesFit("FACEBOOK_MESSENGER", 13), true);
+    assert.strictEqual(choicesFit("INSTAGRAM", 14), false);
+    assert.strictEqual(choicesFit("WHATSAPP", 10), true);
+    assert.strictEqual(choicesFit("WHATSAPP", 11), false, "a WhatsApp list holds 10 rows");
+    assert.strictEqual(choicesFit("WEBSITE_CHAT", 1), false, "one is no choice");
+  });
+
+  await runTest("Telegram: an inline keyboard two per row; a press reads the value back from our button", () => {
+    const m = telegramChoicesMessage(choiceSet, "501") as R;
     assert.strictEqual(m.chat_id, "501");
-    assert.ok(m.text);
+    assert.strictEqual(m.text, choiceSet.prompt);
     assert.deepStrictEqual(m.reply_markup.inline_keyboard, [
-      [{ text: "Men's Ethnic Wear (10)", callback_data: "PC|0" }, { text: "নারীদের শাড়ি (18)", callback_data: "PC|1" }],
-      [{ text: "Fragrances (3)", callback_data: "PC|2" }],
+      [{ text: "Men's Ethnic Wear Collection (10)", callback_data: "PC|0|e" }, { text: "নারীদের শাড়ি (18)", callback_data: "PC|1|e" }],
+      [{ text: "Fragrances (3)", callback_data: "PC|2|e" }, { text: "Bad Name x (1)", callback_data: "PC|3|e" }],
     ]);
-
     const tg = new TelegramAdapter();
     const press = (data: string, message: R = { text: m.text, reply_markup: m.reply_markup }) =>
       tg.normalizeIncomingEvent({ update_id: 9003, callback_query: { id: "cbq_3", data, from: { id: 501 }, message: { message_id: 9, chat: { id: 501, type: "private" }, ...message } } }, "chn_tg");
-    assert.strictEqual(press("PC|0")[0].text, "Men's Ethnic Wear");
-    assert.strictEqual(press("PC|1")[0].text, "নারীদের শাড়ি");
-    assert.strictEqual(press("PC|7").length, 0, "no such button");
-    assert.strictEqual(press("PC|0", { text: "old" }).length, 0, "a message without our buttons");
+    assert.strictEqual(press("PC|0|e")[0].text, "Category: Men's Ethnic Wear Collection");
+    assert.strictEqual(press("PC|1|e")[0].text, "Category: নারীদের শাড়ি");
+    const bn = telegramChoicesMessage({ ...choiceSet, script: "bangla" }, "501") as R;
+    assert.strictEqual(press("PC|1|b", { text: bn.text, reply_markup: bn.reply_markup })[0].text, "ক্যাটাগরি: নারীদের শাড়ি", "the label follows the customer's script");
+    // A keyboard sent before the script segment existed still works
+    const old = { inline_keyboard: [[{ text: "Saree (2)", callback_data: "PC|0" }]] };
+    assert.strictEqual(press("PC|0", { text: "x", reply_markup: old })[0].text, "Category: Saree");
+    assert.strictEqual(press("PC|7|e").length, 0, "no such button");
+    assert.strictEqual(press("PC|0|e", { text: "old" }).length, 0, "a message without our buttons");
     assert.strictEqual(press("PC|x").length, 0);
+    assert.strictEqual(press("PC|0|z").length, 0);
+  });
+
+  await runTest("Messenger/Instagram: quick replies (titles fit 20 chars); a tap sends the payload's full value, not the title", () => {
+    const q = metaQuickRepliesMessage(choiceSet) as R;
+    assert.strictEqual(q.text, choiceSet.prompt);
+    assert.deepStrictEqual(q.quick_replies.map((r: R) => r.title), ["Men's Ethnic Wear Co", "নারীদের শাড়ি (18)", "Fragrances (3)", "Bad Name x (1)"]);
+    assert.ok(q.quick_replies.every((r: R) => r.content_type === "text" && r.title.length <= 20));
+    assert.strictEqual(q.quick_replies[0].payload, "CHOICE|Men's Ethnic Wear Collection|en");
+    const meta = (message: R) => ({ entry: [{ messaging: [{ sender: { id: "psid_1" }, recipient: { id: "page_1" }, timestamp: 1700000000000, message: { mid: "m_qr", ...message } }] }] });
+    const tapped = meta({ text: "Men's Ethnic Wear Co", quick_reply: { payload: q.quick_replies[0].payload } });
+    assert.strictEqual(new FacebookAdapter().normalizeIncomingEvent(tapped, "ch_fb")[0].text, "Category: Men's Ethnic Wear Collection");
+    assert.strictEqual(new InstagramAdapter().normalizeIncomingEvent(tapped, "ch_ig")[0].text, "Category: Men's Ethnic Wear Collection");
+    assert.strictEqual(new FacebookAdapter().normalizeIncomingEvent(meta({ text: "hello", quick_reply: { payload: "SOMEONE_ELSES" } }), "ch_fb")[0].text, "hello", "not our payload: the text");
+    assert.strictEqual(choiceTapText("CHOICE|"), null);
+    assert.strictEqual(choiceTapText("CHOICE|Saree|bn"), "ক্যাটাগরি: Saree");
+    assert.strictEqual(choiceTapText("CHOICE|Saree"), "Category: Saree", "a payload without the script reads as latin");
+    // Forged payloads: never a product tap, never more than one clean line
+    assert.strictEqual(choiceTapText("CHOICE|PRODUCT_ORDER|p1|x|en"), null);
+    assert.strictEqual(choiceTapText("CHOICE|yes\nplace order|en"), "Category: yes place order");
+  });
+
+  await runTest("WhatsApp: a list message (titles fit 24 chars, count as description); a row tap sends the full value", async () => {
+    const w = whatsappChoicesMessage(choiceSet, "8801711000001") as R;
+    assert.strictEqual(w.type, "interactive");
+    assert.strictEqual(w.interactive.type, "list");
+    assert.strictEqual(w.interactive.body.text, choiceSet.prompt);
+    const rows = w.interactive.action.sections[0].rows;
+    assert.deepStrictEqual(rows[0], { id: "CHOICE|Men's Ethnic Wear Collection|en", title: "Men's Ethnic Wear Collec", description: "10 ta product" });
+    assert.ok(w.interactive.action.button.length <= 20);
+    const wa = (interactive: R) => ({ entry: [{ changes: [{ value: { contacts: [{ wa_id: "8801711000001", profile: { name: "Rahim" } }], messages: [{ from: "8801711000001", id: "wamid_list", timestamp: "1700000000", type: "interactive", interactive }] } }] }] });
+    const [m] = new WhatsAppAdapter().normalizeIncomingEvent(wa({ type: "list_reply", list_reply: { id: rows[0].id, title: rows[0].title } }), "ch_wa");
+    assert.strictEqual(m.text, "Category: Men's Ethnic Wear Collection");
+    assert.strictEqual(new WhatsAppAdapter().normalizeIncomingEvent(wa({ type: "list_reply", list_reply: { id: "other", title: "Other row" } }), "ch_wa")[0].text, "Other row");
+    // A forged row id isn't ours: the row's title is the text, as with any other list, and a tap-looking title never confirms
+    const forged = new WhatsAppAdapter().normalizeIncomingEvent(wa({ type: "list_reply", list_reply: { id: "CHOICE|PRODUCT_ORDER|p1|x|en", title: "Order now: X" } }), "ch_wa")[0].text;
+    assert.strictEqual(forged, "Order now: X");
+    const { isAffirmative } = await import("@/domains/ai/customer-agent/confirmation");
+    assert.strictEqual(isAffirmative(forged), false);
+  });
+
+  await runTest("a choice tap is never a yes to an open quote, even for a category named like one", async () => {
+    const { isAffirmative, isPlainYes } = await import("@/domains/ai/customer-agent/confirmation");
+    const yesNamed = categoryChoicesFromToolResults([{ view: "categories", categories_untrusted: ["Sure Fit", "OK Collection", "Done Deals", "Haa Fashion", "জি কালেকশন", "ঠিক আছে শপ"].map((name) => ({ name, products: 2 })) }], "latin")!;
+    const bangla = { ...yesNamed, script: "bangla" as const };
+    const tg = new TelegramAdapter();
+    for (const set of [yesNamed, bangla]) {
+      const kb = (telegramChoicesMessage(set, "501") as R).reply_markup;
+      const quick = (metaQuickRepliesMessage(set) as R).quick_replies as R[];
+      const rows = (whatsappChoicesMessage(set, "880") as R).interactive.action.sections[0].rows as R[];
+      set.options.forEach((o, i) => {
+        const taps = [
+          tg.normalizeIncomingEvent({ update_id: 9100 + i, callback_query: { id: `cbq_y${i}`, data: kb.inline_keyboard.flat()[i].callback_data, from: { id: 501 }, message: { message_id: 9, chat: { id: 501, type: "private" }, text: "x", reply_markup: kb } } }, "chn_tg")[0].text,
+          choiceTapText(quick[i].payload)!,
+          choiceTapText(rows[i].id)!,
+          choiceTapMessage(o.value, set.script), // the widget chip
+        ];
+        for (const t of taps) {
+          assert.ok(isChoiceTapText(t), t);
+          assert.strictEqual(isAffirmative(t), false, t);
+          assert.strictEqual(isPlainYes(t), false, t);
+        }
+      });
+    }
+    assert.strictEqual(isAffirmative("Sure Fit"), true, "typed on its own it still reads as a yes (the gate is about taps)");
+    assert.strictEqual(stripChoiceTapLabel("Category: Sure Fit"), "Sure Fit");
+    assert.strictEqual(stripChoiceTapLabel("ক্যাটাগরি: শাড়ি"), "শাড়ি");
+    assert.strictEqual(stripChoiceTapLabel("Saree"), "Saree");
+  });
+
+  await runTest("choices read back from metadata: only the choice fields pass", () => {
+    assert.deepStrictEqual(readChoiceSet({ ...choiceSet, secret: "x" }), choiceSet);
+    assert.strictEqual(readChoiceSet({ kind: "other", prompt: "x", options: [{ value: "a" }], script: "latin" }), null);
+    assert.strictEqual(readChoiceSet(undefined), null);
   });
 
   await runTest("a Telegram press is never a yes to an open quote, whatever its title", async () => {
@@ -464,24 +572,15 @@ async function main() {
       assert.ok(sends.every((s) => s.body.chat_id === "chat_9"), "to the stored Telegram chat");
       assert.strictEqual(readProductCards(sent.metadata?.product_cards).length, 3, "only the cards that went out");
 
-      // The shop overview's categories go out after the cards as one message of buttons
+      // Tap choices are their own message: one sendMessage with the keyboard, the plain-text form kept for the inbox
       sends.length = 0;
-      const categoryChoices = [{ name: "Panjabi", products: 4 }, { name: "Saree", products: 2 }, { name: "Shoes", products: 1 }];
-      const withCats = await OutboundMessageService.sendMessage(ownerCtx, convo.id, { text: "x", productCards: [cards[0]], categoryChoices });
-      assert.strictEqual(withCats.status, "SENT");
-      assert.deepStrictEqual(sends.map((s) => s.method), ["sendPhoto", "sendMessage"]);
-      assert.deepStrictEqual(sends[1].body.reply_markup.inline_keyboard.flat().map((b: R) => b.text), ["Panjabi (4)", "Saree (2)", "Shoes (1)"]);
-      assert.strictEqual(readProductCards(withCats.metadata?.product_cards).length, 1, "the category message isn't counted as a card");
-
-      // The category buttons failing doesn't fail (or repeat) the cards that went out
-      sends.length = 0;
-      reply = (method) => method === "sendMessage"
-        ? { status: 400, headers: {}, body: JSON.stringify({ ok: false, error_code: 400, description: "Bad Request" }), truncated: false, durationMs: 1 }
-        : { status: 200, headers: {}, body: JSON.stringify({ ok: true, result: { message_id: 60 } }), truncated: false, durationMs: 1 };
-      const catsFailed = await OutboundMessageService.sendMessage(ownerCtx, convo.id, { text: "x", productCards: [cards[0]], categoryChoices });
-      assert.strictEqual(catsFailed.status, "SENT");
-      assert.deepStrictEqual(sends.map((s) => s.method), ["sendPhoto", "sendMessage"]);
-      reply = () => ({ status: 200, headers: {}, body: JSON.stringify({ ok: true, result: { message_id: sends.length } }), truncated: false, durationMs: 1 });
+      const set = categoryChoicesFromToolResults([{ view: "categories", categories_untrusted: [{ name: "Panjabi", products: 4 }, { name: "Saree", products: 2 }] }], "latin")!;
+      const withChoices = await OutboundMessageService.sendMessage(ownerCtx, convo.id, { text: choicesText(set), choices: set });
+      assert.strictEqual(withChoices.status, "SENT");
+      assert.deepStrictEqual(sends.map((s) => s.method), ["sendMessage"]);
+      assert.deepStrictEqual(sends[0].body.reply_markup.inline_keyboard.flat().map((b: R) => b.text), ["Panjabi (4)", "Saree (2)"]);
+      assert.strictEqual(withChoices.message_type, "TEXT");
+      assert.ok(withChoices.text.includes("- Panjabi (4)"));
 
       // Telegram can't fetch the photo: nothing was sent, so the card goes out as text with its button
       sends.length = 0;
@@ -586,6 +685,108 @@ async function main() {
     const cardsMsg = outbound(convo.id).find((m) => m.message_type === "PRODUCT")!;
     const again = await OutboundMessageService.sendMessage(ownerCtx, convo.id, { text: "dup", productCards: cards, idempotency_key: cardsMsg.idempotency_key });
     assert.strictEqual(again.id, cardsMsg.id);
+  });
+
+  await runTest("agent shop overview: sends text reply, product cards, and category choice buttons; a tap browses that category and keeps choices out of history", async () => {
+    const catPanjabi = await CategoryService.createCategory(ownerCtx, { name: "Panjabi" });
+    const catSaree = await CategoryService.createCategory(ownerCtx, { name: "Saree" });
+    db.updateProduct(tenantId, panjabi.id, { category_id: catPanjabi.id });
+    db.updateProduct(tenantId, shirt.id, { category_id: catPanjabi.id });
+    // Bring the shop to 9+ active products across 2 categories so browseShop returns view: "categories"
+    for (let i = 1; i <= 3; i++) {
+      await ProductService.createProduct(ownerCtx, {
+        name: `Festive Panjabi ${i}`, sku: `OV-PJ-${i}`, base_price: 1400 + i * 50, status: "ACTIVE", category_id: catPanjabi.id,
+        variants: [{ title: "M", sku: `OV-PJ-${i}-M`, price: 1400 + i * 50, initial_stock: 4, attributes: { size: "M" } }],
+      } as never);
+    }
+    for (let i = 1; i <= 4; i++) {
+      await ProductService.createProduct(ownerCtx, {
+        name: `Jamdani Saree ${i}`, sku: `OV-SR-${i}`, base_price: 2200 + i * 100, status: "ACTIVE", category_id: catSaree.id,
+        variants: [{ title: "Regular", sku: `OV-SR-${i}-R`, price: 2200 + i * 100, initial_stock: 3, attributes: { size: "Regular" } }],
+      } as never);
+    }
+
+    const convo = await inboundFb("psid_overview", "apnader ki ki product ache?");
+    makeDue(convo.id);
+    scripted.steps = [
+      call("search_products", { query: "all products" }),
+      say("Amader dokane 2 ta category ache, niche theke bechhe nin."),
+    ];
+    graphSends.length = 0;
+    const stats1 = await runAgentJobsOnce();
+    assert.strictEqual(stats1.claimed, 1);
+
+    const out1 = outbound(convo.id);
+    assert.strictEqual(out1.length, 3, JSON.stringify(out1.map((m) => [m.message_type, m.text, m.status])));
+    assert.strictEqual(out1[0].message_type, "TEXT");
+    assert.strictEqual(out1[1].message_type, "PRODUCT");
+    assert.strictEqual(out1[2].message_type, "TEXT");
+    const sentChoices = readChoiceSet(out1[2].metadata?.choices);
+    assert.ok(sentChoices, "third message carries the category choices");
+    assert.strictEqual(sentChoices!.kind, "category");
+    assert.deepStrictEqual(sentChoices!.options.map((o) => o.value), ["Panjabi", "Saree", "Others"]);
+    assert.ok(out1[2].text.includes("- Panjabi (") && out1[2].text.includes("- Saree (4)"), out1[2].text);
+
+    assert.strictEqual(graphSends.length, 3);
+    assert.strictEqual(graphSends[1].body.message.attachment.payload.template_type, "generic");
+    assert.deepStrictEqual(
+      graphSends[2].body.message.quick_replies.map((r: R) => r.payload),
+      ["CHOICE|Panjabi|en", "CHOICE|Saree|en", "CHOICE|Others|en"]
+    );
+
+    // Idempotent per job: resending with the same idempotency key returns the stored choices message
+    const dupChoices = await OutboundMessageService.sendMessage(ownerCtx, convo.id, {
+      text: "dup",
+      choices: sentChoices!,
+      idempotency_key: out1[2].idempotency_key,
+    });
+    assert.strictEqual(dupChoices.id, out1[2].id);
+
+    // Customer taps the "Saree" quick reply on Messenger -> arrives as "Category: Saree"
+    const [tapEvent] = new FacebookAdapter().normalizeIncomingEvent({
+      entry: [{
+        messaging: [{
+          sender: { id: "psid_overview" },
+          recipient: { id: `page_${stamp}` },
+          timestamp: Date.now(),
+          message: { mid: `m_tap_${stamp}`, text: "Saree (4)", quick_reply: { payload: graphSends[2].body.message.quick_replies[1].payload } },
+        }],
+      }],
+    }, fb.id);
+    assert.strictEqual(tapEvent.text, "Category: Saree");
+    await WebhookIngressService.ingestNormalized(fbChannel, [tapEvent], []);
+    makeDue(convo.id);
+
+    let turn2History: LLMMessage[] = [];
+    scripted.steps = [
+      (messages) => {
+        turn2History = messages;
+        return { tool_calls: [{ name: "search_products", arguments: { query: "Category: Saree", category: "Category: Saree" } }] };
+      },
+      say("Ei nin amader Saree collection."),
+    ];
+    graphSends.length = 0;
+    const stats2 = await runAgentJobsOnce();
+    assert.strictEqual(stats2.claimed, 1);
+
+    // The choices message from turn 1 is never fed back into the LLM's conversation history
+    assert.ok(
+      !turn2History.some((m) => m.role === "assistant" && m.content.includes("- Saree (4)")),
+      "choices message excluded from model history"
+    );
+    assert.ok(
+      turn2History.some((m) => m.role === "user" && m.content.includes("Category: Saree")),
+      "the customer's tap is the user message"
+    );
+
+    // Turn 2 sends the text reply + Saree product cards, and NO second category choices message
+    const out2 = outbound(convo.id).slice(out1.length);
+    assert.strictEqual(out2.length, 2, JSON.stringify(out2.map((m) => [m.message_type, m.text])));
+    assert.strictEqual(out2[0].message_type, "TEXT");
+    assert.strictEqual(out2[1].message_type, "PRODUCT");
+    assert.strictEqual(out2[1].metadata?.choices, undefined);
+    const sareeCards = readProductCards(out2[1].metadata?.product_cards);
+    assert.ok(sareeCards.length >= 1 && sareeCards.every((c) => c.title.startsWith("Jamdani Saree")));
   });
 
   console.log(`\n${BOLD}[Template settings]${RESET}`);
@@ -754,13 +955,18 @@ async function main() {
     const webCards = await buildProductCards(tenantId, [searchResult], "WEBSITE_CHAT", "latin");
     const sent = await OutboundMessageService.sendMessage(ownerCtx, convo.id, { text: productCardsText(webCards), productCards: webCards });
     assert.strictEqual(sent.status, "SENT");
+    const sentChoices = await OutboundMessageService.sendMessage(ownerCtx, convo.id, { text: choicesText(choiceSet), choices: choiceSet });
+    assert.strictEqual(sentChoices.status, "SENT");
 
     const { GET } = await import("@/app/api/v1/social/widget/message/route");
     const res = await GET(new Request(`http://localhost:3000/api/v1/social/widget/message?channel_id=${web.id}&anonymous_id=visitor_7`));
-    const json = (await res.json()) as { messages: Array<{ text: string; product_cards?: unknown; agent_email?: unknown }> };
+    const json = (await res.json()) as { messages: Array<{ text: string; product_cards?: unknown; choices?: unknown; agent_email?: unknown }> };
     const withCards = json.messages.find((m) => Array.isArray(m.product_cards));
     assert.ok(withCards, JSON.stringify(json));
     assert.deepStrictEqual(readProductCards(withCards!.product_cards), webCards);
+    const withChoices = json.messages.find((m) => Boolean(m.choices));
+    assert.ok(withChoices, JSON.stringify(json));
+    assert.deepStrictEqual(readChoiceSet(withChoices!.choices), choiceSet);
     assert.ok(!JSON.stringify(json).includes(owner.user.email), "no staff details");
   });
 

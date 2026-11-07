@@ -357,10 +357,22 @@ export interface ProductCard {
 
 export type ProductCardTheme = "lime" | "dark" | "light";
 
-/** A category button sent with the shop overview's cards (Telegram); a tap comes back as the category's name. */
-export interface CategoryChoice {
-  name: string;
-  products: number;
+/**
+ * Tap choices sent as their own message (Phase 1: the shop's categories). Each channel draws them its own way; a tap
+ * comes back as the option's `value`, exactly as if the customer had typed it. Built from tool results, never model text.
+ */
+export interface ChoiceSet {
+  kind: "category";
+  /** The line above the buttons, in the customer's script. */
+  prompt: string;
+  options: ChoiceOption[];
+  script: "bangla" | "latin";
+}
+
+export interface ChoiceOption {
+  value: string;
+  /** Shown next to the value where the channel has room ("Panjabi (10)"); never part of what a tap sends. */
+  count?: number;
 }
 
 export interface NormalizedIncomingMessage {
