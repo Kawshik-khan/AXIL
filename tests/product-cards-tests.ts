@@ -287,7 +287,7 @@ async function main() {
 
   console.log(`\n${BOLD}[Tap choices]${RESET}`);
 
-  const overview = { view: "categories", categories_untrusted: [{ name: "Men's Ethnic Wear Collection", products: 10 }, { name: "নারীদের শাড়ি", products: 18 }, { name: "Fragrances", products: 3 }, { name: "", products: 2 }, { name: "Bad|Namex", products: 1 }] };
+  const overview = { view: "categories", categories_untrusted: [{ name: "Men's Ethnic Wear Collection", products: 10 }, { name: "নারীদের শাড়ি", products: 18 }, { name: "Fragrances", products: 3 }, { name: "", products: 2 }, { name: "Bad|Name\u2028x", products: 1 }] };
   const choiceSet = categoryChoicesFromToolResults([searchResult, overview], "latin")!;
 
   await runTest("choices come from the shop overview only: merchant names cleaned, empty and single sets dropped", () => {
