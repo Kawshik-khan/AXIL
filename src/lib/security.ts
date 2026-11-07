@@ -21,6 +21,9 @@ export const TOKEN_AUDIENCE = {
   impersonation: "commerceos:impersonation",
   /** Password checked, TOTP still required (5 minutes). Never a session (FX-15). */
   mfaPending: "commerceos:mfa-pending",
+  /** Workspace sign-in: password checked, authenticator code still required (5 minutes). Never a session; a platform
+   *  pending token is refused here and this one is refused by the platform console (separate audiences). */
+  workspaceMfaPending: "commerceos:workspace-mfa-pending",
   /** The `state` of a provider sign-in round trip (10 minutes), bound to one workspace, user, browser and provider (ADR-119). */
   connectionOAuth: "commerceos:connection-oauth",
 } as const;
@@ -303,6 +306,31 @@ export async function verifyMfaPendingToken(token: string): Promise<{ userId: st
     const claims = await verifyToken(token, TOKEN_AUDIENCE.mfaPending);
     if (claims.scope !== "MFA_PENDING" || typeof claims.userId !== "string") return null;
     return { userId: claims.userId, sv: typeof claims.sv === "number" ? claims.sv : 1 };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Issued by the workspace sign-in after a correct password for a user with an authenticator turned on. Bound to the
+ * user, the workspace being signed in to and the user's session version; exchanged for a session only at
+ * /api/v1/auth/mfa/verify with a valid authenticator or recovery code.
+ */
+export async function signWorkspaceMfaPendingToken(userId: string, tenantId: string, sv = 1): Promise<string> {
+  return new SignJWT({ userId, tenantId, sv, scope: "WORKSPACE_MFA_PENDING" })
+    .setProtectedHeader({ alg: "HS256" })
+    .setIssuer(TOKEN_ISSUER)
+    .setAudience(TOKEN_AUDIENCE.workspaceMfaPending)
+    .setIssuedAt()
+    .setExpirationTime("5m")
+    .sign(jwtKey());
+}
+
+export async function verifyWorkspaceMfaPendingToken(token: string): Promise<{ userId: string; tenantId: string; sv: number } | null> {
+  try {
+    const claims = await verifyToken(token, TOKEN_AUDIENCE.workspaceMfaPending);
+    if (claims.scope !== "WORKSPACE_MFA_PENDING" || typeof claims.userId !== "string" || typeof claims.tenantId !== "string") return null;
+    return { userId: claims.userId, tenantId: claims.tenantId, sv: typeof claims.sv === "number" ? claims.sv : 1 };
   } catch {
     return null;
   }

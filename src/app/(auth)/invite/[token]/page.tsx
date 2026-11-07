@@ -52,7 +52,8 @@ export default function AcceptInvitationPage() {
       });
       const json = await res.json().catch(() => null);
       if (!res.ok) throw new Error(json?.error?.message || "Couldn't accept the invitation.");
-      window.location.href = "/"; // the response signed you in
+      // Accounts with an authenticator are not signed in by the invitation; they sign in (with their code) next.
+      window.location.href = json?.data?.sign_in_required ? "/login" : "/"; // otherwise the response signed you in
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Couldn't accept the invitation.");
     } finally {

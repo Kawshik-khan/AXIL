@@ -133,7 +133,8 @@ export const AuthenticatorPanel: React.FC<{ impersonating?: boolean }> = ({ impe
       {stage === "idle" && status.enrolled && (
         <p className={styles.text}>
           On since {status.enrolled_at ? new Date(status.enrolled_at).toLocaleDateString() : "setup"}.{" "}
-          {status.recovery_codes_left} of 10 recovery codes left. Approvals and other high-risk actions ask for a code
+          {status.recovery_codes_left} of 10 recovery codes left. Every sign-in asks for a code from your authenticator.
+          Approvals and other high-risk actions ask for a code
           {status.step_up_enforced ? "." : " once your workspace turns this on."}
         </p>
       )}
@@ -141,8 +142,9 @@ export const AuthenticatorPanel: React.FC<{ impersonating?: boolean }> = ({ impe
       {stage === "idle" && !status.enrolled && (
         <>
           <p className={styles.text}>
-            Approving broadcasts, campaigns, price changes and similar actions will ask for a code from an authenticator
-            app such as Google Authenticator, Microsoft Authenticator or 1Password.
+            Once it is on, signing in asks for a 6-digit code from an authenticator app such as Google Authenticator,
+            Microsoft Authenticator or 1Password, after your password. Approving broadcasts, campaigns, price changes and
+            similar actions will ask for a code too.
             {status.step_up_enforced ? " Your workspace already requires it, so set it up before your next approval." : ""}
           </p>
           {impersonating ? (
