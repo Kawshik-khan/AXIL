@@ -3,8 +3,12 @@
 // Baseline security headers (FIX_IMPLEMENTATION_PLAN FX-17, audit L2/L8).
 // The Content-Security-Policy is Report-Only until CSP_ENFORCE=1 (FX-86): switch it once the monitoring job reports a full
 // week without violations (`csp.ready_to_enforce`). Violations are counted at /api/v1/csp-report either way.
+// `next dev` only: React needs eval() in development (server error stacks, Fast Refresh), so the dev server adds
+// 'unsafe-eval' (node_modules/next/dist/docs/01-app/02-guides/content-security-policy.md). `next build` / `next start`
+// run with NODE_ENV=production, so the production policy never contains it.
+const DEV_SCRIPT_SRC = process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : "";
 const CSP =
-  "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; report-uri /api/v1/csp-report; report-to csp";
+  `default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'${DEV_SCRIPT_SRC}; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; report-uri /api/v1/csp-report; report-to csp`;
 const securityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },

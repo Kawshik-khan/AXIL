@@ -19,6 +19,7 @@ import { logger } from "@/lib/logger";
 import { assertNotKilled, isFeatureEnabled } from "@/lib/safety-gate";
 import { loadCustomerRows } from "@/infrastructure/db/tenant-rows";
 import type { ConnectedChannel, Conversation, Message, MessageDelivery, ProductCard } from "@/types/social";
+import { readChoiceSet } from "@/lib/choice-shape";
 import { ChannelService } from "../channels/channel.service";
 import type { ChannelCredentials, SendMessageResult } from "../channels/channel-provider.interface";
 import { TelegramApiError } from "../channels/adapters/telegram.adapter";
@@ -174,11 +175,14 @@ export async function deliverMessage(tenantId: string, messageId: string, opts: 
   const adapter = ChannelService.getAdapter(channel.type);
   const request = delivery.request ?? {};
   const productCards = Array.isArray(claimed.metadata?.product_cards) ? (claimed.metadata.product_cards as ProductCard[]) : undefined;
+  const choices = readChoiceSet(claimed.metadata?.choices);
   let sendResult: SendMessageResult;
   try {
     sendResult =
       productCards && adapter.sendProductCards
         ? await adapter.sendProductCards(credentials, recipientId, productCards)
+        : choices && adapter.sendChoices
+          ? await adapter.sendChoices(credentials, recipientId, choices)
         : request.templateName
           ? await adapter.sendTemplateMessage(credentials, recipientId, request.templateName, request.templateParameters || {})
           : request.mediaUrl
@@ -221,9 +225,9 @@ export async function deliverMessage(tenantId: string, messageId: string, opts: 
 }
 
 async function afterSendError(tenantId: string, claimed: Message, delivery: MessageDelivery, channel: ConnectedChannel, err: unknown): Promise<Message> {
-  const productCards = Array.isArray(claimed.metadata?.product_cards);
+  const bestEffort = Array.isArray(claimed.metadata?.product_cards) || Boolean(claimed.metadata?.choices);
   const classified = classifySendError(err);
-  const outcome = productCards && classified === "RETRY" ? "PERMANENT" : classified;
+  const outcome = bestEffort && classified === "RETRY" ? "PERMANENT" : classified;
   const code = codeOf(err);
   const expired = Date.now() - Date.parse(claimed.created_at) > DELIVERY_WINDOW_MS;
   if (outcome === "RETRY" && delivery.attempts < MAX_DELIVERY_ATTEMPTS && !expired) {

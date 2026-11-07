@@ -8,6 +8,7 @@
  */
 import { db } from "@/infrastructure/db";
 import { isProductTapText } from "@/domains/social/outbound/product-tap";
+import { isChoiceTapText } from "@/domains/social/outbound/choices";
 
 // Word boundaries that understand Bangla: a letter, vowel sign (mark) or digit on either side means "inside a word"
 const word = (alternatives: string) => new RegExp(`(?<![\\p{L}\\p{M}\\p{N}])(?:${alternatives})(?![\\p{L}\\p{M}\\p{N}])`, "iu");
@@ -34,6 +35,8 @@ export function isAffirmative(text: string): boolean {
   if (!t || /[?？]/.test(t)) return false;
   // A product-card tap ("অর্ডার করুন: Blue Panjabi") asks about a product; it never confirms an open quote
   if (isProductTapText(t)) return false;
+  // So does a choice tap ("Category: Sure Fit"): an old category button is browsing, whatever the category is called
+  if (isChoiceTapText(t)) return false;
   if (NEGATE.test(t)) return false;
   return AFFIRM_AT_START.test(t);
 }

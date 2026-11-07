@@ -1,8 +1,9 @@
 import { IntegrationNotConfiguredError, AppError } from "@/lib/errors";
 import crypto from "crypto";
 import { outboundRequest, OutboundBlockedError, OutboundTimeoutError, OutboundNetworkError } from "@/lib/outbound-http";
-import { ChannelType, NormalizedIncomingMessage, ProductCard } from "@/types/social";
+import { ChannelType, ChoiceSet, NormalizedIncomingMessage, ProductCard } from "@/types/social";
 import { metaGenericTemplate, productTapText } from "@/domains/social/outbound/product-cards";
+import { choiceTapText, metaQuickRepliesMessage } from "@/domains/social/outbound/choices";
 import {
   IChannelProvider,
   ChannelCredentials,
@@ -118,6 +119,7 @@ export class InstagramAdapter implements IChannelProvider {
           mid: string;
           text?: string;
           attachments?: Array<{ type: string; payload: { url?: string } }>;
+          quick_reply?: { payload?: string };
         };
 
         if (!sender || !message) continue;
@@ -149,7 +151,8 @@ export class InstagramAdapter implements IChannelProvider {
           },
           direction: "INBOUND",
           messageType: msgType,
-          text: message.text || "",
+          // A quick reply we sent: the payload's full value, not the title (cut to 20 characters)
+          text: choiceTapText(message.quick_reply?.payload) ?? (message.text || ""),
           attachments,
           timestamp: item.timestamp
             ? new Date(Number(item.timestamp)).toISOString()
@@ -227,6 +230,18 @@ export class InstagramAdapter implements IChannelProvider {
     const result = await graphCall(credentials, `/${recipientId}/messages`, {
       recipient: { id: recipientId },
       message: { attachment: metaGenericTemplate(cards) },
+      messaging_type: "RESPONSE",
+    });
+    const msgId = typeof result.message_id === "string" ? result.message_id : "";
+    if (!msgId) throw new AppError("INSTAGRAM_API_ERROR", "Instagram did not return a message id.", 502);
+    return { externalMessageId: msgId, status: "SENT", providerTimestamp: new Date().toISOString() };
+  }
+
+  /** The prompt with quick replies; a tap comes back as a message carrying our payload. */
+  public async sendChoices(credentials: ChannelCredentials, recipientId: string, choices: ChoiceSet): Promise<SendMessageResult> {
+    const result = await graphCall(credentials, `/${recipientId}/messages`, {
+      recipient: { id: recipientId },
+      message: metaQuickRepliesMessage(choices),
       messaging_type: "RESPONSE",
     });
     const msgId = typeof result.message_id === "string" ? result.message_id : "";

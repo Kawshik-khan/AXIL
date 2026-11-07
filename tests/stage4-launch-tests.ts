@@ -145,6 +145,34 @@ async function main() {
     delete process.env.CSP_ENFORCE;
   });
 
+  await runTest("'unsafe-eval' is added for `next dev` only, never in a production build", async () => {
+    const file = path.join(ROOT, "next.config.js");
+    const env = process.env as Record<string, string | undefined>;
+    const original = env.NODE_ENV;
+    const cspFor = async (nodeEnv: string, enforce?: string) => {
+      delete require.cache[require.resolve(file)];
+      env.NODE_ENV = nodeEnv;
+      if (enforce === undefined) delete env.CSP_ENFORCE;
+      else env.CSP_ENFORCE = enforce;
+      const headers = (await (require(file) as { headers: () => Promise<Array<{ headers: Array<{ key: string; value: string }> }>> }).headers())[0].headers;
+      return headers.find((h) => h.key.startsWith("Content-Security-Policy"))?.value ?? "";
+    };
+    try {
+      for (const enforce of [undefined, "1"]) {
+        const prod = await cspFor("production", enforce);
+        assert.ok(prod.includes("script-src 'self' 'unsafe-inline';"), prod);
+        assert.ok(!prod.includes("unsafe-eval"), "production CSP must not allow eval");
+        assert.ok(!(await cspFor("test", enforce)).includes("unsafe-eval"));
+        assert.ok((await cspFor("development", enforce)).includes("script-src 'self' 'unsafe-inline' 'unsafe-eval';"));
+      }
+    } finally {
+      if (original === undefined) delete env.NODE_ENV;
+      else env.NODE_ENV = original;
+      delete env.CSP_ENFORCE;
+      delete require.cache[require.resolve(file)];
+    }
+  });
+
   await runTest("staging is a separate service with every production setting and its own secrets", () => {
     const yaml = fs.readFileSync(path.join(ROOT, "render.yaml"), "utf8");
     const blocks = yaml.split(/\n  - type: \w+\n/).slice(1); // every service, so the cron's keys never count as a web service's

@@ -23,6 +23,7 @@ import type { Order, Product } from "@/types/commerce";
 import { canSeeOrder, capabilityContext, visibleOrders, findVisibleOrders, type CustomerAgentPrincipal } from "./principal";
 import { confirmedAfter, customerMessages, isPlainYes } from "./confirmation";
 import { loadOrderRows, loadTenantRows } from "@/infrastructure/db/tenant-rows";
+import { choicesFit, stripChoiceTapLabel } from "@/domains/social/outbound/choices";
 
 export type ToolResult = Record<string, unknown>;
 
@@ -288,6 +289,11 @@ async function browseShop(pr: CustomerAgentPrincipal, products: Product[], group
   if (useCategories && !catalogMemory(pr, "overview")) {
     await rememberCatalog(pr, "overview", []);
     const { page, facts } = await catalogPage(pr, products, undefined, { pageSize: CATEGORY_PREVIEW_SIZE });
+    // Where the channel draws every category as a button (sent right after the reply), the reply doesn't list them
+    const asButtons = choicesFit(pr.channelType, groups.length);
+    const list = asButtons
+      ? `The categories are shown to the customer as tap buttons right after your reply: do NOT list them. Say in one short sentence that the shop has ${groups.length} categories and ask the customer to pick one below. A tap arrives as "Category: <name>"`
+      : "List the categories with their product counts and ask which one the customer wants to see";
     return {
       view: "categories",
       categories_untrusted: categoryList(groups),
@@ -295,7 +301,7 @@ async function browseShop(pr: CustomerAgentPrincipal, products: Product[], group
       total_products: facts.total_products,
       has_more: facts.has_more,
       more_count: facts.more_count,
-      note: `This shop has ${products.length} products in ${groups.length} categories. List the categories with their product counts and ask which one the customer wants to see; you may name the ${page.length} products here as examples. When the customer picks a category, call search_products with "category" set to its name. Never say these products are the whole shop.`,
+      note: `This shop has ${products.length} products in ${groups.length} categories. ${list}; you may name the ${page.length} products here as examples. When the customer picks a category, call search_products with "category" set to its name. Never say these products are the whole shop.`,
     };
   }
   const { page, facts } = await catalogPage(pr, products, undefined, { categories: useCategories ? groups : undefined });
@@ -320,8 +326,9 @@ async function searchProducts(pr: CustomerAgentPrincipal, a: z.infer<typeof Sear
 
   const priced = allActive.filter((p) => !a.max_price_bdt || p.base_price <= a.max_price_bdt);
   const groups = categoryGroups(pr.tenantId, priced);
-  // A category the customer picked (or named exactly): that category's products, a page at a time
-  const picked = findCategory(groups, a.category ?? "") ?? (isGeneralCatalogQuery ? undefined : findCategory(groups, a.query, true));
+  // A category the customer picked (or named exactly): that category's products, a page at a time. A category button's
+  // tap ("Category: Saree") may be passed on as it came
+  const picked = findCategory(groups, stripChoiceTapLabel(a.category ?? "")) ?? (isGeneralCatalogQuery ? undefined : findCategory(groups, stripChoiceTapLabel(a.query), true));
   if (picked) {
     const { page, facts } = await catalogPage(pr, picked.products, undefined, { key: `cat:${picked.id ?? "others"}`, label: true, categories: groups });
     return { category_untrusted: cleanCategoryName(picked.name), results: page.map((p) => productView(pr.tenantId, p)), ...facts };
