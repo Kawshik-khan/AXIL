@@ -15,6 +15,7 @@ import type { AgentJob } from "@/types/ai";
 import { OutboundMessageService } from "@/domains/social/outbound/outbound-message.service";
 import { ChannelService } from "@/domains/social/channels/channel.service";
 import { buildProductCards, productCardsText, turnShowsProductCards } from "@/domains/social/outbound/product-cards";
+import { categoryChoicesFromToolResults, choicesFit, choicesText } from "@/domains/social/outbound/choices";
 import { cardsEnabledFor, getProductCardSettings } from "@/domains/social/outbound/product-card-settings";
 import type { CustomerAgentPrincipal } from "./principal";
 import type { CustomerTurn } from "./runtime";
@@ -268,6 +269,7 @@ async function runLoadedAgentJob(job: AgentJob): Promise<Finish> {
     if (DELIVERED.has(sent.status)) {
       await markQuotesShown(job, turnStartedAt, sent.id, turn.reply);
       await sendProductCards(job, pr, turn, turnStartedAt);
+      await sendChoices(job, pr, turn, turnStartedAt);
     }
     return { status: "DONE", outcome: `${turn.status}:${sent.status}` };
   } catch (err) {
@@ -307,6 +309,31 @@ async function sendProductCards(job: AgentJob, pr: CustomerAgentPrincipal, turn:
     );
   } catch (err) {
     logger.warn("customer_agent.product_cards_failed", {
+      tenant_id: job.tenant_id,
+      conversation_id: job.conversation_id,
+      code: err instanceof AppError ? err.code : "ERROR",
+    });
+  }
+}
+
+/**
+ * After the shop overview, its categories as one message of buttons (after the cards). Only where the channel can draw
+ * them all (choicesFit; the tool's note then told the agent not to list them). Best effort, like the cards.
+ */
+async function sendChoices(job: AgentJob, pr: CustomerAgentPrincipal, turn: CustomerTurn, turnStartedAt: string): Promise<void> {
+  if (!turnShowsProductCards(turn)) return;
+  const choices = categoryChoicesFromToolResults(turn.toolResults ?? [], replyScript(turn.reply));
+  if (!choices || !choicesFit(pr.channelType, choices.options.length)) return;
+  try {
+    if (!ChannelService.getAdapter(pr.channelType).sendChoices) return;
+    await OutboundMessageService.sendMessage(
+      capabilityContext(pr, "send"),
+      job.conversation_id,
+      { text: choicesText(choices), choices, idempotency_key: `agent:${job.id}:${turn.answeredMessageId ?? job.last_message_id}:choices` },
+      { asAgent: true, agentTurnStartedAt: turnStartedAt, agentHandedOff: turn.handoff, traceId: job.id, agentLease: leaseOf(job) }
+    );
+  } catch (err) {
+    logger.warn("customer_agent.choices_failed", {
       tenant_id: job.tenant_id,
       conversation_id: job.conversation_id,
       code: err instanceof AppError ? err.code : "ERROR",

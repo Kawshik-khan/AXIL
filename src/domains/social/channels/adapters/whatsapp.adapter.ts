@@ -1,8 +1,9 @@
 import { IntegrationNotConfiguredError, AppError } from "@/lib/errors";
 import crypto from "crypto";
 import { outboundRequest, OutboundBlockedError, OutboundTimeoutError, OutboundNetworkError } from "@/lib/outbound-http";
-import { ChannelType, NormalizedIncomingMessage, ProductCard } from "@/types/social";
+import { ChannelType, ChoiceSet, NormalizedIncomingMessage, ProductCard } from "@/types/social";
 import { MAX_WHATSAPP_PRODUCT_CARDS, productTapText, scriptOfCards, whatsappProductMessage } from "@/domains/social/outbound/product-cards";
+import { choiceTapText, whatsappChoicesMessage } from "@/domains/social/outbound/choices";
 import {
   IChannelProvider,
   ChannelCredentials,
@@ -152,12 +153,14 @@ export class WhatsAppAdapter implements IChannelProvider {
               mimeType: doc.mime_type,
             });
           } else if (type === "interactive") {
-            const inter = msg.interactive as { button_reply?: { id?: string; title?: string }; list_reply?: { title?: string } };
+            const inter = msg.interactive as { button_reply?: { id?: string; title?: string }; list_reply?: { id?: string; title?: string } };
             // A product card's button carries the product in its id: "Order now: Blue Panjabi"
             const tap = productTapText(inter.button_reply?.id);
             // A card button never falls back to its title: the shop may have labelled it "yes"
             const cardButton = inter.button_reply?.id?.startsWith("PRODUCT_ORDER") ?? false;
-            text = tap?.text || (cardButton ? "Order now:" : inter.button_reply?.title || inter.list_reply?.title || "Interactive Selection");
+            // A row of our choices list: the full value from its id (the title is cut to 24 characters)
+            const choice = choiceTapText(inter.list_reply?.id);
+            text = tap?.text || (cardButton ? "Order now:" : choice || inter.button_reply?.title || inter.list_reply?.title || "Interactive Selection");
             messageType = "TEXT";
           }
 
@@ -287,6 +290,16 @@ export class WhatsAppAdapter implements IChannelProvider {
     }
     if (!ids.length) throw new AppError("WHATSAPP_API_ERROR", "No product card to send.", 400);
     return { externalMessageId: ids[0], status: "SENT", providerTimestamp: new Date().toISOString(), rawResponse: { message_ids: ids } };
+  }
+
+  /** An interactive list (one button opens the rows); a row tap comes back with our id. */
+  public async sendChoices(credentials: ChannelCredentials, recipientId: string, choices: ChoiceSet): Promise<SendMessageResult> {
+    const phoneNumberId = typeof credentials.phoneNumberId === "string" ? credentials.phoneNumberId : "";
+    if (!phoneNumberId) throw new IntegrationNotConfiguredError("WhatsApp messaging", "phone number id is required");
+    const result = await graphCall(credentials, `/${phoneNumberId}/messages`, whatsappChoicesMessage(choices, recipientId));
+    const msgId = (result.messages as Array<{ id?: string }>)?.[0]?.id;
+    if (!msgId) throw new AppError("WHATSAPP_API_ERROR", "WhatsApp did not return a message id.", 502);
+    return { externalMessageId: msgId, status: "SENT", providerTimestamp: new Date().toISOString() };
   }
 
   public async sendTemplateMessage(

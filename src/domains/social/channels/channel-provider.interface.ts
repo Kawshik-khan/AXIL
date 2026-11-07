@@ -3,6 +3,7 @@ import {
   NormalizedIncomingMessage,
   MessageStatus,
   ProductCard,
+  ChoiceSet,
 } from "@/types/social";
 
 export interface ChannelCredentials {
@@ -108,6 +109,16 @@ export interface IChannelProvider {
     credentials: ChannelCredentials,
     recipientId: string,
     cards: ProductCard[]
+  ): Promise<SendMessageResult>;
+
+  /**
+   * Tap choices as one message of buttons (choices.ts draws each channel's format). Channels without it get the
+   * message's plain-text form.
+   */
+  sendChoices?(
+    credentials: ChannelCredentials,
+    recipientId: string,
+    choices: ChoiceSet
   ): Promise<SendMessageResult>;
 
   /**
