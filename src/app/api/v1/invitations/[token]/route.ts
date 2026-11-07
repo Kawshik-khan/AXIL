@@ -3,6 +3,7 @@ import { randomSuffix } from "@/lib/ids";
 import { InvitationService } from "@/domains/invitations/service";
 import { TenantService } from "@/domains/tenants/service";
 import { AuthService } from "@/domains/auth/service";
+import { WorkspaceMfaService } from "@/domains/auth/workspace-mfa.service";
 import { db, UserRecord } from "@/infrastructure/db";
 import { z } from "zod";
 import { hashPassword, verifyPassword, signSessionToken, AUTH_COOKIE_NAME, DISABLED_PASSWORD_HASH } from "@/lib/security";
@@ -99,6 +100,17 @@ async function handlePOST(
 
     // Accept invitation and create membership
     InvitationService.acceptInvitation(params.token, user.id);
+
+    // An account with an authenticator turned on gets no session from a password alone: the invitation is accepted,
+    // and the person signs in normally, where the authenticator code is asked for.
+    if (WorkspaceMfaService.isEnrolled(user.id)) {
+      return apiSuccess({
+        message: "Invitation accepted. Sign in to continue.",
+        sign_in_required: true,
+        tenant: { id: tenant.id, name: tenant.name, slug: tenant.slug },
+        role: invitation.role,
+      });
+    }
 
     const token = await signSessionToken({
       userId: user.id,

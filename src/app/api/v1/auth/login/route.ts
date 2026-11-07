@@ -43,11 +43,19 @@ async function handlePOST(request: Request) {
     await enforceRateLimit(`login:tenant:email:${email}`, 10, 15 * MINUTE);
     const client = clientKey(request);
     if (client) await enforceRateLimit(`login:tenant:client:${client}`, 50, 15 * MINUTE);
-    const result = await AuthService.login(body.email, body.password, body.tenantId);
+    const start = await AuthService.startLogin(body.email, body.password, body.tenantId);
+    // Authenticator turned on: no session yet. The client sends the code to /api/v1/auth/mfa/verify.
+    if (start.mfa_required) {
+      const challenge = apiSuccess({ mfa_required: true, mfa_token: start.mfa_token });
+      challenge.headers.set("Cache-Control", "no-store");
+      return challenge;
+    }
+    const result = start.result;
 
     const platformMembership = (await import("@/infrastructure/db")).db.findPlatformMembershipByUserId(result.user.id);
 
     const response = apiSuccess({
+      mfa_required: false,
       user: result.user,
       tenant: result.tenant,
       role: result.role,

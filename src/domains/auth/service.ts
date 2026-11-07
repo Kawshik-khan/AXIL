@@ -1,11 +1,12 @@
 import { randomSuffix } from "@/lib/ids";
-import { db, UserRecord, TenantRecord } from "@/infrastructure/db";
-import { hashPassword, verifyPassword, signSessionToken, verifySessionToken } from "@/lib/security";
-import { AuthenticationError, ConflictError, ValidationError, UserSuspendedError, TenantSuspendedError, MembershipSuspendedError } from "@/lib/errors";
+import { db, UserRecord, TenantRecord, MembershipRecord } from "@/infrastructure/db";
+import { hashPassword, verifyPassword, signSessionToken, verifySessionToken, signWorkspaceMfaPendingToken, verifyWorkspaceMfaPendingToken } from "@/lib/security";
+import { AppError, AuthenticationError, ConflictError, ValidationError, UserSuspendedError, TenantSuspendedError, MembershipSuspendedError } from "@/lib/errors";
 import { RequestContext } from "@/lib/context";
 import { RbacService } from "@/domains/rbac/service";
 import { AuditService } from "@/domains/audit/service";
 import { TenantService } from "@/domains/tenants/service";
+import { WorkspaceMfaService, type MfaMethod } from "@/domains/auth/workspace-mfa.service";
 import { RoleName } from "@/lib/permissions";
 
 export interface RegisterInput {
@@ -31,6 +32,9 @@ export interface AuthResult {
   };
   role: RoleName;
 }
+
+/** Outcome of the first sign-in step: a session, or a request for the authenticator code. */
+export type LoginStart = { mfa_required: false; result: AuthResult } | { mfa_required: true; mfa_token: string };
 
 export class AuthService {
   public static async registerTenantWithOwner(input: RegisterInput): Promise<AuthResult> {
@@ -114,7 +118,67 @@ export class AuthService {
     };
   }
 
+  /**
+   * Password sign-in for accounts without an authenticator. An account with one turned on is refused here
+   * (MFA_REQUIRED) so no caller can skip the second step; the sign-in route uses startLogin instead.
+   */
   public static async login(email: string, password: string, tenantId?: string): Promise<AuthResult> {
+    const { user, membership, tenant } = await AuthService.checkCredentials(email, password, tenantId);
+    if (WorkspaceMfaService.isEnrolled(user.id)) {
+      throw new AppError("MFA_REQUIRED", "This account needs its authenticator code to sign in.", 401);
+    }
+    return AuthService.issueSession(user, membership, tenant, null);
+  }
+
+  /**
+   * First step of workspace sign-in. Without an authenticator: a session, as before. With one turned on: no session,
+   * only a 5-minute token that /api/v1/auth/mfa/verify exchanges for a session together with a valid code.
+   */
+  public static async startLogin(email: string, password: string, tenantId?: string): Promise<LoginStart> {
+    const { user, membership, tenant } = await AuthService.checkCredentials(email, password, tenantId);
+    if (WorkspaceMfaService.isEnrolled(user.id)) {
+      return {
+        mfa_required: true,
+        mfa_token: await signWorkspaceMfaPendingToken(user.id, tenant.id, user.session_version ?? 1),
+      };
+    }
+    return { mfa_required: false, result: await AuthService.issueSession(user, membership, tenant, null) };
+  }
+
+  /**
+   * Second step for accounts with an authenticator: the pending token from startLogin plus a 6-digit authenticator code
+   * (each time step once) or an unused recovery code. Everything checked at step one is checked again, because the
+   * account, membership or workspace may have changed in the meantime.
+   */
+  public static async completeMfaLogin(mfaToken: string, code: string): Promise<AuthResult> {
+    const pending = await verifyWorkspaceMfaPendingToken(mfaToken);
+    if (!pending) {
+      throw new AppError("MFA_TOKEN_INVALID", "Sign-in expired. Enter your email and password again.", 401);
+    }
+    const user = db.findUserById(pending.userId);
+    if (!user || user.status !== "ACTIVE" || pending.sv !== (user.session_version ?? 1)) {
+      throw new AppError("MFA_TOKEN_INVALID", "Sign-in expired. Enter your email and password again.", 401);
+    }
+    const membership = db.findMembership(pending.tenantId, user.id);
+    if (!membership) throw new AuthenticationError("User is no longer a member of this workspace.");
+    if (membership.status === "SUSPENDED") throw new MembershipSuspendedError();
+    const tenant = db.findTenantById(pending.tenantId);
+    if (!tenant) throw new AuthenticationError("Associated workspace could not be found.");
+    if (tenant.status !== "ACTIVE") throw new TenantSuspendedError(tenant.name);
+
+    const method = WorkspaceMfaService.verifyCodeMethod(user.id, code);
+    if (!method) {
+      throw new AppError("INVALID_MFA_CODE", "The authenticator code is not valid.", 401);
+    }
+    return AuthService.issueSession(user, membership, tenant, method);
+  }
+
+  /** Password, account, membership and workspace checks shared by both sign-in paths. Issues nothing. */
+  private static async checkCredentials(
+    email: string,
+    password: string,
+    tenantId?: string
+  ): Promise<{ user: UserRecord; membership: MembershipRecord; tenant: TenantRecord }> {
     const normalizedEmail = email.trim().toLowerCase();
     const user = db.findUserByEmail(normalizedEmail);
 
@@ -157,6 +221,15 @@ export class AuthService {
       throw new TenantSuspendedError(tenant.name);
     }
 
+    return { user, membership: activeMembership, tenant };
+  }
+
+  private static async issueSession(
+    user: UserRecord,
+    activeMembership: MembershipRecord,
+    tenant: TenantRecord,
+    mfaMethod: MfaMethod | null
+  ): Promise<AuthResult> {
     // Update last login
     db.updateUser(user.id, { last_login_at: new Date().toISOString() });
 
@@ -167,7 +240,7 @@ export class AuthService {
       action: "USER_LOGIN",
       resourceType: "session",
       resourceId: user.id,
-      metadata: { role: activeMembership.role },
+      metadata: mfaMethod ? { role: activeMembership.role, mfa: mfaMethod } : { role: activeMembership.role },
     });
 
     const token = await signSessionToken({

@@ -10,7 +10,8 @@ import { AuthService } from "@/domains/auth/service";
 import { WorkspaceMfaService } from "@/domains/auth/workspace-mfa.service";
 import { extractRequestContext, extractPlatformContext } from "@/lib/api-response";
 import { requireStepUp, stepUpEnforced } from "@/lib/step-up";
-import { signPlatformSessionToken, signSessionToken, signStepUpToken, verifyStepUpToken, WORKSPACE_STEP_UP_PREFIX } from "@/lib/security";
+import { signMfaPendingToken, signPlatformSessionToken, signSessionToken, signStepUpToken, verifyStepUpToken, WORKSPACE_STEP_UP_PREFIX } from "@/lib/security";
+import { InvitationService } from "@/domains/invitations/service";
 import { generateTotp } from "@/lib/totp";
 import { AppError } from "@/lib/errors";
 import { PERMISSIONS } from "@/lib/permissions";
@@ -483,6 +484,137 @@ async function main() {
       assert.strictEqual((await send({ "x-step-up-token": token })).status, 200);
       assert.strictEqual(db.findUserById(id)?.mfa_enabled, false);
     });
+  });
+
+  // ---- Sign-in with the authenticator (shop owner two-step login) ----
+  const loginRoute = (await import("@/app/api/v1/auth/login/route")) as { POST: Handler };
+  const verifyRoute = (await import("@/app/api/v1/auth/mfa/verify/route")) as { POST: Handler };
+  const post = (handler: Handler, path: string, body: unknown) =>
+    handler.POST(new Request(`${BASE}/${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }));
+  const signIn = (email: string, pw: string) => post(loginRoute, "auth/login", { email, password: pw });
+  const verify = (mfa_token: string, code: string) => post(verifyRoute, "auth/mfa/verify", { mfa_token, code });
+  const sessionCookie = (res: Response) => res.headers.get("set-cookie")?.match(/commerceos_session=([^;]+)/)?.[1] ?? null;
+  const loginPassword = "Login-Mfa-Pass-2026!";
+  const newShop = async (label: string) =>
+    AuthService.registerTenantWithOwner({ workspaceName: `Login ${label} ${stamp}`, name: `Login ${label}`, email: `login-${label}-${stamp}@example.com`, password: loginPassword, currency: "BDT" });
+  const turnOn = async (uid: string) => {
+    const { secret: s } = await WorkspaceMfaService.startEnrollment(uid, loginPassword);
+    const { recovery_codes } = WorkspaceMfaService.confirmEnrollment(uid, generateTotp(s, Date.now() - 30_000));
+    return { secret: s, recovery_codes };
+  };
+
+  await runTest("sign-in: an account without an authenticator signs in with the password alone (2FA off)", async () => {
+    const shop = await newShop("plain");
+    const res = await signIn(shop.user.email, loginPassword);
+    assert.strictEqual(res.status, 200);
+    const body = await json(res);
+    assert.strictEqual(body.data?.mfa_required, false);
+    const cookie = sessionCookie(res);
+    assert.ok(cookie, "a session cookie is set");
+    const ctx = await extractRequestContext(new Request(`${BASE}/orders`, { headers: { authorization: `Bearer ${cookie}` } }));
+    assert.strictEqual(ctx.tenant.id, shop.tenant.id);
+  });
+
+  await runTest("sign-in: with an authenticator on, the password alone gives no session, only a code request", async () => {
+    const shop = await newShop("twostep");
+    await turnOn(shop.user.id);
+    const res = await signIn(shop.user.email, loginPassword);
+    assert.strictEqual(res.status, 200);
+    const body = await json(res);
+    assert.strictEqual(body.data?.mfa_required, true);
+    assert.ok(typeof body.data?.mfa_token === "string");
+    assert.strictEqual(sessionCookie(res), null, "no session cookie before the code");
+    assert.strictEqual(body.data?.user, undefined);
+    // The pending token is not a session anywhere
+    await assert.rejects(() => extractRequestContext(new Request(`${BASE}/orders`, { headers: { authorization: `Bearer ${body.data?.mfa_token}` } })));
+    // A wrong password still gets the generic error, never the code step
+    const wrong = await signIn(shop.user.email, "not-the-password");
+    assert.strictEqual(wrong.status, 401);
+    assert.strictEqual((await json(wrong)).data, undefined);
+  });
+
+  await runTest("sign-in: AuthService.login refuses an account with an authenticator (no way around the code)", async () => {
+    const shop = await newShop("service");
+    await turnOn(shop.user.id);
+    await assert.rejects(() => AuthService.login(shop.user.email, loginPassword), (err: unknown) => err instanceof AppError && err.code === "MFA_REQUIRED");
+  });
+
+  await runTest("sign-in: a wrong code is refused; a valid code signs in; the same code can't be replayed", async () => {
+    const shop = await newShop("verify");
+    const { secret: s } = await turnOn(shop.user.id);
+    const token = String((await json(await signIn(shop.user.email, loginPassword))).data?.mfa_token);
+    const bad = await verify(token, "000000");
+    assert.strictEqual(bad.status, 401);
+    assert.strictEqual((await json(bad)).error?.code, "INVALID_MFA_CODE");
+    assert.strictEqual(sessionCookie(bad), null);
+    const code = generateTotp(s);
+    const ok = await verify(token, code);
+    assert.strictEqual(ok.status, 200);
+    const cookie = sessionCookie(ok);
+    assert.ok(cookie);
+    const ctx = await extractRequestContext(new Request(`${BASE}/orders`, { headers: { authorization: `Bearer ${cookie}` } }));
+    assert.strictEqual(ctx.tenant.id, shop.tenant.id);
+    assert.strictEqual(ctx.user.id, shop.user.id);
+    const login = db.findAuditLogs(shop.tenant.id, 50).filter((l) => l.action === "USER_LOGIN").pop();
+    assert.strictEqual((login?.metadata as { mfa?: string } | undefined)?.mfa, "TOTP", "the sign-in audit records the factor");
+    const replay = await verify(token, code);
+    assert.strictEqual(replay.status, 401, "a code's time step is accepted once");
+  });
+
+  await runTest("sign-in: a recovery code works once at the code step", async () => {
+    const shop = await newShop("recovery");
+    const { recovery_codes } = await turnOn(shop.user.id);
+    const token = String((await json(await signIn(shop.user.email, loginPassword))).data?.mfa_token);
+    const ok = await verify(token, recovery_codes[0]);
+    assert.strictEqual(ok.status, 200);
+    assert.ok(sessionCookie(ok));
+    const again = await verify(token, recovery_codes[0]);
+    assert.strictEqual(again.status, 401);
+  });
+
+  await runTest("sign-in: platform and workspace pending tokens never stand in for each other", async () => {
+    const shop = await newShop("cross");
+    const { secret: s } = await turnOn(shop.user.id);
+    const platformPending = await signMfaPendingToken(shop.user.id, db.findUserById(shop.user.id)?.session_version ?? 1);
+    const res = await verify(platformPending, generateTotp(s, Date.now() + 30_000));
+    assert.strictEqual(res.status, 401);
+    assert.strictEqual((await json(res)).error?.code, "MFA_TOKEN_INVALID");
+    const workspacePending = String((await json(await signIn(shop.user.email, loginPassword))).data?.mfa_token);
+    const platformVerify = (await import("@/app/api/v1/platform/auth/mfa/verify/route")) as { POST: Handler };
+    const p = await post(platformVerify, "platform/auth/mfa/verify", { mfa_token: workspacePending, code: generateTotp(s, Date.now() + 30_000) });
+    assert.strictEqual(p.status, 401);
+    assert.strictEqual((await json(p)).error?.code, "MFA_TOKEN_INVALID");
+  });
+
+  await runTest("sign-in: signing out everywhere or suspension voids a pending sign-in", async () => {
+    const shop = await newShop("revoked");
+    const { secret: s } = await turnOn(shop.user.id);
+    const token = String((await json(await signIn(shop.user.email, loginPassword))).data?.mfa_token);
+    db.bumpSessionVersion(shop.user.id);
+    const res = await verify(token, generateTotp(s));
+    assert.strictEqual(res.status, 401);
+    assert.strictEqual(sessionCookie(res), null);
+    const token2 = String((await json(await signIn(shop.user.email, loginPassword))).data?.mfa_token);
+    db.updateTenant(shop.tenant.id, { status: "SUSPENDED" } as never);
+    const suspended = await verify(token2, generateTotp(s, Date.now() + 30_000));
+    assert.notStrictEqual(suspended.status, 200);
+    assert.strictEqual(sessionCookie(suspended), null);
+  });
+
+  await runTest("sign-in: accepting an invitation with the password alone gives an authenticator account no session", async () => {
+    const inviter = await newShop("inviter");
+    const invitee = await newShop("invitee");
+    await turnOn(invitee.user.id);
+    const invitation = InvitationService.createInvitation(inviter.tenant.id, invitee.user.email, "SALES", inviter.user.id);
+    const mod = (await import("@/app/api/v1/invitations/[token]/route")) as { POST: (r: Request, c: { params: Promise<{ token: string }> }) => Promise<Response> };
+    const res = await mod.POST(
+      new Request(`${BASE}/invitations/x`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: loginPassword }) }),
+      { params: Promise.resolve({ token: invitation.token }) }
+    );
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual((await json(res)).data?.sign_in_required, true);
+    assert.strictEqual(sessionCookie(res), null, "no session from the invitation");
+    assert.ok(db.findMembership(inviter.tenant.id, invitee.user.id), "the invitation was still accepted");
   });
 
   console.log(`\n  Tests Passed: ${passed} | Tests Failed: ${failed}\n`);
