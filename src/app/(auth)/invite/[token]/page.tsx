@@ -4,6 +4,7 @@ import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { Button } from "@/components/ui/Button/Button";
+import { LogoMark } from "@/components/brand/LogoMark";
 import { Input } from "@/components/ui/Input/Input";
 import styles from "../../auth.module.css";
 
@@ -65,7 +66,7 @@ export default function AcceptInvitationPage() {
     <main className={styles.authContainer}>
       <div className={styles.authCard}>
         <div className={styles.header}>
-          <div className={styles.brandLogo}>C✦</div>
+          <LogoMark className={styles.brandLogo} size={48} label="CommerceOS" />
           <h1 className={styles.title}>Join a workspace</h1>
           <p className={styles.subtitle}>
             {info ? (

@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { basket, lockers, phone, plot, rebuild, terrain } from "@lucasmarkes/hairline";
 import { channels, gate, lattice, pipeline, zones } from "./commerce-figures";
+import { LogoMark } from "@/components/brand/LogoMark";
+import { BrandLogo } from "@/components/brand/BrandLogo";
 import { Faq } from "./Faq";
 import { Figure } from "./Figure";
 import { Pricing } from "./Pricing";
@@ -173,7 +175,7 @@ export function Landing() {
 
       <header className={c("nav")}>
         <a className={c("brand")} href="#top" onClick={() => setMenuOpen(false)}>
-          <span className={c("logo")}>C✦</span> CommerceOS
+          <BrandLogo size={46} />
         </a>
         <ul className={c("links")}>
           {NAV.map((item) => (
@@ -289,7 +291,7 @@ export function Landing() {
           <section className={c("panel product")} id="product">
             <div data-reveal className={c("two")}>
               <div>
-                <div className={c("pro")}><span className={c("logo")}>C✦</span> Early access</div>
+                <div className={c("pro")}><LogoMark className={c("logo")} /> Early access</div>
                 <h2>Run the back office. Skip the spreadsheets.</h2>
                 <p className={c("lede")}>
                   Facebook pages and Instagram DMs are good at starting orders and bad at tracking them. CommerceOS is the back office behind them.
@@ -464,7 +466,7 @@ export function Landing() {
         </main>
 
         <footer className={c("foot")}>
-          <a className={c("brand")} href="#top"><span className={c("logo")}>C✦</span> CommerceOS</a>
+          <a className={c("brand")} href="#top"><BrandLogo size={36} /></a>
           <span>Early access. Features and availability are described as they stand today.</span>
         </footer>
     </div>
