@@ -3,6 +3,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { IsoGrid } from "@/components/marketing/IsoGrid";
+import { BrandLogo } from "@/components/brand/BrandLogo";
 import { LockScene } from "../LockScene";
 import styles from "../stage.module.css";
 
@@ -184,7 +185,7 @@ export default function LoginPage() {
 
       <header className={styles.top}>
         <Link href="/welcome" className={styles.brandMark}>
-          <span className={styles.logo}>C✦</span> CommerceOS
+          <BrandLogo size={34} tile /> CommerceOS
         </Link>
         <Link href="/welcome" className={styles.back}>
           <span aria-hidden="true">←</span> Back to site

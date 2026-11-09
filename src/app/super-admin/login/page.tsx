@@ -3,6 +3,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { vault, type Figure } from "@lucasmarkes/hairline";
 import { IsoGrid } from "@/components/marketing/IsoGrid";
+import { BrandLogo } from "@/components/brand/BrandLogo";
 import { c } from "@/components/marketing/classes";
 import styles from "../../(auth)/stage.module.css";
 
@@ -164,7 +165,7 @@ export default function PlatformLoginPage() {
 
       <header className={styles.top}>
         <span className={styles.brandMark}>
-          <span className={styles.logo}>C✦</span> CommerceOS
+          <BrandLogo size={34} tile /> CommerceOS
         </span>
         <span className={styles.platformTag}>Platform console</span>
       </header>
