@@ -42,6 +42,7 @@ import { ConnectionDrawer } from "@/components/connectors/ConnectionDrawer";
 import type { ConnectionView, ProviderSummary } from "@/domains/connectors/connections.service";
 import type { ConnectorGoal } from "@/types/connector";
 import styles from "./connector.module.css";
+import { useDebounce } from "@/hooks/useDebounce";
 
 /** The merchant view groups connectors by what they're for (ADR-119 P6). */
 const GOAL_LABEL: Record<ConnectorGoal, string> = {
@@ -94,6 +95,8 @@ export default function ConnectorPage() {
   // Active filter & search
   const [activeCategory, setActiveCategory] = useState<ConnectorCategory | "ALL" | "GOOGLE_ADS">("ALL");
   const [searchQuery, setSearchQuery] = useState("");
+  // ⚡ Bolt Optimization: Debounce search query to prevent heavy recalculations on every keystroke
+  const debouncedSearchQuery = useDebounce(searchQuery, 300);
 
   const isAdmin =
     session?.role === "ADMIN" ||
@@ -228,6 +231,7 @@ export default function ConnectorPage() {
 
   // Filtered providers
   const filteredProviders = useMemo(() => {
+    const q = debouncedSearchQuery.trim().toLowerCase();
     return providers.filter((p) => {
       // The store view shows what a shop connects, grouped by goal; infrastructure is the platform view's
       const storeView = !isAdmin || viewScope === "STORE";
@@ -250,14 +254,14 @@ export default function ConnectorPage() {
       }
 
       const matchQuery =
-        searchQuery.trim() === "" ||
-        p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        p.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        p.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (p.suggested_models && p.suggested_models.some((m) => m.toLowerCase().includes(searchQuery.toLowerCase())));
+        q === "" ||
+        p.name.toLowerCase().includes(q) ||
+        p.description.toLowerCase().includes(q) ||
+        p.id.toLowerCase().includes(q) ||
+        (p.suggested_models && p.suggested_models.some((m) => m.toLowerCase().includes(q)));
       return matchCategory && matchQuery;
     });
-  }, [providers, activeCategory, searchQuery, isAdmin, viewScope]);
+  }, [providers, activeCategory, debouncedSearchQuery, isAdmin, viewScope]);
 
   // Map of active configs by provider ID
   const configMap = useMemo(() => {
