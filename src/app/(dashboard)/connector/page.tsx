@@ -35,6 +35,7 @@ import {
   ConnectorConfigRecord,
   TestConnectionResult,
 } from "@/types/connector";
+import { useDebounce } from "@/hooks/useDebounce";
 import { LoadingSkeleton, ErrorState, EmptyState } from "@/components/ui/States/States";
 import { Modal } from "@/components/ui/Modal/Modal";
 import { isMetaPopupMessage, pickerUrlOf, startMetaLoginPopup, type SignInProvider } from "@/components/social/meta-login-popup";
@@ -94,6 +95,8 @@ export default function ConnectorPage() {
   // Active filter & search
   const [activeCategory, setActiveCategory] = useState<ConnectorCategory | "ALL" | "GOOGLE_ADS">("ALL");
   const [searchQuery, setSearchQuery] = useState("");
+  // ⚡ Bolt Performance: Debounce search input to avoid expensive re-renders and filtering on every keystroke
+  const debouncedSearchQuery = useDebounce(searchQuery, 300);
 
   const isAdmin =
     session?.role === "ADMIN" ||
@@ -250,14 +253,14 @@ export default function ConnectorPage() {
       }
 
       const matchQuery =
-        searchQuery.trim() === "" ||
-        p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        p.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        p.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (p.suggested_models && p.suggested_models.some((m) => m.toLowerCase().includes(searchQuery.toLowerCase())));
+        debouncedSearchQuery.trim() === "" ||
+        p.name.toLowerCase().includes(debouncedSearchQuery.toLowerCase()) ||
+        p.description.toLowerCase().includes(debouncedSearchQuery.toLowerCase()) ||
+        p.id.toLowerCase().includes(debouncedSearchQuery.toLowerCase()) ||
+        (p.suggested_models && p.suggested_models.some((m) => m.toLowerCase().includes(debouncedSearchQuery.toLowerCase())));
       return matchCategory && matchQuery;
     });
-  }, [providers, activeCategory, searchQuery, isAdmin, viewScope]);
+  }, [providers, activeCategory, debouncedSearchQuery, isAdmin, viewScope]);
 
   // Map of active configs by provider ID
   const configMap = useMemo(() => {
