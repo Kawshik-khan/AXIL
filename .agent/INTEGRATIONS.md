@@ -43,6 +43,13 @@ export interface PaymentAdapter {
 }
 ```
 
+> **Status (ADR-123, 2026-11-12):** the interface that exists is `PaymentGatewayAdapter` in
+> `src/domains/payments/gateways/gateway.types.ts` (`createCheckout`, `confirm`), with SSLCommerz (v4 hosted checkout)
+> and bKash (v2 tokenized checkout) adapters. Tested against a stub of their published contracts only; never called live.
+> Nagad direct and refunds are NOT IMPLEMENTED. Manual Nagad / Rocket transfers are confirmed by staff. A manual
+> bKash TrxID is looked up with the shop's own merchant account via Search Transaction (ADR-124, stub-tested only):
+> the result is shown to staff, and confirms the payment by itself only with `BKASH_TRX_AUTO_CONFIRM=1`.
+
 ### 3.2 Providers Implemented
 1. **bKash Tokenized Checkout & Merchant API**:
    - Supports query payment status, execute agreement, and query transaction ID.

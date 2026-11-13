@@ -16,6 +16,12 @@ import { DISABLED_PASSWORD_HASH, encryptCredential } from "@/lib/security";
 import { PgStorePersistence, StoreConflictError, logUnwritable, type QueuedRow, type RejectedRow } from "@/infrastructure/store/pg-store";
 import { createNeonSqlClient, isDataRejected, pgErrorFields, storeConnectionString, type SqlClient } from "@/infrastructure/store/sql-client";
 import type { MediaAsset } from "@/types/media";
+import type {
+  BillingInvoiceRecord,
+  GatewayPaymentAttemptRecord,
+  PaymentLinkRecord,
+  TenantPaymentSettingsRecord,
+} from "@/types/payments";
 import { ConnectorConfigRecord, ConnectionResource, EXCLUSIVE_RESOURCE_KINDS, type ConnectionResourceKind } from "@/types/connector";
 import type { NotificationSettingsRecord } from "@/types/notifications";
 import {
@@ -667,6 +673,11 @@ export interface DatabaseSchema {
   connection_resources: ConnectionResource[];
   // Uploaded media (ADR-120): product images in object storage
   media_assets: MediaAsset[];
+  // Online payments (ADR-123): shop gateway settings, payment links, gateway attempts, SaaS billing invoices
+  tenant_payment_settings: TenantPaymentSettingsRecord[];
+  payment_links: PaymentLinkRecord[];
+  gateway_payment_attempts: GatewayPaymentAttemptRecord[];
+  billing_invoices: BillingInvoiceRecord[];
 }
 
 /**
@@ -1596,6 +1607,10 @@ export class CommerceDatabase {
       tenant_addons: parsed.tenant_addons || [],
       campaign_kill_switches: parsed.campaign_kill_switches || [],
       automation_kill_switches: parsed.automation_kill_switches || [],
+      tenant_payment_settings: parsed.tenant_payment_settings || [],
+      payment_links: parsed.payment_links || [],
+      gateway_payment_attempts: parsed.gateway_payment_attempts || [],
+      billing_invoices: parsed.billing_invoices || [],
     };
 
     if (unhydrated && unhydrated.size > 0) {
@@ -1903,6 +1918,10 @@ export class CommerceDatabase {
       comment_trigger_events: [],
       connection_resources: [],
       media_assets: [],
+      tenant_payment_settings: [],
+      payment_links: [],
+      gateway_payment_attempts: [],
+      billing_invoices: [],
     };
   }
 
@@ -6288,7 +6307,7 @@ export class CommerceDatabase {
   public recordPaymentVerification(
     tenantId: string,
     id: string,
-    verification: { transactionId: string; verifiedBy: string; method: "MANUAL" | "GATEWAY" }
+    verification: { transactionId: string; verifiedBy: string; method: "MANUAL" | "GATEWAY"; testMode?: boolean }
   ): Payment | undefined {
     const idx = this.data.payments.findIndex((p) => p.tenant_id === tenantId && p.id === id);
     if (idx === -1) return undefined;
@@ -6299,7 +6318,17 @@ export class CommerceDatabase {
       verification_method: verification.method,
       verified_by: verification.verifiedBy,
       verified_at: new Date().toISOString(),
+      ...(verification.testMode ? { test_mode: true } : {}),
     };
+    this.persist(["payments"]);
+    return this.data.payments[idx];
+  }
+
+  /** Stores what bKash said about a pending payment's transaction id (ADR-124); changes nothing else. */
+  public setPaymentGatewayCheck(tenantId: string, id: string, check: Payment["gateway_check"]): Payment | undefined {
+    const idx = this.data.payments.findIndex((p) => p.tenant_id === tenantId && p.id === id);
+    if (idx === -1) return undefined;
+    this.data.payments[idx] = { ...this.data.payments[idx], gateway_check: check };
     this.persist(["payments"]);
     return this.data.payments[idx];
   }
@@ -9900,6 +9929,10 @@ export class CommerceDatabase {
       comment_trigger_events: [],
       connection_resources: [],
       media_assets: [],
+      tenant_payment_settings: [],
+      payment_links: [],
+      gateway_payment_attempts: [],
+      billing_invoices: [],
     };
     this.ensureDefaultSeed();
   }
@@ -11481,6 +11514,109 @@ export class CommerceDatabase {
     }
     this.persist(["tenant_ai_guard_settings"]);
     return settings;
+  }
+
+  // ==================== ONLINE PAYMENTS (ADR-123) ====================
+  public getTenantPaymentSettings(tenantId: string): TenantPaymentSettingsRecord | undefined {
+    return this.data.tenant_payment_settings.find((s) => s.tenant_id === tenantId);
+  }
+
+  public saveTenantPaymentSettings(settings: TenantPaymentSettingsRecord): TenantPaymentSettingsRecord {
+    const idx = this.data.tenant_payment_settings.findIndex((s) => s.tenant_id === settings.tenant_id);
+    if (idx >= 0) this.data.tenant_payment_settings[idx] = settings;
+    else this.data.tenant_payment_settings.push(settings);
+    this.persist(["tenant_payment_settings"]);
+    return settings;
+  }
+
+  public getPaymentLinks(tenantId: string, orderId?: string): PaymentLinkRecord[] {
+    return this.data.payment_links
+      .filter((l) => l.tenant_id === tenantId && (!orderId || l.order_id === orderId))
+      .sort((a, b) => b.created_at.localeCompare(a.created_at));
+  }
+
+  public findPaymentLinkById(tenantId: string, id: string): PaymentLinkRecord | undefined {
+    return this.data.payment_links.find((l) => l.tenant_id === tenantId && l.id === id);
+  }
+
+  /**
+   * The link a customer's token names. The token is the credential here: it is the only lookup that crosses tenants,
+   * and the caller takes the tenant from the row it returns, never from the request.
+   */
+  public findPaymentLinkByToken(token: string): PaymentLinkRecord | undefined {
+    return this.data.payment_links.find((l) => l.token === token);
+  }
+
+  public savePaymentLink(link: PaymentLinkRecord): PaymentLinkRecord {
+    const idx = this.data.payment_links.findIndex((l) => l.tenant_id === link.tenant_id && l.id === link.id);
+    if (idx >= 0) this.data.payment_links[idx] = link;
+    else this.data.payment_links.push(link);
+    this.persist(["payment_links"]);
+    return link;
+  }
+
+  /**
+   * A gateway attempt by the reference the gateway hands back. Like a payment link's token, the id is unguessable and
+   * the caller takes scope and tenant from the row.
+   */
+  public findGatewayPaymentAttempt(id: string): GatewayPaymentAttemptRecord | undefined {
+    return this.data.gateway_payment_attempts.find((a) => a.id === id);
+  }
+
+  public getGatewayPaymentAttempts(
+    tenantId: string,
+    reference: { type: GatewayPaymentAttemptRecord["reference_type"]; id: string }
+  ): GatewayPaymentAttemptRecord[] {
+    return this.data.gateway_payment_attempts.filter(
+      (a) => a.tenant_id === tenantId && a.reference_type === reference.type && a.reference_id === reference.id
+    );
+  }
+
+  /** Another settled attempt already carrying this gateway transaction id (one gateway payment settles one attempt). */
+  public findPaidGatewayAttemptByTransaction(
+    provider: GatewayPaymentAttemptRecord["provider"],
+    transactionId: string,
+    exceptId: string
+  ): GatewayPaymentAttemptRecord | undefined {
+    return this.data.gateway_payment_attempts.find(
+      (a) => a.id !== exceptId && a.provider === provider && a.status === "PAID" && a.gateway_transaction_id === transactionId
+    );
+  }
+
+  public saveGatewayPaymentAttempt(attempt: GatewayPaymentAttemptRecord): GatewayPaymentAttemptRecord {
+    const idx = this.data.gateway_payment_attempts.findIndex((a) => a.id === attempt.id);
+    if (idx >= 0) this.data.gateway_payment_attempts[idx] = attempt;
+    else this.data.gateway_payment_attempts.push(attempt);
+    this.persist(["gateway_payment_attempts"]);
+    return attempt;
+  }
+
+  /** Every billing invoice, newest first (platform console). */
+  public getAllBillingInvoices(): BillingInvoiceRecord[] {
+    return [...this.data.billing_invoices].sort((a, b) => b.created_at.localeCompare(a.created_at));
+  }
+
+  public getBillingInvoices(tenantId: string): BillingInvoiceRecord[] {
+    return this.data.billing_invoices
+      .filter((i) => i.tenant_id === tenantId)
+      .sort((a, b) => b.created_at.localeCompare(a.created_at));
+  }
+
+  public findBillingInvoiceById(tenantId: string, id: string): BillingInvoiceRecord | undefined {
+    return this.data.billing_invoices.find((i) => i.tenant_id === tenantId && i.id === id);
+  }
+
+  /** Platform scope: an invoice by id across tenants (operators verifying a payment, gateway settlement). */
+  public findBillingInvoiceForPlatform(id: string): BillingInvoiceRecord | undefined {
+    return this.data.billing_invoices.find((i) => i.id === id);
+  }
+
+  public saveBillingInvoice(invoice: BillingInvoiceRecord): BillingInvoiceRecord {
+    const idx = this.data.billing_invoices.findIndex((i) => i.id === invoice.id);
+    if (idx >= 0) this.data.billing_invoices[idx] = invoice;
+    else this.data.billing_invoices.push(invoice);
+    this.persist(["billing_invoices"]);
+    return invoice;
   }
 }
 

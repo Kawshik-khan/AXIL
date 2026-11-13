@@ -245,9 +245,8 @@ export default function LoginPage() {
                     disabled={busy}
                   />
                 )}
-                <i className={styles.line} aria-hidden="true" />
                 {!useRecovery && (
-                  <p id="login-code-help" className={styles.caps}>
+                  <p id="login-code-help" className={styles.help}>
                     Open your authenticator app and enter the 6-digit code for CommerceOS.
                   </p>
                 )}

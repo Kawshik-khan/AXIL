@@ -55,6 +55,8 @@ export const PRIVILEGED_ACTIONS: readonly PrivilegedActionSpec[] = [
   },
   // Subscriptions, plans, entitlements, add-ons
   { key: "subscription.change_plan", label: "Change plan", risk: "MEDIUM", permission: "subscription.manage", stepUp: false, approval: "never", reasonMin: REASON, ticketRequired: false, rollback: "Change the plan back." },
+  { key: "billing.verify_payment", label: "Confirm a subscription payment", risk: "MEDIUM", permission: "billing.manage", stepUp: false, approval: "never", reasonMin: REASON, ticketRequired: false, rollback: "Change the plan back and record the correction in the audit reason; the invoice stays as paid." },
+  { key: "billing.reject_payment", label: "Reject a subscription payment", risk: "MEDIUM", permission: "billing.manage", stepUp: false, approval: "never", reasonMin: REASON, ticketRequired: false, rollback: "The workspace submits the transaction id again." },
   { key: "subscription.extend_trial", label: "Extend trial", risk: "MEDIUM", permission: "subscription.manage", stepUp: false, approval: "never", reasonMin: REASON, ticketRequired: false, rollback: "Shorten the trial with another extension." },
   { key: "entitlement.override", label: "Override a limit", risk: "HIGH", permission: "entitlement.manage", stepUp: true, approval: "never", reasonMin: REASON, ticketRequired: true, inverse: "entitlement.clear_override", rollback: "Clear the override." },
   { key: "entitlement.clear_override", label: "Remove a limit override", risk: "MEDIUM", permission: "entitlement.manage", stepUp: false, approval: "never", reasonMin: REASON, ticketRequired: false, rollback: "Set the override again." },

@@ -50,6 +50,17 @@
   --card-sheen:           none;
   --page-backdrop:        none;
 
+  /* Ink action: the high-contrast primary for work screens (lime stays for one signal per screen) */
+  --color-ink-action:       #16171A;
+  --color-ink-action-hover: #2A2C30;
+  --color-ink-action-text:  #FFFFFF;
+
+  /* Bangladeshi wallet brand marks (payment method badges) */
+  --color-brand-bkash:  #E2136E;
+  --color-brand-nagad:  #EC1C24;
+  --color-brand-rocket: #8C3494;
+  --color-brand-mark-text: #FFFFFF;
+
   /* Data visualisation: categorical order is fixed (validated for colour-blind separation); never cycle it */
   --chart-cat-1: #2F6FD0;
   --chart-cat-2: #E07B22;
@@ -208,6 +219,9 @@ html[data-console-theme="dark"] {
   --color-accent-emerald: #3FD6A0;
   --color-track:          rgba(255, 255, 255, 0.07);
   --color-track-strong:   rgba(255, 255, 255, 0.14);
+  --color-ink-action:       #F3F4EF;
+  --color-ink-action-hover: #FFFFFF;
+  --color-ink-action-text:  #0A0B0D;
   /* Cards: a faint top-lit sheen over the surface, so they read as raised panels on the near-black page */
   --card-sheen:           linear-gradient(180deg, rgba(255, 255, 255, 0.045) 0%, rgba(255, 255, 255, 0.012) 100%);
   /* Page: two soft colour fields (brand lime, cool blue) under a near-black base */

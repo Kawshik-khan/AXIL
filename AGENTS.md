@@ -47,6 +47,9 @@ src/lib/store-unit.ts                withStore: wraps every route handler; a wri
 src/lib/safety-gate.ts               assertNotKilled, assertWithinLimit, isFeatureEnabled (enforced platform controls)
 src/lib/impersonation.ts             read-only support sessions (cookie + operator session)
 src/domains/orders/order-lifecycle.service.ts  the only writer of order status
+src/domains/payments/                payment links, shop gateway settings, gateways/ (SSLCommerz, bKash adapters), gateway-payment.service.ts:
+                                     the only place a gateway callback becomes a PAID payment or invoice (ADR-123)
+src/domains/billing/billing.service.ts  workspace subscription invoices; BillingService.settle is the only writer of a paid subscription
 src/domains/enterprise/organization-access.ts  resolveOrganizationId (own organizations only), resolveEnterpriseCaller (real enterprise scope)
 src/lib/errors.ts                    AppError family (NotFoundError, ForbiddenError, ...)
 src/lib/permissions.ts               PERMISSIONS, RoleName, ROLE_PERMISSIONS

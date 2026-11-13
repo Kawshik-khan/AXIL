@@ -435,9 +435,7 @@
 }
 
 .queryInput:focus {
-  border-color: var(--color-lime-primary, #C7F900);
   background: var(--color-surface-pure, #FFFFFF);
-  box-shadow: 0 0 0 3px var(--color-lime-glow, rgba(199, 249, 0, 0.28));
 }
 
 .queryInput::placeholder {

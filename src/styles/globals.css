@@ -49,10 +49,10 @@ button {
   cursor: pointer;
 }
 
-/* Accessible Focus Ring */
+/* No focus outline anywhere */
+:focus,
 :focus-visible {
-  outline: 2px solid var(--color-lime-primary);
-  outline-offset: 2px;
+  outline: none;
 }
 
 /* Custom Minimal Scrollbar */

@@ -2025,3 +2025,124 @@ has no background workers, so the worker stays in the web process for now.
   cancelled instead, see above); `message.sent` still carries the text and recipient id, as before; migration 012 adds
   stored generated columns, which rewrites `messages`. Applied to Neon on 2026-10-26 after a temporary-branch rehearsal
   (56 rows, 128 kB: the rewrite was negligible); recorded in `_migrations`.
+
+## ADR-123: Online Payments — Shop Gateways, Payment Links and Subscription Invoices
+
+**Date**: 2026-11-12 · **Status**: Accepted (built; gateways never called live, see Open) · **Builds on**: FX-11 (manual TrxID verification), ADR-109 (units of work), ADR-110 (outbound guard), rules/platform-billing.md §1
+
+### Context
+A shop could only record a payment by hand and tick it verified; nothing let a customer pay, and a workspace had no
+way to pay CommerceOS for its plan (operators assigned plans). `AdvanceFeeService` hands out a checkout URL that does
+not exist. Bangladeshi buyers pay by bKash / Nagad / Rocket "send money", or through a gateway; most small shops have
+a wallet number, fewer a merchant account.
+
+### Decision
+1. **Two money flows, one set of adapters, nothing else shared.** STORE: customer → shop, with the shop's own
+   merchant account (`tenant_payment_settings`, credentials encrypted with `encryptCredential`, never returned).
+   PLATFORM: workspace → CommerceOS, with the platform's account from the environment (`PLATFORM_SSLCOMMERZ_*`,
+   `PLATFORM_BKASH_*`). A shop's credentials never touch an invoice; the platform's never touch an order.
+2. **Gateways: SSLCommerz (v4 hosted checkout) and bKash (v2 "Tokenized Without Agreement").** Adapters in
+   `src/domains/payments/gateways/`; every call goes through `outboundRequest`; hosts are constants chosen by mode.
+   bKash does not publish its production host, so LIVE reads `BKASH_LIVE_BASE_URL` from the platform environment and
+   is refused (424) without it. bKash allows two token grants an hour: the token is cached 50 minutes per account, in
+   process memory.
+3. **A callback is a pointer, never proof.** `gateway_payment_attempts.id` is our reference (SSLCommerz `tran_id`,
+   bKash `merchantInvoiceNumber`; 104 random bits). The browser return, the IPN and the bKash confirm route find the
+   attempt by that id, take scope and tenant from the row, and ask the gateway with the merchant's credentials
+   (SSLCommerz validation API; bKash Execute, then Query when Execute gives no answer). Money is recorded only when
+   the answer names this attempt with the same amount in BDT and its transaction id settled no other attempt.
+   Settlement re-reads the attempt inside one unit of work, so IPN and browser return settle once. A later confirmed
+   payment still settles an attempt an earlier callback marked cancelled or failed.
+4. **Payment links.** `payment_links.token` (32 random bytes) is the customer's only credential and names tenant and
+   order server-side. The public view shows shop name, order number, amount and methods; no personal data. A
+   submitted transaction id is a PENDING payment that staff confirm (`payments.verify`) or reject; three unverified
+   submissions per link, twelve gateway attempts per link or invoice, plus rate limits per token and per client.
+5. **Subscription invoices.** `billing_invoices`: one invoice per billing period, price from the latest published plan
+   version (plus the version's setup fee on the first paid invoice). The subscription changes only in
+   `BillingService.settle`: after a gateway confirmation, or after a platform operator confirms a manually submitted
+   transaction id through the privileged-action gate (`billing.verify_payment`, `billing.manage`, reason, platform
+   audit). A renewal paid early is added after the current period. Nothing renews by itself.
+6. **Sandbox money pays for nothing.** A confirmed SANDBOX payment is kept on the attempt (`test_only`) and the payer
+   is told it was a test. `PAYMENTS_SANDBOX_SETTLES=1` (demos, development) applies it, marked `test_mode`.
+7. **GETs stay read-only.** bKash returns the browser with a GET, so its callback URL is a page
+   (`/pay/return/bkash/<attempt>`) that POSTs to the confirm route.
+
+### Consequences
+- New collections are JSONB documents (`tenant_payment_settings`, `payment_links`, `gateway_payment_attempts`,
+  `billing_invoices`); no migration. `payments` keeps its tenant-scoped unique transaction key and order foreign key.
+- Changing payment settings asks for workspace step-up (`CHANGE_PAYMENT_SETTINGS`) once step-up is enforced.
+- Tenant status is not changed by a payment (no lifecycle service exists yet); only the subscription and `plan_id`.
+
+### Open
+- No request has been sent to SSLCommerz or bKash: the adapters follow the published contracts and are tested against
+  a stub that speaks them. A sandbox run with real credentials is needed before LIVE.
+- bKash refunds, SSLCommerz refunds and transaction-query reconciliation are not built; a paid-but-unmatched attempt
+  is only logged (`payments.gateway.paid_without_order`).
+- The bKash token cache is per process: several servers each grant their own token.
+- `AdvanceFeeService` still returns its made-up checkout URL; it should create a payment link instead.
+- No dunning: an expired period is not detected or acted on by this change.
+
+## ADR-124: bKash Transaction Lookup for Send-Money Payments
+
+**Date**: 2026-11-12 · **Status**: Accepted (built; stub-tested only, never called against bKash) · **Builds on**: ADR-123
+
+### Context
+Customers who pay a shop's bKash number submit the TrxID on a payment link; staff then find it in their own bKash
+account and confirm it (ADR-123). Shops asked for this to be automatic. bKash offers no API for personal wallets, but
+a merchant account with Payment Gateway access can look a transaction up by id (tokenized checkout
+`general/searchTransaction`), and the answer is limited to that merchant's own transactions.
+
+### Decision
+1. **Look up every submitted bKash TrxID when the shop has saved bKash merchant credentials** (even with checkout
+   switched off on links). `TrxLookupService.check` (`src/domains/payments/trx-lookup.service.ts`) calls
+   `searchBkashTransaction` and stores the result on the PENDING payment as `gateway_check`.
+2. **MATCHED means all of:** bKash found this id, `transactionStatus` is Completed, the amount equals the payment's in
+   BDT, it completed no earlier than the link's creation (2-minute clock allowance), and, when the customer gave the
+   last 4 digits of the paying number (optional field on the pay page, stored as `payer_last4`), bKash's payer ends
+   in them. Otherwise NOT_FOUND, NOT_COMPLETED, AMOUNT_MISMATCH, BEFORE_LINK, SENDER_MISMATCH, or UNAVAILABLE when
+   bKash can't be asked. The payer's full number from bKash is reduced to its last 4 digits in the adapter and never
+   stored or logged.
+3. **Advice by default, confirmation only when the platform says so.** With `BKASH_TRX_AUTO_CONFIRM=1`, a MATCHED
+   result on a LIVE account (or a sandbox one with `PAYMENTS_SANDBOX_SETTLES=1`, tagged TEST) confirms the payment
+   through the same checks a staff confirmation runs (`PaymentService.confirmPending`: single-use TrxID, no more than
+   is due), recorded as GATEWAY by `gateway:BKASH_LOOKUP`, only when also: a readable completion time; the customer's
+   sender digits given and matching (a TrxID alone is not tied to a payer: receipts get shared); a plain incoming
+   payment type (`isIncomingPaymentType`: not checkout, refund, payout, transfer); the link still ACTIVE and unexpired;
+   the order still payable; and no checkout attempt already settled with this TrxID. A refused confirmation leaves
+   the payment for a person; any other error fails the unit, so a half-done confirmation is never kept.
+   One bKash transaction pays one thing both ways: a checkout callback whose TrxID is already a submitted payment is
+   refused (`GatewayPaymentService.apply`).
+4. **The customer learns nothing from the lookup**: the public route answers PAID or PENDING_VERIFICATION only. The
+   payer's number in bKash's answer is not stored or logged. bKash being down never blocks a submission.
+5. **Staff can ask again** (`POST /api/v1/payments/[id]/check`, `payments.verify`, rate-limited per workspace, audited
+   as PAYMENT_TRX_CHECKED); the Payments page shows the result next to the TrxID.
+
+### Consequences
+- One extra bKash call per bKash TrxID submission; the customer waits for it (bKash allows 30 s per call). Both routes
+  (`pay/[token]/manual`, `payments/[id]/check`) run with `{ unit: false }`: the submission is saved in one short unit,
+  bKash is called with no store lock held, and the result is saved in a second unit that re-reads the payment
+  (security review H1).
+- Flood and guessing limits on the public submission (`pay/[token]/manual`): 5 a minute per link, 20 per client
+  address (with `TRUST_PROXY=1`, set in render.yaml), 30 a minute per shop across its links; at most 3 waiting and
+  5 over the link's whole life, rejected ones included (`PAYMENT_LINK_MAX_SUBMISSIONS`). Every refusal that can be
+  decided from memory (closed link, used id, full link, method not offered) is made by
+  `PaymentLinkService.precheckManualSubmission` before any store lock, write or bKash call; it runs again inside
+  the unit. The pay page hides the form once an id is waiting (a "wrong ID?" button reopens it) and for good once
+  the link is full.
+- Personal bKash numbers, Nagad and Rocket still need a person.
+
+### Open
+- Never called against bKash: the request path, the response field names (`trxID`, `transactionStatus`, `amount`,
+  `completedTime`) and the time format follow bKash's documentation and must be checked in the sandbox.
+- Whether Search Transaction returns payments made with the app's "Payment" option to the merchant number (not only
+  checkout payments) must be confirmed with bKash before relying on it.
+- Merchant scoping is bKash's: we do not compare `organizationShortCode` with a stored value.
+- `isIncomingPaymentType` guesses bKash's type names ("Payment"); confirm the real ones in the sandbox, else nothing
+  auto-confirms (safe, but no automation).
+- The bKash token cache is per process (ADR-123): several servers each grant their own token.
+- No test runs the lock split against a real Postgres with a slow bKash; it is checked by reading the route source.
+- The sender-digits binding does not help when a leaked TrxID comes with the payer's number (a public comment with a
+  receipt). Whether bKash's answer includes `customerMsisdn` is unverified; without it nothing auto-confirms.
+- A customer who pays by checkout and submits the same TrxID by hand before the callback arrives is stopped only by
+  the transaction-type check (wording unverified); the money still counts once.
+- `payer_last4` is new stored customer data, visible to staff with payments.read.

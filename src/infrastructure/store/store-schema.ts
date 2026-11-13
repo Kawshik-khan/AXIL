@@ -76,6 +76,7 @@ export const NATURAL_KEYS: Record<string, string[]> = {
   network_delivery_reputations: ["phone_hash"],
   tenant_rto_settings: ["tenant_id"],
   tenant_ai_guard_settings: ["tenant_id"],
+  tenant_payment_settings: ["tenant_id"],
 };
 
 /** The row id Postgres stores a record under, or null when the record has none. */

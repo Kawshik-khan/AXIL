@@ -267,7 +267,6 @@
 .select:focus,
 .textarea:focus {
   outline: none;
-  border-color: var(--color-text-primary);
 }
 
 .textarea {

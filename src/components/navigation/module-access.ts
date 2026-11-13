@@ -9,6 +9,7 @@ const MODULE_PERMISSIONS: ReadonlyArray<readonly [prefix: string, permission: st
   ["/products", PERMISSIONS.PRODUCTS_READ],
   ["/inventory", PERMISSIONS.INVENTORY_READ],
   ["/shipments", PERMISSIONS.SHIPMENTS_READ],
+  ["/payments", PERMISSIONS.PAYMENTS_READ],
   ["/customers", PERMISSIONS.CUSTOMERS_READ],
   ["/conversations", PERMISSIONS.SOCIAL_CONVERSATION_READ],
   ["/growth", PERMISSIONS.MARKETING_READ],

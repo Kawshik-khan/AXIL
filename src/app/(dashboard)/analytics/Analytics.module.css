@@ -483,7 +483,6 @@
 }
 
 .searchInput:focus {
-  border-color: var(--color-lime-primary, #C7F900);
 }
 
 .selectInput {

@@ -36,18 +36,24 @@ interface Props {
   fees: DeliveryFees | null;
   selectStyle?: React.CSSProperties;
   labelStyle?: React.CSSProperties;
+  /** Class names, for callers styled with CSS modules instead of inline styles. */
+  selectClassName?: string;
+  labelClassName?: string;
+  hintClassName?: string;
 }
 
 /**
  * Pick one of the 64 districts; the delivery zone (and its fee) follows from it (FX-36 M5).
  */
-export function DistrictPicker({ district, onChange, fees, selectStyle, labelStyle }: Props) {
+export function DistrictPicker({ district, onChange, fees, selectStyle, labelStyle, selectClassName, labelClassName, hintClassName }: Props) {
   const spec = findDistrict(district);
   const fee = spec && fees ? (spec.zone === "INSIDE_DHAKA" ? fees.inside_dhaka_bdt : fees.outside_dhaka_bdt) : null;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-      <label style={labelStyle}>District *</label>
-      <select value={spec?.district ?? ""} onChange={(e) => onChange(e.target.value)} required style={selectStyle}>
+      <label style={labelStyle} className={labelClassName} htmlFor="district-picker">
+        District *
+      </label>
+      <select id="district-picker" value={spec?.district ?? ""} onChange={(e) => onChange(e.target.value)} required style={selectStyle} className={selectClassName}>
         <option value="">Choose a district</option>
         {BD_DIVISIONS.map((division) => (
           <optgroup key={division} label={`${division} Division`}>
@@ -59,7 +65,7 @@ export function DistrictPicker({ district, onChange, fees, selectStyle, labelSty
           </optgroup>
         ))}
       </select>
-      <span style={{ fontSize: "12px", color: "var(--color-text-muted)" }}>
+      <span className={hintClassName} style={hintClassName ? undefined : { fontSize: "12px", color: "var(--color-text-muted)" }}>
         {spec
           ? `${spec.zone === "INSIDE_DHAKA" ? "Inside Dhaka" : "Outside Dhaka"} · delivery charge ${fee !== null ? `৳${fee}` : "—"}`
           : "The delivery zone and charge follow from the district."}

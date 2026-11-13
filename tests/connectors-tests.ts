@@ -292,6 +292,19 @@ async function main() {
     assert.strictEqual(tenantBList.configurations[0].provider_id, "steadfast");
   });
 
+  await runTest("bKash is listed under Get paid but can't be saved or tested as a connector (Payments owns it)", async () => {
+    const bkash = ConnectorService.PROVIDERS.find((p) => p.id === "bkash");
+    assert.ok(bkash, "bKash is in the catalog");
+    assert.strictEqual(bkash.goal, "GET_PAID");
+    assert.strictEqual(bkash.managed_at, "/payments");
+    assert.strictEqual(bkash.fields.length, 0, "no credential fields: they live in payment settings");
+
+    const input = { provider_id: "bkash", credentials: { username: "u", password: "p", app_key: "k", app_secret: "s" } };
+    await assert.rejects(() => ConnectorService.saveConnector(tenantBContext, input), /MANAGED_ELSEWHERE/);
+    await assert.rejects(() => ConnectorService.testConnection(tenantBContext, input), /MANAGED_ELSEWHERE/);
+    assert.ok(!db.getConnectors("tenant_beta_02").some((c) => c.provider_id === "bkash"), "nothing was stored");
+  });
+
   await runTest("Update existing connector configuration", async () => {
     const updated = await ConnectorService.saveConnector(tenantAContext, {
       provider_id: "openai",

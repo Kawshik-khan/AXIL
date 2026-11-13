@@ -587,8 +587,6 @@
 
 .textInput:focus,
 .selectInput:focus {
-  border-color: #242529;
-  box-shadow: 0 0 0 2px rgba(36, 37, 41, 0.08);
 }
 
 .passwordToggle {

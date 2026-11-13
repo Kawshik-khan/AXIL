@@ -5,7 +5,7 @@
 .page { --px: clamp(20px, 5vw, 72px); position: relative; isolation: isolate; overflow: hidden; min-height: 100vh; min-height: 100svh;
   display: grid; grid-template-rows: auto 1fr; background: var(--mk-card); color: var(--mk-ink);
   font-family: var(--font-family-base); -webkit-font-smoothing: antialiased; }
-.page :focus-visible { outline: 2px solid var(--mk-ink); outline-offset: 3px; }
+.page :focus-visible { outline: none; }
 /* the background grid (IsoGrid) in dark hairlines on the light page; lit cells stay lime */
 .page > canvas { --iso-line: var(--mk-black-a075); --iso-lit: var(--color-lime-primary); }
 
@@ -83,7 +83,7 @@
 .segment span { display: grid; place-items: center; padding: 0 12px; border-radius: 12px; font-size: 15px; font-weight: 600; color: var(--mk-text-2); white-space: nowrap; transition: background .15s, color .15s, box-shadow .15s; }
 .segment input:hover + span { color: var(--mk-ink); }
 .segment input:checked + span { background: var(--mk-ink); color: var(--color-lime-primary); box-shadow: 0 4px 12px -4px var(--mk-black-a350); }
-.segment input:focus-visible + span { outline: 2px solid var(--mk-ink); outline-offset: 2px; }
+.segment input:focus-visible + span { outline: none; }
 .currency:disabled .segment input { cursor: progress; }
 .rule { margin: 0; font-size: 14px; font-weight: 500; color: var(--mk-muted); display: inline-flex; align-items: center; gap: 7px; transition: color .2s; }
 .rule::before { content: ""; width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--mk-muted); transition: background .2s, border-color .2s; }
@@ -111,6 +111,7 @@
 .reveal:hover { background: var(--mk-black-a075); color: var(--mk-ink); }
 .reveal svg { width: 23px; height: 23px; }
 .caps { margin: 0; font-size: 14px; font-weight: 600; color: var(--mk-ink); display: inline-flex; align-items: center; gap: 6px; }
+.help { margin: 0; font-size: 14px; font-weight: 600; color: var(--mk-ink); }
 .caps::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--color-lime-primary); outline: 1px solid var(--mk-ink); }
 
 .submit { position: relative; overflow: hidden; width: 100%; min-height: 60px; border: 0; border-radius: var(--radius-pill); cursor: pointer;

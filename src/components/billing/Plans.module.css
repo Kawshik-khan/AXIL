@@ -1,0 +1,288 @@
+/* Plan & billing page parts: current plan with usage, plan cards, period switch. Shared look: ui/WorkScreen. */
+
+/* ---- Current plan ---------------------------------------------------------------------------------------------------- */
+
+.current {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(0, 2fr);
+  gap: var(--space-24);
+  padding: var(--space-20);
+}
+
+@container (max-width: 720px) {
+  .current {
+    grid-template-columns: 1fr;
+  }
+}
+
+.currentName {
+  margin: var(--space-4) 0;
+  font-size: 22px;
+  line-height: 28px;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  color: var(--color-text-primary);
+}
+
+.currentMeta {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.meters {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: var(--space-16);
+  align-content: start;
+}
+
+.meter {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.meterHead {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-8);
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.meterValue {
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-primary);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.track {
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--color-track);
+  overflow: hidden;
+}
+
+.fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-text-primary);
+  transition: width var(--transition-smooth);
+}
+
+.fillWarn {
+  background: var(--color-warning);
+}
+
+.fillFull {
+  background: var(--color-danger);
+}
+
+.meterNote {
+  font-size: var(--font-size-meta);
+  color: var(--color-text-muted);
+}
+
+/* ---- Plan cards ------------------------------------------------------------------------------------------------------ */
+
+.plansHead {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-12);
+  flex-wrap: wrap;
+}
+
+.save {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  background: var(--color-lime-primary);
+  color: var(--color-surface-dark);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--space-16);
+}
+
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+  padding: var(--space-20);
+  background: var(--color-surface-pure);
+  background-image: var(--card-sheen);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 14px;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
+}
+
+.card:hover {
+  border-color: var(--color-border-medium);
+  box-shadow: var(--shadow-md);
+}
+
+.cardFeatured {
+  border-color: var(--color-text-primary);
+  box-shadow: var(--shadow-md);
+}
+
+.cardCurrent {
+  border-color: var(--color-lime-primary);
+  box-shadow: 0 0 0 1px var(--color-lime-primary);
+}
+
+.cardTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-8);
+  min-height: 22px;
+}
+
+.cardName {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 650;
+  color: var(--color-text-primary);
+}
+
+.badge {
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--color-ink-action);
+  color: var(--color-ink-action-text);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.badgeCurrent {
+  background: var(--color-lime-primary);
+  color: var(--color-surface-dark);
+}
+
+.cardDesc {
+  margin: 0;
+  font-size: 13px;
+  line-height: 19px;
+  color: var(--color-text-secondary);
+  min-height: 38px;
+}
+
+.price {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.priceValue {
+  font-size: 30px;
+  line-height: 36px;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-primary);
+}
+
+.priceUnit {
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+.priceNote {
+  margin: 2px 0 0;
+  font-size: var(--font-size-meta);
+  color: var(--color-text-muted);
+  min-height: 16px;
+}
+
+.cta {
+  width: 100%;
+  justify-content: center;
+}
+
+.limits {
+  margin: 0;
+  padding: var(--space-16) 0 0;
+  list-style: none;
+  border-top: 1px solid var(--color-border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--color-text-primary);
+}
+
+.limit {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-8);
+}
+
+.limit svg {
+  flex: none;
+  margin-top: 1px;
+  color: var(--color-text-primary);
+}
+
+.limitOff {
+  color: var(--color-text-muted);
+  text-decoration: line-through;
+}
+
+.limitOff svg {
+  color: var(--color-text-muted);
+}
+
+.overLimit {
+  display: flex;
+  gap: 6px;
+  padding: var(--space-8) var(--space-12);
+  border-radius: var(--radius-sm);
+  background: var(--color-warning-bg);
+  font-size: var(--font-size-meta);
+  color: var(--color-text-primary);
+}
+
+.overLimit svg {
+  flex: none;
+  margin-top: 1px;
+}
+
+.footnote {
+  margin: 0;
+  font-size: var(--font-size-meta);
+  color: var(--color-text-muted);
+}
+
+.notice {
+  padding: var(--space-12) var(--space-16);
+  border-radius: 12px;
+  font-size: 13px;
+  border: 1px solid var(--color-border-subtle);
+}
+
+.noticeOk {
+  background: var(--color-success-bg);
+  color: var(--color-text-primary);
+}
+
+.noticeWarn {
+  background: var(--color-warning-bg);
+  color: var(--color-text-primary);
+}
+
+.noticeBad {
+  background: var(--color-danger-bg);
+  color: var(--color-text-primary);
+}

@@ -1,0 +1,230 @@
+/* Payments page parts: the confirmation queue, wallet marks and the new-link panel. Shared look: ui/WorkScreen. */
+
+.orderOption:focus-visible {
+  outline: 2px solid var(--color-lime-primary);
+  outline-offset: 2px;
+}
+
+/* ---- Confirmation queue -------------------------------------------------------------------------------------------- */
+
+.queueRow {
+  display: grid;
+  grid-template-columns: 36px minmax(140px, 1.1fr) minmax(180px, 1.4fr) minmax(90px, auto) auto;
+  align-items: center;
+  gap: var(--space-16);
+  padding: var(--space-12) var(--space-20);
+}
+
+.queueRow + .queueRow {
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+/* Narrower sections: two lines per payment, who + how much on top, the ID + what to do below */
+
+@container (max-width: 1040px) {
+  .queueRow {
+    grid-template-columns: 36px minmax(0, 1fr) auto;
+    row-gap: var(--space-8);
+  }
+  .queueRow > :nth-child(1) {
+    grid-row: 1 / span 2;
+    align-self: start;
+  }
+  .queueRow > :nth-child(3) {
+    grid-column: 2;
+    grid-row: 2;
+  }
+  .queueRow > :nth-child(4) {
+    grid-column: 3;
+    grid-row: 1;
+  }
+  .queueRow > :nth-child(5) {
+    grid-column: 3;
+    grid-row: 2;
+  }
+}
+
+@container (max-width: 560px) {
+  .queueRow > :nth-child(5) {
+    grid-column: 2 / -1;
+    grid-row: 3;
+    justify-content: flex-start;
+  }
+}
+
+.queueMore {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-8) var(--space-20);
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.trx {
+  font-family: var(--font-family-mono);
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  color: var(--color-text-primary);
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: var(--font-size-meta);
+}
+
+.checkOk {
+  color: var(--color-success);
+}
+
+.checkBad {
+  color: var(--color-danger);
+}
+
+.checkNeutral {
+  color: var(--color-text-muted);
+}
+
+.bigAmount {
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-primary);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-8);
+}
+
+/* ---- Method marks -------------------------------------------------------------------------------------------------- */
+
+.mark {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-brand-mark-text);
+  background: var(--color-text-secondary);
+}
+
+.markSm {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  font-size: 11px;
+}
+
+.markBkash {
+  background: var(--color-brand-bkash);
+}
+
+.markNagad {
+  background: var(--color-brand-nagad);
+}
+
+.markRocket {
+  background: var(--color-brand-rocket);
+}
+
+.methodCell {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+
+.orderList {
+  max-height: 248px;
+  overflow-y: auto;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 4px;
+}
+
+.orderOption {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-8) var(--space-12);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.orderOption:hover {
+  background: var(--color-surface-soft);
+}
+
+.optionMeta {
+  composes: secondaryText from "../ui/WorkScreen/WorkScreen.module.css";
+  display: block;
+}
+
+.orderOptionActive {
+  border-color: var(--color-text-primary);
+  background: var(--color-surface-soft);
+}
+
+.listState {
+  padding: var(--space-16);
+  text-align: center;
+  font-size: var(--font-size-meta);
+  color: var(--color-text-muted);
+}
+
+.success {
+  padding: var(--space-16);
+  border-radius: 12px;
+  background: var(--color-success-bg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+}
+
+.successTitle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  margin: 0;
+  font-size: var(--font-size-body);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.linkRow {
+  display: flex;
+  gap: var(--space-8);
+  align-items: center;
+}
+
+.linkBox {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-8) var(--space-12);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-pure);
+  border: 1px solid var(--color-border-subtle);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-meta);
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

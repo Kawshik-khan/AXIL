@@ -271,7 +271,36 @@ export interface Payment {
   verification_method?: "MANUAL" | "GATEWAY";
   verified_by?: string;
   verified_at?: string;
+  /** Paid through a gateway's sandbox (ADR-123): the flow ran, no real money moved. */
+  test_mode?: boolean;
+  /** What the shop's bKash account said about a customer-submitted TrxID (ADR-124). Advice for staff, not proof. */
+  gateway_check?: PaymentGatewayCheck;
+  /** bKash: the last 4 digits of the number the customer says they paid from (ADR-124), compared with bKash's record. */
+  payer_last4?: string;
   created_at: string;
+}
+
+/**
+ * The result of looking up a submitted transaction id with the shop's own bKash merchant account (ADR-124).
+ * MATCHED: found, completed, same amount in BDT, completed after the payment link was made.
+ */
+export type PaymentGatewayCheckResult = "MATCHED" | "SENDER_MISMATCH" | "AMOUNT_MISMATCH" | "NOT_COMPLETED" | "NOT_FOUND" | "BEFORE_LINK" | "UNAVAILABLE";
+
+export interface PaymentGatewayCheck {
+  provider: "BKASH";
+  result: PaymentGatewayCheckResult;
+  mode: "SANDBOX" | "LIVE";
+  checked_at: string;
+  /** One line for staff, e.g. "bKash: completed, ৳1,270, 12 Nov 19:25". */
+  message: string;
+  amount?: number;
+  completed_at?: string;
+  transaction_type?: string;
+  /**
+   * MATCHED, with a readable completion time, the sender's last 4 digits matching what the customer gave, and a plain
+   * incoming payment (not checkout, refund or payout): the only case automatic confirmation may use.
+   */
+  auto_confirmable: boolean;
 }
 
 export type CourierProviderName =

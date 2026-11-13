@@ -23,9 +23,10 @@ import { StatusPill } from "../../_components/StatusPill";
 import { Tabs, useTab, type TabDef } from "../../_components/Tabs";
 import { PrivilegedActionDialog } from "../../_components/PrivilegedActionDialog";
 import { PlanEditor } from "./PlanEditor";
+import { InvoiceQueue } from "./InvoiceQueue";
 import styles from "../../super-admin.module.css";
 
-type TabId = "plans" | "catalog" | "addons" | "subscriptions" | "migrate";
+type TabId = "plans" | "catalog" | "addons" | "subscriptions" | "invoices" | "migrate";
 
 interface CatalogRow {
   id: string;
@@ -69,6 +70,7 @@ export default function BillingPage() {
     { id: "catalog", label: "Entitlement catalog", visible: can(PLATFORM_PERMISSIONS.ENTITLEMENT_READ) },
     { id: "addons", label: "Add-ons" },
     { id: "subscriptions", label: "Subscriptions", visible: can(PLATFORM_PERMISSIONS.SUBSCRIPTION_READ) },
+    { id: "invoices", label: "Invoices", visible: can(PLATFORM_PERMISSIONS.BILLING_READ) },
     { id: "migrate", label: "Move tenants", visible: can(PLATFORM_PERMISSIONS.SUBSCRIPTION_READ) },
   ];
   const [tab, setTab] = useTab(tabs, "plans");
@@ -440,6 +442,8 @@ export default function BillingPage() {
           />
         </BentoCard>
       )}
+
+      {tab === "invoices" && <InvoiceQueue canManage={can(PLATFORM_PERMISSIONS.BILLING_MANAGE)} />}
 
       {tab === "migrate" && (
         <BentoCard span={12} title="Move tenants between plan versions" subtitle="Preview counts current usage against the new limits before anything moves">

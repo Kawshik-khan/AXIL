@@ -3,6 +3,7 @@ export * from "./services/platform-audit.service";
 export * from "./services/platform-tenant.service";
 export * from "./services/platform-user.service";
 export * from "./services/platform-subscription.service";
+export * from "./services/platform-billing.service";
 export * from "./services/platform-entitlement.service";
 export * from "./services/platform-safety.service";
 export * from "./services/platform-support.service";

@@ -28,6 +28,7 @@ import {
   Flame,
   Building2,
   Send,
+  Wallet,
 } from "lucide-react";
 import {
   ConnectorCategory,
@@ -73,6 +74,24 @@ function summaryStatus(summary: ProviderSummary | undefined): { label: string; t
     if (days <= 7) return { label: `Expires in ${Math.max(days, 0)} day${days === 1 ? "" : "s"}`, tone: "warn" };
   }
   return { label: summary.last_event_at ? `Active · last message ${relativeTime(summary.last_event_at)}` : "Active", tone: "ok" };
+}
+
+/** A payment gateway's real state, from the Payments page's settings (ADR-123); credentials are never returned. */
+interface GatewayStatusView {
+  configured: boolean;
+  enabled: boolean;
+  mode: "SANDBOX" | "LIVE" | null;
+}
+
+/** Catalog ids of providers set up on the Payments page, mapped to their key in its gateway settings. */
+const PAYMENT_GATEWAY_KEYS: Record<string, "BKASH" | "SSLCOMMERZ"> = { bkash: "BKASH" };
+
+function gatewayStatus(views: Record<string, GatewayStatusView> | null, key: string): { label: string; tone: "ok" | "warn" | "none" } {
+  if (!views) return { label: "Status unknown", tone: "none" };
+  const view = views[key];
+  if (!view?.configured) return { label: "Not set up", tone: "none" };
+  if (!view.enabled) return { label: "Saved · off", tone: "warn" };
+  return { label: view.mode === "LIVE" ? "On · Live" : "On · Sandbox", tone: "ok" };
 }
 
 /** Providers connected by signing in (ADR-119): their card opens the provider's popup, never a credentials form. */
@@ -152,6 +171,9 @@ export default function ConnectorPage() {
   const [manageProvider, setManageProvider] = useState<ConnectorProviderDefinition | null>(null);
   const [drawerBusy, setDrawerBusy] = useState(false);
 
+  // Payment gateways (ADR-123) are set up on the Payments page; their card shows that page's real status
+  const [gatewayViews, setGatewayViews] = useState<Record<string, GatewayStatusView> | null>(null);
+
   // Guidance Drawer State
   const [drawerProvider, setDrawerProvider] = useState<ConnectorProviderDefinition | null>(null);
 
@@ -162,11 +184,14 @@ export default function ConnectorPage() {
     setIsLoading(true);
     setErrorMessage(null);
     try {
-      const [res, sessRes, connRes] = await Promise.all([
+      const [res, sessRes, connRes, payRes] = await Promise.all([
         fetch("/api/v1/connectors"),
         fetch("/api/v1/auth/session"),
         fetch("/api/v1/connections").catch(() => null),
+        fetch("/api/v1/payments/settings").catch(() => null),
       ]);
+      const pJson = payRes?.ok ? await payRes.json().catch(() => null) : null;
+      setGatewayViews(pJson?.data?.settings?.gateways ?? null);
       if (connRes?.ok) {
         const cJson = await connRes.json().catch(() => null);
         if (cJson?.data) setConnectionsData({ connections: cJson.data.connections ?? [], summaries: cJson.data.summaries ?? [] });
@@ -213,6 +238,7 @@ export default function ConnectorPage() {
           "LOGISTICS",
           "DATABASE",
           "ENTERPRISE",
+          "PAYMENTS",
         ].includes(cat)
       ) {
         setActiveCategory(cat as any);
@@ -243,6 +269,7 @@ export default function ConnectorPage() {
         if (activeCategory === "SOCIAL_ADS") matchCategory = p.goal === "SELL_CHAT";
         else if (activeCategory === "LOGISTICS") matchCategory = p.goal === "DELIVER";
         else if (activeCategory === "GOOGLE_ADS") matchCategory = p.goal === "ADS";
+        else if (activeCategory === "PAYMENTS") matchCategory = p.goal === "GET_PAID";
       } else if (activeCategory === "GOOGLE_ADS") {
         matchCategory = p.id === "google_ads";
       } else if (activeCategory !== "ALL") {
@@ -289,6 +316,11 @@ export default function ConnectorPage() {
 
   // Open Configure Modal
   const handleOpenConfigure = (provider: ConnectorProviderDefinition) => {
+    // Set up on its own page (e.g. bKash on Payments), which owns the credentials
+    if (provider.managed_at) {
+      router.push(provider.managed_at);
+      return;
+    }
     if (SIGN_IN_CARDS[provider.id]) {
       void connectBySignIn(provider.id);
       return;
@@ -518,6 +550,8 @@ export default function ConnectorPage() {
         return <Database size={20} style={{ color: "#00897B" }} />;
       case "ENTERPRISE":
         return <Building2 size={20} style={{ color: "#F3B63F" }} />;
+      case "PAYMENTS":
+        return <Wallet size={20} style={{ color: "var(--color-accent-emerald)" }} />;
     }
   };
 
@@ -751,6 +785,16 @@ export default function ConnectorPage() {
               </button>
               <button
                 type="button"
+                className={`${styles.tabButton} ${activeCategory === "PAYMENTS" ? styles.activeTab : ""}`}
+                onClick={() => setActiveCategory("PAYMENTS")}
+              >
+                {GOAL_LABEL.GET_PAID}
+                <span className={styles.tabBadge}>
+                  {providers.filter((p) => p.goal === "GET_PAID").length}
+                </span>
+              </button>
+              <button
+                type="button"
                 className={`${styles.tabButton} ${activeCategory === "SOCIAL_ADS" ? styles.activeTab : ""}`}
                 onClick={() => setActiveCategory("SOCIAL_ADS")}
               >
@@ -914,7 +958,8 @@ export default function ConnectorPage() {
           filteredProviders.map((provider) => {
             const config = configMap.get(provider.id);
             const summary = summaryMap.get(provider.id);
-            const live = summaryStatus(summary);
+            const gatewayKey = PAYMENT_GATEWAY_KEYS[provider.id];
+            const live = gatewayKey ? gatewayStatus(gatewayViews, gatewayKey) : summaryStatus(summary);
             const isConnected = live ? live.tone === "ok" : config?.status === "ACTIVE";
 
             return (
@@ -1007,7 +1052,7 @@ export default function ConnectorPage() {
                     >
                       <BookOpen size={13} /> Guide
                     </button>
-                    {isConnected && !SIGN_IN_CARDS[provider.id] && (
+                    {isConnected && !SIGN_IN_CARDS[provider.id] && !provider.managed_at && (
                       <button
                         type="button"
                         className={styles.testPingButton}
@@ -1030,6 +1075,10 @@ export default function ConnectorPage() {
                   >
                     {provider.status === "COMING_SOON"
                       ? "Coming soon"
+                      : provider.managed_at
+                        ? gatewayKey && gatewayViews?.[gatewayKey]?.configured
+                          ? "Manage in Payments"
+                          : "Set up in Payments"
                       : hasConnections(provider.id)
                         ? "Manage"
                         : SIGN_IN_CARDS[provider.id]

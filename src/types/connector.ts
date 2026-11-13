@@ -7,7 +7,8 @@ export type ConnectorCategory =
   | "SOCIAL_ADS"
   | "LOGISTICS"
   | "DATABASE"
-  | "ENTERPRISE";
+  | "ENTERPRISE"
+  | "PAYMENTS";
 
 export type ConnectorStatus = "ACTIVE" | "NOT_CONFIGURED" | "ERROR" | "TESTING";
 
@@ -124,6 +125,11 @@ export interface ConnectorProviderDefinition {
   suggested_models?: string[];
   fields: ConnectorFieldDefinition[];
   guidelines: ConnectorGuideline;
+  /**
+   * Set up on another page, which owns its credentials (e.g. "/payments" for the shop's bKash checkout, ADR-123). The
+   * card links there; the connectors routes refuse to save or test it, so its secrets live in one place only.
+   */
+  managed_at?: string;
 }
 
 export interface ConnectorConfigRecord {
