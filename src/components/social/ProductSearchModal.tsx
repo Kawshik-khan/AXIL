@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { Search, X, Package, Check, Copy } from "lucide-react";
 import { Button } from "@/components/ui/Button/Button";
+import { useDebounce } from "@/hooks/useDebounce";
 import styles from "./SocialInbox.module.css";
 import { useDebounce } from "@/hooks/useDebounce";
 
@@ -18,6 +19,8 @@ export const ProductSearchModal: React.FC<ProductSearchModalProps> = ({
   onSelectProduct,
 }) => {
   const [query, setQuery] = useState("");
+  // ⚡ Bolt: Debounce the search input to reduce API calls while typing
+  const debouncedQuery = useDebounce(query, 300);
   const [products, setProducts] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
