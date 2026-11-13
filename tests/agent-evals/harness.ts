@@ -108,7 +108,7 @@ export function bengaliShare(text: string): number {
   return letters.filter((c) => /[ঀ-৿]/.test(c)).length / letters.length;
 }
 
-export interface TurnRecord { input: string; response: string; status: string; tools: Array<{ name: string; ok: boolean; refused?: string }>; guards: string[]; handoff: boolean; latency_ms: number; llm_calls: number; prompt_tokens: number; completion_tokens: number; cached_tokens: number; hallucinated_amounts: number[]; error?: string }
+export interface TurnRecord { input: string; response: string; status: string; tools: Array<{ name: string; ok: boolean; refused?: string; issues?: string[] }>; guards: string[]; handoff: boolean; latency_ms: number; llm_calls: number; prompt_tokens: number; completion_tokens: number; cached_tokens: number; hallucinated_amounts: number[]; error?: string }
 /**
  * provider_error: a turn failed because the model provider was unreachable, busy or timed out (the runtime's
  * `provider_failed:` guard). Such a case says nothing about the agent: the summary counts it as a provider error and
