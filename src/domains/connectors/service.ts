@@ -134,6 +134,7 @@ export class ConnectorService {
       LOGISTICS: { available: 0, active: 0 },
       DATABASE: { available: 0, active: 0 },
       ENTERPRISE: { available: 0, active: 0 },
+      PAYMENTS: { available: 0, active: 0 },
     };
 
     for (const p of this.PROVIDERS) {
@@ -168,6 +169,9 @@ export class ConnectorService {
     }
     if (provider.status === "COMING_SOON") {
       throw new BadRequestError(`${provider.name} is coming soon and can't be connected yet (PROVIDER_NOT_AVAILABLE).`);
+    }
+    if (provider.managed_at) {
+      throw new BadRequestError(`${provider.name} is set up on ${provider.managed_at}, not with connector credentials (MANAGED_ELSEWHERE).`);
     }
   }
 

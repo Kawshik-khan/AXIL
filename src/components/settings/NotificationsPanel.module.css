@@ -46,7 +46,7 @@
 }
 
 .noticeClose:focus-visible {
-  outline: 2px solid var(--color-lime-primary);
+  outline: none;
 }
 
 /* ---- connect card ---- */

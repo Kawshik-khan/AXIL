@@ -2,7 +2,7 @@
      on very large screens, where content stops at 1760px; section backgrounds always run edge to edge */
   .landing { --px: max(clamp(20px, 5vw, 96px), calc((100% - 1760px) / 2)); --py: clamp(64px, 9vw, 128px); display: flow-root; min-height: 100vh; margin: 0; background: var(--mk-shell); font-family: var(--font-family-base); font-size: 16px; color: var(--mk-ink); line-height: 1.5; -webkit-font-smoothing: antialiased; overflow-x: clip; }
   .landing a { color: inherit; }
-  .landing :focus-visible { outline: 2px solid var(--mk-ink); outline-offset: 3px; }
+  .landing :focus-visible { outline: none; }
   .black :focus-visible { outline-color: var(--mk-hex-ffffff); }
   .landing h1, .landing h2, .landing h3, .landing h4 { margin: 0; font-weight: 500; letter-spacing: -.035em; line-height: 1.04; }
   :where(.landing) p { margin: 0; }

@@ -144,8 +144,6 @@
 
 .searchBox:focus-within {
   background: var(--color-surface-pure);
-  border-color: var(--color-primary, #C7F900);
-  box-shadow: 0 0 0 3px rgba(199, 249, 0, 0.18);
 }
 
 .searchInput {
@@ -613,8 +611,6 @@
 
 .composerTextarea:focus {
   background: var(--color-surface-pure);
-  border-color: #C7F900;
-  box-shadow: 0 0 0 3px rgba(199, 249, 0, 0.20);
 }
 
 .internalNoteActiveTextarea {
@@ -912,7 +908,6 @@
 }
 
 .widgetInput:focus {
-  border-color: var(--color-primary);
 }
 
 .widgetSendBtn {

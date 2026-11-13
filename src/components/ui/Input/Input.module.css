@@ -22,8 +22,6 @@
 }
 
 .inputContainer:focus-within {
-  border-color: var(--color-lime-primary);
-  box-shadow: 0 0 0 3px var(--color-lime-glow);
 }
 
 .inputError {

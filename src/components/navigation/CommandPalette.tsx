@@ -326,6 +326,28 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose,
       },
     },
     {
+      id: "nav-payments",
+      title: "Go to Payments & Payment Links",
+      category: "Commerce",
+      icon: <FileText size={18} />,
+      href: "/payments",
+      action: () => {
+        router.push("/payments");
+        onClose();
+      },
+    },
+    {
+      id: "nav-billing",
+      title: "Go to Billing & Plan",
+      category: "Settings",
+      icon: <Settings size={18} />,
+      href: "/settings/billing",
+      action: () => {
+        router.push("/settings/billing");
+        onClose();
+      },
+    },
+    {
       id: "nav-settings",
       title: "Go to Workspace Settings",
       category: "Settings",

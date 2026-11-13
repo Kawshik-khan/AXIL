@@ -64,4 +64,5 @@ export const STEP_UP_ACTION_LABELS: Record<string, string> = {
   RUN_REPLENISHMENT: "run replenishment (it can send a purchase order)",
   CUSTOMER_ERASE: "erase this customer's data",
   RESET_MEMBER_MFA: "reset this member's authenticator",
+  CHANGE_PAYMENT_SETTINGS: "change how this shop gets paid",
 };

@@ -18,6 +18,7 @@ import {
   PlugZap,
   Heart,
   Target,
+  Wallet,
 } from "lucide-react";
 import { Dock, type DockItem } from "./Dock";
 import { canAccessPath } from "./module-access";
@@ -28,6 +29,7 @@ const DOCK_ROUTES: DockItem[] = [
   { label: "Products", href: "/products", icon: <Package size={20} strokeWidth={2} /> },
   { label: "Inventory", href: "/inventory", icon: <Boxes size={20} strokeWidth={2} /> },
   { label: "Shipments", href: "/shipments", icon: <Truck size={20} strokeWidth={2} /> },
+  { label: "Payments", href: "/payments", icon: <Wallet size={20} strokeWidth={2} /> },
   { label: "Customers", href: "/customers", icon: <Users size={20} strokeWidth={2} /> },
   { label: "Conversations", href: "/conversations", icon: <MessageSquareText size={20} strokeWidth={2} />, badge: "Omni" },
   { label: "Growth", href: "/growth", icon: <Rocket size={20} strokeWidth={2} /> },

@@ -682,7 +682,6 @@
 }
 
 .textInput:focus, .selectInput:focus, .textAreaInput:focus {
-  border-color: #242529;
   background: var(--color-surface-pure);
 }
 

@@ -1,0 +1,243 @@
+/* New-order and order-detail side panels. Shared look: ui/WorkScreen. */
+
+.group {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+}
+
+.groupTitle {
+  padding: 0;
+  margin-bottom: var(--space-4);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  width: fit-content;
+  padding: 3px;
+  border: 1px solid var(--color-border-medium);
+  border-radius: var(--radius-sm);
+}
+
+.stepperValue {
+  min-width: 32px;
+  text-align: center;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.preview {
+  padding: var(--space-16);
+  border-radius: 12px;
+  background: var(--color-surface-soft);
+  border: 1px solid var(--color-border-subtle);
+}
+
+/* ---- Progress -------------------------------------------------------------------------------------------------------- */
+
+.progress {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.progressStep {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  min-width: 0;
+}
+
+.progressStep::before {
+  content: "";
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--color-track);
+}
+
+.progressDone::before {
+  background: var(--color-text-primary);
+}
+
+.progressCurrent {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.progressCurrent::before {
+  background: var(--color-lime-primary);
+}
+
+.closedBanner {
+  padding: var(--space-12) var(--space-16);
+  border-radius: 12px;
+  background: var(--color-track);
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+/* ---- Blocks -------------------------------------------------------------------------------------------------------- */
+
+.blocks {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-12);
+}
+
+@media (max-width: 520px) {
+  .blocks {
+    grid-template-columns: 1fr;
+  }
+}
+
+.block {
+  padding: var(--space-12) var(--space-16);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.blockTitle {
+  margin-bottom: var(--space-4);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.blockStrong {
+  font-size: var(--font-size-body);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.items {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+}
+
+.item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-12);
+  padding: var(--space-12) 0;
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.item:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.itemMeta {
+  font-size: var(--font-size-meta);
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.itemTotal {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* ---- Return risk ----------------------------------------------------------------------------------------------------- */
+
+.risk {
+  padding: var(--space-12) var(--space-16);
+  border-radius: 12px;
+  border: 1px solid var(--color-border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  font-size: 13px;
+}
+
+.riskLow {
+  background: var(--color-success-bg);
+}
+
+.riskMedium {
+  background: var(--color-warning-bg);
+}
+
+.riskHigh {
+  background: var(--color-danger-bg);
+}
+
+.riskHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-8);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.riskScore {
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-secondary);
+  font-weight: 500;
+}
+
+.riskText {
+  margin: 0;
+  color: var(--color-text-secondary);
+}
+
+.inline {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-width: 0;
+}
+
+.inline:has(.linkLine) {
+  display: flex;
+  width: 100%;
+}
+
+.linkLine {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-8) var(--space-12);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-pure);
+  border: 1px solid var(--color-border-subtle);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-meta);
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.footerSpacer {
+  flex: 1;
+}

@@ -55,6 +55,17 @@ export class OrderService {
   }
 
   /**
+   * How many of the tenant's orders are in each status, over every order (one GROUP BY in Postgres), for the Orders
+   * page's tabs and summary. Read-only.
+   */
+  public static async getStatusCounts(context: RequestContext): Promise<{ counts: Partial<Record<OrderStatus, number>>; total: number }> {
+    RbacService.assertCan(context, PERMISSIONS.ORDERS_READ);
+    const counts = (await orderRepository.getOrderStatusCounts(context.tenant.id)) as Partial<Record<OrderStatus, number>>;
+    const total = Object.values(counts).reduce<number>((sum, n) => sum + (n ?? 0), 0);
+    return { counts, total };
+  }
+
+  /**
    * Exact, case-insensitive match on order number or id across all of the tenant's orders (not a 50-row page, FX-22).
    * Returns undefined when there is no such order.
    */
