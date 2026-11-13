@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
+import { useDebounce } from "@/hooks/useDebounce";
 import {
   PlugZap,
   Sparkles,
@@ -113,6 +114,7 @@ export default function ConnectorPage() {
   // Active filter & search
   const [activeCategory, setActiveCategory] = useState<ConnectorCategory | "ALL" | "GOOGLE_ADS">("ALL");
   const [searchQuery, setSearchQuery] = useState("");
+  const debouncedSearchQuery = useDebounce(searchQuery, 300);
 
   const isAdmin =
     session?.role === "ADMIN" ||
@@ -276,15 +278,18 @@ export default function ConnectorPage() {
         matchCategory = p.category === activeCategory;
       }
 
+      // Performance optimization: Debouncing search prevents expensive O(N) array filtering
+      // on every keystroke. Calculating the lowercase query once avoids repeated string allocations.
+      const searchLower = debouncedSearchQuery.toLowerCase();
       const matchQuery =
-        searchQuery.trim() === "" ||
-        p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        p.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        p.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (p.suggested_models && p.suggested_models.some((m) => m.toLowerCase().includes(searchQuery.toLowerCase())));
+        debouncedSearchQuery.trim() === "" ||
+        p.name.toLowerCase().includes(searchLower) ||
+        p.description.toLowerCase().includes(searchLower) ||
+        p.id.toLowerCase().includes(searchLower) ||
+        (p.suggested_models && p.suggested_models.some((m) => m.toLowerCase().includes(searchLower)));
       return matchCategory && matchQuery;
     });
-  }, [providers, activeCategory, searchQuery, isAdmin, viewScope]);
+  }, [providers, activeCategory, debouncedSearchQuery, isAdmin, viewScope]);
 
   // Map of active configs by provider ID
   const configMap = useMemo(() => {
