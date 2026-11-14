@@ -112,12 +112,12 @@ export default function RegisterPage() {
       return;
     }
 
-    // The padlock opens and the shutter rolls up, the grid flashes, then the dashboard opens.
+    // The padlock opens and the shutter rolls up, the grid flashes, then shop setup (onboarding) opens.
     setStatus("success");
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     if (!reduce) window.setTimeout(() => setFlash((n) => n + 1), 450);
     window.setTimeout(() => {
-      window.location.href = "/";
+      window.location.href = "/onboarding";
     }, reduce ? 0 : 1250);
   };
 

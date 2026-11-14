@@ -92,9 +92,9 @@ Response bodies carry states and reason codes only (`QDRANT_UNREACHABLE`, `REDIS
 reloads the entire store. A Qdrant or LLM outage is not fixed by a restart, so the platform check must not depend on them. Use the
 full URL for uptime monitors, alerts and the post-deploy smoke test (R5).
 
-`READY_REQUIRED` (default `qdrant,redis,llm`) picks which services fail the full check. A service with no configuration is
-skipped, not reported down. Note that `redis` is required by default but the app barely uses Upstash today: if you don't
-want an Upstash outage to page anyone, drop it from the list.
+`READY_REQUIRED` (code default `qdrant,redis,llm`; `render.yaml` sets `qdrant,llm`) picks which services fail the full check. A service with no configuration is
+skipped, not reported down. `render.yaml` leaves `redis` out: the app only uses Upstash as an optional AI response cache with an
+offline fallback, and an Upstash outage (Nov 2026) blocked every production deploy. It still shows as `down` in the response.
 
 ## Sizing (fill in with real numbers)
 
