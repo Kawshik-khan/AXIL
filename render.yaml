@@ -49,9 +49,10 @@ services:
         value: "1"
       - key: STORE_POOL_MAX
         value: "5"
-      # Which external services make /health/ready report not-ready when down (Postgres always does).
+      # Which external services make /health/ready report not-ready when down (Postgres always does). Redis is left out:
+      # it is only an optional AI response cache with an offline fallback, so an Upstash outage must not block deploys.
       - key: READY_REQUIRED
-        value: qdrant,redis,llm
+        value: qdrant,llm
       - key: DEFAULT_CURRENCY
         value: BDT
       - key: DEFAULT_TIMEZONE
@@ -210,9 +211,10 @@ services:
         value: "1"
       - key: STORE_POOL_MAX
         value: "5"
-      # Which external services make /health/ready report not-ready when down (Postgres always does).
+      # Which external services make /health/ready report not-ready when down (Postgres always does). Redis is left out:
+      # it is only an optional AI response cache with an offline fallback, so an Upstash outage must not block deploys.
       - key: READY_REQUIRED
-        value: qdrant,redis,llm
+        value: qdrant,llm
       - key: DEFAULT_CURRENCY
         value: BDT
       - key: DEFAULT_TIMEZONE
