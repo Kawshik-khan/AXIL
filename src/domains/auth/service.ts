@@ -6,6 +6,7 @@ import { RequestContext } from "@/lib/context";
 import { RbacService } from "@/domains/rbac/service";
 import { AuditService } from "@/domains/audit/service";
 import { TenantService } from "@/domains/tenants/service";
+import { OnboardingService } from "@/domains/onboarding/onboarding.service";
 import { WorkspaceMfaService, type MfaMethod } from "@/domains/auth/workspace-mfa.service";
 import { RoleName } from "@/lib/permissions";
 
@@ -64,6 +65,8 @@ export class AuthService {
       name: input.workspaceName,
       currency: input.currency || "BDT",
     });
+    // A self-registered shop is walked through setup (OnboardingService); workspaces made any other way are not
+    TenantService.updateTenantSettings(tenant.id, { settings: { onboarding: OnboardingService.initialState() } });
 
     // 2. Hash Password & Create User
     const passwordHash = await hashPassword(input.password);

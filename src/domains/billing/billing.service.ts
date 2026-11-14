@@ -22,6 +22,9 @@ import { annualPrice, latestPublished, monthlyPrice } from "@/domains/platform/p
 import { ENTITLEMENT_CATALOG, type EntitlementKind, type EntitlementValue } from "@/domains/platform/entitlement-catalog";
 import { PlatformEntitlementService } from "@/domains/platform/services/platform-entitlement.service";
 import { periodEnd } from "@/domains/platform/services/platform-subscription.service";
+import { PlatformSettingsService } from "@/domains/platform/services/platform-settings.service";
+import { AuditService } from "@/domains/audit/service";
+import { isFeatureEnabled } from "@/lib/safety-gate";
 import { platformGateways, platformManualAccounts, type PlatformManualAccounts } from "@/domains/payments/gateways/gateway-accounts";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -90,6 +93,19 @@ function planLimits(version: PlanVersionRecord): PlanLimit[] {
   });
 }
 
+/** The plan a shop can try by itself, once (onboarding "Start my free trial"). Operators can still start others. */
+export const SELF_SERVE_TRIAL_PLAN_ID = "GROWTH";
+/** Platform feature flag that turns self-serve trials off when an operator creates it disabled. */
+export const SELF_SERVE_TRIAL_FLAG = "billing.self_serve_trial";
+
+export interface TrialOffer {
+  plan_id: string;
+  plan_name: string;
+  days: number;
+  /** What the plan costs per month after the trial, when it is sold monthly. */
+  monthly_price_bdt: number | null;
+}
+
 export interface BillingOverview {
   subscription:
     | (Pick<SubscriptionRecord, "status" | "plan_id" | "billing_period" | "trial_ends_at" | "current_period_start" | "current_period_end"> & {
@@ -99,6 +115,8 @@ export interface BillingOverview {
   plans: BillingPlanOption[];
   invoices: BillingInvoiceRecord[];
   payment_options: { gateways: GatewayProvider[]; manual: PlatformManualAccounts };
+  /** A free trial this workspace can start itself; null once it has had any subscription. */
+  trial_offer: TrialOffer | null;
 }
 
 function offeredTo(plan: PlanRecord, tenantId: string): boolean {
@@ -163,7 +181,77 @@ export class BillingService {
       plans,
       invoices: db.getBillingInvoices(tenantId),
       payment_options: { gateways: platformGateways(), manual: platformManualAccounts() },
+      trial_offer: BillingService.trialOffer(tenantId),
     };
+  }
+
+  /**
+   * The self-serve trial on offer, or null. Only a workspace that has never had a subscription gets one (a trial,
+   * paid plan or operator-assigned plan all leave a subscription record behind), so each shop can try once.
+   * Length: the plan version's trial_days, else the platform's billing.trial_default_days.
+   */
+  public static trialOffer(tenantId: string): TrialOffer | null {
+    // Operators can switch self-serve trials off (feature flag; no flag = on)
+    if (!isFeatureEnabled(SELF_SERVE_TRIAL_FLAG, tenantId)) return null;
+    if (db.findSubscriptionByTenantId(tenantId)) return null;
+    // A workspace an operator put on a paid plan directly (no subscription record) keeps it
+    const currentPlan = db.findTenantById(tenantId)?.plan_id;
+    if (currentPlan && currentPlan !== "FREE") return null;
+    const plan = db.findPlanById(SELF_SERVE_TRIAL_PLAN_ID);
+    if (!plan || !offeredTo(plan, tenantId)) return null;
+    const version = latestPublished(db.getPlanVersions(plan.id));
+    if (!version) return null;
+    const days = version.trial_days ?? PlatformSettingsService.getEffectiveSetting<number>("billing.trial_default_days");
+    if (!(days > 0)) return null;
+    return { plan_id: plan.id, plan_name: plan.name, days, monthly_price_bdt: monthlyPrice(version) };
+  }
+
+  /**
+   * Starts this workspace's one free trial (settings.update). Nothing is charged at the end: the trial simply ends
+   * and the workspace pays an invoice to keep the plan, as with every plan here.
+   */
+  public static startTrial(context: RequestContext): Pick<SubscriptionRecord, "status" | "plan_id" | "trial_ends_at"> & { plan_name: string; days: number } {
+    RbacService.assertCan(context, PERMISSIONS.SETTINGS_UPDATE);
+    const tenantId = context.tenant.id;
+    const offer = BillingService.trialOffer(tenantId);
+    if (!offer) {
+      throw new AppError("TRIAL_NOT_AVAILABLE", "A free trial isn't available for this workspace. Each shop can try once, before choosing a plan.", 409);
+    }
+    const version = latestPublished(db.getPlanVersions(offer.plan_id))!;
+    const now = new Date();
+    const trialEnd = new Date(now.getTime() + offer.days * DAY_MS).toISOString();
+    const previousPlan = db.findTenantById(tenantId)?.plan_id ?? null;
+    const subscription: SubscriptionRecord = {
+      // One id per workspace: two trial starts racing on different servers write the same record, so the version
+      // check refuses the second instead of leaving two subscriptions behind
+      id: `sub_trial_${tenantId}`,
+      tenant_id: tenantId,
+      plan_id: offer.plan_id,
+      plan_version_id: version.id,
+      status: "TRIAL",
+      billing_period: monthlyPrice(version) !== null ? "MONTHLY" : "ANNUAL",
+      trial_ends_at: trialEnd,
+      current_period_start: now.toISOString(),
+      current_period_end: trialEnd,
+      cancel_at_period_end: false,
+      created_at: now.toISOString(),
+      updated_at: now.toISOString(),
+    };
+    db.saveSubscription(subscription);
+    db.updateTenant(tenantId, { plan_id: offer.plan_id, updated_at: now.toISOString() });
+    AuditService.log({
+      tenantId,
+      actorUserId: context.user.id,
+      action: "SUBSCRIPTION_TRIAL_STARTED",
+      resourceType: "subscription",
+      resourceId: subscription.id,
+      metadata: {
+        self_serve: true,
+        before: { plan_id: previousPlan, subscription: null },
+        after: { plan_id: offer.plan_id, plan_version_id: version.id, status: "TRIAL", trial_days: offer.days, trial_ends_at: trialEnd },
+      },
+    });
+    return { status: subscription.status, plan_id: offer.plan_id, plan_name: offer.plan_name, trial_ends_at: trialEnd, days: offer.days };
   }
 
   /**

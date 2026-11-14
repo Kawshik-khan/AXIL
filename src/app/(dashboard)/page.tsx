@@ -39,6 +39,7 @@ import { Badge } from "@/components/ui/Badge/Badge";
 import { Button } from "@/components/ui/Button/Button";
 import { LoadingState } from "@/components/ui/States/States";
 import { RevenueSparkline } from "@/components/dashboard/RevenueSparkline";
+import { LaunchChecklist } from "@/components/onboarding/LaunchChecklist";
 import styles from "./dashboard.module.css";
 import type { db } from "@/infrastructure/db";
 import type { FinancialMetrics } from "@/types/analytics";
@@ -263,6 +264,8 @@ export default function DashboardPage() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+      {/* New shops: finish setup, then the launch checklist (nothing for older workspaces) */}
+      <LaunchChecklist />
       {/* 0. Top Command Center Header */}
       <div className={styles.pageHeader}>
         <div>
