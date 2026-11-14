@@ -1,42 +1,34 @@
 import type { SVGProps } from "react";
+import { HUB_BODY, HUB_CORE, HUB_VIEWBOX } from "./hub-mark";
 
-type LogoMarkProps = SVGProps<SVGSVGElement> & { size?: number; label?: string };
+type LogoMarkProps = SVGProps<SVGSVGElement> & { size?: number; label?: string; edge?: boolean };
 
 /**
- * CommerceOS mark: four interlocking loops around a four-point star.
- * Artwork source: public/images/logos/Commerces os icon-01.svg (1000×1000), drawn on the dark brand tile.
+ * CommerceOS app-icon mark: the Hub mark on its ink tile. Colours are fixed in every theme
+ * (--color-logo-* in tokens.css). `edge` adds a faint outline for dark pages.
  */
-const LOOPS = [
-  "m499.24,422.81s13.28-149.41-119.45-143.37c0,0-80.61,7.85-98.63,81.74-.99,4.06-1.24,8.25-1.05,12.42,1.14,24.36-6.19,117.13-116.85,126.69-30.28,2.62-60.39-8.8-80.08-31.95-8.61-10.12-16.86-23.24-23.25-40.21,0,0-40.62-147.96,111.7-152.31,0,0,97.6,0,110.38-122.65,1.9-18.26,8.97-35.67,20.35-50.08,31.88-40.35,100.72-98.45,183.09,6.52,9.31,11.86,14.45,26.51,14.4,41.59-.11,35.48,10.99,107.95,100.66,124.8,0,0,124.75-4.54,117.98,120.21,0,0-.12,110.85-137.32,104.53",
-  "m577.17,500.22s149.5,12.28,142.56-120.41c0,0-8.39-80.56-82.4-98.08-4.06-.96-8.26-1.19-12.43-.97-24.35,1.31-117.17-5.4-127.47-115.99-2.82-30.26,8.4-60.44,31.41-80.3,10.06-8.68,23.13-17.02,40.05-23.52,0,0,147.69-41.61,153.06,110.67,0,0,.66,97.6,123.38,109.56,18.28,1.78,35.73,8.73,50.21,20.02,40.56,31.61,99.13,100.06-5.29,183.13-11.8,9.39-26.42,14.63-41.49,14.68-35.48.13-107.87,11.71-124.12,101.5,0,0,5.38,124.72-119.41,118.79,0,0-110.85.62-105.45-136.62",
-  "m500.28,578.68s-11.27,149.58,121.36,141.75c0,0,80.5-8.93,97.52-83.06.93-4.07,1.13-8.27.88-12.43-1.47-24.34,4.61-117.2,115.13-128.24,30.24-3.02,60.5,7.99,80.51,30.87,8.75,10,17.17,23.02,23.79,39.89,0,0,42.6,147.4-109.64,153.8,0,0-97.59,1.31-108.72,124.12-1.66,18.29-8.49,35.79-19.68,50.35-31.33,40.77-99.39,99.8-183.16-4.06-9.47-11.74-14.8-26.32-14.96-41.39-.37-35.48-12.44-107.79-102.33-123.44,0,0-124.68,6.22-119.59-118.61,0,0-1.37-110.84,135.91-106.37",
-  "m421.32,502.32s-149.65-10.27-140.93,122.31c0,0,9.47,80.44,83.71,96.96,4.08.91,8.27,1.08,12.44.8,24.33-1.64,117.23,3.83,129.02,114.27,3.23,30.22-7.59,60.55-30.33,80.71-9.94,8.81-22.9,17.33-39.73,24.06,0,0-147.11,43.59-154.53-108.61,0,0-1.97-97.58-124.85-107.89-18.3-1.53-35.84-8.25-50.48-19.34-40.98-31.06-100.46-98.72,2.83-183.19,11.67-9.54,26.22-14.98,41.29-15.24,35.48-.61,107.7-13.16,122.75-103.16,0,0-7.05-124.63,117.81-120.38,0,0,110.83-2.11,107.28,135.19",
-];
-const STAR =
-  "m499.24,633.39l-20.34-54.96c-9.83-26.57-30.78-47.52-57.35-57.35l-54.96-20.34,54.96-20.34c26.57-9.83,47.52-30.78,57.35-57.35l20.34-54.96,20.34,54.96c9.83,26.57,30.78,47.52,57.35,57.35l54.96,20.34-54.96,20.34c-26.57,9.83-47.52,30.78-57.35,57.35l-20.34,54.96Z";
-
-const ART_SCALE = 0.78;
-
-export function LogoMark({ size = 30, label, ...props }: LogoMarkProps) {
-  // The source stroke (11 units) disappears at UI sizes; keep it at roughly 1.3 rendered pixels, never thinner than the artwork.
-  const stroke = Math.max(11, Math.round((1.3 * 1000) / (size * ART_SCALE)));
+export function LogoMark({ size = 30, label, edge = false, ...props }: LogoMarkProps) {
   return (
     <svg
       width={size}
       height={size}
-      viewBox="0 0 1000 1000"
-      fill="none"
+      viewBox={HUB_VIEWBOX}
       role={label ? "img" : undefined}
       aria-label={label}
       aria-hidden={label ? undefined : true}
       {...props}
     >
-      <rect x="20" y="20" width="960" height="960" rx="290" fill="#171816" />
-      <g transform={`translate(110 110) scale(${ART_SCALE})`}>
-        {LOOPS.map((d) => (
-          <path key={d.slice(0, 16)} d={d} stroke="#C6D92C" strokeWidth={stroke} strokeMiterlimit={10} />
-        ))}
-        <path d={STAR} fill="#C6D92C" />
+      <rect
+        x="1"
+        y="1"
+        width="118"
+        height="118"
+        rx="34"
+        style={{ fill: "var(--color-logo-tile)", stroke: edge ? "var(--color-logo-edge)" : "none", strokeWidth: 2 }}
+      />
+      <g transform="translate(24 24) scale(0.6)">
+        <path d={HUB_BODY} fillRule="evenodd" style={{ fill: "var(--color-logo-body)" }} />
+        <circle {...HUB_CORE} style={{ fill: "var(--color-logo-core)" }} />
       </g>
     </svg>
   );

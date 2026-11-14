@@ -61,6 +61,12 @@
   --color-brand-rocket: #8C3494;
   --color-brand-mark-text: #FFFFFF;
 
+  /* CommerceOS Hub mark: fixed in every theme (the app-icon tile is always ink) */
+  --color-logo-tile:  #141512;
+  --color-logo-body:  #F3F5EC;
+  --color-logo-core:  #C7F900;
+  --color-logo-edge:  rgba(255, 255, 255, 0.16);
+
   /* Data visualisation: categorical order is fixed (validated for colour-blind separation); never cycle it */
   --chart-cat-1: #2F6FD0;
   --chart-cat-2: #E07B22;
