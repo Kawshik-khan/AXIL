@@ -405,7 +405,7 @@ export default function AnalyticsPage() {
                         <div className={styles.metricRowLabel}>Discounts Deducted</div>
                         <div className={styles.metricRowSub}>Coupons & promotional cuts</div>
                       </div>
-                      <div className={styles.metricRowValue} style={{ color: "#C5221F" }}>
+                      <div className={styles.metricRowValue} style={{ color: "var(--color-danger-ink)" }}>
                         -{fmtCurrency(financials.total_discounts_bdt)}
                       </div>
                     </div>
@@ -415,7 +415,7 @@ export default function AnalyticsPage() {
                         <div className={styles.metricRowLabel}>Refunds & Returns</div>
                         <div className={styles.metricRowSub}>MFS reversals & courier RTOs</div>
                       </div>
-                      <div className={styles.metricRowValue} style={{ color: "#C5221F" }}>
+                      <div className={styles.metricRowValue} style={{ color: "var(--color-danger-ink)" }}>
                         -{fmtCurrency(financials.total_refunds_bdt)}
                       </div>
                     </div>
@@ -425,7 +425,7 @@ export default function AnalyticsPage() {
                         <div className={styles.metricRowLabel}>Net Merchandise Value (NMV)</div>
                         <div className={styles.metricRowSub}>Retained customer revenue</div>
                       </div>
-                      <div className={styles.metricRowValue} style={{ color: "#137333" }}>
+                      <div className={styles.metricRowValue} style={{ color: "var(--color-success-ink)" }}>
                         {fmtCurrency(financials.nmv_bdt)}
                       </div>
                     </div>
@@ -537,7 +537,7 @@ export default function AnalyticsPage() {
                         <div className={styles.metricRowLabel}>Inside Dhaka ({fmtCurrency(fees?.inside_dhaka_bdt)} delivery)</div>
                         <div className={styles.metricRowSub}>Rapid same-day / next-day hub delivery</div>
                       </div>
-                      <div className={styles.metricRowValue} style={{ color: "#137333" }}>
+                      <div className={styles.metricRowValue} style={{ color: "var(--color-success-ink)" }}>
                         {fmtPct(rtoReport.inside_dhaka_rto_pct)} RTO
                       </div>
                     </div>
@@ -638,7 +638,7 @@ export default function AnalyticsPage() {
                     <option value="Mymensingh">Mymensingh Division (4)</option>
                   </select>
 
-                  <div style={{ fontSize: 12, color: "#70736F" }}>
+                  <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
                     Showing {rtoReport.districts.length} of 64 districts
                   </div>
                 </div>
@@ -766,28 +766,28 @@ export default function AnalyticsPage() {
 
                         <div className={styles.channelStatsRow}>
                           <div>
-                            <div style={{ color: "#70736F", fontSize: 11 }}>Orders</div>
+                            <div style={{ color: "var(--color-text-secondary)", fontSize: 11 }}>Orders</div>
                             <div style={{ fontWeight: 700 }}>{ch.orders_count}</div>
                           </div>
                           <div>
-                            <div style={{ color: "#70736F", fontSize: 11 }}>AOV</div>
+                            <div style={{ color: "var(--color-text-secondary)", fontSize: 11 }}>AOV</div>
                             <div style={{ fontWeight: 700 }}>{fmtCurrency(ch.aov_bdt)}</div>
                           </div>
                           <div>
-                            <div style={{ color: "#70736F", fontSize: 11 }}>Conversion</div>
+                            <div style={{ color: "var(--color-text-secondary)", fontSize: 11 }}>Conversion</div>
                             <div style={{ fontWeight: 700 }} title="Not measured: there is no visit or session data">
                               {fmtPct(ch.conversion_rate_pct)}
                             </div>
                           </div>
                           <div>
-                            <div style={{ color: "#70736F", fontSize: 11 }}>RTO Rate</div>
+                            <div style={{ color: "var(--color-text-secondary)", fontSize: 11 }}>RTO Rate</div>
                             <div style={{ fontWeight: 700, color: rtoTone(ch.rto_rate_pct, 6, 6.01, ["var(--color-warning)", "var(--color-warning)", "var(--color-success)", "var(--color-text-muted)"]) }}>
                               {fmtPct(ch.rto_rate_pct)}
                             </div>
                           </div>
                         </div>
 
-                        <div style={{ fontSize: 11, color: "#70736F" }}>
+                        <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
                           COD share: <strong>{fmtPct(ch.cod_share_pct)}</strong>
                         </div>
                       </div>
@@ -920,7 +920,7 @@ export default function AnalyticsPage() {
                 <h3 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>
                   ✦ Generate Executive Business Digest
                 </h3>
-                <p style={{ fontSize: 13, color: "#70736F", margin: "4px 0 0 0" }}>
+                <p style={{ fontSize: 13, color: "var(--color-text-secondary)", margin: "4px 0 0 0" }}>
                   Synthesize an executive intelligence brief from authoritative store telemetry.
                 </p>
               </div>
@@ -954,7 +954,7 @@ export default function AnalyticsPage() {
                 </div>
               </div>
 
-              <div style={{ background: "#FAFBF8", padding: 14, borderRadius: 12, border: "1px solid rgba(30, 32, 30, 0.08)", fontSize: 12, lineHeight: 1.6 }}>
+              <div style={{ background: "var(--color-surface-soft)", padding: 14, borderRadius: 12, border: "1px solid var(--color-border-subtle)", fontSize: 12, lineHeight: 1.6 }}>
                 <strong>Deterministic Synthesis Pipeline:</strong>
                 <ul style={{ margin: "6px 0 0 16px", padding: 0 }}>
                   <li>Pulls real order totals, COGS, discounts, and refunds for the selected window</li>
@@ -997,7 +997,7 @@ export default function AnalyticsPage() {
                   </h3>
                   <span className={styles.badgeLime}>{selectedDigest.period_type}</span>
                 </div>
-                <div style={{ fontSize: 12, color: "#70736F", marginTop: 4 }}>
+                <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 4 }}>
                   Covering {new Date(selectedDigest.period_start).toLocaleDateString()} to{" "}
                   {new Date(selectedDigest.period_end).toLocaleDateString()}
                 </div>
@@ -1012,7 +1012,7 @@ export default function AnalyticsPage() {
 
             <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
               {/* Executive Summary */}
-              <div style={{ background: "#FAFBF8", padding: 16, borderRadius: 12, border: "1px solid rgba(30,32,30,0.06)", fontSize: 13, lineHeight: 1.6 }}>
+              <div style={{ background: "var(--color-surface-soft)", padding: 16, borderRadius: 12, border: "1px solid var(--color-border-subtle)", fontSize: 13, lineHeight: 1.6 }}>
                 <strong>Executive Summary:</strong>
                 <p style={{ margin: "6px 0 0 0", color: "#3C4043" }}>{selectedDigest.executive_summary}</p>
               </div>
@@ -1024,25 +1024,25 @@ export default function AnalyticsPage() {
                 </div>
                 <div className={styles.channelStatsRow} style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
                   <div>
-                    <div style={{ color: "#70736F", fontSize: 11 }}>GMV</div>
+                    <div style={{ color: "var(--color-text-secondary)", fontSize: 11 }}>GMV</div>
                     <div style={{ fontWeight: 700, fontSize: 15 }}>
                       {fmtCurrency(selectedDigest.financial_summary?.gmv_bdt || 0)}
                     </div>
                   </div>
                   <div>
-                    <div style={{ color: "#70736F", fontSize: 11 }}>AOV</div>
+                    <div style={{ color: "var(--color-text-secondary)", fontSize: 11 }}>AOV</div>
                     <div style={{ fontWeight: 700, fontSize: 15 }}>
                       {fmtCurrency(selectedDigest.financial_summary?.aov_bdt || 0)}
                     </div>
                   </div>
                   <div>
-                    <div style={{ color: "#70736F", fontSize: 11 }}>Gross Margin</div>
-                    <div style={{ fontWeight: 700, fontSize: 15, color: "#137333" }}>
+                    <div style={{ color: "var(--color-text-secondary)", fontSize: 11 }}>Gross Margin</div>
+                    <div style={{ fontWeight: 700, fontSize: 15, color: "var(--color-success-ink)" }}>
                       {fmtPct(selectedDigest.financial_summary?.gross_margin_pct)}
                     </div>
                   </div>
                   <div>
-                    <div style={{ color: "#70736F", fontSize: 11 }}>RTO Rate</div>
+                    <div style={{ color: "var(--color-text-secondary)", fontSize: 11 }}>RTO Rate</div>
                     <div style={{ fontWeight: 700, fontSize: 15 }}>
                       {fmtPct(selectedDigest.financial_summary?.rto_rate_pct)}
                     </div>
@@ -1081,7 +1081,7 @@ export default function AnalyticsPage() {
                       <div
                         key={i}
                         style={{
-                          background: "#FCE8E6",
+                          background: "var(--color-danger-bg)",
                           border: "1px solid #F28B82",
                           padding: "8px 12px",
                           borderRadius: 10,
@@ -1089,7 +1089,7 @@ export default function AnalyticsPage() {
                         }}
                       >
                         <strong>{spot.district}</strong> ({spot.division}) •{" "}
-                        <span style={{ color: "#C5221F", fontWeight: 700 }}>
+                        <span style={{ color: "var(--color-danger-ink)", fontWeight: 700 }}>
                           {spot.rto_pct}% RTO
                         </span>
                       </div>
@@ -1112,15 +1112,15 @@ export default function AnalyticsPage() {
                           display: "flex",
                           gap: 10,
                           alignItems: "flex-start",
-                          background: "#FAFBF8",
+                          background: "var(--color-surface-soft)",
                           padding: 12,
                           borderRadius: 10,
-                          border: "1px solid rgba(30,32,30,0.06)",
+                          border: "1px solid var(--color-border-subtle)",
                           fontSize: 13,
                           lineHeight: 1.5,
                         }}
                       >
-                        <span style={{ color: "#137333", fontWeight: 700 }}>{i + 1}.</span>
+                        <span style={{ color: "var(--color-success-ink)", fontWeight: 700 }}>{i + 1}.</span>
                         <span>{rec}</span>
                       </div>
                     ))}
@@ -1165,7 +1165,7 @@ export default function AnalyticsPage() {
                     {tierLabel(selectedDistrict.risk_tier)}
                   </span>
                 </div>
-                <div style={{ fontSize: 12, color: "#70736F", marginTop: 4 }}>
+                <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 4 }}>
                   {selectedDistrict.division} Division •{" "}
                   {selectedDistrict.zone === "INSIDE_DHAKA"
                     ? `Inside Dhaka (${fmtCurrency(fees?.inside_dhaka_bdt)} delivery)`
@@ -1183,32 +1183,32 @@ export default function AnalyticsPage() {
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
               <div className={styles.channelStatsRow} style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
                 <div>
-                  <div style={{ color: "#70736F", fontSize: 11 }}>Shipments</div>
+                  <div style={{ color: "var(--color-text-secondary)", fontSize: 11 }}>Shipments</div>
                   <div style={{ fontWeight: 700, fontSize: 15 }}>
                     {selectedDistrict.total_shipments}
                   </div>
                 </div>
                 <div>
-                  <div style={{ color: "#70736F", fontSize: 11 }}>Delivered</div>
-                  <div style={{ fontWeight: 700, fontSize: 15, color: "#137333" }}>
+                  <div style={{ color: "var(--color-text-secondary)", fontSize: 11 }}>Delivered</div>
+                  <div style={{ fontWeight: 700, fontSize: 15, color: "var(--color-success-ink)" }}>
                     {selectedDistrict.delivered_count}
                   </div>
                 </div>
                 <div>
-                  <div style={{ color: "#70736F", fontSize: 11 }}>RTO Refusals</div>
-                  <div style={{ fontWeight: 700, fontSize: 15, color: "#C5221F" }}>
+                  <div style={{ color: "var(--color-text-secondary)", fontSize: 11 }}>RTO Refusals</div>
+                  <div style={{ fontWeight: 700, fontSize: 15, color: "var(--color-danger-ink)" }}>
                     {selectedDistrict.rto_count}
                   </div>
                 </div>
                 <div>
-                  <div style={{ color: "#70736F", fontSize: 11 }}>COD Reliance</div>
+                  <div style={{ color: "var(--color-text-secondary)", fontSize: 11 }}>COD Reliance</div>
                   <div style={{ fontWeight: 700, fontSize: 15 }}>
                     {fmtPct(selectedDistrict.cod_share_pct)}
                   </div>
                 </div>
               </div>
 
-              <div style={{ background: "#FAFBF8", padding: 14, borderRadius: 12, border: "1px solid rgba(30,32,30,0.06)", fontSize: 13 }}>
+              <div style={{ background: "var(--color-surface-soft)", padding: 14, borderRadius: 12, border: "1px solid var(--color-border-subtle)", fontSize: 13 }}>
                 <strong>Automated Courier Policy Recommendation:</strong>
                 <p style={{ margin: "6px 0 0 0", color: "#3C4043", lineHeight: 1.5 }}>
                   {selectedDistrict.recommendation}

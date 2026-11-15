@@ -205,7 +205,7 @@ export default function IntelligenceExecutivePage() {
         <div className={`${styles.bentoCard} ${styles.col8}`}>
           <div className={styles.cardTitle}>
             <span>🎯 Grounded Optimization Proposals</span>
-            <Link href="/intelligence/recommendations" style={{ color: "#C7F900", fontSize: 13, textDecoration: "none" }}>
+            <Link href="/intelligence/recommendations" style={{ color: "var(--color-lime-ink)", fontSize: 13, fontWeight: 600, textDecoration: "none" }}>
               View All ({recommendations.length})
             </Link>
           </div>
@@ -217,9 +217,9 @@ export default function IntelligenceExecutivePage() {
               <div key={rec.id} className={styles.recItem}>
                 <div className={styles.recTitle}>
                   <span>{rec.title}</span>
-                  <span className={rec.priority === "CRITICAL" ? styles.badgeRed : styles.badgeYellow}>
-                    {rec.priority}
-                  </span>
+                  {rec.priority && (
+                    <span className={rec.priority === "CRITICAL" ? styles.badgeRed : styles.badgeYellow}>{rec.priority}</span>
+                  )}
                 </div>
                 <p className={styles.recDesc}>{rec.description}</p>
 
@@ -279,13 +279,13 @@ export default function IntelligenceExecutivePage() {
           ))}
 
           <div className={styles.cardTitle} style={{ marginTop: 16 }}>
-            <span><ShieldAlert size={16} color="#ff6b6b" style={{ marginRight: 6 }} /> Active Risks</span>
+            <span><ShieldAlert size={16} color="var(--color-danger-ink)" style={{ marginRight: 6 }} /> Active Risks</span>
           </div>
 
           {risks.slice(0, 2).map((risk: any) => (
-            <div key={risk.id} className={styles.recItem} style={{ marginBottom: 8, borderColor: "rgba(255, 82, 82, 0.2)" }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: "#ff6b6b" }}>{risk.title}</div>
-              <p style={{ fontSize: 12, color: "#a0a4ab", margin: "4px 0" }}>{risk.description}</p>
+            <div key={risk.id} className={styles.recItem} style={{ marginBottom: 8, borderColor: "var(--color-danger)" }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "var(--color-danger-ink)" }}>{risk.title}</div>
+              <p style={{ fontSize: 12, color: "var(--color-text-secondary)", margin: "4px 0" }}>{risk.description}</p>
               <span className={styles.badgeRed}>Severity: {risk.severity}</span>
             </div>
           ))}

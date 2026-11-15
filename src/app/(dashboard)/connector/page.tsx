@@ -776,7 +776,7 @@ export default function ConnectorPage() {
           <>
             <div className={styles.metricCard}>
               <span className={styles.metricLabel}>
-                <Truck size={13} style={{ color: "#E65100" }} /> Parcel Delivery
+                <Truck size={13} style={{ color: "var(--color-warning-ink)" }} /> Parcel Delivery
               </span>
               <div className={styles.metricValueRow}>
                 <span className={styles.metricValue}>
@@ -1329,7 +1329,7 @@ export default function ConnectorPage() {
                     style={{
                       background: "transparent",
                       border: "none",
-                      color: "#C62828",
+                      color: "var(--color-danger-ink)",
                       fontSize: "12px",
                       cursor: "pointer",
                       padding: "6px 8px",

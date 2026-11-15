@@ -503,7 +503,7 @@ export default function MarketingPage() {
                     key={ins.id}
                     style={{
                       padding: "14px",
-                      background: "#FFFFFF",
+                      background: "var(--color-surface-pure)",
                       borderRadius: "12px",
                       border: "1px solid var(--color-border-subtle, rgba(0,0,0,0.06))",
                       display: "flex",
@@ -667,7 +667,7 @@ export default function MarketingPage() {
                               </button>
                             )}
                             {cart.recovery_stage === "RECOVERED" && (
-                              <span style={{ fontSize: "12px", color: "#2E7D32", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                              <span style={{ fontSize: "12px", color: "var(--color-success-ink)", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: "4px" }}>
                                 <CheckCircle2 size={14} /> Attributed to Order
                               </span>
                             )}
@@ -712,7 +712,7 @@ export default function MarketingPage() {
               </div>
 
               {/* Segment Rules Summary */}
-              <div style={{ background: "#FAFBF8", padding: "10px 14px", borderRadius: "10px", fontSize: "12px", color: "var(--color-text-secondary, #70736F)", marginBottom: "16px", border: "1px solid var(--color-border-subtle, rgba(0,0,0,0.06))" }}>
+              <div style={{ background: "var(--color-surface-soft)", padding: "10px 14px", borderRadius: "10px", fontSize: "12px", color: "var(--color-text-secondary, #70736F)", marginBottom: "16px", border: "1px solid var(--color-border-subtle, rgba(0,0,0,0.06))" }}>
                 <strong style={{ color: "var(--color-text-primary, #202124)" }}>Rule Logic: </strong>
                 {aud.rule_groups.map((rg: any, idx: number) => (
                   <span key={idx}>
@@ -804,14 +804,14 @@ export default function MarketingPage() {
               </div>
 
               {/* Message Content Preview */}
-              <div style={{ margin: "12px 0", padding: "12px", background: "#FAFBF8", borderRadius: "10px", border: "1px solid var(--color-border-subtle, rgba(0,0,0,0.06))", fontSize: "12px", lineHeight: "1.5" }}>
+              <div style={{ margin: "12px 0", padding: "12px", background: "var(--color-surface-soft)", borderRadius: "10px", border: "1px solid var(--color-border-subtle, rgba(0,0,0,0.06))", fontSize: "12px", lineHeight: "1.5" }}>
                 <strong style={{ display: "block", marginBottom: "4px", color: "var(--color-text-secondary, #70736F)", fontSize: "11px", textTransform: "uppercase" }}>Copy Preview:</strong>
                 {cmp.variants?.[0]?.content_body}
               </div>
 
               {/* Simulation metrics if present */}
               {cmp.simulation_snapshot && (
-                <div style={{ marginBottom: "16px", padding: "10px 14px", background: "#FFFFFF", borderRadius: "8px", border: "1px solid var(--color-border-subtle, rgba(0,0,0,0.08))", display: "flex", justifyContent: "space-between", fontSize: "12px" }}>
+                <div style={{ marginBottom: "16px", padding: "10px 14px", background: "var(--color-surface-pure)", borderRadius: "8px", border: "1px solid var(--color-border-subtle, rgba(0,0,0,0.08))", display: "flex", justifyContent: "space-between", fontSize: "12px" }}>
                   <span>Est. Reach: <strong>{cmp.simulation_snapshot.estimated_reach}</strong></span>
                   <span>Exp. Conv: <strong>{cmp.simulation_snapshot.expected_conversion_rate}%</strong></span>
                   <span>
@@ -827,7 +827,7 @@ export default function MarketingPage() {
 
               {/* Execution result if completed */}
               {cmp.result_metrics && (
-                <div style={{ marginBottom: "16px", padding: "10px 14px", background: "#E8F5E9", borderRadius: "8px", border: "1px solid #C8E6C9", display: "flex", justifyContent: "space-between", fontSize: "12px", color: "#2E7D32" }}>
+                <div style={{ marginBottom: "16px", padding: "10px 14px", background: "var(--color-success-bg)", borderRadius: "8px", border: "1px solid var(--color-success)", display: "flex", justifyContent: "space-between", fontSize: "12px", color: "var(--color-success-ink)" }}>
                   <span>Sent: <strong>{cmp.result_metrics.messages_sent}</strong></span>
                   <span>Delivered: <strong>{cmp.result_metrics.messages_delivered}</strong></span>
                   <span>Failed: <strong>{cmp.result_metrics.messages_failed}</strong></span>
@@ -901,7 +901,7 @@ export default function MarketingPage() {
               </div>
 
               {/* Model Selector */}
-              <div style={{ display: "flex", gap: "6px", background: "#FAFBF8", padding: "4px", borderRadius: "10px", border: "1px solid var(--color-border-subtle, rgba(0,0,0,0.08))" }}>
+              <div style={{ display: "flex", gap: "6px", background: "var(--color-surface-soft)", padding: "4px", borderRadius: "10px", border: "1px solid var(--color-border-subtle, rgba(0,0,0,0.08))" }}>
                 {(["LAST_TOUCH", "FIRST_TOUCH", "LINEAR", "TIME_DECAY"] as const).map((m) => (
                   <button
                     key={m}
@@ -916,19 +916,19 @@ export default function MarketingPage() {
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "16px", margin: "16px 0" }}>
-              <div style={{ padding: "16px", background: "#FAFBF8", borderRadius: "12px", border: "1px solid var(--color-border-subtle, rgba(0,0,0,0.06))" }}>
+              <div style={{ padding: "16px", background: "var(--color-surface-soft)", borderRadius: "12px", border: "1px solid var(--color-border-subtle, rgba(0,0,0,0.06))" }}>
                 <div style={{ fontSize: "12px", color: "var(--color-text-secondary, #70736F)", textTransform: "uppercase" }}>Total Attributed Revenue</div>
                 <div style={{ fontSize: "28px", fontWeight: 700, color: "var(--color-text-primary, #202124)", marginTop: "4px" }}>
                   ৳{attribution?.total_attributed_revenue_bdt?.toLocaleString() || "0"}
                 </div>
               </div>
-              <div style={{ padding: "16px", background: "#FAFBF8", borderRadius: "12px", border: "1px solid var(--color-border-subtle, rgba(0,0,0,0.06))" }}>
+              <div style={{ padding: "16px", background: "var(--color-surface-soft)", borderRadius: "12px", border: "1px solid var(--color-border-subtle, rgba(0,0,0,0.06))" }}>
                 <div style={{ fontSize: "12px", color: "var(--color-text-secondary)", textTransform: "uppercase" }}>Incremental Lift</div>
                 <div style={{ fontSize: "28px", fontWeight: 700, color: "var(--color-text-muted)", marginTop: "4px" }}>
                   Not measured
                 </div>
               </div>
-              <div style={{ padding: "16px", background: "#FAFBF8", borderRadius: "12px", border: "1px solid var(--color-border-subtle, rgba(0,0,0,0.06))" }}>
+              <div style={{ padding: "16px", background: "var(--color-surface-soft)", borderRadius: "12px", border: "1px solid var(--color-border-subtle, rgba(0,0,0,0.06))" }}>
                 <div style={{ fontSize: "12px", color: "var(--color-text-secondary, #70736F)", textTransform: "uppercase" }}>Active Attribution Model</div>
                 <div style={{ fontSize: "22px", fontWeight: 700, color: "var(--color-text-primary, #202124)", marginTop: "6px" }}>
                   {attributionModel.replace("_", " ")}

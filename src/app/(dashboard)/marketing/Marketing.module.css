@@ -48,7 +48,7 @@
 .navTabs {
   display: inline-flex;
   gap: 4px;
-  background: rgba(255, 255, 255, 0.85);
+  background: var(--glass-bg);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   padding: 4px;
@@ -78,7 +78,7 @@
 
 .navTab:hover {
   color: var(--color-text-primary, #202124);
-  background: rgba(0, 0, 0, 0.04);
+  background: var(--color-track);
 }
 
 .navTabActive {
@@ -138,12 +138,12 @@
 }
 
 .bentoCard:hover {
-  border-color: rgba(30, 32, 30, 0.16);
+  border-color: var(--color-border-medium);
 }
 
 /* AI Glow Card */
 .aiCard {
-  background: linear-gradient(180deg, #FFFFFF 0%, #FAFDEB 100%);
+  background: linear-gradient(180deg, var(--color-surface-pure) 0%, #FAFDEB 100%);
   border: 1px solid rgba(199, 249, 0, 0.5);
   box-shadow: 0 4px 20px rgba(199, 249, 0, 0.15);
 }
@@ -198,18 +198,18 @@
 }
 
 .trendPositive {
-  background: #E8F5E9;
-  color: #2E7D32;
+  background: var(--color-success-bg);
+  color: var(--color-success-ink);
 }
 
 .trendWarning {
-  background: #FFF8E1;
-  color: #F57F17;
+  background: var(--color-warning-bg);
+  color: var(--color-warning-ink);
 }
 
 .trendNeutral {
-  background: #F5F5F5;
-  color: #616161;
+  background: var(--color-surface-soft);
+  color: var(--color-text-secondary);
 }
 
 /* Status Pills */
@@ -227,7 +227,7 @@
 
 .statusPending {
   background: #FFF9C4;
-  color: #F57F17;
+  color: var(--color-warning-ink);
 }
 
 .statusMessaged {
@@ -236,13 +236,13 @@
 }
 
 .statusRecovered {
-  background: #E8F5E9;
-  color: #2E7D32;
+  background: var(--color-success-bg);
+  color: var(--color-success-ink);
 }
 
 .statusExpired {
-  background: #F5F5F5;
-  color: #9E9E9E;
+  background: var(--color-surface-soft);
+  color: var(--color-text-muted);
 }
 
 .statusReview {
@@ -256,8 +256,8 @@
 }
 
 .statusRunning {
-  background: #E8F5E9;
-  color: #2E7D32;
+  background: var(--color-success-bg);
+  color: var(--color-success-ink);
 }
 
 .statusCompleted {
@@ -266,19 +266,19 @@
 }
 
 .riskHigh {
-  background: #FFEBEE;
-  color: #C62828;
-  border: 1px solid #FFCDD2;
+  background: var(--color-danger-bg);
+  color: var(--color-danger-ink);
+  border: 1px solid var(--color-danger);
 }
 
 .riskMedium {
-  background: #FFF3E0;
-  color: #E65100;
+  background: var(--color-warning-bg);
+  color: var(--color-warning-ink);
 }
 
 .riskLow {
-  background: #E8F5E9;
-  color: #2E7D32;
+  background: var(--color-success-bg);
+  color: var(--color-success-ink);
 }
 
 /* Tables */
@@ -287,7 +287,7 @@
   overflow-x: auto;
   border-radius: 12px;
   border: 1px solid var(--color-border-subtle, rgba(30, 32, 30, 0.08));
-  background: #FFFFFF;
+  background: var(--color-surface-pure);
 }
 
 .table {
@@ -319,7 +319,7 @@
 }
 
 .table tr:hover td {
-  background: #FAFBF8;
+  background: var(--color-surface-soft);
 }
 
 /* Buttons */
@@ -347,7 +347,7 @@
 }
 
 .btnSecondary {
-  background: #FFFFFF;
+  background: var(--color-surface-pure);
   color: var(--color-text-primary, #202124);
   font-weight: 500;
   font-size: 13px;
@@ -362,8 +362,8 @@
 }
 
 .btnSecondary:hover {
-  background: #F5F6F3;
-  border-color: rgba(30, 32, 30, 0.2);
+  background: var(--color-surface-soft);
+  border-color: var(--color-border-medium);
 }
 
 .btnSecondary:active {
@@ -371,11 +371,11 @@
 }
 
 .btnDanger {
-  background: #FFEBEE;
-  color: #C62828;
+  background: var(--color-danger-bg);
+  color: var(--color-danger-ink);
   font-weight: 600;
   font-size: 13px;
-  border: 1px solid #FFCDD2;
+  border: 1px solid var(--color-danger);
   padding: 8px 16px;
   border-radius: 10px;
   cursor: pointer;
@@ -411,7 +411,7 @@
 }
 
 .modalContent {
-  background: #FFFFFF;
+  background: var(--color-surface-pure);
   border-radius: 20px;
   max-width: 600px;
   width: 100%;
@@ -454,8 +454,8 @@
 }
 
 .closeButton:hover {
-  background: #F5F6F3;
-  color: #202124;
+  background: var(--color-surface-soft);
+  color: var(--color-text-primary);
 }
 
 .formGroup {
@@ -482,7 +482,7 @@
   font-size: 13px;
   font-family: inherit;
   color: var(--color-text-primary, #202124);
-  background: #FAFBF8;
+  background: var(--color-surface-soft);
   outline: none;
   transition: border-color 0.15s ease;
 }
@@ -490,7 +490,7 @@
 .formInput:focus,
 .formTextarea:focus,
 .formSelect:focus {
-  background: #FFFFFF;
+  background: var(--color-surface-pure);
 }
 
 .formTextarea {
@@ -507,9 +507,9 @@
   font-weight: 500;
   padding: 3px 8px;
   border-radius: 6px;
-  background: #E8F5E9;
-  color: #2E7D32;
-  border: 1px solid #C8E6C9;
+  background: var(--color-success-bg);
+  color: var(--color-success-ink);
+  border: 1px solid var(--color-success);
 }
 
 /* Responsive adjustments */

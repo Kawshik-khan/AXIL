@@ -59,7 +59,7 @@ export function HandoffContextCard({ card, onApproveDraft }: { card: HandoffCard
           </div>
         )}
         {card.order_draft && (
-          <div style={{ marginTop: "8px", padding: "8px", background: "rgba(0,0,0,0.04)", borderRadius: "4px" }}>
+          <div style={{ marginTop: "8px", padding: "8px", background: "var(--color-track)", borderRadius: "4px" }}>
             <div style={{ fontWeight: 600, marginBottom: "4px" }}>📦 Order Draft for Review:</div>
             {card.order_draft.items.map((it, i) => (
               <div key={i} style={{ fontSize: "0.75rem" }}>
@@ -76,7 +76,7 @@ export function HandoffContextCard({ card, onApproveDraft }: { card: HandoffCard
                 style={{
                   marginTop: "6px",
                   background: "var(--color-primary, #10B981)",
-                  color: "#000",
+                  color: "var(--color-text-primary)",
                   border: "none",
                   borderRadius: "4px",
                   padding: "4px 8px",

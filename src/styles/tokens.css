@@ -41,6 +41,17 @@
   /* Text on tinted chips, KPI icon accents, progress tracks: each has a dark-theme value below */
   --color-lime-ink:       #4A5E00;
   --color-info-ink:       #1D4ED8;
+  /* Status text that stays readable on its tinted background in each theme */
+  --color-success-ink:    #047857;
+  --color-warning-ink:    #9A5B00;
+  --color-danger-ink:     #B42318;
+  /* The same inks on an always-dark surface (a dark KPI card, an AI panel) in either theme.
+     Such a surface re-points the ink tokens at these; see the "Always-dark surfaces" rules in the CSS modules */
+  --ink-on-dark-lime:      #D8FF38;
+  --ink-on-dark-info:      #93B8FF;
+  --ink-on-dark-success:   #5FD79A;
+  --ink-on-dark-warning:   #FFC15C;
+  --ink-on-dark-danger:    #FF9EA1;
   --color-accent-blue:    #2563EB;
   --color-accent-violet:  #9333EA;
   --color-accent-amber:   #D97706;
@@ -230,6 +241,9 @@ html[data-console-theme="dark"] {
 
   --color-lime-ink:       #D8FF38;
   --color-info-ink:       #93B8FF;
+  --color-success-ink:    #5FD79A;
+  --color-warning-ink:    #FFC15C;
+  --color-danger-ink:     #FF9EA1;
   --color-accent-blue:    #6CA2FF;
   --color-accent-violet:  #C08BFF;
   --color-accent-amber:   #FFC15C;

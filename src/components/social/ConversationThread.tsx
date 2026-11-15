@@ -403,7 +403,7 @@ export const ConversationThread: React.FC<ConversationThreadProps> = ({
                     <span>INTERNAL NOTE • {String(msg.metadata?.author_name || "Operator")}</span>
                   </div>
                   <div>{msg.text}</div>
-                  <div style={{ fontSize: "0.6875rem", color: "#B45309", textAlign: "right", marginTop: "4px" }}>
+                  <div style={{ fontSize: "0.6875rem", color: "var(--color-warning-ink)", textAlign: "right", marginTop: "4px" }}>
                     {new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                   </div>
                 </div>
@@ -523,8 +523,8 @@ export const ConversationThread: React.FC<ConversationThreadProps> = ({
                     bottom: "100%",
                     left: 0,
                     marginBottom: "8px",
-                    background: "#FFFFFF",
-                    border: "1px solid rgba(0, 0, 0, 0.1)",
+                    background: "var(--color-surface-pure)",
+                    border: "1px solid var(--color-border-subtle)",
                     borderRadius: "12px",
                     padding: "8px",
                     width: "300px",
@@ -538,7 +538,7 @@ export const ConversationThread: React.FC<ConversationThreadProps> = ({
                     style={{
                       fontSize: "0.6875rem",
                       fontWeight: 700,
-                      color: "#6B7280",
+                      color: "var(--color-text-secondary)",
                       padding: "4px 8px",
                       marginBottom: "4px",
                     }}
@@ -546,7 +546,7 @@ export const ConversationThread: React.FC<ConversationThreadProps> = ({
                     SAVED RESPONSES
                   </div>
                   {quickReplies.length === 0 ? (
-                    <div style={{ fontSize: "0.75rem", color: "#6B7280", padding: "8px" }}>
+                    <div style={{ fontSize: "0.75rem", color: "var(--color-text-secondary)", padding: "8px" }}>
                       No quick replies found.
                     </div>
                   ) : (
@@ -564,11 +564,11 @@ export const ConversationThread: React.FC<ConversationThreadProps> = ({
                         onMouseEnter={(e) => (e.currentTarget.style.background = "#F3F4F6")}
                         onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                       >
-                        <div style={{ fontWeight: 600, color: "#1F2937" }}>{qr.title}</div>
+                        <div style={{ fontWeight: 600, color: "var(--color-text-primary)" }}>{qr.title}</div>
                         <div
                           style={{
                             fontSize: "0.6875rem",
-                            color: "#6B7280",
+                            color: "var(--color-text-secondary)",
                             overflow: "hidden",
                             textOverflow: "ellipsis",
                             whiteSpace: "nowrap",
@@ -593,7 +593,7 @@ export const ConversationThread: React.FC<ConversationThreadProps> = ({
               style={{
                 background: "rgba(199, 249, 0, 0.2)",
                 borderColor: "rgba(199, 249, 0, 0.5)",
-                color: "#121316",
+                color: "var(--color-text-primary)",
                 fontWeight: 700,
               }}
             >
@@ -603,7 +603,7 @@ export const ConversationThread: React.FC<ConversationThreadProps> = ({
             <AiModeBadge />
           </div>
 
-          <div style={{ fontSize: "0.6875rem", color: "#6B7280" }}>
+          <div style={{ fontSize: "0.6875rem", color: "var(--color-text-secondary)" }}>
             {isInternalNote ? "Note visible only to operators" : "Press Cmd+Enter to send"}
           </div>
         </div>
@@ -614,7 +614,7 @@ export const ConversationThread: React.FC<ConversationThreadProps> = ({
             style={{
               padding: "12px 16px",
               borderRadius: "12px",
-              background: "#FAFDE6",
+              background: "var(--color-surface-soft)",
               border: "1.5px solid #C7F900",
               boxShadow: "0 4px 14px rgba(199, 249, 0, 0.18)",
             }}
@@ -634,7 +634,7 @@ export const ConversationThread: React.FC<ConversationThreadProps> = ({
                   gap: "6px",
                   fontSize: "0.75rem",
                   fontWeight: 700,
-                  color: "#121316",
+                  color: "var(--color-text-primary)",
                 }}
               >
                 <Sparkles size={14} color="#059669" />
@@ -652,7 +652,7 @@ export const ConversationThread: React.FC<ConversationThreadProps> = ({
                 style={{
                   background: "none",
                   border: "none",
-                  color: "#6B7280",
+                  color: "var(--color-text-secondary)",
                   cursor: "pointer",
                   fontSize: "0.875rem",
                 }}
@@ -660,7 +660,7 @@ export const ConversationThread: React.FC<ConversationThreadProps> = ({
                 ✕
               </button>
             </div>
-            <div style={{ fontSize: "0.875rem", color: "#1F2937", lineHeight: 1.5, marginBottom: "10px" }}>
+            <div style={{ fontSize: "0.875rem", color: "var(--color-text-primary)", lineHeight: 1.5, marginBottom: "10px" }}>
               {copilotSuggestion.suggested_reply}
             </div>
             <div style={{ display: "flex", gap: "8px" }}>

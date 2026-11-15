@@ -387,7 +387,7 @@ export default function CustomersPage() {
                 gridTemplateColumns: "1fr 1fr",
                 gap: "12px",
                 padding: "12px",
-                background: "rgba(0,0,0,0.02)",
+                background: "var(--color-track)",
                 borderRadius: "var(--radius-card)",
               }}
             >

@@ -66,7 +66,7 @@
 
 .tabPillActive {
   background: var(--color-primary);
-  color: #121316;
+  color: var(--color-text-primary);
 }
 
 .topActions {
@@ -135,8 +135,8 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  background: #FAFBF8;
-  border: 1px solid rgba(30, 32, 30, 0.12);
+  background: var(--color-surface-soft);
+  border: 1px solid var(--color-border-subtle);
   border-radius: 12px;
   padding: 8px 12px;
   transition: all 0.15s ease;
@@ -151,12 +151,12 @@
   border: none;
   outline: none;
   font-size: 0.8125rem;
-  color: #1F2937;
+  color: var(--color-text-primary);
   width: 100%;
 }
 
 .searchInput::placeholder {
-  color: #9CA3AF;
+  color: var(--color-text-muted);
 }
 
 .filterPillsRow {
@@ -176,9 +176,9 @@
   font-size: 0.75rem;
   font-weight: 500;
   border-radius: 9999px;
-  border: 1px solid rgba(30, 32, 30, 0.10);
-  background: #FAFBF8;
-  color: #4B5563;
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-surface-soft);
+  color: var(--color-text-secondary);
   cursor: pointer;
   white-space: nowrap;
   transition: all 0.15s ease;
@@ -189,8 +189,8 @@
 
 .filterBadge:hover {
   background: var(--color-surface-pure);
-  border-color: rgba(30, 32, 30, 0.20);
-  color: #1F2937;
+  border-color: var(--color-border-medium);
+  color: var(--color-text-primary);
 }
 
 .filterBadgeActive {
@@ -219,7 +219,7 @@
   align-items: flex-start;
   gap: 12px;
   padding: 14px 16px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  border-bottom: 1px solid var(--color-border-subtle);
   cursor: pointer;
   transition: background 0.15s ease;
   position: relative;
@@ -227,7 +227,7 @@
 }
 
 .conversationItem:hover {
-  background: rgba(0, 0, 0, 0.02);
+  background: var(--color-track);
 }
 
 .conversationItemActive {
@@ -295,7 +295,7 @@
   border-radius: 50%;
   background: rgba(199, 249, 0, 0.2);
   border: 1.5px solid var(--color-primary, #C7F900);
-  color: #121316;
+  color: var(--color-text-primary);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -313,13 +313,13 @@
 .customerMetaName {
   font-weight: 700;
   font-size: 0.9375rem;
-  color: #1F2937;
+  color: var(--color-text-primary);
   letter-spacing: -0.01em;
 }
 
 .customerMetaChannel {
   font-size: 0.6875rem;
-  color: #6B7280;
+  color: var(--color-text-secondary);
   display: flex;
   align-items: center;
   gap: 4px;
@@ -343,8 +343,8 @@
   gap: 8px;
   height: 32px;
   padding: 0 12px;
-  background: #FAFBF8;
-  border: 1px solid rgba(30, 32, 30, 0.12);
+  background: var(--color-surface-soft);
+  border: 1px solid var(--color-border-subtle);
   border-radius: 9999px;
   cursor: pointer;
   outline: none;
@@ -367,12 +367,12 @@
 .dropdownTriggerLabel {
   font-size: 0.75rem;
   font-weight: 600;
-  color: #1F2937;
+  color: var(--color-text-primary);
   white-space: nowrap;
 }
 
 .dropdownChevron {
-  color: #6B7280;
+  color: var(--color-text-secondary);
   transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
@@ -386,7 +386,7 @@
   right: 0;
   min-width: 190px;
   background: var(--color-surface-pure);
-  border: 1px solid rgba(0, 0, 0, 0.08);
+  border: 1px solid var(--color-border-subtle);
   border-radius: 14px;
   padding: 6px;
   box-shadow: 0 12px 36px -4px rgba(0, 0, 0, 0.12), 0 4px 12px rgba(0, 0, 0, 0.04);
@@ -412,7 +412,7 @@
   font-size: 0.625rem;
   font-weight: 700;
   letter-spacing: 0.05em;
-  color: #9CA3AF;
+  color: var(--color-text-muted);
   padding: 6px 10px 4px;
   text-transform: uppercase;
 }
@@ -426,7 +426,7 @@
   border-radius: 8px;
   border: none;
   background: transparent;
-  color: #1F2937;
+  color: var(--color-text-primary);
   font-size: 0.8125rem;
   font-weight: 500;
   cursor: pointer;
@@ -436,13 +436,13 @@
 }
 
 .dropdownItem:hover {
-  background: #F3F4F6;
-  color: #111827;
+  background: var(--color-surface-soft);
+  color: var(--color-text-primary);
 }
 
 .dropdownItemActive {
-  background: #FAFDE6;
-  color: #111827;
+  background: var(--color-surface-soft);
+  color: var(--color-text-primary);
   font-weight: 700;
 }
 
@@ -474,7 +474,7 @@
   display: flex;
   flex-direction: column;
   gap: 14px;
-  background: #F8F9F6;
+  background: var(--color-surface-soft);
 }
 
 /* Message Bubble Styles */
@@ -509,8 +509,8 @@
 /* Customer Inbound Bubble: Pristine White Card on Soft Bento Background */
 .inboundBubble {
   background: var(--color-surface-pure);
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  color: #1F2937;
+  border: 1px solid var(--color-border-subtle);
+  color: var(--color-text-primary);
   border-radius: 18px 18px 18px 4px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
 }
@@ -526,9 +526,9 @@
 
 /* Internal Staff Note: Soft Warm Amber Card */
 .internalNoteBubble {
-  background: #FEF9C3;
-  border: 1px solid #FCD34D;
-  color: #78350F;
+  background: var(--color-warning-bg);
+  border: 1px solid var(--color-warning);
+  color: var(--color-warning-ink);
   border-radius: 12px;
   padding: 12px 16px;
   display: flex;
@@ -543,12 +543,12 @@
   gap: 6px;
   font-size: 0.75rem;
   font-weight: 700;
-  color: #B45309;
+  color: var(--color-warning-ink);
 }
 
 .bubbleMeta {
   font-size: 0.6875rem;
-  color: #9CA3AF;
+  color: var(--color-text-muted);
   margin-top: 4px;
   display: flex;
   align-items: center;
@@ -596,13 +596,13 @@
   flex: 1;
   min-height: 48px;
   max-height: 140px;
-  background: #FAFBF8;
-  border: 1.5px solid rgba(30, 32, 30, 0.10);
+  background: var(--color-surface-soft);
+  border: 1.5px solid var(--color-border-subtle);
   border-radius: 14px;
   padding: 12px 16px;
   font-size: 0.875rem;
   line-height: 1.45;
-  color: #1F2937;
+  color: var(--color-text-primary);
   outline: none;
   resize: none;
   font-family: inherit;
@@ -615,7 +615,7 @@
 
 .internalNoteActiveTextarea {
   border-color: #F59E0B !important;
-  background: #FFFDF0 !important;
+  background: var(--color-warning-bg) !important;
   box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.15) !important;
 }
 
@@ -666,8 +666,8 @@
 }
 
 .contextCard {
-  background: #FAFBF8;
-  border: 1px solid rgba(30, 32, 30, 0.08);
+  background: var(--color-surface-soft);
+  border: 1px solid var(--color-border-subtle);
   border-radius: 14px;
   padding: 16px;
   margin: 0 14px;
@@ -681,7 +681,7 @@
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: #6B7280;
+  color: var(--color-text-secondary);
   display: flex;
   align-items: center;
   gap: 6px;
@@ -695,7 +695,7 @@
 
 .metricBox {
   background: var(--color-surface-pure);
-  border: 1px solid rgba(30, 32, 30, 0.08);
+  border: 1px solid var(--color-border-subtle);
   border-radius: 10px;
   padding: 10px;
 }
@@ -703,13 +703,13 @@
 .metricLabel {
   font-size: 0.6875rem;
   font-weight: 600;
-  color: #6B7280;
+  color: var(--color-text-secondary);
 }
 
 .metricValue {
   font-size: 1.125rem;
   font-weight: 800;
-  color: #1F2937;
+  color: var(--color-text-primary);
   margin-top: 2px;
 }
 
@@ -719,7 +719,7 @@
   align-items: center;
   padding: 10px 12px;
   background: var(--color-surface-pure);
-  border: 1px solid rgba(30, 32, 30, 0.06);
+  border: 1px solid var(--color-border-subtle);
   border-radius: 10px;
   font-size: 0.75rem;
 }
@@ -798,7 +798,7 @@
   height: 32px;
   border-radius: var(--radius-full);
   background: var(--color-primary);
-  color: #121316;
+  color: var(--color-text-primary);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -840,7 +840,7 @@
 .widgetVisitorBubble {
   align-self: flex-end;
   background: var(--color-primary);
-  color: #121316;
+  color: var(--color-text-primary);
   font-weight: 500;
   padding: 10px 14px;
   border-radius: 14px 14px 2px 14px;
@@ -912,7 +912,7 @@
 
 .widgetSendBtn {
   background: var(--color-primary);
-  color: #121316;
+  color: var(--color-text-primary);
   border: none;
   border-radius: var(--radius-full);
   width: 36px;
@@ -943,7 +943,7 @@
   height: 42px;
   border-radius: 50%;
   background: #242529;
-  border: 1.5px solid rgba(0, 0, 0, 0.08);
+  border: 1.5px solid var(--color-border-subtle);
   color: var(--color-primary, #C7F900);
   display: flex;
   align-items: center;
@@ -985,7 +985,7 @@
 .customerNameText {
   font-size: 0.875rem;
   font-weight: 700;
-  color: #1F2937;
+  color: var(--color-text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -993,14 +993,14 @@
 
 .timestampText {
   font-size: 0.6875rem;
-  color: #9CA3AF;
+  color: var(--color-text-muted);
   flex-shrink: 0;
   font-weight: 500;
 }
 
 .convoSnippet {
   font-size: 0.8125rem;
-  color: #6B7280;
+  color: var(--color-text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1020,8 +1020,8 @@
   font-weight: 700;
   padding: 1px 5px;
   border-radius: 9999px;
-  background: rgba(30, 32, 30, 0.08);
-  color: #4B5563;
+  background: var(--color-track);
+  color: var(--color-text-secondary);
   margin-left: 2px;
 }
 
@@ -1036,16 +1036,16 @@
 
 .statusOpen {
   background: rgba(16, 185, 129, 0.12);
-  color: #059669;
+  color: var(--color-success-ink);
 }
 
 .statusOther {
-  background: #F3F4F6;
-  color: #4B5563;
+  background: var(--color-surface-soft);
+  color: var(--color-text-secondary);
 }
 
 .priorityUrgent {
-  color: #DC2626;
+  color: var(--color-danger-ink);
   font-size: 0.625rem;
   font-weight: 700;
   background: rgba(239, 68, 68, 0.12);
@@ -1054,7 +1054,7 @@
 }
 
 .priorityHigh {
-  color: #D97706;
+  color: var(--color-warning-ink);
   font-size: 0.625rem;
   font-weight: 700;
   background: rgba(245, 158, 11, 0.12);
@@ -1065,8 +1065,8 @@
 .tagBadge {
   font-size: 0.625rem;
   font-weight: 600;
-  color: #4B5563;
-  background: #F3F4F6;
+  color: var(--color-text-secondary);
+  background: var(--color-surface-soft);
   padding: 2px 6px;
   border-radius: 4px;
 }
@@ -1108,7 +1108,7 @@
 
 .pausedBannerButton {
   background: var(--color-primary);
-  color: #121316; /* dark text on lime, like the module's other primary buttons */
+  color: var(--color-text-primary); /* dark text on lime, like the module's other primary buttons */
   border: none;
   font-weight: 600;
   font-size: 0.75rem;
@@ -1154,7 +1154,7 @@
 .aiBubble {
   background: var(--color-surface-pure);
   border: 1.5px solid #C7F900;
-  color: #1F2937;
+  color: var(--color-text-primary);
   border-radius: 18px 18px 4px 18px;
   box-shadow: 0 4px 18px rgba(199, 249, 0, 0.20);
   padding: 12px 16px;
@@ -1183,8 +1183,8 @@
 .aiConfidence {
   font-size: 0.6875rem;
   font-weight: 600;
-  color: #4B5563;
-  background: #F3F4F6;
+  color: var(--color-text-secondary);
+  background: var(--color-surface-soft);
   padding: 2px 6px;
   border-radius: 4px;
 }
@@ -1193,9 +1193,9 @@
   margin-top: 8px;
   font-size: 0.6875rem;
   font-weight: 500;
-  color: #374151;
-  background: #F3F4F6;
-  border: 1px solid rgba(0, 0, 0, 0.06);
+  color: var(--color-text-primary);
+  background: var(--color-surface-soft);
+  border: 1px solid var(--color-border-subtle);
   padding: 3px 8px;
   border-radius: 6px;
   width: fit-content;
@@ -1239,8 +1239,17 @@
 
 .minimizeBtn:hover {
   background: rgba(239, 68, 68, 0.15);
-  color: #EF4444;
+  color: var(--color-danger-ink);
   border-color: rgba(239, 68, 68, 0.3);
 }
 
 
+
+/* Always-dark surfaces: status inks use their dark-theme values here in both themes */
+.outboundBubble {
+  --color-lime-ink: var(--ink-on-dark-lime);
+  --color-info-ink: var(--ink-on-dark-info);
+  --color-success-ink: var(--ink-on-dark-success);
+  --color-warning-ink: var(--ink-on-dark-warning);
+  --color-danger-ink: var(--ink-on-dark-danger);
+}

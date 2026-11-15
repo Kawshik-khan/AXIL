@@ -131,7 +131,7 @@ export default function AnalyticsExplorerPage() {
 
         {/* Answer Box */}
         {loading && <div style={{ marginTop: 20 }}><LoadingSkeleton lines={2} height="80px" /></div>}
-        {error && <div style={{ marginTop: 16, color: "#dc2626", fontSize: 13 }}>{error}</div>}
+        {error && <div style={{ marginTop: 16, color: "var(--color-danger-ink)", fontSize: 13 }}>{error}</div>}
         {nlResult && !loading && (
           <div className={styles.groundedAnswerBox}>
             <div className={styles.groundedAnswerLabel}>✦ GROUNDED ANSWER</div>
@@ -148,7 +148,7 @@ export default function AnalyticsExplorerPage() {
         {/* Customer RFM Table */}
         <div className={`${styles.bentoCard} ${styles.col7}`}>
           <div className={styles.cardTitle}>
-            <span><Users size={16} color="#3b4d00" style={{ marginRight: 6 }} /> Customer RFM Intelligence & LTV</span>
+            <span><Users size={16} color="var(--color-lime-ink)" style={{ marginRight: 6 }} /> Customer RFM Intelligence & LTV</span>
             <span className={styles.badgeNeutral}>{customers.length} Profiles</span>
           </div>
 
@@ -186,7 +186,7 @@ export default function AnalyticsExplorerPage() {
                       </td>
                       <td>৳{c.observed_ltv_bdt?.toLocaleString()}</td>
                       <td>
-                        <strong style={{ color: "#047857" }}>৳{c.estimated_ltv_bdt?.toLocaleString()}</strong>
+                        <strong style={{ color: "var(--color-success-ink)" }}>৳{c.estimated_ltv_bdt?.toLocaleString()}</strong>
                       </td>
                       <td style={{ color: "var(--color-text-secondary)" }}>{c.recency_days}d ago</td>
                     </tr>
@@ -200,7 +200,7 @@ export default function AnalyticsExplorerPage() {
         {/* Acquisition Cohorts */}
         <div className={`${styles.bentoCard} ${styles.col5}`}>
           <div className={styles.cardTitle}>
-            <span><BarChart3 size={16} color="#3b4d00" style={{ marginRight: 6 }} /> Customer Retention Cohorts</span>
+            <span><BarChart3 size={16} color="var(--color-lime-ink)" style={{ marginRight: 6 }} /> Customer Retention Cohorts</span>
             <span className={styles.badgeNeutral}>{cohorts.length} Cohorts</span>
           </div>
 

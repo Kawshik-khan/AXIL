@@ -117,7 +117,7 @@ export const UnifiedInbox: React.FC<UnifiedInboxProps> = ({
               style={{
                 background: "none",
                 border: "none",
-                color: "#6B7280",
+                color: "var(--color-text-secondary)",
                 cursor: "pointer",
                 padding: "2px",
                 display: "flex",

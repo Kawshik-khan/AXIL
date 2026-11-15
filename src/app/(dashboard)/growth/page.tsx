@@ -277,7 +277,7 @@ export default function GrowthCommandCenterPage() {
                       border: "1px solid rgba(199, 249, 0, 0.4)",
                       fontSize: "11px",
                       fontWeight: 700,
-                      color: "#283600",
+                      color: "var(--color-lime-ink)",
                     }}
                   >
                     {total.toLocaleString()} Active Funnel Cohort
@@ -460,7 +460,7 @@ export default function GrowthCommandCenterPage() {
                         className={styles.cohortStageTag}
                         style={{
                           background: `${activeStage.color}15`,
-                          color: activeStage.colorDark,
+                          color: `color-mix(in srgb, ${activeStage.colorDark} 60%, var(--color-text-primary))`,
                           border: `1px solid ${activeStage.color}35`,
                         }}
                       >
@@ -486,7 +486,7 @@ export default function GrowthCommandCenterPage() {
                         gap: "4px",
                         padding: "5px 10px",
                         borderRadius: "8px",
-                        background: "rgba(0, 0, 0, 0.04)",
+                        background: "var(--color-track)",
                         whiteSpace: "nowrap",
                         transition: "all 0.15s ease",
                       }}

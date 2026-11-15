@@ -108,7 +108,7 @@ export default function WorkflowDetailPage() {
             display: "inline-flex",
             alignItems: "center",
             gap: "0.5rem",
-            color: "#9ca3af",
+            color: "var(--color-text-muted)",
             textDecoration: "none",
             fontSize: "0.9rem",
             fontWeight: 500,
@@ -142,10 +142,10 @@ export default function WorkflowDetailPage() {
               {workflow.status}
             </Badge>
           </div>
-          <p style={{ color: "#9ca3af", margin: "0.35rem 0 0 0", fontSize: "0.9rem" }}>
+          <p style={{ color: "var(--color-text-muted)", margin: "0.35rem 0 0 0", fontSize: "0.9rem" }}>
             {workflow.objective}
           </p>
-          <div style={{ display: "flex", gap: "1rem", marginTop: "0.5rem", color: "#6b7280", fontSize: "0.8rem" }}>
+          <div style={{ display: "flex", gap: "1rem", marginTop: "0.5rem", color: "var(--color-text-secondary)", fontSize: "0.8rem" }}>
             <span>ID: <code style={{ color: "#C7F900" }}>{workflow.id}</code></span>
             <span>Trigger: {workflow.trigger_type}</span>
             <span>Created: {new Date(workflow.created_at).toLocaleString()}</span>
@@ -242,12 +242,12 @@ export default function WorkflowDetailPage() {
                       </div>
                     </div>
 
-                    <p style={{ color: "#9ca3af", fontSize: "0.8rem", margin: "0.5rem 0 0 2rem" }}>
+                    <p style={{ color: "var(--color-text-muted)", fontSize: "0.8rem", margin: "0.5rem 0 0 2rem" }}>
                       {task.objective}
                     </p>
 
                     {task.dependencies?.length > 0 && (
-                      <div style={{ marginLeft: "2rem", marginTop: "0.4rem", fontSize: "0.75rem", color: "#6b7280" }}>
+                      <div style={{ marginLeft: "2rem", marginTop: "0.4rem", fontSize: "0.75rem", color: "var(--color-text-secondary)" }}>
                         Depends on: {task.dependencies.map((d: any) => d.task_id).join(", ")}
                       </div>
                     )}
@@ -262,26 +262,26 @@ export default function WorkflowDetailPage() {
             {selectedTask ? (
               <div style={{ fontSize: "0.85rem", marginTop: "0.5rem" }}>
                 <div style={{ borderBottom: "1px solid #2d2f36", paddingBottom: "0.75rem", marginBottom: "0.75rem" }}>
-                  <div style={{ color: "#9ca3af", fontSize: "0.75rem" }}>TASK ID</div>
+                  <div style={{ color: "var(--color-text-muted)", fontSize: "0.75rem" }}>TASK ID</div>
                   <code style={{ color: "#C7F900", fontSize: "0.8rem" }}>{selectedTask.id}</code>
                 </div>
 
                 <div style={{ borderBottom: "1px solid #2d2f36", paddingBottom: "0.75rem", marginBottom: "0.75rem" }}>
-                  <div style={{ color: "#9ca3af", fontSize: "0.75rem" }}>IDEMPOTENCY KEY</div>
+                  <div style={{ color: "var(--color-text-muted)", fontSize: "0.75rem" }}>IDEMPOTENCY KEY</div>
                   <code style={{ color: "#38bdf8", fontSize: "0.8rem" }}>{selectedTask.idempotency_key}</code>
                 </div>
 
                 {selectedTask.approval_id && (
                   <div style={{ borderBottom: "1px solid #2d2f36", paddingBottom: "0.75rem", marginBottom: "0.75rem" }}>
-                    <div style={{ color: "#9ca3af", fontSize: "0.75rem" }}>APPROVAL REQUIRED</div>
-                    <Link href="/ai/approvals" style={{ color: "#f59e0b", fontSize: "0.8rem", textDecoration: "underline" }}>
+                    <div style={{ color: "var(--color-text-muted)", fontSize: "0.75rem" }}>APPROVAL REQUIRED</div>
+                    <Link href="/ai/approvals" style={{ color: "var(--color-warning-ink)", fontSize: "0.8rem", textDecoration: "underline" }}>
                       Approval ID: {selectedTask.approval_id} &rarr;
                     </Link>
                   </div>
                 )}
 
                 <div style={{ marginBottom: "0.75rem" }}>
-                  <div style={{ color: "#9ca3af", fontSize: "0.75rem", marginBottom: "0.25rem" }}>INPUT PAYLOAD</div>
+                  <div style={{ color: "var(--color-text-muted)", fontSize: "0.75rem", marginBottom: "0.25rem" }}>INPUT PAYLOAD</div>
                   <pre
                     style={{
                       background: "#111215",
@@ -317,7 +317,7 @@ export default function WorkflowDetailPage() {
                 )}
               </div>
             ) : (
-              <div style={{ color: "#6b7280", padding: "2rem", textAlign: "center" }}>
+              <div style={{ color: "var(--color-text-secondary)", padding: "2rem", textAlign: "center" }}>
                 Select a task to inspect inputs and receipts
               </div>
             )}
@@ -330,7 +330,7 @@ export default function WorkflowDetailPage() {
         <BentoCard span={6} title="Durable Checkpoints Snapshot">
           <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", marginTop: "0.75rem" }}>
             {checkpoints.length === 0 ? (
-              <div style={{ color: "#6b7280", fontSize: "0.85rem" }}>No checkpoints recorded yet.</div>
+              <div style={{ color: "var(--color-text-secondary)", fontSize: "0.85rem" }}>No checkpoints recorded yet.</div>
             ) : (
               checkpoints.map((chk: any) => (
                 <div
@@ -348,9 +348,9 @@ export default function WorkflowDetailPage() {
                 >
                   <div>
                     <span style={{ color: "#fff", fontWeight: 600 }}>Step {chk.step_index}: </span>
-                    <span style={{ color: "#9ca3af" }}>{chk.reason}</span>
+                    <span style={{ color: "var(--color-text-muted)" }}>{chk.reason}</span>
                   </div>
-                  <span style={{ color: "#6b7280", fontSize: "0.75rem" }}>
+                  <span style={{ color: "var(--color-text-secondary)", fontSize: "0.75rem" }}>
                     {new Date(chk.created_at).toLocaleTimeString()}
                   </span>
                 </div>
@@ -362,7 +362,7 @@ export default function WorkflowDetailPage() {
         <BentoCard span={6} title="Inter-Agent Communication Bus">
           <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", marginTop: "0.75rem" }}>
             {messages.length === 0 ? (
-              <div style={{ color: "#6b7280", fontSize: "0.85rem" }}>No messages logged yet.</div>
+              <div style={{ color: "var(--color-text-secondary)", fontSize: "0.85rem" }}>No messages logged yet.</div>
             ) : (
               messages.map((msg: any) => (
                 <div
@@ -380,11 +380,11 @@ export default function WorkflowDetailPage() {
                 >
                   <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
                     <span style={{ color: "#C7F900", fontWeight: 600 }}>{msg.sender_agent}</span>
-                    <span style={{ color: "#6b7280" }}>&rarr;</span>
+                    <span style={{ color: "var(--color-text-secondary)" }}>&rarr;</span>
                     <span style={{ color: "#38bdf8", fontWeight: 600 }}>{msg.recipient_agent}</span>
                     <Badge variant="default">{msg.message_type}</Badge>
                   </div>
-                  <span style={{ color: "#6b7280", fontSize: "0.75rem" }}>
+                  <span style={{ color: "var(--color-text-secondary)", fontSize: "0.75rem" }}>
                     {new Date(msg.created_at).toLocaleTimeString()}
                   </span>
                 </div>
