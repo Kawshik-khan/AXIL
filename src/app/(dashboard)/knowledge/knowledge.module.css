@@ -53,7 +53,7 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  background: rgba(255, 255, 255, 0.85);
+  background: var(--glass-bg);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   padding: 4px;
@@ -83,7 +83,7 @@
 
 .tabButton:hover {
   color: var(--color-text-primary, #202124);
-  background: rgba(0, 0, 0, 0.04);
+  background: var(--color-track);
 }
 
 .tabButtonActive {
@@ -94,7 +94,7 @@
 }
 
 .tabBadge {
-  background: rgba(0, 0, 0, 0.08);
+  background: var(--color-track);
   color: inherit;
   font-size: 11px;
   padding: 1px 6px;
@@ -103,7 +103,7 @@
 
 .tabButtonActive .tabBadge {
   background: rgba(0, 0, 0, 0.15);
-  color: #111827;
+  color: var(--color-text-primary);
 }
 
 /* Buttons */
@@ -155,7 +155,7 @@
   align-items: center;
   gap: 8px;
   background: rgba(239, 68, 68, 0.12);
-  color: #dc2626;
+  color: var(--color-danger-ink);
   font-weight: 700;
   font-size: 13px;
   padding: 9px 16px;
@@ -277,10 +277,10 @@
   font-weight: 600;
 }
 
-.kpiLime { color: #3b4d00; }
-.kpiGreen { color: #047857; }
-.kpiRed { color: #dc2626; }
-.kpiYellow { color: #b45309; }
+.kpiLime { color: var(--color-lime-ink); }
+.kpiGreen { color: var(--color-success-ink); }
+.kpiRed { color: var(--color-danger-ink); }
+.kpiYellow { color: var(--color-warning-ink); }
 
 /* Status Badges */
 .badge {
@@ -297,25 +297,25 @@
 
 .badgeActive {
   background: rgba(199, 249, 0, 0.2);
-  color: #3b4d00;
+  color: var(--color-lime-ink);
   border: 1px solid rgba(199, 249, 0, 0.5);
 }
 
 .badgeSuccess {
   background: rgba(16, 185, 129, 0.15);
-  color: #047857;
+  color: var(--color-success-ink);
   border: 1px solid rgba(16, 185, 129, 0.3);
 }
 
 .badgeFailed {
   background: rgba(239, 68, 68, 0.15);
-  color: #dc2626;
+  color: var(--color-danger-ink);
   border: 1px solid rgba(239, 68, 68, 0.3);
 }
 
 .badgeWarning {
   background: rgba(245, 158, 11, 0.15);
-  color: #b45309;
+  color: var(--color-warning-ink);
   border: 1px solid rgba(245, 158, 11, 0.3);
 }
 
@@ -388,7 +388,7 @@
 }
 
 .table tr:hover td {
-  background: rgba(0, 0, 0, 0.015);
+  background: var(--color-track);
 }
 
 /* Workflow Template Card */
@@ -421,7 +421,7 @@
 .templateCode {
   font-family: monospace;
   font-size: 11px;
-  color: #3b4d00;
+  color: var(--color-lime-ink);
   background: rgba(199, 249, 0, 0.2);
   padding: 2px 6px;
   border-radius: 4px;
@@ -464,7 +464,7 @@
 }
 
 .killSwitchTitle {
-  color: #b91c1c;
+  color: var(--color-danger-ink);
   font-weight: 800;
   font-size: 15px;
   margin: 0 0 4px 0;
@@ -474,7 +474,7 @@
 }
 
 .killSwitchSubtitle {
-  color: #dc2626;
+  color: var(--color-danger-ink);
   font-size: 13px;
   margin: 0;
 }
@@ -574,7 +574,7 @@
 
 /* Document File Dropzone */
 .dropzone {
-  border: 2px dashed rgba(30, 32, 30, 0.2);
+  border: 2px dashed var(--color-border-medium);
   border-radius: 16px;
   background: var(--color-surface-soft, #FAFBF8);
   padding: 32px 20px;
@@ -602,7 +602,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #3B4700;
+  color: var(--color-lime-ink);
   margin-bottom: 2px;
 }
 
@@ -736,7 +736,7 @@
 .pipelineStepItemDone {
   background: rgba(46, 125, 50, 0.2);
   border-color: rgba(46, 125, 50, 0.5);
-  color: #81C784;
+  color: var(--color-success-ink);
 }
 
 @keyframes spin {
@@ -775,13 +775,13 @@
 }
 
 .docActionBtnDanger {
-  color: #9A9D98;
+  color: var(--color-text-muted);
 }
 
 .docActionBtnDanger:hover {
   background: rgba(211, 47, 47, 0.08);
   border-color: rgba(211, 47, 47, 0.2);
-  color: #D32F2F;
+  color: var(--color-danger-ink);
 }
 
 /* Custom Category Dropdown */
@@ -838,7 +838,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #333F00;
+  color: var(--color-lime-ink);
   flex-shrink: 0;
 }
 
@@ -873,7 +873,7 @@
 
 .chevronIconRotated {
   transform: rotate(180deg);
-  color: #202124;
+  color: var(--color-text-primary);
 }
 
 .customSelectMenu {
@@ -882,10 +882,10 @@
   left: 0;
   right: 0;
   z-index: 100;
-  background: rgba(255, 255, 255, 0.98);
+  background: var(--glass-bg);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(30, 32, 30, 0.12);
+  border: 1px solid var(--color-border-subtle);
   border-radius: 14px;
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.04);
   padding: 6px;
@@ -952,7 +952,7 @@
 
 .customSelectItem:hover {
   background: var(--color-surface-soft, #FAFBF8);
-  border-color: rgba(30, 32, 30, 0.06);
+  border-color: var(--color-border-subtle);
 }
 
 .customSelectItemActive {
@@ -1007,13 +1007,13 @@
   font-weight: 600;
   padding: 1px 6px;
   border-radius: 4px;
-  background: rgba(30, 32, 30, 0.06);
+  background: var(--color-track);
   color: var(--color-text-secondary, #70736F);
 }
 
 .customSelectItemActive .itemBadge {
   background: rgba(199, 249, 0, 0.35);
-  color: #333F00;
+  color: var(--color-lime-ink);
 }
 
 .itemDesc {
@@ -1033,4 +1033,13 @@
   justify-content: center;
   flex-shrink: 0;
   margin-left: 6px;
+}
+
+/* Always-dark surfaces: status inks use their dark-theme values here in both themes */
+.pipelineBox {
+  --color-lime-ink: var(--ink-on-dark-lime);
+  --color-info-ink: var(--ink-on-dark-info);
+  --color-success-ink: var(--ink-on-dark-success);
+  --color-warning-ink: var(--ink-on-dark-warning);
+  --color-danger-ink: var(--ink-on-dark-danger);
 }

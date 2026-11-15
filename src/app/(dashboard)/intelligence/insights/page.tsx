@@ -117,7 +117,7 @@ export default function InsightsExplorerPage() {
                 </div>
                 {anom.evidence?.[0] && (
                   <div style={{ marginTop: 8, padding: 10, background: "var(--color-surface-soft, #FAFBF8)", border: "1px solid var(--color-border-subtle, rgba(30, 32, 30, 0.08))", borderRadius: 8 }}>
-                    <div style={{ fontSize: 11, color: "#3b4d00", fontWeight: 700 }}>✦ CITED EVIDENCE</div>
+                    <div style={{ fontSize: 11, color: "var(--color-lime-ink)", fontWeight: 700 }}>✦ CITED EVIDENCE</div>
                     <div style={{ fontSize: 12, color: "var(--color-text-secondary, #70736F)", marginTop: 2 }}>{anom.evidence[0].description}</div>
                   </div>
                 )}
@@ -150,7 +150,7 @@ export default function InsightsExplorerPage() {
                 </div>
                 {opp.evidence?.[0] && (
                   <div style={{ marginTop: 8, padding: 10, background: "var(--color-surface-soft, #FAFBF8)", border: "1px solid var(--color-border-subtle, rgba(30, 32, 30, 0.08))", borderRadius: 8 }}>
-                    <div style={{ fontSize: 11, color: "#3b4d00", fontWeight: 700 }}>✦ EVIDENCE CITATION</div>
+                    <div style={{ fontSize: 11, color: "var(--color-lime-ink)", fontWeight: 700 }}>✦ EVIDENCE CITATION</div>
                     <div style={{ fontSize: 12, color: "var(--color-text-secondary, #70736F)", marginTop: 2 }}>{opp.evidence[0].description}</div>
                   </div>
                 )}
@@ -166,7 +166,7 @@ export default function InsightsExplorerPage() {
             {risks.map((risk) => (
               <div key={risk.id} className={`${styles.bentoCard} ${styles.col6}`}>
                 <div className={styles.cardTitle}>
-                  <span style={{ color: "#dc2626" }}>{risk.title}</span>
+                  <span style={{ color: "var(--color-danger-ink)" }}>{risk.title}</span>
                   <span className={styles.badgeRed}>{risk.severity}</span>
                 </div>
                 <p className={styles.recDesc}>{risk.description}</p>
@@ -176,7 +176,7 @@ export default function InsightsExplorerPage() {
                 </div>
                 {risk.evidence?.[0] && (
                   <div style={{ marginTop: 8, padding: 10, background: "var(--color-surface-soft, #FAFBF8)", border: "1px solid var(--color-border-subtle, rgba(30, 32, 30, 0.08))", borderRadius: 8 }}>
-                    <div style={{ fontSize: 11, color: "#dc2626", fontWeight: 700 }}>✦ RISK SIGNAL</div>
+                    <div style={{ fontSize: 11, color: "var(--color-danger-ink)", fontWeight: 700 }}>✦ RISK SIGNAL</div>
                     <div style={{ fontSize: 12, color: "var(--color-text-secondary, #70736F)", marginTop: 2 }}>{risk.evidence[0].description}</div>
                   </div>
                 )}

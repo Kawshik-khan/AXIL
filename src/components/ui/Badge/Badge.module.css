@@ -18,7 +18,7 @@
 
 .admin {
   background-color: rgba(108, 158, 255, 0.15);
-  color: #3b6bcc;
+  color: var(--color-info-ink);
 }
 
 .dev {
@@ -29,7 +29,7 @@
 
 .manager {
   background-color: rgba(243, 182, 63, 0.15);
-  color: #b07e1e;
+  color: var(--color-warning-ink);
 }
 
 .sales, .support, .marketing, .inventory, .finance, .analyst {
@@ -55,7 +55,7 @@
 
 .pending {
   background-color: var(--color-warning-bg);
-  color: var(--color-warning);
+  color: var(--color-warning-ink);
 }
 
 .default {
@@ -65,6 +65,6 @@
 
 .role {
   background-color: rgba(199, 249, 0, 0.15);
-  color: #5c7400;
+  color: var(--color-lime-ink);
   border: 1px solid rgba(199, 249, 0, 0.3);
 }

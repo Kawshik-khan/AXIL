@@ -62,14 +62,14 @@
 
 .badgePositive {
   background: rgba(199, 249, 0, 0.25);
-  color: #314200;
+  color: var(--color-lime-ink);
   border: 1px solid rgba(199, 249, 0, 0.5);
   box-shadow: 0 1px 6px var(--color-lime-glow, rgba(199, 249, 0, 0.2));
 }
 
 .badgeNegative {
   background: rgba(239, 68, 68, 0.1);
-  color: #dc2626;
+  color: var(--color-danger-ink);
   border: 1px solid rgba(239, 68, 68, 0.25);
 }
 

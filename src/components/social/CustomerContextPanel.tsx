@@ -127,14 +127,14 @@ export const CustomerContextPanel: React.FC<CustomerContextPanelProps> = ({
           <User size={16} /> Customer Profile
         </div>
         <div>
-          <div style={{ fontSize: "1rem", fontWeight: 700, color: "#1F2937" }}>
+          <div style={{ fontSize: "1rem", fontWeight: 700, color: "var(--color-text-primary)" }}>
             {customer.first_name} {customer.last_name}
           </div>
-          <div style={{ fontSize: "0.8125rem", color: "#6B7280", marginTop: "2px" }}>
+          <div style={{ fontSize: "0.8125rem", color: "var(--color-text-secondary)", marginTop: "2px" }}>
             📞 {customer.phone}
           </div>
           {customer.email && (
-            <div style={{ fontSize: "0.8125rem", color: "#6B7280", marginTop: "2px" }}>
+            <div style={{ fontSize: "0.8125rem", color: "var(--color-text-secondary)", marginTop: "2px" }}>
               ✉️ {customer.email}
             </div>
           )}
@@ -177,7 +177,7 @@ export const CustomerContextPanel: React.FC<CustomerContextPanelProps> = ({
                 padding: "3px 8px",
                 borderRadius: "6px",
                 background: "rgba(199, 249, 0, 0.22)",
-                color: "#1F2937",
+                color: "var(--color-text-primary)",
                 fontWeight: 700,
                 border: "1px solid rgba(199, 249, 0, 0.5)",
               }}
@@ -194,12 +194,12 @@ export const CustomerContextPanel: React.FC<CustomerContextPanelProps> = ({
             onChange={(e) => setNewTagInput(e.target.value)}
             style={{
               flex: 1,
-              background: "#FFFFFF",
-              border: "1px solid rgba(30, 32, 30, 0.12)",
+              background: "var(--color-surface-pure)",
+              border: "1px solid var(--color-border-subtle)",
               borderRadius: "8px",
               padding: "6px 10px",
               fontSize: "0.75rem",
-              color: "#1F2937",
+              color: "var(--color-text-primary)",
               outline: "none",
             }}
           />
@@ -214,7 +214,7 @@ export const CustomerContextPanel: React.FC<CustomerContextPanelProps> = ({
         <div className={styles.cardTitle}>
           <Target size={16} /> Sales Lead
         </div>
-        <p style={{ fontSize: "0.75rem", color: "#6B7280" }}>
+        <p style={{ fontSize: "0.75rem", color: "var(--color-text-secondary)" }}>
           Capture high-intent inquiries directly into the sales pipeline.
         </p>
         <Button size="sm" variant="outline" onClick={onConvertLead}>
@@ -228,17 +228,17 @@ export const CustomerContextPanel: React.FC<CustomerContextPanelProps> = ({
           <ShoppingBag size={16} /> Recent Orders
         </div>
         {isLoadingOrders ? (
-          <div style={{ fontSize: "0.75rem", color: "#6B7280" }}>Loading orders...</div>
+          <div style={{ fontSize: "0.75rem", color: "var(--color-text-secondary)" }}>Loading orders...</div>
         ) : customerOrders.length === 0 ? (
-          <div style={{ fontSize: "0.75rem", color: "#6B7280" }}>No past orders found.</div>
+          <div style={{ fontSize: "0.75rem", color: "var(--color-text-secondary)" }}>No past orders found.</div>
         ) : (
           customerOrders.map((ord) => (
             <div key={ord.id} className={styles.orderItemSnippet}>
               <div>
-                <div style={{ fontWeight: 700, color: "#1F2937" }}>
+                <div style={{ fontWeight: 700, color: "var(--color-text-primary)" }}>
                   {ord.order_number}
                 </div>
-                <div style={{ fontSize: "0.6875rem", color: "#6B7280", marginTop: "2px" }}>
+                <div style={{ fontSize: "0.6875rem", color: "var(--color-text-secondary)", marginTop: "2px" }}>
                   ৳{ord.grand_total} • {ord.status}
                 </div>
               </div>

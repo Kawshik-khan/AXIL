@@ -40,7 +40,7 @@
   justify-content: center;
   flex-shrink: 0;
   background: var(--color-lime-glow, rgba(199, 249, 0, 0.25));
-  color: #1a1a1a;
+  color: var(--color-text-primary);
 }
 
 .pageTitle {
@@ -204,7 +204,7 @@
 
 .tabButton:hover {
   color: var(--color-text-primary, #202124);
-  background: rgba(0, 0, 0, 0.03);
+  background: var(--color-track);
 }
 
 .activeTab {
@@ -218,13 +218,13 @@
   font-size: 10px;
   padding: 2px 6px;
   border-radius: 6px;
-  background: rgba(0, 0, 0, 0.05);
+  background: var(--color-track);
   font-weight: 600;
 }
 
 .activeTab .tabBadge {
   background: var(--color-lime-glow, rgba(199, 249, 0, 0.25));
-  color: #1a1a1a;
+  color: var(--color-text-primary);
 }
 
 .searchBox {
@@ -279,7 +279,7 @@
 .connectorCard:hover {
   transform: translateY(-3px);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.06);
-  border-color: rgba(30, 32, 30, 0.16);
+  border-color: var(--color-border-medium);
 }
 
 .cardActiveBorder {
@@ -347,7 +347,7 @@
   font-size: 10px;
   padding: 2px 6px;
   border-radius: 6px;
-  background: rgba(0, 0, 0, 0.04);
+  background: var(--color-track);
   color: var(--color-text-secondary, #70736F);
   font-weight: 500;
 }
@@ -370,14 +370,14 @@
 
 .statusActive {
   background: rgba(76, 175, 112, 0.12);
-  color: #2E7D32;
+  color: var(--color-success-ink);
   border: 1px solid rgba(76, 175, 112, 0.25);
 }
 
 .statusNotConfigured {
-  background: rgba(0, 0, 0, 0.04);
+  background: var(--color-track);
   color: var(--color-text-muted, #9A9D98);
-  border: 1px solid rgba(0, 0, 0, 0.08);
+  border: 1px solid var(--color-border-subtle);
 }
 
 .statusTesting {
@@ -388,7 +388,7 @@
 
 .statusError {
   background: rgba(239, 127, 130, 0.15);
-  color: #C62828;
+  color: var(--color-danger-ink);
   border: 1px solid rgba(239, 127, 130, 0.3);
 }
 
@@ -556,7 +556,7 @@
 }
 
 .requiredStar {
-  color: #E53935;
+  color: var(--color-danger-ink);
   margin-left: 2px;
 }
 
@@ -680,13 +680,13 @@
 .testBannerSuccess {
   background: rgba(76, 175, 112, 0.1);
   border: 1px solid rgba(76, 175, 112, 0.25);
-  color: #1B5E20;
+  color: var(--color-success-ink);
 }
 
 .testBannerError {
   background: rgba(239, 127, 130, 0.1);
   border: 1px solid rgba(239, 127, 130, 0.25);
-  color: #B71C1C;
+  color: var(--color-danger-ink);
 }
 
 .testBannerTesting {
@@ -969,4 +969,13 @@
   background: var(--color-warning-bg);
   color: var(--color-warning);
   border: 1px solid var(--color-warning-bg);
+}
+
+/* Always-dark surfaces: status inks use their dark-theme values here in both themes */
+.portalBanner {
+  --color-lime-ink: var(--ink-on-dark-lime);
+  --color-info-ink: var(--ink-on-dark-info);
+  --color-success-ink: var(--ink-on-dark-success);
+  --color-warning-ink: var(--ink-on-dark-warning);
+  --color-danger-ink: var(--ink-on-dark-danger);
 }

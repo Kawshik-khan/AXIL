@@ -541,11 +541,11 @@ export default function ConnectorPage() {
       case "VECTOR_DB":
         return <Layers size={20} style={{ color: "#9C27B0" }} />;
       case "REDIS_CACHE":
-        return <Flame size={20} style={{ color: "#E53935" }} />;
+        return <Flame size={20} style={{ color: "var(--color-danger-ink)" }} />;
       case "SOCIAL_ADS":
         return <Share2 size={20} style={{ color: "#0084FF" }} />;
       case "LOGISTICS":
-        return <Truck size={20} style={{ color: "#E65100" }} />;
+        return <Truck size={20} style={{ color: "var(--color-warning-ink)" }} />;
       case "DATABASE":
         return <Database size={20} style={{ color: "#00897B" }} />;
       case "ENTERPRISE":
@@ -689,7 +689,7 @@ export default function ConnectorPage() {
           <>
             <div className={styles.metricCard}>
               <span className={styles.metricLabel}>
-                <Truck size={13} style={{ color: "#E65100" }} /> Parcel Delivery
+                <Truck size={13} style={{ color: "var(--color-warning-ink)" }} /> Parcel Delivery
               </span>
               <div className={styles.metricValueRow}>
                 <span className={styles.metricValue}>
@@ -1361,7 +1361,7 @@ export default function ConnectorPage() {
                     style={{
                       background: "transparent",
                       border: "none",
-                      color: "#C62828",
+                      color: "var(--color-danger-ink)",
                       fontSize: "12px",
                       cursor: "pointer",
                       padding: "6px 8px",

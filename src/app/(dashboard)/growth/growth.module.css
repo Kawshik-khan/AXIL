@@ -47,7 +47,7 @@
 .navTabs {
   display: inline-flex;
   gap: 4px;
-  background: rgba(255, 255, 255, 0.85);
+  background: var(--glass-bg);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   padding: 4px;
@@ -72,7 +72,7 @@
 
 .navTab:hover {
   color: var(--color-text-primary, #202124);
-  background: rgba(0, 0, 0, 0.04);
+  background: var(--color-track);
 }
 
 .navTabActive {
@@ -264,31 +264,31 @@
 
 .statusRunning {
   background: rgba(199, 249, 0, 0.2);
-  color: #4d6100;
+  color: var(--color-lime-ink);
   border: 1px solid rgba(199, 249, 0, 0.5);
 }
 
 .statusReview {
   background: rgba(245, 158, 11, 0.14);
-  color: #b45309;
+  color: var(--color-warning-ink);
   border: 1px solid rgba(245, 158, 11, 0.3);
 }
 
 .statusScheduled {
   background: rgba(59, 130, 246, 0.14);
-  color: #1d4ed8;
+  color: var(--color-info-ink);
   border: 1px solid rgba(59, 130, 246, 0.3);
 }
 
 .statusDraft {
   background: rgba(107, 114, 128, 0.14);
-  color: #4b5563;
+  color: var(--color-text-secondary);
   border: 1px solid rgba(107, 114, 128, 0.3);
 }
 
 .statusActive {
   background: rgba(16, 185, 129, 0.15);
-  color: #047857;
+  color: var(--color-success-ink);
   border: 1px solid rgba(16, 185, 129, 0.3);
 }
 
@@ -328,12 +328,12 @@
 .btnSecondary:hover {
   background: var(--color-surface-soft, #FAFBF8);
   border-color: var(--color-border-medium, rgba(30, 32, 30, 0.18));
-  color: #000000;
+  color: var(--color-text-primary);
 }
 
 .btnDanger {
   background: rgba(239, 68, 68, 0.12);
-  color: #dc2626;
+  color: var(--color-danger-ink);
   border: 1px solid rgba(239, 68, 68, 0.3);
 }
 
@@ -369,7 +369,7 @@
 }
 
 .table tr:hover td {
-  background: rgba(0, 0, 0, 0.015);
+  background: var(--color-track);
 }
 
 /* Item List */
@@ -472,7 +472,7 @@
   position: absolute;
   left: 0;
   right: 0;
-  border-bottom: 1px dashed rgba(0, 0, 0, 0.06);
+  border-bottom: 1px dashed var(--color-border-subtle);
   pointer-events: none;
 }
 
@@ -481,7 +481,7 @@
   right: 2px;
   font-size: 10px;
   font-weight: 600;
-  color: #9ca3af;
+  color: var(--color-text-muted);
   transform: translateY(-50%);
 }
 
@@ -533,19 +533,19 @@
   width: 100%;
   max-width: 44px;
   height: 120px;
-  background: rgba(0, 0, 0, 0.035);
+  background: var(--color-track);
   border-radius: 10px 10px 4px 4px;
   display: flex;
   align-items: flex-end;
   position: relative;
   overflow: hidden;
-  border: 1px solid rgba(0, 0, 0, 0.04);
+  border: 1px solid var(--color-border-subtle);
   transition: background 0.2s ease, border-color 0.2s ease;
 }
 
 .barCol:hover .barTrack {
-  background: rgba(0, 0, 0, 0.055);
-  border-color: rgba(0, 0, 0, 0.1);
+  background: var(--color-track);
+  border-color: var(--color-border-subtle);
 }
 
 .barFill {
@@ -626,3 +626,13 @@
   to { opacity: 1; transform: translateY(0); }
 }
 
+
+/* Always-dark surfaces: status inks use their dark-theme values here in both themes */
+.bentoCardDark,
+.bentoCardAI {
+  --color-lime-ink: var(--ink-on-dark-lime);
+  --color-info-ink: var(--ink-on-dark-info);
+  --color-success-ink: var(--ink-on-dark-success);
+  --color-warning-ink: var(--ink-on-dark-warning);
+  --color-danger-ink: var(--ink-on-dark-danger);
+}

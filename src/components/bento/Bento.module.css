@@ -41,7 +41,7 @@
   border-color: rgba(199, 249, 0, 0.4);
   background: linear-gradient(
     180deg,
-    rgba(255, 255, 255, 1) 0%,
+    var(--color-surface-pure) 0%,
     rgba(239, 255, 173, 0.1) 100%
   );
 }

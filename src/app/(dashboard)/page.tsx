@@ -619,7 +619,7 @@ export default function DashboardPage() {
                   <span>Revenue: <strong style={{ color: "#ffffff" }}>{cur.format(activeChannel.revenueBDT)}</strong></span>
                   <span>Orders: <strong style={{ color: "#ffffff" }}>{activeChannel.orders}</strong></span>
                 </div>
-                <div style={{ display: "flex", justifyContent: "space-between", marginTop: "4px", fontSize: "11px", color: "#9ca3af" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginTop: "4px", fontSize: "11px", color: "var(--color-text-muted)" }}>
                   <span>{activeChannel.agentStatus}</span>
                 </div>
               </div>
@@ -803,7 +803,7 @@ export default function DashboardPage() {
                     padding: "3px 10px",
                     borderRadius: "12px",
                     background: "rgba(239, 68, 68, 0.12)",
-                    color: "#dc2626",
+                    color: "var(--color-danger-ink)",
                     fontSize: "11px",
                     fontWeight: 800,
                     letterSpacing: "0.02em",
