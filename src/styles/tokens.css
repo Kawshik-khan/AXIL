@@ -61,6 +61,17 @@
   --color-brand-rocket: #8C3494;
   --color-brand-mark-text: #FFFFFF;
 
+  /* Connector brand marks (Connectors page tiles); shades chosen so white text keeps 4.5:1 */
+  --color-brand-facebook:  #0B5FCC;
+  --color-brand-whatsapp:  #0B6E57;
+  --color-brand-telegram:  #1A6FA3;
+  --color-brand-tiktok:    #111111;
+  --color-brand-google:    #1A5FC8;
+  --color-brand-pathao:    #C8102E;
+  --color-brand-redx:      #B8141B;
+  --color-brand-dhl:       #FFCC00;
+  --color-brand-dhl-text:  #B0030F;
+
   /* CommerceOS Hub mark: fixed in every theme (the app-icon tile is always ink) */
   --color-logo-tile:  #141512;
   --color-logo-body:  #F3F5EC;
