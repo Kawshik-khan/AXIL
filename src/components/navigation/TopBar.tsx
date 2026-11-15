@@ -3,8 +3,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Search, Bell, LogOut, Settings, UserCheck, Shield, Sun, Moon } from "lucide-react";
-import { Badge } from "../ui/Badge/Badge";
+import { Search, Bell, LogOut, Settings, UserCheck, Shield, Sun, Moon, ChevronDown } from "lucide-react";
 import { useMerchantTheme } from "./merchant-theme";
 import styles from "./TopBar.module.css";
 
@@ -46,6 +45,11 @@ export const TopBar: React.FC<TopBarProps> = ({
       router.refresh();
     }
   };
+
+  // A colour of their own for each person, the same on every visit (hue from the name)
+  const hue = [...userName].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) % 360, 7);
+  const avatarStyle = { background: `linear-gradient(135deg, hsl(${hue} 62% 46%), hsl(${(hue + 48) % 360} 68% 34%))` };
+  const roleLabel = userRole.charAt(0).toUpperCase() + userRole.slice(1).toLowerCase().replace(/_/g, " ");
 
   const initials = userName
     .split(" ")
@@ -100,16 +104,28 @@ export const TopBar: React.FC<TopBarProps> = ({
             aria-expanded={isDropdownOpen}
             aria-haspopup="true"
           >
-            <div className={styles.avatar}>{initials}</div>
-            <span className={styles.userName}>{userName}</span>
-            <Badge variant={userRole.toLowerCase() as any}>{userRole}</Badge>
+            <span className={styles.avatar} style={avatarStyle} aria-hidden="true">
+              {initials}
+            </span>
+            <span className={styles.profileText}>
+              <span className={styles.userName}>{userName}</span>
+              <span className={styles.userRole}>{roleLabel}</span>
+            </span>
+            <ChevronDown size={16} className={`${styles.chevron} ${isDropdownOpen ? styles.chevronOpen : ""}`} aria-hidden="true" />
           </button>
 
           {isDropdownOpen && (
             <div className={styles.dropdown} role="menu">
-              <div style={{ padding: "8px 12px" }}>
-                <p style={{ fontWeight: 600, fontSize: "13px" }}>{userName}</p>
-                <p style={{ fontSize: "11px", color: "var(--color-text-muted)" }}>Role: {userRole}</p>
+              <div className={styles.dropdownHeader}>
+                <span className={`${styles.avatar} ${styles.avatarLarge}`} style={avatarStyle} aria-hidden="true">
+                  {initials}
+                </span>
+                <span className={styles.profileText}>
+                  <span className={styles.userName}>{userName}</span>
+                  <span className={styles.userRole}>
+                    {roleLabel} · {tenantName}
+                  </span>
+                </span>
               </div>
               <div className={styles.dropdownDivider} />
               <Link

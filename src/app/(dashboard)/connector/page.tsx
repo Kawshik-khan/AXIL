@@ -11,24 +11,16 @@ import {
   Search,
   CheckCircle2,
   AlertCircle,
-  Clock,
   ExternalLink,
   Copy,
   Eye,
   EyeOff,
-  Cpu,
   RefreshCw,
   X,
   BookOpen,
-  ArrowRight,
   ShieldCheck,
-  Server,
   Zap,
-  Layers,
-  Flame,
   Building2,
-  Send,
-  Wallet,
 } from "lucide-react";
 import {
   ConnectorCategory,
@@ -40,6 +32,7 @@ import { LoadingSkeleton, ErrorState, EmptyState } from "@/components/ui/States/
 import { Modal } from "@/components/ui/Modal/Modal";
 import { isMetaPopupMessage, pickerUrlOf, startMetaLoginPopup, type SignInProvider } from "@/components/social/meta-login-popup";
 import { ConnectionDrawer } from "@/components/connectors/ConnectionDrawer";
+import { ConnectorCard, connectorCardStyles as cardStyles, type CardAction, type CardSwitch } from "@/components/connectors/ConnectorCard";
 import type { ConnectionView, ProviderSummary } from "@/domains/connectors/connections.service";
 import type { ConnectorGoal } from "@/types/connector";
 import styles from "./connector.module.css";
@@ -54,6 +47,8 @@ const GOAL_LABEL: Record<ConnectorGoal, string> = {
   PLATFORM: "Platform",
 };
 const STORE_GOALS: ConnectorGoal[] = ["SELL_CHAT", "DELIVER", "GET_PAID", "ADS"];
+/** The order groups appear in on the store view: where you sell, how you get paid, how parcels go out, then ads. */
+const GROUP_ORDER: ConnectorGoal[] = ["SELL_CHAT", "GET_PAID", "DELIVER", "ADS"];
 
 function relativeTime(iso: string): string {
   const minutes = Math.round((Date.now() - Date.parse(iso)) / 60_000);
@@ -122,6 +117,7 @@ export default function ConnectorPage() {
   const router = useRouter();
   /** The sign-in card whose popup is opening, if any. */
   const [metaBusy, setMetaBusy] = useState<string | null>(null);
+  const [toggleBusy, setToggleBusy] = useState<string | null>(null);
   const [metaError, setMetaError] = useState<string | null>(null);
 
   // A sign-in popup reports back here; then the merchant picks what to connect on that provider's page
@@ -534,32 +530,123 @@ export default function ConnectorPage() {
   };
 
   // Render provider category icon
-  const renderCategoryIcon = (category: ConnectorCategory) => {
-    switch (category) {
-      case "AI_LLM":
-        return <Sparkles size={20} style={{ color: "#7B61FF" }} />;
-      case "VECTOR_DB":
-        return <Layers size={20} style={{ color: "#9C27B0" }} />;
-      case "REDIS_CACHE":
-        return <Flame size={20} style={{ color: "var(--color-danger-ink)" }} />;
-      case "SOCIAL_ADS":
-        return <Share2 size={20} style={{ color: "#0084FF" }} />;
-      case "LOGISTICS":
-        return <Truck size={20} style={{ color: "var(--color-warning-ink)" }} />;
-      case "DATABASE":
-        return <Database size={20} style={{ color: "#00897B" }} />;
-      case "ENTERPRISE":
-        return <Building2 size={20} style={{ color: "#F3B63F" }} />;
-      case "PAYMENTS":
-        return <Wallet size={20} style={{ color: "var(--color-accent-emerald)" }} />;
+  /** The card's status: connection health or Payments settings first, then a saved hub config, never a guess. */
+  const cardStatus = (provider: ConnectorProviderDefinition): { label: string; tone: "ok" | "warn" | "none" } => {
+    const gatewayKey = PAYMENT_GATEWAY_KEYS[provider.id];
+    const live = gatewayKey ? gatewayStatus(gatewayViews, gatewayKey) : summaryStatus(summaryMap.get(provider.id));
+    if (live) return live;
+    if (provider.status === "COMING_SOON") return { label: "Coming soon", tone: "none" };
+    const config = configMap.get(provider.id);
+    if (config?.status === "ACTIVE") {
+      return config.health_status === "UNVERIFIED" ? { label: "Saved · not verified", tone: "warn" } : { label: "Connected", tone: "ok" };
+    }
+    return { label: "Not connected", tone: "none" };
+  };
+
+  const storeView = !isAdmin || viewScope === "STORE";
+  const storeGrouped = storeView && activeCategory === "ALL" && searchQuery.trim() === "";
+
+  /** Pauses or resumes every connection of a provider (POST /api/v1/connectors/{id}/disable|enable), then reloads. */
+  const setPaused = async (provider: ConnectorProviderDefinition, connectionIds: string[], pause: boolean) => {
+    setMetaError(null);
+    setToggleBusy(provider.id);
+    try {
+      for (const id of connectionIds) {
+        const res = await fetch(`/api/v1/connectors/${encodeURIComponent(id)}/${pause ? "disable" : "enable"}`, { method: "POST" });
+        if (!res.ok) {
+          const json = await res.json().catch(() => ({}));
+          throw new Error(json?.error?.message ?? `Could not ${pause ? "pause" : "resume"} ${provider.name}.`);
+        }
+      }
+      await loadConnectors();
+    } catch (err) {
+      setMetaError(err instanceof Error ? err.message : `Could not ${pause ? "pause" : "resume"} ${provider.name}.`);
+    } finally {
+      setToggleBusy(null);
     }
   };
 
-  const renderProviderIcon = (provider: ConnectorProviderDefinition) => {
-    if (provider.id === "telegram") {
-      return <Send size={20} style={{ color: "#229ED9" }} />;
+  const renderCard = (provider: ConnectorProviderDefinition) => {
+    const status = cardStatus(provider);
+    const gatewayKey = PAYMENT_GATEWAY_KEYS[provider.id];
+    const linked = connectionsData.connections.filter((c) => c.provider_id === provider.id && c.connection_status !== "DISCONNECTED");
+    const running = linked.filter((c) => c.enabled);
+    const paused = linked.length > 0 && running.length === 0;
+    // What is connected (a Page, a number, an account); left out when it only repeats the provider's name
+    const firstName = linked[0]?.name;
+    const detail =
+      linked.length > 1
+        ? `${firstName} +${linked.length - 1}`
+        : firstName && firstName.trim().toLowerCase() !== provider.name.trim().toLowerCase()
+          ? firstName
+          : undefined;
+    const signIn = SIGN_IN_CARDS[provider.id];
+    const busy = toggleBusy === provider.id || metaBusy === provider.id;
+
+    // The real state line; nothing for a connector that isn't set up (the Connect button says it)
+    const stateText = paused
+      ? `Paused${detail ? ` · ${detail}` : ""}`
+      : status.tone !== "none"
+        ? `${status.label}${detail ? ` · ${detail}` : ""}`
+        : undefined;
+
+    let action: CardAction | null;
+    if (provider.status === "COMING_SOON") {
+      action = null;
+    } else if (provider.managed_at) {
+      const configured = Boolean(gatewayKey && gatewayViews?.[gatewayKey]?.configured);
+      action = configured
+        ? { kind: "text", label: "Manage in Payments", onClick: () => handleOpenConfigure(provider) }
+        : { kind: "pill", label: "Set up in Payments", onClick: () => handleOpenConfigure(provider) };
+    } else if (hasConnections(provider.id)) {
+      // Manage opens the drawer: details, edit, reconnect and disconnect (which confirms first)
+      action =
+        status.tone === "warn"
+          ? { kind: "text", label: "Reconnect", warn: true, onClick: () => setManageProvider(provider) }
+          : { kind: "text", label: "Manage", onClick: () => setManageProvider(provider) };
+    } else if (status.tone !== "none") {
+      action = { kind: "text", label: "Manage", onClick: () => handleOpenConfigure(provider) };
+    } else {
+      action = { kind: "pill", label: metaBusy === provider.id ? "Opening…" : "Connect", onClick: () => handleOpenConfigure(provider), disabled: busy };
     }
-    return renderCategoryIcon(provider.category);
+
+    let toggle: CardSwitch;
+    if (provider.status === "COMING_SOON") {
+      toggle = { on: false, onToggle: () => undefined, disabled: true, label: `${provider.name} isn't available yet` };
+    } else if (provider.managed_at) {
+      const on = Boolean(gatewayKey && gatewayViews?.[gatewayKey]?.enabled);
+      toggle = { on, onToggle: () => handleOpenConfigure(provider), label: `Turn ${provider.name} ${on ? "off" : "on"} in Payments` };
+    } else if (linked.length > 0) {
+      const on = running.length > 0;
+      toggle = {
+        on,
+        onToggle: () => void setPaused(provider, linked.map((c) => c.id), on),
+        disabled: busy,
+        label: on ? `Pause ${provider.name}` : `Resume ${provider.name}`,
+      };
+    } else {
+      toggle = {
+        on: false,
+        onToggle: () => handleOpenConfigure(provider),
+        disabled: busy,
+        label: signIn ? signIn.label : `Connect ${provider.name}`,
+      };
+    }
+
+    return (
+      <ConnectorCard
+        key={provider.id}
+        providerId={provider.id}
+        name={provider.name}
+        description={provider.description}
+        tone={status.tone}
+        paused={paused}
+        stateText={stateText}
+        action={action}
+        toggle={toggle}
+        onGuide={() => setDrawerProvider(provider)}
+      />
+    );
   };
 
   if (isLoading && providers.length === 0) {
@@ -600,7 +687,7 @@ export default function ConnectorPage() {
             </span>
             <h1 className={styles.pageTitle}>
               {!isAdmin || viewScope === "STORE"
-                ? "Connectors & Logistics"
+                ? "Connectors"
                 : viewScope === "INFRA"
                 ? "Cloud Infrastructure & AI Gateway Hub"
                 : "Connectors & Integrations Gateway"}
@@ -608,7 +695,7 @@ export default function ConnectorPage() {
           </div>
           <p className={styles.pageSubtitle}>
             {!isAdmin || viewScope === "STORE"
-              ? "Connect Bangladeshi parcel delivery couriers (Steadfast, Pathao, RedX, Paperfly, eCourier, DHL), omnichannel social messaging (Meta Facebook & Instagram, WhatsApp, TikTok, Telegram), and Google Ads conversion attribution."
+              ? "Connect where you sell, how you get paid and who delivers. Each card shows what's really connected."
               : "Unified multi-server gateway. Connect frontier LLM models (OpenAI, Claude, Gemini, Ollama), vector databases (Qdrant, Pinecone), Redis caching, and enterprise ERPs with AES-256-GCM encryption."}
           </p>
         </div>
@@ -940,162 +1027,43 @@ export default function ConnectorPage() {
         </div>
       </div>
 
-      {/* 12-Column Bento Grid of Connectors */}
-      <div className={styles.bentoGrid}>
-        {filteredProviders.length === 0 ? (
-          <div className={styles.emptyState}>
-            <EmptyState
-              title="No Connectors Found"
-              description={`No services matched your query "${searchQuery}". Try selecting another category tab or clearing the search.`}
-              actionText="Clear Search"
-              onAction={() => {
-                setSearchQuery("");
-                setActiveCategory("ALL");
-              }}
-            />
-          </div>
-        ) : (
-          filteredProviders.map((provider) => {
-            const config = configMap.get(provider.id);
-            const summary = summaryMap.get(provider.id);
-            const gatewayKey = PAYMENT_GATEWAY_KEYS[provider.id];
-            const live = gatewayKey ? gatewayStatus(gatewayViews, gatewayKey) : summaryStatus(summary);
-            const isConnected = live ? live.tone === "ok" : config?.status === "ACTIVE";
-
+      {/* Connector cards: grouped by what they're for in the store view, one grid otherwise */}
+      {filteredProviders.length === 0 ? (
+        <div className={styles.emptyState}>
+          <EmptyState
+            title="No connectors found"
+            description={`Nothing matched "${searchQuery}". Try another tab or clear the search.`}
+            actionText="Clear search"
+            onAction={() => {
+              setSearchQuery("");
+              setActiveCategory("ALL");
+            }}
+          />
+        </div>
+      ) : storeGrouped ? (
+        <div style={{ display: "grid", gap: "var(--space-32)" }}>
+          {GROUP_ORDER.map((goal) => {
+            const items = filteredProviders.filter((p) => p.goal === goal);
+            if (items.length === 0) return null;
+            const connectedCount = items.filter((p) => cardStatus(p).tone === "ok").length;
             return (
-              <div
-                key={provider.id}
-                className={`${styles.connectorCard} ${isConnected ? styles.cardActiveBorder : ""}`}
-              >
-                {/* Header */}
-                <div className={styles.cardHeader}>
-                  <div className={styles.providerInfo}>
-                    <div className={styles.providerIconBox}>
-                      {renderProviderIcon(provider)}
-                    </div>
-                    <div className={styles.providerDetails}>
-                      <div className={styles.providerNameRow}>
-                        <h3 className={styles.providerName}>{provider.name}</h3>
-                        {provider.badge && (
-                          <span className={styles.providerBadge}>{provider.badge}</span>
-                        )}
-                      </div>
-                      <span className={styles.categoryTag}>
-                        {!isAdmin || viewScope === "STORE" ? GOAL_LABEL[provider.goal] : provider.category.replace("_", " ")}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Status Pill */}
-                  <span
-                    className={`${styles.cardStatusPill} ${
-                      live?.tone === "warn" ? styles.statusAttention : isConnected ? styles.statusActive : styles.statusNotConfigured
-                    }`}
-                  >
-                    <span className={styles.statusDot} />
-                    {live
-                      ? live.label
-                      : isConnected
-                        ? "Active"
-                        : provider.status === "COMING_SOON"
-                          ? "Coming soon"
-                          : "Not connected"}
+              <section key={goal} className={cardStyles.group} aria-labelledby={`goal-${goal}`}>
+                <div className={cardStyles.groupHead}>
+                  <h2 id={`goal-${goal}`} className={cardStyles.groupTitle}>
+                    {GOAL_LABEL[goal]}
+                  </h2>
+                  <span className={cardStyles.groupCount}>
+                    {connectedCount} of {items.length} connected
                   </span>
                 </div>
-
-                {/* Description */}
-                <p className={styles.cardDescription}>{provider.description}</p>
-
-                {/* Active Details Snippet if Connected */}
-                {isConnected && config && (
-                  <div className={styles.activeConfigSnippet}>
-                    {config.default_model && (
-                      <div className={styles.configSnippetRow}>
-                        <span className={styles.configSnippetLabel}>Model / Version:</span>
-                        <span className={styles.configSnippetValue}>{config.default_model}</span>
-                      </div>
-                    )}
-                    {config.endpoint_url && (
-                      <div className={styles.configSnippetRow}>
-                        <span className={styles.configSnippetLabel}>Endpoint:</span>
-                        <span className={styles.configSnippetValue}>{config.endpoint_url}</span>
-                      </div>
-                    )}
-                    {typeof config.last_test_latency_ms === "number" && (
-                      <div className={styles.configSnippetRow}>
-                        <span className={styles.configSnippetLabel}>Latency:</span>
-                        <span style={{ fontWeight: 600 }}>{config.last_test_latency_ms} ms</span>
-                      </div>
-                    )}
-                    {config.health_status === "UNVERIFIED" && (
-                      <div className={styles.configSnippetRow}>
-                        <span className={styles.configSnippetLabel}>Status:</span>
-                        <span style={{ fontWeight: 600 }}>Saved, not verified with the provider</span>
-                      </div>
-                    )}
-                    {config.health_status === "HEALTHY" && (
-                      <div className={styles.configSnippetRow}>
-                        <span className={styles.configSnippetLabel}>Status:</span>
-                        <span style={{ fontWeight: 600 }}>Verified with the provider</span>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Card Actions Footer */}
-                <div className={styles.cardFooter}>
-                  <div className={styles.footerLeft}>
-                    <button
-                      type="button"
-                      className={styles.guideButton}
-                      onClick={() => setDrawerProvider(provider)}
-                    >
-                      <BookOpen size={13} /> Guide
-                    </button>
-                    {isConnected && !SIGN_IN_CARDS[provider.id] && !provider.managed_at && (
-                      <button
-                        type="button"
-                        className={styles.testPingButton}
-                        onClick={() => handleOpenConfigure(provider)}
-                        title="Run real-time handshake check"
-                      >
-                        <RefreshCw size={13} /> Ping
-                      </button>
-                    )}
-                  </div>
-
-                  <button
-                    type="button"
-                    className={`${styles.connectButton} ${
-                      isConnected ? styles.connectButtonActive : styles.connectButtonPrimary
-                    }`}
-                    onClick={() => (hasConnections(provider.id) ? setManageProvider(provider) : handleOpenConfigure(provider))}
-                    disabled={provider.status === "COMING_SOON" || metaBusy === provider.id}
-                    title={provider.status === "COMING_SOON" ? "Not available yet" : undefined}
-                  >
-                    {provider.status === "COMING_SOON"
-                      ? "Coming soon"
-                      : provider.managed_at
-                        ? gatewayKey && gatewayViews?.[gatewayKey]?.configured
-                          ? "Manage in Payments"
-                          : "Set up in Payments"
-                      : hasConnections(provider.id)
-                        ? "Manage"
-                        : SIGN_IN_CARDS[provider.id]
-                        ? metaBusy === provider.id
-                          ? "Opening…"
-                          : SIGN_IN_CARDS[provider.id].label
-                        : isConnected
-                          ? "Configure"
-                          : "Connect"}
-                    <ArrowRight size={14} />
-                  </button>
-                </div>
-              </div>
+                <div className={cardStyles.grid}>{items.map(renderCard)}</div>
+              </section>
             );
-          })
-        )}
-      </div>
+          })}
+        </div>
+      ) : (
+        <div className={cardStyles.grid}>{filteredProviders.map(renderCard)}</div>
+      )}
 
       {/* Connection detail drawer (ADR-119 P6) */}
       {manageProvider && (
