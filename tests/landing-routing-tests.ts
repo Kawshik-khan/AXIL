@@ -11,6 +11,7 @@ import { proxy, config, WORKSPACE_SESSION_COOKIES } from "@/proxy";
 import { AUTH_COOKIE_NAME } from "@/lib/security";
 import { IMPERSONATION_COOKIE_NAME } from "@/lib/impersonation";
 import { PLANS } from "@/components/marketing/plans";
+import { CONNECTOR_ROWS } from "@/components/marketing/content";
 
 let passed = 0;
 let failed = 0;
@@ -52,6 +53,11 @@ function withEnv(env: { nodeEnv: string; bypass?: string }, fn: () => void): voi
 }
 
 const read = (file: string): string => fs.readFileSync(path.join(process.cwd(), file), "utf8");
+
+/** Every component and data file of the landing page; the colour, fetch and promise checks run over all of them. */
+const PAGE_FILES = fs
+  .readdirSync(path.join(process.cwd(), "src/components/marketing"))
+  .filter((f) => /\.(tsx|ts)$/.test(f) && !f.endsWith(".d.ts"));
 
 async function main(): Promise<void> {
   console.log("\n  Landing page routing\n");
@@ -128,21 +134,53 @@ async function main(): Promise<void> {
   await runTest("the page lists only limits the platform enforces", () => {
     const catalog = read("src/domains/platform/entitlement-catalog.ts");
     // Orders per month, storage and priority support have `enforcedBy: null`: they must not be promised.
-    const page = ["Pricing", "Landing", "Faq"].map((f) => read(`src/components/marketing/${f}.tsx`)).join("\n");
+    // Comments are stripped: plans.ts explains in a comment which limits are not enforced, which is not a promise.
+    const page = PAGE_FILES.map((f) => read(`src/components/marketing/${f}`).replace(/\/\*[\s\S]*?\*\/|^\s*\/\/.*$/gm, "")).join("\n");
     assert.ok(/enforcedBy: null/.test(catalog), "this guard assumes some limits are still unenforced");
     for (const promise of [/orders per month/i, /monthly order/i, /priority support/i, /dedicated SLA/i]) {
       assert.ok(!promise.test(page), `the landing page promises ${promise}, which is not enforced`);
     }
   });
 
-  await runTest("the landing code has no raw colors and calls no API", () => {
-    for (const file of ["Landing.tsx", "Pricing.tsx", "Faq.tsx", "Figure.tsx"]) {
+  await runTest("the landing code has no raw colors and calls no API except the newsletter sign-up", () => {
+    for (const file of PAGE_FILES) {
       const src = read(`src/components/marketing/${file}`);
       assert.ok(!/#[0-9a-fA-F]{3,8}\b/.test(src), `${file} has a raw hex color`);
-      assert.ok(!/\bfetch\(/.test(src), `${file} calls fetch: the public page must not load tenant data`);
+      const fetches = src.match(/\bfetch\(/g) ?? [];
+      if (file === "SubscribeForm.tsx") {
+        // Exactly one call: a POST to the public newsletter endpoint, never a read of tenant data.
+        assert.strictEqual(fetches.length, 1, "SubscribeForm.tsx may call fetch once");
+        assert.ok(/NEWSLETTER_ENDPOINT = "\/api\/v1\/public\/newsletter"/.test(src), "SubscribeForm.tsx must post to the newsletter endpoint");
+        assert.ok(/method: "POST"/.test(src), "the newsletter call must be a POST");
+      } else {
+        assert.strictEqual(fetches.length, 0, `${file} calls fetch: the public page must not load tenant data`);
+      }
     }
     const css = read("src/components/marketing/landing.module.css").replace(/url\("data:[^"]*"\)/g, "");
     assert.ok(!/#[0-9a-fA-F]{3,8}\b|rgba?\(/.test(css), "landing.module.css has a raw color; use a token from tokens.css");
+  });
+
+  await runTest("connector statuses match STATUS.md: Meta channels and couriers are planned, Telegram and gateways in beta", () => {
+    const status = new Map(CONNECTOR_ROWS.flat().map((cn) => [cn.id, cn.status]));
+    for (const id of ["facebook", "instagram", "whatsapp", "steadfast"]) assert.strictEqual(status.get(id), "planned", `${id} must be planned`);
+    for (const id of ["telegram", "bkash", "sslcommerz"]) assert.strictEqual(status.get(id), "beta", `${id} must be beta`);
+    for (const cn of CONNECTOR_ROWS.flat()) {
+      if (cn.icon) assert.ok(fs.existsSync(path.join(process.cwd(), "public", cn.icon)), `missing icon ${cn.icon}`);
+    }
+  });
+
+  await runTest("the yearly prices are labelled as a preview", () => {
+    const pricing = read("src/components/marketing/Pricing.tsx");
+    assert.ok(/Yearly billing coming soon/.test(pricing), "the yearly toggle must say yearly billing is coming soon");
+    assert.ok(/coming soon/.test(pricing.slice(pricing.indexOf("pnote"))), "each yearly price note must say coming soon");
+  });
+
+  await runTest("the hero hands the email to sign-up without putting it in the URL", () => {
+    const hero = read("src/components/marketing/HeroRoads.tsx");
+    const register = read("src/app/(auth)/register/page.tsx");
+    assert.ok(/saveSignupEmail\(/.test(hero) && /router\.push\("\/register"\)/.test(hero), "the hero must store the email and open /register");
+    assert.ok(!/register\?/.test(hero), "the email must not travel in the URL");
+    assert.ok(/takeSignupEmail\(\)/.test(register), "the sign-up page must read the hand-off");
   });
 
   console.log(`\n  LANDING TEST SUMMARY: ${passed} PASSED, ${failed} FAILED`);

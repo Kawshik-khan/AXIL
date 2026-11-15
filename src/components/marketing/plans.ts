@@ -15,6 +15,12 @@ export interface LandingPlan {
   cta: "line" | "lime";
 }
 
+/**
+ * Yearly billing is not built yet: billing has no yearly plan versions. The pricing toggle shows this discount as a
+ * preview, always labelled "Yearly billing coming soon", so nobody is shown a price they can buy today.
+ */
+export const YEARLY_PREVIEW_DISCOUNT = 20;
+
 /** Formats a BDT amount the way the page shows it, e.g. ৳1,999. */
 export const taka = (n: number): string => `৳${Math.round(n).toLocaleString("en-US")}`;
 
