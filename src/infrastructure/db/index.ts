@@ -414,6 +414,18 @@ import {
   AutomationAuditRecord,
 } from "@/types/automation";
 
+/**
+ * A landing-page newsletter sign-up (platform scope, no tenant). Only consented addresses are stored; nothing is
+ * emailed. The id is derived from the normalised email, so one address can only ever have one record.
+ */
+export interface NewsletterSubscriptionRecord {
+  id: string;
+  email: string;
+  source: "landing";
+  consented_at: string;
+  created_at: string;
+}
+
 export interface DatabaseSchema {
   tenants: TenantRecord[];
   users: UserRecord[];
@@ -678,6 +690,8 @@ export interface DatabaseSchema {
   payment_links: PaymentLinkRecord[];
   gateway_payment_attempts: GatewayPaymentAttemptRecord[];
   billing_invoices: BillingInvoiceRecord[];
+  // Landing-page newsletter sign-ups (platform scope; JSONB documents, nothing is emailed)
+  newsletter_subscriptions: NewsletterSubscriptionRecord[];
 }
 
 /**
@@ -1611,6 +1625,7 @@ export class CommerceDatabase {
       payment_links: parsed.payment_links || [],
       gateway_payment_attempts: parsed.gateway_payment_attempts || [],
       billing_invoices: parsed.billing_invoices || [],
+      newsletter_subscriptions: parsed.newsletter_subscriptions || [],
     };
 
     if (unhydrated && unhydrated.size > 0) {
@@ -1922,6 +1937,7 @@ export class CommerceDatabase {
       payment_links: [],
       gateway_payment_attempts: [],
       billing_invoices: [],
+      newsletter_subscriptions: [],
     };
   }
 
@@ -9933,6 +9949,7 @@ export class CommerceDatabase {
       payment_links: [],
       gateway_payment_attempts: [],
       billing_invoices: [],
+      newsletter_subscriptions: [],
     };
     this.ensureDefaultSeed();
   }
@@ -11617,6 +11634,26 @@ export class CommerceDatabase {
     else this.data.billing_invoices.push(invoice);
     this.persist(["billing_invoices"]);
     return invoice;
+  }
+
+  /** Platform scope: the newsletter sign-up for an already-normalised (trimmed, lowercased) email. */
+  public findNewsletterSubscriptionByEmail(email: string): NewsletterSubscriptionRecord | undefined {
+    return (this.data.newsletter_subscriptions || []).find((s) => s.email === email);
+  }
+
+  /** Platform scope: every newsletter sign-up, newest first (for a later operator export). */
+  public getAllNewsletterSubscriptions(): NewsletterSubscriptionRecord[] {
+    return [...(this.data.newsletter_subscriptions || [])].sort((a, b) => b.created_at.localeCompare(a.created_at));
+  }
+
+  /** Adds a sign-up; an existing record for the same email or id is left as it is (idempotent). */
+  public addNewsletterSubscription(record: NewsletterSubscriptionRecord): NewsletterSubscriptionRecord {
+    if (!this.data.newsletter_subscriptions) this.data.newsletter_subscriptions = [];
+    const existing = this.data.newsletter_subscriptions.find((s) => s.id === record.id || s.email === record.email);
+    if (existing) return existing;
+    this.data.newsletter_subscriptions.push(record);
+    this.persist(["newsletter_subscriptions"]);
+    return record;
   }
 }
 

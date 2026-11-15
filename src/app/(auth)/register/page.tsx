@@ -3,6 +3,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { IsoGrid } from "@/components/marketing/IsoGrid";
+import { takeSignupEmail } from "@/components/marketing/signup-handoff";
 import { BrandLogo } from "@/components/brand/BrandLogo";
 import { LockScene } from "../LockScene";
 import styles from "../stage.module.css";
@@ -63,6 +64,12 @@ export default function RegisterPage() {
     email: useRef<HTMLInputElement>(null),
     password: useRef<HTMLInputElement>(null),
   };
+
+  // An email typed on the landing page arrives through sessionStorage (never the URL); fill it in once.
+  useEffect(() => {
+    const handedOff = takeSignupEmail();
+    if (handedOff) setEmail((current) => current || handedOff);
+  }, []);
 
   // Desktop only: on phones, focusing a field on load throws the keyboard over the page.
   useEffect(() => {
