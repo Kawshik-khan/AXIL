@@ -18,10 +18,11 @@
     "min_pass_rate": 95,
     "max_provider_error_rate": 10
   },
+  "_budget_comment": "Raised 2026-11-20 when the live eval moved from gpt-oss:120b on Ollama Cloud ($0.15/1M input) to Claude Haiku 4.5 on mwapi ($1/1M input list price). Run 44588579510 measured 14824 prompt tokens/turn, p95 29154 ms, $0.0168/case with 100% quality; the old limits were sized for the cheaper model.",
   "budget": {
-    "max_avg_prompt_tokens_per_turn": 9000,
-    "max_p95_turn_latency_ms": 12000,
-    "max_cost_per_case_usd": 0.004
+    "max_avg_prompt_tokens_per_turn": 18000,
+    "max_p95_turn_latency_ms": 35000,
+    "max_cost_per_case_usd": 0.02
   },
   "bola_cases": [
     "R06",
