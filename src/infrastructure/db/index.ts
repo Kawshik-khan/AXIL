@@ -8306,6 +8306,19 @@ export class CommerceDatabase {
     return artifact;
   }
 
+  /** Marks a task's artifacts verified; called only after the verifier accepted that task's output. */
+  public markWorkflowArtifactsVerified(tenantId: string, workflowId: string, taskId: string): number {
+    let changed = 0;
+    for (const artifact of this.data.workflow_artifacts) {
+      if (artifact.tenant_id === tenantId && artifact.workflow_id === workflowId && artifact.task_id === taskId && !artifact.is_verified) {
+        artifact.is_verified = true;
+        changed++;
+      }
+    }
+    if (changed > 0) this.persist(["workflow_artifacts"]);
+    return changed;
+  }
+
   // --- Checkpoints ---
   public getWorkflowCheckpoints(tenantId: string, workflowId: string): WorkflowCheckpoint[] {
     return this.data.workflow_checkpoints
