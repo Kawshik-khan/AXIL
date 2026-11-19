@@ -19,7 +19,7 @@ import { resetRateLimitsForTesting } from "@/lib/rate-limit";
 import { alertsWebhookSecret, resetAlertsBotForTesting, secretForAlertsToken } from "@/domains/notifications/alerts-bot";
 import { OwnerAlertService, deliverAfter } from "@/domains/notifications/owner-alerts.service";
 import { answerTelegramQuestionsOnce } from "@/domains/ai/owner-assistant/telegram-worker";
-import { answerQuestion, ownerPrincipalFor } from "@/domains/ai/owner-assistant/owner-assistant.service";
+import { answerQuestion, ownerPrincipalFor, saveTurn } from "@/domains/ai/owner-assistant/owner-assistant.service";
 import { runOwnerTool, toolsFor } from "@/domains/ai/owner-assistant/owner-tools";
 import { checkGrounding } from "@/domains/ai/owner-assistant/grounding";
 import { resolvePeriod } from "@/domains/ai/owner-assistant/periods";
@@ -603,6 +603,64 @@ async function main() {
     const r = await runOwnerTool(principal, "get_returns_summary", { period: "today" });
     const reasons = JSON.stringify(r.result.top_reasons);
     assert.ok(!reasons.includes("223344") && reasons.includes("[number]"), reasons);
+  });
+
+  // ---- PR #83 review ----
+  await runTest("PR #83 review: the sales summary counts cancelled orders (left out of revenue) and periods don't share a midnight order", async () => {
+    const before = await runOwnerTool(principal, "get_sales_summary", { period: "today" });
+    const cancelled = await order(1, "+8801711000009");
+    db.updateOrderStatus(T, cancelled.id, "CANCELLED");
+    const after = await runOwnerTool(principal, "get_sales_summary", { period: "today" });
+    assert.strictEqual(Number(after.result.cancelled), Number(before.result.cancelled) + 1, "the cancellation is counted");
+    assert.strictEqual(Number(after.result.orders), Number(before.result.orders) + 1, "and the order with it");
+    assert.strictEqual(after.result.revenue_bdt, before.result.revenue_bdt, "but not its revenue");
+
+    // An order at exactly today's local midnight belongs to today, not also to yesterday
+    const boundary = await order(1, "+8801711000010");
+    const midnight = resolvePeriod("today", "Asia/Dhaka").from;
+    const stored = db.findOrderById(T, boundary.id)!;
+    stored.created_at = midnight;
+    const yesterday = await runOwnerTool(principal, "get_sales_summary", { period: "yesterday" });
+    const today = await runOwnerTool(principal, "get_sales_summary", { period: "today" });
+    const inToday = Number(today.result.orders) - Number(after.result.orders);
+    assert.strictEqual(inToday, 1, "counted today");
+    assert.strictEqual(yesterday.result.orders, 0, "not counted yesterday");
+    assert.strictEqual(today.result.days, 1, "each result names its length in days");
+  });
+
+  await runTest("PR #83 review: a figure typed into the question is not a grounded number", async () => {
+    assert.strictEqual(checkGrounding("Yes, you sold ৳90,000 today.", [{ revenue_bdt: 4500 }]).grounded, false);
+    const provider = new ScriptedProvider([
+      () => ({ content: "Yes, you sold ৳90,000 today." }),
+      () => ({ content: "Correct, ৳90,000." }),
+    ]);
+    const previous = modelRouter.getActiveProvider("TIER_1_FAST").provider;
+    modelRouter.setPrimaryProvider(provider);
+    try {
+      const result = await answerQuestion(principal, "We sold ৳90,000 today, right?", { liveModel: true });
+      assert.strictEqual(result.mode, "BASIC", "the repeated question figure fails grounding");
+      assert.ok(!result.answer.includes("90,000"), result.answer);
+    } finally {
+      modelRouter.setPrimaryProvider(previous);
+    }
+  });
+
+  await runTest("PR #83 review: a chat forgotten while an answer is being worked out stays forgotten", async () => {
+    const pending = db.insertOwnerAssistantTurn({
+      id: `oat_forget_${stamp}`,
+      tenant_id: T,
+      channel: "TELEGRAM",
+      chat_key: `tg:${CHAT}`,
+      user_id: shop.user.id,
+      question: "sales today?",
+      status: "ANSWERING",
+      created_at: new Date().toISOString(),
+    });
+    db.deleteOwnerAssistantTurns(T, `tg:${CHAT}`); // /forget arrives meanwhile
+    const result = await answerQuestion(principal, "sales today?");
+    const saved = saveTurn({ tenantId: T, channel: "TELEGRAM", chatKey: `tg:${CHAT}`, userId: shop.user.id, question: "sales today?", result, existingTurnId: pending.id, startedAt: Date.now() });
+    assert.strictEqual(saved, undefined, "nothing is stored for a forgotten turn");
+    assert.strictEqual(db.getOwnerAssistantTurns(T, `tg:${CHAT}`).length, 0, "the chat stays empty");
   });
 
   await runTest("settings: the new alerts and assistant settings are strict and show in GET", async () => {

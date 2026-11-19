@@ -157,7 +157,7 @@ export async function answerQuestion(pr: OwnerPrincipal, rawQuestion: string, op
 
       const answer = (res.content || "").trim();
       if (!answer) break;
-      const check = checkGrounding(answer, results, question);
+      const check = checkGrounding(answer, results);
       if (check.grounded) {
         return { answer: cap(answer, MAX_ANSWER_CHARS), mode: "LIVE", toolsUsed, ungrounded: [], usage };
       }
@@ -196,7 +196,7 @@ export function saveTurn(input: {
   result: AnswerResult;
   existingTurnId?: string;
   startedAt: number;
-}): OwnerAssistantTurnRecord {
+}): OwnerAssistantTurnRecord | undefined {
   const now = new Date().toISOString();
   const { result } = input;
   let runId: string | undefined;
@@ -255,8 +255,9 @@ export function saveTurn(input: {
     error_code: undefined,
   };
   if (input.existingTurnId) {
-    const updated = db.updateOwnerAssistantTurn(input.tenantId, input.existingTurnId, fields);
-    if (updated) return updated;
+    // The pending turn is gone: the chat was forgotten (/forget) while this answer was being worked out. Nothing is
+    // stored and the caller sends nothing, so a forgotten chat can't come back (PR #83 review).
+    return db.updateOwnerAssistantTurn(input.tenantId, input.existingTurnId, fields);
   }
   return db.insertOwnerAssistantTurn({
     id: `oat_${randomUUID().replace(/-/g, "").slice(0, 20)}`,

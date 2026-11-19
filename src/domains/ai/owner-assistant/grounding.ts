@@ -1,7 +1,8 @@
 /**
  * Grounding check for Owner Assistant answers (ADR-127): every number in a model-written answer must be a number some
- * tool returned in that turn (or one the owner wrote in the question). Revenue, counts and stock come from the store,
- * never from the model. Bangla digits and thousands separators are normalised first.
+ * tool returned in that turn. Numbers in the owner's question don't count: a figure typed into a question ("we sold
+ * ৳90,000 today, right?") must not come back as the shop's figure (PR #83 review). Revenue, counts and stock come
+ * from the store, never from the model or the question. Bangla digits and thousands separators are normalised first.
  */
 
 const BANGLA_DIGITS = "০১২৩৪৫৬৭৮৯";
@@ -43,9 +44,9 @@ export interface GroundingResult {
  * Checks an answer against the tool results of its turn. List markers at the start of a line ("1." / "2)") are not
  * claims and are skipped.
  */
-export function checkGrounding(answer: string, toolResults: unknown[], question = ""): GroundingResult {
+export function checkGrounding(answer: string, toolResults: unknown[]): GroundingResult {
   const allowed = new Set<number>();
-  for (const n of [...numbersInValue(toolResults), ...numbersIn(question)]) for (const v of variants(n)) allowed.add(v);
+  for (const n of numbersInValue(toolResults)) for (const v of variants(n)) allowed.add(v);
 
   const ungrounded: string[] = [];
   const text = normaliseDigits(answer).replace(/^\s*\d{1,2}[.)]\s/gm, " ");

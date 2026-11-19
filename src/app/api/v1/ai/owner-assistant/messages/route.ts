@@ -13,7 +13,7 @@ import {
   ownerPrincipalFor,
   saveTurn,
 } from "@/domains/ai/owner-assistant/owner-assistant.service";
-import { ForbiddenError } from "@/lib/errors";
+import { AppError, ForbiddenError } from "@/lib/errors";
 
 /**
  * Owner Assistant chat on the dashboard (ADR-127). Each person has their own chat (`user:<id>`); the tenant and the
@@ -64,6 +64,7 @@ async function handlePOST(request: Request) {
       async () => saveTurn({ tenantId: context.tenant.id, channel: "DASHBOARD", chatKey, userId: context.user.id, question, result, startedAt }),
       () => true,
     );
+    if (!turn) throw new AppError("OWNER_ASSISTANT_NOT_SAVED", "The answer could not be saved. Please ask again.", 500);
     return apiSuccess({ turn: view(turn), note: result.note ?? null }, undefined, 201);
   } catch (err) {
     return apiError(err);

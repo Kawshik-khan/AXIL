@@ -69,8 +69,8 @@ export async function answerTelegramQuestionsOnce(limit = TURNS_PER_PASS): Promi
       const result: AnswerResult = await answerQuestion(principal, turn.question, { history, deadlineMs: startedAt + ANSWER_BUDGET_MS });
 
       // Saved before sending: a crash after this can lose the reply but never send it twice
-      await db.unit(async () => {
-        saveTurn({
+      const saved = await db.unit(async () => {
+        const stored = saveTurn({
           tenantId: turn.tenant_id,
           channel: "TELEGRAM",
           chatKey: turn.chat_key,
@@ -80,8 +80,14 @@ export async function answerTelegramQuestionsOnce(limit = TURNS_PER_PASS): Promi
           existingTurnId: turn.id,
           startedAt,
         });
-        db.updateOwnerAssistantTurn(turn.tenant_id, turn.id, { error_code: "REPLY_PENDING" });
+        if (stored) db.updateOwnerAssistantTurn(turn.tenant_id, turn.id, { error_code: "REPLY_PENDING" });
+        return stored;
       }, () => true);
+      if (!saved) {
+        // Forgotten (/forget) while it was being answered: not stored, not sent
+        stats.failed++;
+        continue;
+      }
       const sent = await NotificationService.replyInChat(turn.tenant_id, chatId, result.answer, turn.telegram_message_id);
       await db.unit(async () => {
         db.updateOwnerAssistantTurn(turn.tenant_id, turn.id, {

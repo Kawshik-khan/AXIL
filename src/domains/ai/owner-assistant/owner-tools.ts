@@ -11,7 +11,7 @@ import { inventoryRepository } from "@/domains/inventory/inventory.repository";
 import { PERMISSIONS, type Permission } from "@/lib/permissions";
 import type { LLMToolDefinition } from "@/domains/ai/providers/llm-provider.interface";
 import type { Order, OrderItem } from "@/types/commerce";
-import { PERIODS, PeriodSchema, resolvePeriod, type PeriodWindow } from "./periods";
+import { PERIODS, PeriodSchema, periodDays, resolvePeriod, type PeriodWindow } from "./periods";
 
 export interface OwnerPrincipal {
   tenantId: string;
@@ -49,10 +49,12 @@ const PeriodLimitInput = z.object({ period: PeriodSchema.default("last_7_days"),
 const LimitInput = z.object({ limit: z.number().int().min(1).max(10).default(5) }).strict();
 const NoInput = z.object({}).strict();
 
-const describe = (w: PeriodWindow) => ({ period: w.period, from_date: w.from_date, to_date: w.to_date });
+/** The period, its dates and its length in days (so "last 7 days" in an answer is a tool number). */
+const describe = (w: PeriodWindow) => ({ period: w.period, from_date: w.from_date, to_date: w.to_date, days: periodDays(w) });
 
 async function ordersIn(pr: OwnerPrincipal, from: string, to: string): Promise<Order[]> {
-  return orderRepository.findInWindow(pr.tenantId, from, to);
+  // Cancelled orders included (counted as cancelled, left out of revenue); [from, to) so adjacent periods never share an order
+  return orderRepository.findInWindow(pr.tenantId, from, to, { includeCancelled: true, endExclusive: true });
 }
 
 async function itemsOf(pr: OwnerPrincipal, orderIds: string[]): Promise<OrderItem[]> {
@@ -133,7 +135,7 @@ export const OWNER_TOOLS: Record<string, OwnerTool> = {
         .sort((x, y) => y.units - x.units || y.sales_bdt - x.sales_bdt)
         .slice(0, input.limit as number)
         .map((r, i) => ({ rank: i + 1, product: r.name, sku: r.sku, units: r.units, sales_bdt: round(r.sales_bdt, 2) }));
-      return { ...describe(w), currency: "BDT", orders_counted: live.length, products: ranked };
+      return { ...describe(w), currency: "BDT", orders_counted: live.length, limit: input.limit as number, products: ranked };
     },
   },
 
@@ -165,7 +167,7 @@ export const OWNER_TOOLS: Record<string, OwnerTool> = {
           };
         })
         .sort((a, b) => (a.days_of_stock_left ?? Number.POSITIVE_INFINITY) - (b.days_of_stock_left ?? Number.POSITIVE_INFINITY) || a.available - b.available);
-      return { low_stock_items: low.length, sold_out_items: rows.filter((r) => r.sold_out).length, items: rows.slice(0, input.limit as number) };
+      return { low_stock_items: low.length, sold_out_items: rows.filter((r) => r.sold_out).length, limit: input.limit as number, sales_window_days: 30, items: rows.slice(0, input.limit as number) };
     },
   },
 
