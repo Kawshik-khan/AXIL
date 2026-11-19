@@ -13,6 +13,7 @@ import { InstagramAdapter } from "./adapters/instagram.adapter";
 import { WhatsAppAdapter } from "./adapters/whatsapp.adapter";
 import { WebsiteChatAdapter } from "./adapters/website-chat.adapter";
 import { TelegramAdapter } from "./adapters/telegram.adapter";
+import { platformAlertsBotId, telegramBotIdOf, workspaceAlertsBotToken } from "@/domains/notifications/alerts-bot";
 import { assertWithinLimit } from "@/lib/safety-gate";
 
 /** Channel types whose inbound webhooks are routed by `provider_account_id` (Page id / WhatsApp phone number id). */
@@ -146,6 +147,14 @@ export class ChannelService {
   public static assertTelegramBotAvailable(tenantId: string, connectorId: string | undefined, rawToken: string): string {
     const botId = rawToken.trim().split(":")[0].trim();
     if (!/^\d{3,20}$/.test(botId)) throw new BadRequestError("The Telegram bot token is malformed.");
+    // Two bots, two roles (ADR-128): a bot that sends owner alerts (the platform bot or any workspace's alerts bot)
+    // never answers customers, so owner figures and customer chats can't share one inbox
+    const ownerBot =
+      botId === platformAlertsBotId() ||
+      db.getAllNotificationSettings().some((r) => (r.bot_id ?? telegramBotIdOf(workspaceAlertsBotToken(r) ?? "")) === botId);
+    if (ownerBot) {
+      throw new ConflictError("This bot sends owner alerts. Customers need a bot of their own: create a second bot in @BotFather.");
+    }
     const currentChannel = connectorId
       ? db.getConnectedChannels(tenantId).find((c) => c.connector_id === connectorId)
       : undefined;

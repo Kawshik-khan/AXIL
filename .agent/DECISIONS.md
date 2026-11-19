@@ -2146,3 +2146,82 @@ a merchant account with Payment Gateway access can look a transaction up by id (
 - A customer who pays by checkout and submits the same TrxID by hand before the callback arrives is stopped only by
   the transaction-type check (wording unverified); the money still counts once.
 - `payer_last4` is new stored customer data, visible to staff with payments.read.
+
+## ADR-127: Owner Assistant — Business Q&A and Event Alerts for the Shop Owner
+
+**Date**: 2026-11-19 · **Status**: Accepted (built; tested offline with a stub model and a fake Telegram; no live model, bot or WhatsApp) · **Builds on**: ADR-110, ADR-111
+**Note**: numbered 127 because ADR-125 and ADR-126 are taken by unmerged work (the paywall in the main checkout, a
+billing decision and the orchestrator effect gate in other worktrees); renumber when those merge.
+
+### Context
+Owners asked to check their shop from their phone ("how much did I sell today?", "what is low on stock?") and to hear
+about things that need them now (a customer waiting for a person, a big order, a failed online payment). The Telegram
+alerts bot already links one chat per workspace with a one-time code and sends four scheduled alerts; there was no way
+to ask it anything, and no event-driven alert.
+
+### Decision
+1. **Read-only assistant, own agent.** `OWNER_ASSISTANT` (`src/domains/ai/owner-assistant/`) is separate from the
+   customer agent: different principal, prompt and tools. Seven read-only tools (sales summary with comparison, top
+   products, low stock with days of cover, delivery issues, returns, unreconciled COD, open escalations), each with a
+   strict Zod input, the tenant from the principal only, and a permission; the model is offered only the tools the
+   person's current role allows. Changes and percentages are computed by the tools, never by the model.
+2. **Grounded numbers.** Every number in a model answer must appear in that turn's tool results (Bangla digits and
+   separators normalised). An ungrounded answer is retried once with the offending numbers named, then replaced by the
+   offline answer. No model configured, the AI budget spent, or a provider failure also give the offline answer: keyword
+   routing (English, Banglish, Bangla) and fixed wording over the same tools, marked `BASIC`.
+3. **No model call under the store lock.** `answerQuestion` never writes; the dashboard POST is `{ unit: false }` and
+   saves in one short unit. A Telegram question is stored PENDING by the webhook and answered by the background worker
+   (customer-agent worker loop), which re-checks that the chat is still linked and that the person who linked it is
+   still an active member with `ai.run`, answers as that person, saves the answer, then sends it (a crash can lose a
+   reply but never send it twice).
+4. **Who can ask where.** Dashboard: each member has their own chat (`ai.run`). Telegram: only the linked chat of a
+   workspace; a chat linked to several workspaces gets no answers; group chats only when `group_questions` is on (off by
+   default) and the bot is mentioned or replied to. 20 questions per chat or user per 10 minutes. `/forget` and the
+   dashboard's Clear delete a chat. Questions and answers are kept 30 days.
+5. **Event alerts through an outbox.** `chat_escalated` (on by default), `new_order_high_value` (threshold in settings,
+   default ৳5,000) and `payment_failed` (a gateway-reported failure, not a cancelled checkout) are queued in the same
+   unit as their event, once per dedupe key, only when wanted, and sent by the worker: claimed before the Telegram call,
+   and an alert left mid-send is marked FAILED, never re-sent. Quiet hours (shop timezone) defer delivery. Alert texts
+   carry no customer names, phone numbers or escalation reasons, because the linked chat may be a group.
+
+### Consequences
+- The owner can ask from the dashboard ("Ask your shop") and the linked Telegram chat; numbers are the store's.
+- Model answers count against `ai_monthly_runs`, the AI budget and `agent_runs` / `ai_usage` (the run keeps the answer's
+  length, not its text); offline answers cost nothing.
+- Not done: WhatsApp for owners (needs approved templates outside the 24-hour window and finished WhatsApp sending,
+  FX-50); actions (the assistant only reads; any action would go through the approval-gated orchestrator); live
+  verification with a real model and bot.
+
+## ADR-128: Two Telegram Bots (Customers, Owner) and Random Alerts-Bot Webhook Secrets
+
+**Date**: 2026-11-19 · **Status**: Accepted (built; tested offline with a fake Telegram; not registered against a live bot) · **Builds on**: ADR-127
+**Note**: numbered after ADR-127 for the same reason (125/126 are taken by unmerged work).
+
+### Context
+The alerts bot's webhook secret was `HMAC(bot token, constant)`. A workspace that saved its own alerts bot knew that
+token, so it could compute the secret and send forged updates; ADR-127's review limited such updates to the bot's own
+workspace, but a leaked token still let anyone forge updates, two workspaces could save the same bot (first match
+won), and a rotated secret couldn't be revoked without changing the token. Separately, the alerts bot fell back to the
+workspace's customer bot, so owner questions could land in the customer flow.
+
+### Decision
+1. **Two bots, two roles.** Customers talk to the shop's own bot (Connectors → Telegram). The owner talks to the alerts
+   bot: the platform bot by default (no setup), or a second bot the workspace saves. No fallback to the customer bot.
+   Saving an alerts bot is refused when it is the platform bot, any workspace's customer bot, or another workspace's
+   alerts bot (bot id = the token's numeric prefix); connecting a customer bot is refused when it is any alerts bot.
+2. **Random secret, own address.** A workspace bot gets a random 32-character address key and a random secret, stored
+   encrypted, registered with `setWebhook` at `/api/v1/notifications/telegram/webhook/<key>`. Saving the bot again
+   rotates both; changing or removing it deletes the old bot's webhook. The platform bot uses
+   `TELEGRAM_ALERTS_WEBHOOK_SECRET` when set, else the token-derived secret (its token is known only to the server).
+3. **A chat belongs to the bot it pressed Start on** (`telegram.via`, `telegram.bot_id`). Switching bots disconnects a
+   chat linked through another bot; alerts and answers reach a chat only through its own bot.
+4. **Migration.** Bots saved earlier keep their token-derived secret on the shared address, for their own workspace
+   only, until Connect Telegram, Send test or a save registers the random address and secret; after that the derived
+   secret is refused.
+
+### Consequences
+- A forged update needs the bot's random secret, which only the server and Telegram have; a token leak no longer lets
+  anyone send updates as that bot to us.
+- Owners using the platform bot see no change. Owners with their own bot are moved over the next time they press Send
+  test or Connect, or save the bot again; until then the old secret still works for their own workspace only.
+- Not verified against a live Telegram bot: `setWebhook` / `deleteWebhook` are exercised only against a fake transport.

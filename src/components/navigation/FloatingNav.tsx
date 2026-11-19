@@ -19,6 +19,7 @@ import {
   Heart,
   Target,
   Wallet,
+  MessageCircleQuestion,
 } from "lucide-react";
 import { Dock, type DockItem } from "./Dock";
 import { canAccessPath } from "./module-access";
@@ -38,6 +39,7 @@ const DOCK_ROUTES: DockItem[] = [
   { label: "Ad Manager", href: "/ads", icon: <Target size={20} strokeWidth={2} /> },
   { label: "Analytics", href: "/analytics", icon: <BarChart3 size={20} strokeWidth={2} /> },
   { label: "Intelligence", href: "/intelligence", icon: <TrendingUp size={20} strokeWidth={2} />, badge: "AI" },
+  { label: "Ask your shop", href: "/assistant", icon: <MessageCircleQuestion size={20} strokeWidth={2} />, badge: "AI" },
   { label: "Knowledge", href: "/knowledge", icon: <Workflow size={20} strokeWidth={2} /> },
   { label: "Connectors", href: "/connector", icon: <PlugZap size={20} strokeWidth={2} />, badge: "Hub" },
 ];

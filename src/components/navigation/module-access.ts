@@ -18,6 +18,7 @@ const MODULE_PERMISSIONS: ReadonlyArray<readonly [prefix: string, permission: st
   ["/ads", PERMISSIONS.MARKETING_READ],
   ["/analytics", PERMISSIONS.ANALYTICS_READ],
   ["/intelligence", PERMISSIONS.ANALYTICS_READ],
+  ["/assistant", PERMISSIONS.AI_RUN],
   ["/agents", PERMISSIONS.AI_READ],
   ["/knowledge", PERMISSIONS.AI_KNOWLEDGE_READ],
   ["/connector", PERMISSIONS.SETTINGS_READ],

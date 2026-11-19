@@ -15,6 +15,8 @@ export const TOOL_PAYLOAD_DAYS = 30;
 export const SHADOW_REPLY_DAYS = 30;
 export const AGENT_JOB_DAYS = 7;
 export const OUTBOX_DAYS = 30;
+/** Owner Assistant questions/answers and delivered owner alerts (ADR-127): business figures, kept a month. */
+export const OWNER_ASSISTANT_DAYS = 30;
 
 export interface PurgeResult {
   tool_payloads_cleared: number;
@@ -24,6 +26,8 @@ export interface PurgeResult {
   job_runs_deleted: number;
   messages_deleted: number;
   agent_runs_deleted: number;
+  owner_assistant_turns_deleted: number;
+  owner_alerts_deleted: number;
   retention_days: number | null;
 }
 
@@ -37,7 +41,7 @@ export class RetentionService {
   public static purge(now = Date.now(), env: NodeJS.ProcessEnv = process.env): PurgeResult {
     const data = db.data;
     const before = (days: number) => new Date(now - days * DAY).toISOString();
-    const result: PurgeResult = { tool_payloads_cleared: 0, shadow_replies_removed: 0, agent_jobs_deleted: 0, outbox_rows_deleted: 0, job_runs_deleted: 0, messages_deleted: 0, agent_runs_deleted: 0, retention_days: messageRetentionDays(env) };
+    const result: PurgeResult = { tool_payloads_cleared: 0, shadow_replies_removed: 0, agent_jobs_deleted: 0, outbox_rows_deleted: 0, job_runs_deleted: 0, messages_deleted: 0, agent_runs_deleted: 0, owner_assistant_turns_deleted: 0, owner_alerts_deleted: 0, retention_days: messageRetentionDays(env) };
 
     const payloadCutoff = before(TOOL_PAYLOAD_DAYS);
     for (const call of data.agent_tool_calls) {
@@ -71,6 +75,10 @@ export class RetentionService {
     const runsBefore = data.job_runs.length;
     data.job_runs = data.job_runs.filter((r) => r.started_at >= outboxCutoff);
     result.job_runs_deleted = runsBefore - data.job_runs.length;
+
+    const ownerCutoff = before(OWNER_ASSISTANT_DAYS);
+    result.owner_assistant_turns_deleted = db.purgeOwnerAssistantTurns(ownerCutoff);
+    result.owner_alerts_deleted = db.purgeOwnerAlerts(ownerCutoff);
 
     if (result.retention_days !== null) {
       const cutoff = before(result.retention_days);

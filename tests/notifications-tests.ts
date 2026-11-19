@@ -106,7 +106,7 @@ async function main() {
     const v = r.json.data;
     assert.deepStrictEqual(v.bot, { configured: false, username: null });
     assert.strictEqual(v.telegram.connected, false);
-    assert.deepStrictEqual(v.alerts, { daily_summary: true, low_stock: true, failed_deliveries: true, cod_weekly: false });
+    assert.deepStrictEqual(v.alerts, { daily_summary: true, low_stock: true, failed_deliveries: true, cod_weekly: false, chat_escalated: true, new_order_high_value: false, payment_failed: false });
     assert.strictEqual(v.can_manage, true);
     assert.strictEqual(db.getAllNotificationSettings().length, before);
     const link = await call("notifications/telegram/link", "POST", owner);
@@ -130,7 +130,7 @@ async function main() {
   await runTest("alerts are switched with a strict body; unknown keys (or a tenant id) are refused", async () => {
     const ok = await call("notifications/settings", "PATCH", owner, { alerts: { cod_weekly: true, low_stock: false } });
     assert.strictEqual(ok.status, 200, JSON.stringify(ok.json));
-    assert.deepStrictEqual(ok.json.data.alerts, { daily_summary: true, low_stock: false, failed_deliveries: true, cod_weekly: true });
+    assert.deepStrictEqual(ok.json.data.alerts, { daily_summary: true, low_stock: false, failed_deliveries: true, cod_weekly: true, chat_escalated: true, new_order_high_value: false, payment_failed: false });
     assert.strictEqual((await call("notifications/settings", "PATCH", owner, { alerts: { sms: true } })).status, 400);
     assert.strictEqual((await call("notifications/settings", "PATCH", owner, { tenant_id: other.tenant.id, alerts: {} })).status, 400);
     assert.strictEqual((await call("notifications/settings", "GET", other.token)).json.data.alerts.cod_weekly, false, "another shop is untouched");
