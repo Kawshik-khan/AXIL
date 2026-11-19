@@ -21,7 +21,9 @@ export interface WorkflowTemplateSelection {
   candidates: WorkflowTemplateCode[];
 }
 
-const TEMPLATE_VERSION = 1;
+// 2: every template step has a typed handler; DELIVERY_EXCEPTION_RESOLVE sends only through an approved
+// OUTBOUND_MESSAGE_APPROVAL step (its draft step no longer sends).
+const TEMPLATE_VERSION = 2;
 const TEMPLATE_MATCHERS: Array<{ code: WorkflowTemplateCode; pattern: RegExp }> = [
   { code: "ABANDONED_CART_RECOVERY", pattern: /\b(?:abandoned\s+(?:cart|checkout)|cart\s+recovery|recover\s+abandoned\s+carts?)\b|পরিত্যক্ত\s+কার্ট/i },
   { code: "LOW_STOCK_RESTOCK", pattern: /\b(?:low[\s-]*stock|restock|inventory\s+audit|audit\s+(?:the\s+)?(?:warehouse\s+)?stock)\b|কম\s+স্টক|স্টক\s+অডিট/i },
@@ -66,7 +68,7 @@ export class SupervisorAgent {
           agent_type: "ORDER_ASSISTANT",
           dependencies: [],
           risk_level: "LOW",
-          required_tools: ["lookup_order"],
+          required_tools: ["get_order"],
         },
         {
           task_type: "RETRIEVE_CUSTOMER_CONTEXT",
@@ -74,7 +76,7 @@ export class SupervisorAgent {
           agent_type: "CUSTOMER_SUPPORT",
           dependencies: ["IDENTIFY_ABANDONED_CARTS"],
           risk_level: "LOW",
-          required_tools: ["lookup_customer"],
+          required_tools: ["get_customer"],
         },
         {
           task_type: "CHECK_PRODUCT_AVAILABILITY",
@@ -120,7 +122,7 @@ export class SupervisorAgent {
           agent_type: "SALES",
           dependencies: ["AUDIT_WAREHOUSE_STOCK"],
           risk_level: "LOW",
-          required_tools: ["get_product_details"],
+          required_tools: ["get_product"],
         },
         {
           task_type: "PREPARE_REORDER_PROPOSAL",
@@ -142,7 +144,7 @@ export class SupervisorAgent {
           agent_type: "SHIPPING",
           dependencies: [],
           risk_level: "LOW",
-          required_tools: ["track_shipment"],
+          required_tools: ["get_shipment_status"],
         },
         {
           task_type: "NOTIFY_CUSTOMER_EMPATHY",
@@ -150,7 +152,15 @@ export class SupervisorAgent {
           agent_type: "CUSTOMER_SUPPORT",
           dependencies: ["TRACK_PARCEL_STATUS"],
           risk_level: "MEDIUM",
-          required_tools: ["lookup_customer"],
+          required_tools: ["get_customer"],
+        },
+        {
+          task_type: "OUTBOUND_MESSAGE_APPROVAL",
+          objective: "Require human authorization before sending the delay notification to the customer",
+          agent_type: "SUPERVISOR",
+          dependencies: ["NOTIFY_CUSTOMER_EMPATHY"],
+          risk_level: "HIGH",
+          required_tools: [],
         },
       ];
     }
@@ -164,7 +174,7 @@ export class SupervisorAgent {
           agent_type: "PAYMENT",
           dependencies: [],
           risk_level: "LOW",
-          required_tools: ["check_payment_status"],
+          required_tools: ["get_payment_status"],
         },
         {
           task_type: "INSPECT_ORDER_RETURN_STATE",
@@ -172,7 +182,7 @@ export class SupervisorAgent {
           agent_type: "ORDER_ASSISTANT",
           dependencies: ["VERIFY_PAYMENT_TRX"],
           risk_level: "LOW",
-          required_tools: ["lookup_order"],
+          required_tools: ["get_order"],
         },
         {
           task_type: "APPROVAL_REFUND_DISBURSEMENT",
@@ -194,7 +204,7 @@ export class SupervisorAgent {
           agent_type: "SALES",
           dependencies: [],
           risk_level: "LOW",
-          required_tools: ["search_products", "get_product_details"],
+          required_tools: ["search_products", "get_product"],
         },
         {
           task_type: "AUDIT_BULK_STOCK",
@@ -218,7 +228,7 @@ export class SupervisorAgent {
           agent_type: "SALES",
           dependencies: ["CALCULATE_BULK_SHIPPING"],
           risk_level: "MEDIUM",
-          required_tools: ["calculate_cart_totals", "create_order_draft"],
+          required_tools: ["calculate_checkout", "create_order_draft"],
         },
       ];
     }

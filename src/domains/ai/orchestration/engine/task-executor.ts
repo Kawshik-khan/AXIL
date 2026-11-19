@@ -22,9 +22,20 @@ import { ForbiddenError } from '@/lib/errors';
 import { AppError, isAppError } from '@/lib/errors';
 import { workflowBudgetService } from './workflow-budget.service';
 import { autonomyPolicyService } from '../autonomy/autonomy-policy.service';
-import { approvalBindingMismatch, approvalDigest, approvalPayloadDigest, captureApprovalTargetState } from '../autonomy/approval-binding';
-import { loadOrderRows } from "@/infrastructure/db/tenant-rows";
+import { approvalBindingMismatch, approvalDigest, approvalPayloadDigest, captureApprovalTargetState, type ApprovalTargetEntityType } from '../autonomy/approval-binding';
+import { loadOrderRows, loadTenantRows } from "@/infrastructure/db/tenant-rows";
 import { inventoryRepository } from "@/domains/inventory/inventory.repository";
+import {
+  effectiveRiskLevel,
+  executeTypedWorkflowTask,
+  freezeEffectPayload,
+  isEffectTask,
+  isWorkflowTaskHandlerRegistered,
+  isWorkflowTaskReady,
+  TaskOutcomeUnknownError,
+} from "./workflow-task-handlers";
+
+export { isWorkflowTaskHandlerRegistered, isWorkflowTaskReady, TaskOutcomeUnknownError };
 
 /**
  * What system- and event-started workflows may do (FX-19, audit M12). They have no human creator, and the agents
@@ -40,33 +51,7 @@ const SYSTEM_WORKFLOW_PERMISSIONS: Permission[] = [
   PERMISSIONS.AI_RUN,
 ];
 
-const TASK_HANDLER_AGENT: Readonly<Record<string, string>> = Object.freeze({
-  AUDIT_WAREHOUSE_STOCK: "INVENTORY",
-  CALCULATE_SHIPPING_ESTIMATE: "SHIPPING",
-  CALCULATE_ESTIMATE: "SHIPPING",
-  VERIFY_PAYMENT_TRX: "PAYMENT",
-});
 
-export function isWorkflowTaskHandlerRegistered(taskType: string, agentType?: string): boolean {
-  const registeredAgent = TASK_HANDLER_AGENT[taskType];
-  return !!registeredAgent && (!agentType || registeredAgent === agentType);
-}
-
-export function isWorkflowTaskReady(
-  taskType: string,
-  agentType: string,
-  input: Record<string, unknown> = {},
-  context: Record<string, unknown> = {},
-): boolean {
-  if (!isWorkflowTaskHandlerRegistered(taskType, agentType)) return false;
-  if (taskType === "AUDIT_WAREHOUSE_STOCK") return typeof (input.variant_id ?? context.variant_id) === "string";
-  if (taskType === "CALCULATE_SHIPPING_ESTIMATE" || taskType === "CALCULATE_ESTIMATE") {
-    const weight = input.weight_kg ?? context.weight_kg;
-    return typeof (input.city ?? context.city) === "string" && typeof weight === "number" && Number.isFinite(weight) && weight > 0;
-  }
-  if (taskType === "VERIFY_PAYMENT_TRX") return typeof (input.payment_id ?? context.payment_id) === "string";
-  return false;
-}
 
 export interface TaskExecutionResult {
   task: AgentTask;
@@ -82,13 +67,7 @@ class TaskDeadlineExceeded extends Error {
   constructor() { super("Task deadline exceeded."); this.name = "TaskDeadlineExceeded"; }
 }
 
-/** Raised by a provider/effect adapter when it cannot prove whether a remote effect committed. */
-export class TaskOutcomeUnknownError extends Error {
-  constructor(message = "The external action outcome could not be confirmed.") {
-    super(message);
-    this.name = "TaskOutcomeUnknownError";
-  }
-}
+
 
 function classifyFailure(err: unknown): AgentTask["failure_class"] {
   if (err instanceof TaskOutcomeUnknownError) return "OUTCOME_UNKNOWN";
@@ -202,6 +181,23 @@ export class TaskExecutor {
       return { task: { ...task, status: TaskStatus.FAILED, error: err }, status: TaskStatus.FAILED, error: err };
     }
 
+    // Effect tasks (customer messages, refunds): before any approval exists, resolve their final parameters and
+    // raise their risk to the effect floor, then store both on the task. The approval digest below covers this
+    // frozen input, the approver sees exactly what will run, and the handler reads only this input.
+    if (isEffectTask(task.task_type) && !task.approval_id) {
+      let frozenInput: Record<string, unknown>;
+      try {
+        frozenInput = await freezeEffectPayload(task, contextEntities, this.getDependencyOutputs(tenantId, task));
+      } catch (err) {
+        const error = err instanceof Error ? err.message : "Effect parameters could not be resolved.";
+        const updated = db.updateTask(tenantId, task.id, { status: TaskStatus.FAILED, failure_class: "PERMANENT", error });
+        return { task: updated, status: TaskStatus.FAILED, error };
+      }
+      const riskLevel = effectiveRiskLevel(task.task_type, task.risk_level) as ActionRiskLevel;
+      db.updateTask(tenantId, task.id, { input: frozenInput, risk_level: riskLevel });
+      task = { ...task, input: frozenInput, risk_level: riskLevel };
+    }
+
     // If task risk requires approval and approval hasn't already been granted
     const requiresApproval = autonomyPolicyService.requiresApproval(tenantId, task.agent_type, task.risk_level);
 
@@ -209,11 +205,12 @@ export class TaskExecutor {
       workflowStateMachine.assertTaskTransition(task.status, TaskStatus.WAITING_APPROVAL);
 
       const approvalId = `appr_${randomUUID().substring(0, 8)}`;
-      const orderId = (task.input.order_id as string | undefined) ||
-        (task.input.target_entity_type === "ORDER" ? task.input.target_entity_id as string | undefined : undefined);
-      const targetState = orderId ? captureApprovalTargetState(tenantId, "ORDER", orderId) : undefined;
-      if (!orderId || !targetState) {
-        const error = "Approval cannot be created without a verifiable authoritative order target.";
+      const resolvedTarget = await this.resolveApprovalTarget(tenantId, task, contextEntities);
+      const targetState = resolvedTarget
+        ? captureApprovalTargetState(tenantId, resolvedTarget.entityType, resolvedTarget.entityId)
+        : undefined;
+      if (!resolvedTarget || !targetState) {
+        const error = "Approval cannot be created without a verifiable authoritative target entity.";
         const updated = db.updateTask(tenantId, task.id, { status: TaskStatus.FAILED, failure_class: "PERMANENT", error });
         return { task: updated, status: TaskStatus.FAILED, error };
       }
@@ -226,8 +223,8 @@ export class TaskExecutor {
         requested_by_agent: task.agent_type,
         action: task.task_type,
         risk_level: task.risk_level,
-        target_entity_type: "ORDER",
-        target_entity_id: orderId,
+        target_entity_type: resolvedTarget.entityType,
+        target_entity_id: resolvedTarget.entityId,
         entity_state_snapshot: targetState,
         payload: task.input,
         requester_id: workflow?.created_by_type === "USER" ? workflow.created_by : undefined,
@@ -377,11 +374,23 @@ export class TaskExecutor {
         await workflowBudgetService.consumeTaskUsage(tenantId, task.workflow_id, task.id, budgetReservationId, { toolCalls: 1 });
         this.assertStillActive(task, signal, deadlineAt);
       }
-      const output = await awaitWithSignal(this.dispatchAgentAction(task, contextEntities, signal), signal, deadlineAt);
+      const output = await awaitWithSignal(
+        this.dispatchAgentAction(task, contextEntities, signal, budgetReservationId),
+        signal,
+        deadlineAt
+      );
       this.assertStillActive(task, signal, deadlineAt);
 
       // 5. Verification Gate (Physical verification against DB records)
-      if (task.task_type.includes("ORDER") || task.task_type.includes("INVENTORY") || task.task_type.includes("PAYMENT")) {
+      const needsVerification =
+        task.task_type.includes("ORDER") ||
+        task.task_type.includes("INVENTORY") ||
+        task.task_type.includes("PAYMENT") ||
+        task.task_type === "GENERATE_PERSONALIZED_MESSAGE" ||
+        task.task_type === "NOTIFY_CUSTOMER_EMPATHY" ||
+        task.task_type === "PREPARE_REORDER_PROPOSAL" ||
+        task.task_type === "FORMULATE_WHOLESALE_QUOTE";
+      if (needsVerification) {
         const verAssertion = `Validate output integrity for task ${task.id}`;
         const verResult = await awaitWithSignal(verifierAgent.verify({
           tenantId,
@@ -394,6 +403,9 @@ export class TaskExecutor {
 
         if (verResult.status === "FAILED") {
           throw new Error(`Verifier rejected agent output: ${verResult.failure_reason}`);
+        }
+        if (verResult.status === "VERIFIED") {
+          db.markWorkflowArtifactsVerified(tenantId, task.workflow_id, task.id);
         }
       }
 
@@ -603,67 +615,107 @@ export class TaskExecutor {
     };
   }
 
+  private getDependencyOutputs(tenantId: string, task: AgentTask): Record<string, Record<string, unknown>> {
+    const depOutputs: Record<string, Record<string, unknown>> = {};
+    for (const dep of task.dependencies) {
+      const parent = db.getTaskById(tenantId, dep.task_id);
+      if (parent?.output) {
+        depOutputs[dep.task_id] = parent.output;
+        depOutputs[parent.task_type] = parent.output;
+      }
+    }
+    return depOutputs;
+  }
+
+  private async resolveApprovalTarget(
+    tenantId: string,
+    task: AgentTask,
+    contextEntities?: Record<string, unknown>
+  ): Promise<{ entityType: ApprovalTargetEntityType; entityId: string } | undefined> {
+    const depOutputs = this.getDependencyOutputs(tenantId, task);
+    const merged: Record<string, unknown> = { ...(contextEntities || {}) };
+    for (const out of Object.values(depOutputs)) {
+      Object.assign(merged, out);
+    }
+    Object.assign(merged, task.input);
+
+    const explicitType = merged.target_entity_type;
+    const explicitId = merged.target_entity_id;
+    let entityType: ApprovalTargetEntityType | undefined;
+    let entityId: string | undefined;
+
+    if (
+      (explicitType === "ORDER" ||
+        explicitType === "CUSTOMER" ||
+        explicitType === "PAYMENT" ||
+        explicitType === "MESSAGE" ||
+        explicitType === "INVENTORY") &&
+      typeof explicitId === "string" &&
+      explicitId.length > 0
+    ) {
+      entityType = explicitType;
+      entityId = explicitId;
+    } else if (typeof merged.order_id === "string" && merged.order_id.length > 0) {
+      entityType = "ORDER";
+      entityId = merged.order_id;
+    } else if (typeof merged.payment_id === "string" && merged.payment_id.length > 0) {
+      entityType = "PAYMENT";
+      entityId = merged.payment_id;
+    } else if (typeof merged.message_id === "string" && merged.message_id.length > 0) {
+      entityType = "MESSAGE";
+      entityId = merged.message_id;
+    } else if (typeof merged.conversation_id === "string" && merged.conversation_id.length > 0) {
+      entityType = "MESSAGE";
+      entityId = merged.conversation_id;
+    } else if (typeof merged.customer_id === "string" && merged.customer_id.length > 0) {
+      entityType = "CUSTOMER";
+      entityId = merged.customer_id;
+    } else if (typeof merged.variant_id === "string" && merged.variant_id.length > 0) {
+      entityType = "INVENTORY";
+      entityId = merged.variant_id;
+    }
+
+    if (!entityType || !entityId) return undefined;
+
+    if (entityType === "ORDER") {
+      await loadTenantRows(tenantId, ["orders", "order_items"]);
+    } else if (entityType === "CUSTOMER") {
+      await loadTenantRows(tenantId, ["customers"]);
+    } else if (entityType === "PAYMENT") {
+      await loadTenantRows(tenantId, ["payments"]);
+    } else if (entityType === "MESSAGE") {
+      await loadTenantRows(tenantId, ["social_messages", "social_conversations"]);
+    } else if (entityType === "INVENTORY") {
+      await loadTenantRows(tenantId, ["inventory_items", "product_variants"]);
+    }
+
+    return { entityType, entityId };
+  }
+
   /**
    * Dispatches task to appropriate specialized agent
    */
   private async dispatchAgentAction(
     task: AgentTask,
     contextEntities?: Record<string, unknown>,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    budgetReservationId?: string
   ): Promise<Record<string, unknown>> {
     if (signal?.aborted) throw new AppError("CONFLICT", "Workflow execution was cancelled.", 409);
     if (!isWorkflowTaskHandlerRegistered(task.task_type, task.agent_type)) {
       throw new AppError("NOT_IMPLEMENTED", `Workflow task '${task.task_type}' has no reviewed typed handler.`, 501);
     }
     const mockContext = this.executionContextFor(task);
+    const depOutputs = this.getDependencyOutputs(task.tenant_id, task);
 
-    switch (task.agent_type) {
-      case "INVENTORY": {
-        const variantId = (task.input.variant_id as string) || (contextEntities?.variant_id as string | undefined);
-        if (!variantId) throw new AppError("VALIDATION_ERROR", "Inventory task requires an authoritative variant_id.", 400);
-        await inventoryRepository.getStockLevels(task.tenant_id); // zero-hydration: the stock rows checked here
-        const stockResult = inventoryAgent.checkStock(mockContext, variantId);
-        return {
-          variant_id: variantId,
-          available_quantity: stockResult.available,
-          reserved_quantity: stockResult.reserved,
-          low_stock: stockResult.low_stock,
-          status: "STOCK_AUDITED",
-        };
-      }
-
-      case "SHIPPING": {
-        if (task.task_type !== "CALCULATE_SHIPPING_ESTIMATE" && task.task_type !== "CALCULATE_ESTIMATE") {
-          throw new AppError("NOT_IMPLEMENTED", `Workflow task '${task.task_type}' requires a live shipment-tracking adapter.`, 501);
-        }
-        const city = (task.input.city as string | undefined) || (contextEntities?.city as string | undefined);
-        const weight = (task.input.weight_kg as number | undefined) ?? (contextEntities?.weight_kg as number | undefined);
-        if (!city || typeof weight !== "number" || !Number.isFinite(weight) || weight <= 0) {
-          throw new AppError("VALIDATION_ERROR", "Shipping estimate requires city and positive weight_kg.", 400);
-        }
-        const shippingResult = shippingAgent.calculateEstimate(mockContext, city, weight);
-        return {
-          ...shippingResult,
-          status: "SHIPPING_CALCULATED",
-        };
-      }
-
-      case "PAYMENT": {
-        const paymentId = (task.input.payment_id as string | undefined) || (contextEntities?.payment_id as string | undefined);
-        if (!paymentId) throw new AppError("VALIDATION_ERROR", "Payment verification requires an authoritative payment_id.", 400);
-        const paymentResult = paymentAgent.verifyPayment(mockContext, paymentId);
-        return {
-          payment_id: paymentId,
-          verified: paymentResult?.verified ?? false,
-          status: paymentResult?.status ?? "NOT_FOUND",
-          amount: paymentResult?.amount ?? null,
-        };
-      }
-
-      default: {
-        throw new AppError("NOT_IMPLEMENTED", `Workflow task '${task.task_type}' has no verified domain handler.`, 501);
-      }
-    }
+    return executeTypedWorkflowTask({
+      task,
+      executionContext: mockContext,
+      contextEntities,
+      depOutputs,
+      signal,
+      budgetReservationId,
+    });
   }
 }
 

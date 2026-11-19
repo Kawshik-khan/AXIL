@@ -2146,3 +2146,50 @@ a merchant account with Payment Gateway access can look a transaction up by id (
 - A customer who pays by checkout and submits the same TrxID by hand before the callback arrives is stopped only by
   the transaction-type check (wording unverified); the money still counts once.
 - `payer_last4` is new stored customer data, visible to staff with payments.read.
+
+## ADR-126: Workflow Effects Are Gated by What They Do, and the Approved Payload Is What Runs
+
+**Date**: 2026-11-19 · **Status**: Accepted (built; tested offline, in memory and on PGlite; no live provider) · **Builds on**: ADR-111
+**Note**: numbered 126 because ADR-125 is already used by two different, unmerged decisions (the paywall in the main
+checkout and a billing decision in another worktree); renumber those when they merge.
+
+### Context
+The workflow orchestrator gained typed handlers for all five templates, including two kinds of effect: sending a
+message to a customer (`OUTBOUND_MESSAGE_APPROVAL`) and recording a refund (`APPROVAL_REFUND_DISBURSEMENT`). Review
+found that approval depended on the risk label a template gave a step, not on the step's effect: the delivery-delay
+draft step (MEDIUM) could also send, so at autonomy level 3 a customer message went out with no approval. The
+approval digest covered only the task's stored input, while the message text and refund amount were taken at run
+time from earlier steps or workflow context, so the approver neither saw nor bound them, and a missing draft fell
+back to a hard-coded message. Refund amounts had no ceiling, and refunds were reported as COMPLETED although no
+payment gateway is called.
+
+### Decision
+1. **One effect, one task type, one gate.** Only `OUTBOUND_MESSAGE_APPROVAL` sends and only
+   `APPROVAL_REFUND_DISBURSEMENT` refunds. Draft steps (`NOTIFY_CUSTOMER_EMPATHY`, `GENERATE_PERSONALIZED_MESSAGE`)
+   never send and reject a `send` flag; the delivery-delay template ends with an `OUTBOUND_MESSAGE_APPROVAL` step
+   (templates are now version 2).
+2. **Risk floors by effect** (`EFFECT_TASK_RISK_FLOOR`): messages at least HIGH, refunds CRITICAL. The executor raises
+   the task's risk to the floor before the autonomy check, so no template, planner or stored task can label an effect
+   lower. Autonomy policy still decides the rest: at LEVEL_4_HIGH a HIGH message runs without approval; refunds always
+   need approval.
+3. **Freeze, then approve.** Before an approval is requested, `freezeEffectPayload` resolves the final parameters
+   (message text, recipient, channel; order, return, payment and refund amount) and the executor stores them as the
+   task's input. The approval digest covers that input, the approver sees it, and the effect handlers read only
+   `task.input`. Changing the input after approval fails the binding ("payload no longer matches"). No text means no
+   send; there is no default message.
+4. **Refund ceiling** (`refundableAmount`): computed on the same payment `ReturnService.processRefund` records against
+   (first PAID, else the first payment), only if it was paid, minus every non-FAILED refund on it. Checked when
+   freezing (an impossible refund gets no approval) and again just before recording. `return_id` must be a return of
+   that order.
+5. **Truthful results.** A workflow refund reports `status: REFUND_RECORDED`, `money_movement: NOT_PERFORMED`,
+   `settlement: MANUAL_REQUIRED` (the refund row's own status is `record_status`). Draft artifacts start with
+   `is_verified: false`, become true only when the verifier accepts the task, and say `verification_scope:
+   STRUCTURED_NUMBERS_ONLY` (the verifier does not read model-written text).
+
+### Consequences
+- A person approves the exact words and amount that will run; a delivery-delay workflow now pauses for approval
+  before messaging the customer.
+- Refund money still moves outside CommerceOS; a gateway refund adapter (bKash/SSLCommerz refund APIs) is future work.
+- Open: two different approved refunds on one order running at the same moment are not serialized beyond the store's
+  version check; `conversation_id` is not checked against `customer_id`; the verifier does not check numbers inside
+  draft text; the reconcile/uncertain routes have no UI yet.
