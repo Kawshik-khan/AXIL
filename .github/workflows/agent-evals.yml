@@ -64,11 +64,13 @@ jobs:
     env:
       TEST_LLM_LIVE: "1"
       # Provider profile under test (implementation plan §2a). Switching provider = changing these lines.
-      LLM_PROVIDER_NAME: ollama-cloud
-      LLM_BASE_URL: https://ollama.com/v1
-      LLM_MODEL_FAST: gpt-oss:120b
-      LLM_MODEL_REASONING: gpt-oss:120b
-      LLM_PRICING_JSON: '{"TIER_1_FAST":{"promptCostPer1M":0.15,"cachedPromptCostPer1M":0.014,"completionCostPer1M":0.6}}'
+      LLM_PROVIDER_NAME: mwapi
+      LLM_BASE_URL: https://api.mwapi.dev/v1
+      LLM_MODEL_FAST: claude-haiku-4-5-20251001
+      LLM_MODEL_REASONING: claude-haiku-4-5-20251001
+      LLM_REASONING_EFFORT: medium
+      # Anthropic list prices for Haiku 4.5; replace with mwapi's own prices if they differ
+      LLM_PRICING_JSON: '{"TIER_1_FAST":{"promptCostPer1M":1,"cachedPromptCostPer1M":0.1,"completionCostPer1M":5},"TIER_2_REASONING":{"promptCostPer1M":1,"cachedPromptCostPer1M":0.1,"completionCostPer1M":5}}'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -78,7 +80,7 @@ jobs:
         if: github.event_name == 'pull_request'
         env:
           EVAL_CASES: G01,G03,G06,G19,G25,G28,G33,G37,G41,G44,G55,G59,R03,R04,R06,R07,R11,R12,R16,R21,R25,R26,R27,R35,R42,R43
-          LLM_API_KEY: ${{ secrets.OLLAMA_EVAL_API_KEY }}
+          LLM_API_KEY: ${{ secrets.LLM_EVAL_API_KEY }}
         shell: bash # pipefail: an aborted eval fails this step instead of tee's 0 hiding it
         run: node tests/ts-runner.cjs ./tests/agent-evals/run-evals.ts | tee eval.log
       - name: Full suite (nightly / manual)
@@ -86,7 +88,7 @@ jobs:
         shell: bash # pipefail: an aborted eval fails this step instead of tee's 0 hiding it
         run: node tests/ts-runner.cjs ./tests/agent-evals/run-evals.ts | tee eval.log
         env:
-          LLM_API_KEY: ${{ secrets.OLLAMA_EVAL_API_KEY }}
+          LLM_API_KEY: ${{ secrets.LLM_EVAL_API_KEY }}
       - name: Gate
         run: node tests/agent-evals/check-thresholds.mjs "$(ls -d tests/agent-evals/results/live-* | tail -1)"
       # FX-82: Recall@2 ≥ 95% per language with real embeddings (nightly; synthetic policy text only)
