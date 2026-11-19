@@ -22,7 +22,7 @@ import { ForbiddenError } from '@/lib/errors';
 import { AppError, isAppError } from '@/lib/errors';
 import { workflowBudgetService } from './workflow-budget.service';
 import { autonomyPolicyService } from '../autonomy/autonomy-policy.service';
-import { approvalBindingMismatch, approvalDigest, approvalPayloadDigest, captureApprovalTargetState, type ApprovalTargetEntityType } from '../autonomy/approval-binding';
+import { approvalBindingMismatch, approvalDigest, approvalPayloadDigest, captureApprovalTargetState, loadApprovalTarget, type ApprovalTargetEntityType } from '../autonomy/approval-binding';
 import { loadOrderRows, loadTenantRows } from "@/infrastructure/db/tenant-rows";
 import { inventoryRepository } from "@/domains/inventory/inventory.repository";
 import {
@@ -254,6 +254,8 @@ export class TaskExecutor {
 
     if (requiresApproval || task.approval_id) {
       const approval = task.approval_id ? db.getApprovalRequestById(tenantId, task.approval_id) : undefined;
+      // Zero-hydration: re-read the bound target before comparing it with the reviewed snapshot
+      if (approval) await loadApprovalTarget(tenantId, approval.target_entity_type, approval.target_entity_id);
       const mismatch = approval && approval.task_id === task.id && approval.workflow_id === task.workflow_id
         ? approvalBindingMismatch(approval, task, policy.version)
         : "An approved request bound to this task is required.";

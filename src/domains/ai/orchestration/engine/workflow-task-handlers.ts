@@ -19,7 +19,8 @@ import { PricingService } from "@/domains/pricing/pricing.service";
 import { MarketingService } from "@/domains/marketing/marketing.service";
 import { inventoryOperationsService } from "@/domains/operations/services/inventory-operations.service";
 import { returnsOperationsService } from "@/domains/operations/services/returns-operations.service";
-import { consentService } from "@/domains/growth/services/consent.service";
+import { consentService, frequencyCappingService } from "@/domains/growth/services/consent.service";
+import type { MarketingChannelType } from "@/types/growth";
 import { OutboundMessageService } from "@/domains/social/outbound/outbound-message.service";
 import { modelRouter } from "@/domains/ai/providers/model-router";
 import { PromptInjectionClassifier } from "@/domains/ai/safety/prompt-injection";
@@ -267,7 +268,27 @@ const OutboundMessageApprovalSchema = z.object({
   channel: z.enum(["WHATSAPP", "FACEBOOK", "INSTAGRAM", "TELEGRAM", "SMS", "EMAIL", "WEB_CHAT"]).default("WHATSAPP"),
   message_text: z.string().min(1).max(2000).optional(),
   simulate: z.boolean().optional(),
+  /** MARKETING (cart recovery, offers) needs marketing consent before sending; SERVICE (an order's delivery news) doesn't. */
+  purpose: z.enum(["MARKETING", "SERVICE"]).optional(),
 }).strict();
+
+/** Conversation channel → marketing consent channel; channels with no consent record can't take a marketing send. */
+const MARKETING_CHANNEL: Partial<Record<string, MarketingChannelType>> = {
+  WHATSAPP: "WHATSAPP",
+  FACEBOOK_MESSENGER: "FACEBOOK_MESSENGER",
+  INSTAGRAM: "INSTAGRAM",
+  WEBSITE_CHAT: "WEBSITE_CHAT",
+  EMAIL: "EMAIL",
+  TELEGRAM: "TELEGRAM",
+};
+
+/** The customer's most recent conversation on an active connected channel (tenant-scoped), for a customer-only send. */
+function latestReachableConversation(tenantId: string, customerId: string): string | undefined {
+  return db
+    .getAllConversations(tenantId)
+    .filter((c) => c.customer_id === customerId && db.findConnectedChannelById(tenantId, c.channel_id)?.status === "ACTIVE")
+    .sort((a, b) => (b.last_message_at ?? "").localeCompare(a.last_message_at ?? ""))[0]?.id;
+}
 
 const ApprovalRefundDisbursementSchema = z.object({
   order_id: z.string().min(1),
@@ -368,7 +389,21 @@ export async function freezeEffectPayload(
       if (!parsed.conversation_id && !parsed.customer_id) {
         throw new AppError("VALIDATION_ERROR", "An outbound message needs a conversation_id or customer_id to address it to.", 400);
       }
-      return { ...parsed, message_text: parsed.message_text.trim() };
+      // Where it goes is part of what is approved: a customer-only send gets the customer's latest reachable
+      // conversation now, and a conversation must belong to the customer it names (PR #82 review)
+      let conversationId = parsed.conversation_id;
+      if (conversationId) {
+        const conversation = db.findConversationById(tenantId, conversationId);
+        if (!conversation) throw new NotFoundError("Conversation", conversationId);
+        if (parsed.customer_id && conversation.customer_id !== parsed.customer_id) {
+          throw new AppError("VALIDATION_ERROR", "The conversation belongs to a different customer.", 400);
+        }
+      } else if (parsed.customer_id) {
+        conversationId = latestReachableConversation(tenantId, parsed.customer_id);
+      }
+      // A delivery-delay notice is service; anything else (cart recovery, offers) is marketing unless stated
+      const purpose = parsed.purpose ?? (depOutputs.NOTIFY_CUSTOMER_EMPATHY && !depOutputs.GENERATE_PERSONALIZED_MESSAGE ? "SERVICE" : "MARKETING");
+      return { ...parsed, ...(conversationId ? { conversation_id: conversationId } : {}), purpose, message_text: parsed.message_text.trim() };
     }
 
     case "APPROVAL_REFUND_DISBURSEMENT": {
@@ -511,12 +546,36 @@ async function dispatchOutboundOrSimulate(params: {
   customerId?: string;
   messageText: string;
   forceSimulate?: boolean;
+  purpose?: "MARKETING" | "SERVICE";
 }): Promise<Record<string, unknown>> {
   const { executionContext, task, conversationId, customerId, messageText, forceSimulate } = params;
   const tenantId = task.tenant_id;
 
   assertNotKilled(tenantId, "WORKFLOW", task.workflow_id);
   assertNotKilled(tenantId, "WORKFLOW", task.task_type);
+
+  // Marketing needs the customer's consent on that channel (suppression, opt-out, frequency cap), checked right
+  // before sending, as MarketingService.nudgeAbandonedCart does (PR #82 review)
+  if ((params.purpose ?? "MARKETING") === "MARKETING") {
+    const conversation = conversationId ? db.findConversationById(tenantId, conversationId) : undefined;
+    const recipient = conversation?.customer_id ?? customerId;
+    const channelType = conversation ? db.findConnectedChannelById(tenantId, conversation.channel_id)?.type : undefined;
+    const consentChannel = channelType ? MARKETING_CHANNEL[channelType] : "WHATSAPP";
+    const eligibility = recipient && consentChannel
+      ? frequencyCappingService.checkSendEligibility(tenantId, recipient, consentChannel)
+      : { eligible: false, reason: "No consent record applies to this customer or channel." };
+    if (!eligibility.eligible) {
+      return {
+        status: "NOT_SENT",
+        delivery_status: "NOT_SENT",
+        reason: `Marketing message not sent: ${eligibility.reason ?? "no marketing consent."}`,
+        customer_id: recipient ?? null,
+        conversation_id: conversationId ?? null,
+        idempotency_key: task.idempotency_key,
+        draft_text: messageText,
+      };
+    }
+  }
 
   if (forceSimulate || !conversationId || !isFeatureEnabled("real_messaging", tenantId)) {
     return {
@@ -1203,6 +1262,7 @@ export async function executeTypedWorkflowTask(params: {
         customerId: parsed.customer_id,
         messageText: parsed.message_text,
         forceSimulate: parsed.simulate,
+        purpose: parsed.purpose,
       });
     }
 

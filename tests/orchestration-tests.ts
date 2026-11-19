@@ -1,5 +1,6 @@
 // @ts-nocheck
 import assert from "assert";
+import { randomUUID } from "crypto";
 declare const process: { exit(code?: number): void };
 
 import { db } from "@/infrastructure/db";
@@ -39,6 +40,7 @@ import {
   type AgentTask,
 } from "@/types/orchestration";
 import { AppError } from "@/lib/errors";
+import { consentService } from "@/domains/growth/services/consent.service";
 
 const ANSI_GREEN = "\x1b[32m";
 const ANSI_RED = "\x1b[31m";
@@ -1653,6 +1655,98 @@ export async function runOrchestrationTests() {
     const wrongRes = await taskExecutor.executeTask(wrongReturn);
     assert.strictEqual(wrongRes.status, TaskStatus.FAILED);
     assert.ok(/is not a return of order/.test(wrongRes.error || ""), wrongRes.error);
+  });
+
+  // ---- PR #82 review: consent before marketing sends, a conversation for customer-only sends ----
+  const makeConversation = (customerId: string, channelStatus: "ACTIVE" | "DISCONNECTED" = "ACTIVE") => {
+    const seq = randomUUID().replace(/-/g, "").slice(0, 16);
+    const now = new Date().toISOString();
+    const channel = db.createConnectedChannel({
+      id: `ch_g14_${seq}`,
+      tenant_id: contextA.tenant.id,
+      type: "WHATSAPP",
+      name: "Shop WhatsApp",
+      status: channelStatus,
+      provider_account_id: `pn_${seq}`,
+      credentials_encrypted: "",
+      configuration: {},
+      created_at: now,
+      updated_at: now,
+    } as unknown as Parameters<typeof db.createConnectedChannel>[0]);
+    return db.createConversation({
+      id: `conv_g14_${seq}`,
+      tenant_id: contextA.tenant.id,
+      channel_id: channel.id,
+      channel_type: "WHATSAPP",
+      customer_id: customerId,
+      external_conversation_id: `ext_${seq}`,
+      status: "OPEN",
+      priority: "NORMAL",
+      mode: "AI",
+      automation_paused: false,
+      last_message_at: now,
+      unread_count: 0,
+      tags: [],
+      source: "INBOUND",
+      created_at: now,
+      updated_at: now,
+    } as unknown as Parameters<typeof db.createConversation>[0]);
+  };
+
+  await runTest("PR #82 review: a customer-only send is addressed to the customer's latest reachable conversation, shown in the approval", async () => {
+    setSupervisorLevel(AutonomyLevel.LEVEL_2_ASSISTED);
+    const customerId = sampleOrder.customer_id;
+    makeConversation(customerId, "DISCONNECTED");
+    const reachable = makeConversation(customerId, "ACTIVE");
+    const send = insertTask(newWorkflow(), "OUTBOUND_MESSAGE_APPROVAL", "SUPERVISOR", { customer_id: customerId, message_text: "Your order is on its way." });
+    const waiting = await taskExecutor.executeTask(send);
+    assert.strictEqual(waiting.status, TaskStatus.WAITING_APPROVAL, waiting.error);
+    const payload = db.getApprovalRequestById(contextA.tenant.id, waiting.approvalId!)!.payload as Record<string, unknown>;
+    assert.strictEqual(payload.conversation_id, reachable.id, "the approver sees which conversation it goes to");
+    assert.strictEqual(payload.purpose, "MARKETING", "a send with no delivery-notice draft is treated as marketing");
+
+    const other = insertTask(newWorkflow(), "OUTBOUND_MESSAGE_APPROVAL", "SUPERVISOR", {
+      customer_id: `cust_someone_else_${Date.now()}`,
+      conversation_id: reachable.id,
+      message_text: "Hello",
+    });
+    const refused = await taskExecutor.executeTask(other);
+    assert.strictEqual(refused.status, TaskStatus.FAILED);
+    assert.ok(/different customer/.test(refused.error || ""), refused.error);
+  });
+
+  await runTest("PR #82 review: a marketing send to an opted-out customer is not sent; a delivery notice (service) is not blocked by marketing opt-out", async () => {
+    setSupervisorLevel(AutonomyLevel.LEVEL_2_ASSISTED);
+    const customerId = sampleOrder.customer_id;
+    const conv = makeConversation(customerId, "ACTIVE");
+    consentService.suppressCustomer(contextA.tenant.id, customerId, "CUSTOMER_OPT_OUT", "WHATSAPP");
+
+    const wf = newWorkflow();
+    const draft = insertTask(wf, "GENERATE_PERSONALIZED_MESSAGE", "SALES", {}, {
+      status: TaskStatus.COMPLETED,
+      output: { draft_text: "Your cart is waiting, 10% off today!", customer_id: customerId, conversation_id: conv.id },
+    });
+    const send = insertTask(wf, "OUTBOUND_MESSAGE_APPROVAL", "SUPERVISOR", {}, { dependencies: [{ task_id: draft.id, required_status: TaskStatus.COMPLETED }] });
+    const waiting = await taskExecutor.executeTask(send);
+    await approvalEngine.approveAction(contextA.tenant.id, waiting.approvalId!, "op_approver_g14");
+    const done = await taskExecutor.executeTask(db.getTaskById(contextA.tenant.id, send.id)!);
+    assert.strictEqual(done.status, TaskStatus.COMPLETED, done.error);
+    assert.strictEqual(done.output?.delivery_status, "NOT_SENT");
+    assert.ok(/Marketing message not sent/.test(String(done.output?.reason)), String(done.output?.reason));
+
+    const wf2 = newWorkflow();
+    const notice = insertTask(wf2, "NOTIFY_CUSTOMER_EMPATHY", "CUSTOMER_SUPPORT", {}, {
+      status: TaskStatus.COMPLETED,
+      output: { draft_text: "Your parcel is delayed by a day, sorry.", customer_id: customerId, conversation_id: conv.id },
+    });
+    // Simulated: the real send would then meet WhatsApp's 24-hour rule, which is not what this checks
+    const send2 = insertTask(wf2, "OUTBOUND_MESSAGE_APPROVAL", "SUPERVISOR", { simulate: true }, { dependencies: [{ task_id: notice.id, required_status: TaskStatus.COMPLETED }] });
+    const waiting2 = await taskExecutor.executeTask(send2);
+    assert.strictEqual((db.getApprovalRequestById(contextA.tenant.id, waiting2.approvalId!)!.payload as Record<string, unknown>).purpose, "SERVICE");
+    await approvalEngine.approveAction(contextA.tenant.id, waiting2.approvalId!, "op_approver_g14");
+    const done2 = await taskExecutor.executeTask(db.getTaskById(contextA.tenant.id, send2.id)!);
+    assert.strictEqual(done2.status, TaskStatus.COMPLETED, done2.error);
+    assert.ok(!/Marketing message not sent/.test(String(done2.output?.reason ?? "")), "service messages skip the marketing check");
   });
 
   await runTest("Draft artifacts start unverified and are marked verified only after the verifier accepts the task", async () => {

@@ -1,6 +1,7 @@
 import { createHash } from "crypto";
 import { AgentTask, ApprovalRequest } from "@/types/orchestration";
 import { db } from "@/infrastructure/db";
+import { loadCustomerRows, loadOrderRows, loadTenantRows } from "@/infrastructure/db/tenant-rows";
 
 export type ApprovalTargetEntityType = ApprovalRequest["target_entity_type"];
 
@@ -28,6 +29,18 @@ export function approvalPayloadDigest(tenantId: string, task: AgentTask): string
     risk_level: task.risk_level,
     input: task.input,
   });
+}
+
+/**
+ * Zero-hydration: loads the rows an approval's target snapshot reads, for this request. Orders, customers and
+ * inventory are not kept in memory on Postgres; payments and messages are. Call before captureApprovalTargetState or
+ * approvalBindingMismatch, or a valid approval reads as "target can no longer be verified" (PR #82 review).
+ */
+export async function loadApprovalTarget(tenantId: string, entityType: string | undefined, entityId: string | undefined): Promise<void> {
+  if (!entityType || !entityId) return;
+  if (entityType === "ORDER") await loadOrderRows(tenantId, [entityId]);
+  else if (entityType === "CUSTOMER") await loadCustomerRows(tenantId, [entityId]);
+  else if (entityType === "INVENTORY") await loadTenantRows(tenantId, ["inventory_items", "product_variants", "products"]);
 }
 
 /** Authoritative versioned snapshots for approval-gated target entities. */
