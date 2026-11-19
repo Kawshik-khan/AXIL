@@ -1,5 +1,6 @@
 // @ts-nocheck
 import assert from "assert";
+import { randomUUID } from "crypto";
 declare const process: { exit(code?: number): void };
 
 import { db } from "@/infrastructure/db";
@@ -7,6 +8,9 @@ import { AuthService } from "@/domains/auth/service";
 import { ProductService } from "@/domains/catalog/product.service";
 import { InventoryService } from "@/domains/inventory/inventory.service";
 import { OrderService } from "@/domains/orders/order.service";
+import { POST as reconcilePost } from "@/app/api/v1/ai/workflows/[id]/tasks/[taskId]/reconcile/route";
+import { GET as uncertainGet } from "@/app/api/v1/ai/workflows/uncertain/route";
+import { signSessionToken } from "@/lib/security";
 import { RequestContext } from "@/lib/context";
 import { PERMISSIONS } from "@/lib/permissions";
 
@@ -33,7 +37,10 @@ import {
   ActionRiskLevel,
   AutonomyLevel,
   ApprovalStatus,
+  type AgentTask,
 } from "@/types/orchestration";
+import { AppError } from "@/lib/errors";
+import { consentService } from "@/domains/growth/services/consent.service";
 
 const ANSI_GREEN = "\x1b[32m";
 const ANSI_RED = "\x1b[31m";
@@ -179,7 +186,7 @@ export async function runOrchestrationTests() {
     assert.match(ambiguous.clarification || "", /multiple workflow templates/i);
     const explicit = await taskPlanner.planObjective(contextA.tenant.id, "do the work", undefined, "LOW_STOCK_RESTOCK");
     assert.strictEqual(explicit.templateCode, "LOW_STOCK_RESTOCK");
-    assert.strictEqual(explicit.templateVersion, 1);
+    assert.strictEqual(explicit.templateVersion, 2);
     assert.strictEqual(explicit.validation.isValid, true);
     const falseWholesale = await taskPlanner.planObjective(contextA.tenant.id, "Sell product 50");
     assert.strictEqual(falseWholesale.steps.length, 0);
@@ -980,10 +987,11 @@ export async function runOrchestrationTests() {
     assert.ok(new Date(updatedSched.next_run_at) > new Date());
   });
 
-  await runTest("WorkflowSimulator projects steps, costs, and approval points before execution", async () => {
+  await runTest("WorkflowSimulator projects steps, costs, and approval points for all 5 templates", async () => {
     const sim = await workflowSimulator.simulate(
       contextA.tenant.id,
-      "Recover abandoned carts with discount and customer preference"
+      "Recover abandoned carts with discount and customer preference",
+      { customer_id: sampleOrder.customer_id, variant_id: sampleVariant.id, conversation_id: "conv_sim_1" }
     );
 
     assert.ok(sim.planned_steps.length > 0);
@@ -991,8 +999,29 @@ export async function runOrchestrationTests() {
     assert.ok(sim.estimated_cost_usd > 0);
     assert.ok(sim.required_agents.length > 0);
     assert.strictEqual(sim.safe_to_execute, true);
-    assert.strictEqual(sim.execution_ready, false, "A structurally valid plan may still contain task types without handlers");
-    assert.ok(sim.warnings.some((warning) => warning.includes("Typed execution handlers")));
+    assert.strictEqual(sim.execution_ready, true, "All ABANDONED_CART_RECOVERY tasks now have registered typed handlers");
+
+    // All 5 templates with valid inputs must report execution_ready: true
+    const templateCases: Array<{ objective: string; ctx: Record<string, unknown> }> = [
+      { objective: "Check low stock and prepare restock reorder proposal", ctx: { variant_id: sampleVariant.id } },
+      { objective: "Inspect refund return request for damaged order", ctx: { order_id: sampleOrder.id, payment_id: "pay_sim_1", amount: 500, reason: "Damaged" } },
+      { objective: "Resolve delayed parcel delivery exception", ctx: { order_id: sampleOrder.id, customer_id: sampleOrder.customer_id, conversation_id: "conv_sim_2" } },
+      { objective: "Recover abandoned carts with discount and customer preference", ctx: { customer_id: sampleOrder.customer_id, variant_id: sampleVariant.id, conversation_id: "conv_sim_3" } },
+      { objective: "Formulate wholesale bulk quote for enterprise buyer", ctx: { variant_id: sampleVariant.id, quantity: 60, city: "Dhaka" } },
+    ];
+    for (const tc of templateCases) {
+      const result = await workflowSimulator.simulate(contextA.tenant.id, tc.objective, tc.ctx);
+      assert.strictEqual(result.safe_to_execute, true, `Expected safe_to_execute for ${tc.objective}`);
+      assert.strictEqual(result.execution_ready, true, `Expected execution_ready for ${tc.objective}, warnings: ${result.warnings.join("; ")}`);
+    }
+
+    // Missing required input marks execution_ready false
+    const incompleteSim = await workflowSimulator.simulate(
+      contextA.tenant.id,
+      "Check low stock and prepare restock reorder proposal",
+      {}
+    );
+    assert.strictEqual(incompleteSim.execution_ready, false, "Missing variant_id must report execution_ready: false");
   });
 
   await runTest("OrchestrationTelemetry aggregates accurate multi-agent metrics", () => {
@@ -1001,6 +1030,738 @@ export async function runOrchestrationTests() {
     assert.ok(typeof metrics.success_rate === "number");
     assert.ok(metrics.total_action_receipts >= 1);
     assert.ok(metrics.total_verifications >= 1);
+  });
+
+  // ============================================================
+  // GATE 13: TYPED WORKFLOW HANDLERS (PHASES 1–4)
+  // ============================================================
+  console.log(`\n${ANSI_BOLD}Gate 13: Typed Workflow Handlers & Operator Reconciliation (Phases 1-4)${ANSI_RESET}`);
+
+  await runTest("Phase 1: Read-only handlers execute against real store data and enforce tenant isolation", async () => {
+    const { executeTypedWorkflowTask } = await import("@/domains/ai/orchestration/engine/workflow-task-handlers");
+    const makeTask = (taskType: string, agentType: any, input: Record<string, unknown>) => ({
+      id: `task_p1_${taskType}_${Date.now()}`,
+      tenant_id: contextA.tenant.id,
+      workflow_id: `wf_p1_${Date.now()}`,
+      task_type: taskType,
+      agent_type: agentType,
+      objective: taskType,
+      input,
+      dependencies: [],
+      risk_level: ActionRiskLevel.LOW,
+      required_tools: [],
+      status: TaskStatus.RUNNING,
+      retry_count: 0,
+      max_retries: 0,
+      created_at: new Date().toISOString(),
+    });
+
+    const velocity = await executeTypedWorkflowTask({
+      task: makeTask("CALCULATE_SALES_VELOCITY", "SALES", { variant_id: sampleVariant.id, lookback_days: 30 }),
+      executionContext: contextA,
+    });
+    assert.strictEqual(velocity.variant_id, sampleVariant.id);
+    assert.strictEqual(velocity.status, "VELOCITY_CALCULATED");
+    assert.ok(typeof velocity.daily_sales_velocity === "number");
+
+    const avail = await executeTypedWorkflowTask({
+      task: makeTask("CHECK_PRODUCT_AVAILABILITY", "INVENTORY", { variant_id: sampleVariant.id, quantity: 2 }),
+      executionContext: contextA,
+    });
+    assert.strictEqual(avail.all_available, true);
+    assert.strictEqual(avail.unit_price, 2500);
+
+    const spec = await executeTypedWorkflowTask({
+      task: makeTask("VALIDATE_PRODUCT_SPEC", "SALES", { variant_id: sampleVariant.id }),
+      executionContext: contextA,
+    });
+    assert.strictEqual(spec.unit_price, 2500);
+    assert.strictEqual(spec.sku, sampleVariant.sku);
+
+    const bulkStock = await executeTypedWorkflowTask({
+      task: makeTask("AUDIT_BULK_STOCK", "INVENTORY", { variant_id: sampleVariant.id, requested_quantity: 5 }),
+      executionContext: contextA,
+    });
+    assert.strictEqual(bulkStock.can_fulfill_in_full, true);
+
+    const bulkShip = await executeTypedWorkflowTask({
+      task: makeTask("CALCULATE_BULK_SHIPPING", "SHIPPING", { city: "Dhaka", quantity: 10, unit_weight_kg: 0.5 }),
+      executionContext: contextA,
+    });
+    assert.ok(typeof bulkShip.charge === "number" && bulkShip.charge > 0);
+
+    const custCtx = await executeTypedWorkflowTask({
+      task: makeTask("RETRIEVE_CUSTOMER_CONTEXT", "CUSTOMER_SUPPORT", { customer_id: sampleOrder.customer_id }),
+      executionContext: contextA,
+    });
+    assert.strictEqual(custCtx.customer_id, sampleOrder.customer_id);
+
+    const inspectOrd = await executeTypedWorkflowTask({
+      task: makeTask("INSPECT_ORDER_RETURN_STATE", "ORDER_ASSISTANT", { order_id: sampleOrder.id }),
+      executionContext: contextA,
+    });
+    assert.strictEqual(inspectOrd.order_id, sampleOrder.id);
+
+    const carts = await executeTypedWorkflowTask({
+      task: makeTask("IDENTIFY_ABANDONED_CARTS", "ORDER_ASSISTANT", { min_cart_total_bdt: 0, limit: 10 }),
+      executionContext: contextA,
+    });
+    assert.strictEqual(carts.status, "ABANDONED_CARTS_IDENTIFIED");
+
+    db.createShipment({
+      id: `shp_p1_${now}`,
+      tenant_id: contextA.tenant.id,
+      order_id: sampleOrder.id,
+      courier_provider: "STEADFAST",
+      tracking_number: `TRK-${now}`,
+      status: "IN_TRANSIT",
+      delivery_charge: 60,
+      cod_amount: sampleOrder.grand_total,
+      recipient_name: "Tanvir Hossain",
+      recipient_phone: "01711000000",
+      recipient_address: "Dhaka",
+      recipient_city: "Dhaka",
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+    const parcel = await executeTypedWorkflowTask({
+      task: makeTask("TRACK_PARCEL_STATUS", "SHIPPING", { order_id: sampleOrder.id }),
+      executionContext: contextA,
+    });
+    assert.strictEqual(parcel.order_id, sampleOrder.id);
+
+    // Invalid input -> 400 VALIDATION_ERROR
+    let invalidRejected = false;
+    try {
+      await executeTypedWorkflowTask({
+        task: makeTask("CALCULATE_BULK_SHIPPING", "SHIPPING", { city: "Dhaka", quantity: 0 }),
+        executionContext: contextA,
+      });
+    } catch (e: any) {
+      invalidRejected = e.statusCode === 400;
+    }
+    assert.ok(invalidRejected, "Invalid quantity=0 must throw 400");
+
+    // Cross-tenant isolation -> 404
+    const tenantB = await AuthService.registerTenantWithOwner({
+      workspaceName: `Other Tenant ${now}`,
+      workspaceSlug: `other-orch-${now}`,
+      email: `other-${now}@apex.com.bd`,
+      password: "Password123!",
+      name: "Other Owner",
+    });
+    const contextB: RequestContext = {
+      ...contextA,
+      user: { id: tenantB.user.id, email: tenantB.user.email, name: "Other Owner", status: "ACTIVE" },
+      tenant: { ...contextA.tenant, id: tenantB.tenant.id, name: tenantB.tenant.name, slug: tenantB.tenant.slug },
+    };
+    let crossTenantBlocked = false;
+    try {
+      await executeTypedWorkflowTask({
+        task: { ...makeTask("CHECK_PRODUCT_AVAILABILITY", "INVENTORY", { variant_id: sampleVariant.id }), tenant_id: tenantB.tenant.id },
+        executionContext: contextB,
+      });
+    } catch (e: any) {
+      crossTenantBlocked = e.statusCode === 404;
+    }
+    assert.ok(crossTenantBlocked, "Cross-tenant variant lookup must throw 404");
+  });
+
+  await runTest("Phase 2: LLM draft handlers produce verified drafts and Verifier rejects numeric mismatches", async () => {
+    const { executeTypedWorkflowTask } = await import("@/domains/ai/orchestration/engine/workflow-task-handlers");
+    const wfId = `wf_p2_${Date.now()}`;
+    db.insertWorkflow({
+      id: wfId,
+      tenant_id: contextA.tenant.id,
+      objective: "Wholesale quote test",
+      status: WorkflowStatus.RUNNING,
+      planned_steps: [],
+      created_by: contextA.user.id,
+      created_by_type: "USER",
+      budget_limits: { max_tokens: 50000, max_cost_usd: 5, max_tool_calls: 20, max_duration_ms: 60000 },
+      budget_used: { tokens: 0, cost_usd: 0, tool_calls: 0, duration_ms: 0 },
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+
+    const quoteOut = await executeTypedWorkflowTask({
+      task: {
+        id: `task_p2_quote_${Date.now()}`,
+        tenant_id: contextA.tenant.id,
+        workflow_id: wfId,
+        task_type: "FORMULATE_WHOLESALE_QUOTE",
+        agent_type: "SALES",
+        objective: "Formulate wholesale quote",
+        input: { variant_id: sampleVariant.id, quantity: 60, city: "Dhaka" },
+        dependencies: [],
+        risk_level: ActionRiskLevel.MEDIUM,
+        required_tools: [],
+        status: TaskStatus.RUNNING,
+        retry_count: 0,
+        max_retries: 0,
+        created_at: new Date().toISOString(),
+      },
+      executionContext: contextA,
+    });
+    assert.strictEqual(quoteOut.draft_type, "WHOLESALE_QUOTE");
+    assert.strictEqual(quoteOut.authoritative_numbers.unit_price, 2500);
+    assert.strictEqual(quoteOut.authoritative_numbers.discount_total, 15000);
+    assert.ok(typeof quoteOut.artifact_id === "string");
+
+    // Verifier confirms honest quote output
+    const okVerify = await verifierAgent.verify({
+      tenantId: contextA.tenant.id,
+      workflowId: wfId,
+      taskId: `task_p2_quote_${Date.now()}`,
+      claimedOutput: quoteOut,
+      targetAssertion: "Verify quote numbers",
+    });
+    assert.strictEqual(okVerify.status, "VERIFIED");
+
+    // Verifier rejects tampered unit_price
+    const badVerify = await verifierAgent.verify({
+      tenantId: contextA.tenant.id,
+      workflowId: wfId,
+      taskId: `task_p2_quote_bad_${Date.now()}`,
+      claimedOutput: {
+        ...quoteOut,
+        authoritative_numbers: { ...(quoteOut.authoritative_numbers as Record<string, unknown>), unit_price: 1 },
+      },
+      targetAssertion: "Verify tampered quote numbers",
+    });
+    assert.strictEqual(badVerify.status, "FAILED");
+  });
+
+  await runTest("Phase 3: Approval-gated outbound handler supports CUSTOMER target binding and reports SIMULATED/NOT_SENT", async () => {
+    db.upsertAutonomyPolicy(contextA.tenant.id, {
+      id: `pol_${contextA.tenant.id}_supervisor`,
+      tenant_id: contextA.tenant.id,
+      agent_type: "SUPERVISOR",
+      autonomy_level: AutonomyLevel.LEVEL_2_ASSISTED,
+      allowed_tools: [],
+      approval_required_for: [ActionRiskLevel.HIGH, ActionRiskLevel.CRITICAL],
+      max_actions_per_day: 100,
+      allowed_channels: ["ALL"],
+      is_emergency_stopped: false,
+      enabled: true,
+      version: 1,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+    const wfId = `wf_p3_${Date.now()}`;
+    db.insertWorkflow({
+      id: wfId,
+      tenant_id: contextA.tenant.id,
+      objective: "Send recovery message",
+      status: WorkflowStatus.RUNNING,
+      planned_steps: [],
+      created_by: contextA.user.id,
+      created_by_type: "USER",
+      budget: {
+        max_tokens: 50000,
+        max_cost_usd: 5,
+        max_tool_calls: 20,
+        max_duration_ms: 60000,
+        used_tokens: 0,
+        used_cost_usd: 0,
+        used_tool_calls: 0,
+        reservations: {},
+      },
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+    const taskId = `task_p3_msg_${Date.now()}`;
+    const task = {
+      id: taskId,
+      tenant_id: contextA.tenant.id,
+      workflow_id: wfId,
+      task_type: "OUTBOUND_MESSAGE_APPROVAL",
+      agent_type: "SUPERVISOR" as const,
+      objective: "Approve outbound message",
+      input: { customer_id: sampleOrder.customer_id, message_text: "Your cart is waiting!" },
+      dependencies: [],
+      risk_level: ActionRiskLevel.HIGH,
+      required_tools: [],
+      status: TaskStatus.PENDING,
+      idempotency_key: `idemp_p3_${Date.now()}`,
+      budget: {
+        max_tokens: 10000,
+        max_cost_usd: 1,
+        max_tool_calls: 5,
+        max_duration_ms: 30000,
+        used_tokens: 0,
+        used_cost_usd: 0,
+        used_tool_calls: 0,
+      },
+      retry_count: 0,
+      max_retries: 0,
+      created_at: new Date().toISOString(),
+    };
+    db.insertTask(task);
+
+    // First run puts it into WAITING_APPROVAL bound to CUSTOMER
+    const waitRes = await taskExecutor.executeTask(task);
+    assert.strictEqual(waitRes.status, TaskStatus.WAITING_APPROVAL);
+    const pendingTask = db.getTaskById(contextA.tenant.id, taskId)!;
+    const approval = db.getApprovalRequestById(contextA.tenant.id, pendingTask.approval_id!)!;
+    assert.strictEqual(approval.target_entity_type, "CUSTOMER");
+    assert.strictEqual(approval.target_entity_id, sampleOrder.customer_id);
+
+    // Approve by another operator
+    await approvalEngine.approveAction(contextA.tenant.id, approval.id, "op_approver_p3");
+    const execRes = await taskExecutor.executeTask(db.getTaskById(contextA.tenant.id, taskId)!);
+    assert.strictEqual(execRes.status, TaskStatus.COMPLETED, execRes.error);
+    assert.strictEqual(execRes.output?.status, "SIMULATED");
+    assert.strictEqual(execRes.output?.delivery_status, "NOT_SENT");
+  });
+
+  await runTest("Phase 4: Operator reconciliation API enforces RBAC, tenant isolation, audit logging, and lists uncertain tasks", async () => {
+    const wfId = `wf_p4_${Date.now()}`;
+    const taskId = `task_p4_unc_${Date.now()}`;
+    db.insertWorkflow({
+      id: wfId,
+      tenant_id: contextA.tenant.id,
+      objective: "Uncertain refund test",
+      status: WorkflowStatus.PAUSED,
+      planned_steps: [],
+      created_by: contextA.user.id,
+      created_by_type: "USER",
+      budget: {
+        max_tokens: 50000,
+        max_cost_usd: 5,
+        max_tool_calls: 20,
+        max_duration_ms: 60000,
+        used_tokens: 0,
+        used_cost_usd: 0,
+        used_tool_calls: 0,
+        reservations: {},
+      },
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+    db.insertTask({
+      id: taskId,
+      tenant_id: contextA.tenant.id,
+      workflow_id: wfId,
+      task_type: "APPROVAL_REFUND_DISBURSEMENT",
+      agent_type: "SUPERVISOR",
+      objective: "Disburse refund",
+      input: { order_id: sampleOrder.id, amount: 500 },
+      dependencies: [],
+      risk_level: ActionRiskLevel.CRITICAL,
+      required_tools: [],
+      status: TaskStatus.OUTCOME_UNKNOWN,
+      retry_count: 0,
+      max_retries: 0,
+      created_at: new Date().toISOString(),
+    });
+
+    const viewerId = `user_viewer_p4_${now}`;
+    db.createUser({
+      id: viewerId,
+      email: `viewer-${now}@apex.com.bd`,
+      name: "Viewer User",
+      password_hash: "hashed",
+      status: "ACTIVE",
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+    db.createMembership({
+      id: `mem_viewer_p4_${now}`,
+      tenant_id: contextA.tenant.id,
+      user_id: viewerId,
+      role: "VIEWER",
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+
+    const ownerToken = await signSessionToken({
+      userId: contextA.user.id,
+      tenantId: contextA.tenant.id,
+      email: contextA.user.email,
+      name: contextA.user.name,
+      role: "OWNER",
+      sv: 1,
+    });
+    const viewerToken = await signSessionToken({
+      userId: viewerId,
+      tenantId: contextA.tenant.id,
+      email: `viewer-${now}@apex.com.bd`,
+      name: "Viewer User",
+      role: "VIEWER",
+      sv: 1,
+    });
+
+    // GET /uncertain lists the OUTCOME_UNKNOWN task
+    const uncRes = await uncertainGet(
+      new Request("http://localhost:3000/api/v1/ai/workflows/uncertain", {
+        headers: { authorization: `Bearer ${ownerToken}` },
+      })
+    );
+    assert.strictEqual(uncRes.status, 200);
+    const uncJson = await uncRes.json();
+    assert.ok(uncJson.data.tasks.some((t: any) => t.id === taskId));
+
+    // RBAC: VIEWER cannot reconcile (403)
+    const forbidRes = await reconcilePost(
+      new Request(`http://localhost:3000/api/v1/ai/workflows/${wfId}/tasks/${taskId}/reconcile`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${viewerToken}` },
+        body: JSON.stringify({ outcome: "APPLIED", evidence: "Gateway receipt #123" }),
+      }),
+      { params: Promise.resolve({ id: wfId, taskId }) }
+    );
+    assert.strictEqual(forbidRes.status, 403);
+
+    // OWNER can reconcile -> 200 and audit log recorded
+    const okRes = await reconcilePost(
+      new Request(`http://localhost:3000/api/v1/ai/workflows/${wfId}/tasks/${taskId}/reconcile`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${ownerToken}` },
+        body: JSON.stringify({ outcome: "APPLIED", evidence: "Gateway receipt #123" }),
+      }),
+      { params: Promise.resolve({ id: wfId, taskId }) }
+    );
+    assert.strictEqual(okRes.status, 200);
+    const audits = db.findAuditLogs(contextA.tenant.id);
+    assert.ok(audits.some((a) => a.action === "WORKFLOW_TASK_RECONCILED" && a.resource_id === taskId));
+
+    // Double reconcile fails -> 409
+    const dupRes = await reconcilePost(
+      new Request(`http://localhost:3000/api/v1/ai/workflows/${wfId}/tasks/${taskId}/reconcile`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${ownerToken}` },
+        body: JSON.stringify({ outcome: "APPLIED", evidence: "Second attempt" }),
+      }),
+      { params: Promise.resolve({ id: wfId, taskId }) }
+    );
+    assert.strictEqual(dupRes.status, 409);
+  });
+
+  // ============================================================
+  // Gate 14: effect safety regressions (approval follows the effect, the approved payload is what runs)
+  // ============================================================
+
+  const handlers = await import("@/domains/ai/orchestration/engine/workflow-task-handlers");
+  const setSupervisorLevel = (level: AutonomyLevel) => db.upsertAutonomyPolicy(contextA.tenant.id, {
+    id: `pol_${contextA.tenant.id}_supervisor`,
+    tenant_id: contextA.tenant.id,
+    agent_type: "SUPERVISOR",
+    autonomy_level: level,
+    allowed_tools: [],
+    approval_required_for: [ActionRiskLevel.HIGH, ActionRiskLevel.CRITICAL],
+    max_actions_per_day: 100,
+    allowed_channels: ["ALL"],
+    is_emergency_stopped: false,
+    enabled: true,
+    version: 1,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  });
+  let gate14Seq = 0;
+  const newWorkflow = () => {
+    const id = `wf_g14_${Date.now()}_${++gate14Seq}`;
+    db.insertWorkflow({
+      id,
+      tenant_id: contextA.tenant.id,
+      objective: "Gate 14",
+      status: WorkflowStatus.RUNNING,
+      planned_steps: [],
+      created_by: contextA.user.id,
+      created_by_type: "USER",
+      budget: { max_tokens: 50000, max_cost_usd: 5, max_tool_calls: 20, max_duration_ms: 60000, used_tokens: 0, used_cost_usd: 0, used_tool_calls: 0, reservations: {} },
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+    return id;
+  };
+  const insertTask = (
+    workflowId: string,
+    taskType: string,
+    agentType: AgentTask["agent_type"],
+    input: Record<string, unknown>,
+    extra: Partial<AgentTask> = {},
+  ): AgentTask => {
+    const task: AgentTask = {
+      id: `task_g14_${taskType}_${Date.now()}_${++gate14Seq}`,
+      tenant_id: contextA.tenant.id,
+      workflow_id: workflowId,
+      task_type: taskType,
+      agent_type: agentType,
+      objective: taskType,
+      input,
+      dependencies: [],
+      risk_level: ActionRiskLevel.LOW,
+      required_tools: [],
+      status: TaskStatus.PENDING,
+      idempotency_key: `idemp_g14_${Date.now()}_${gate14Seq}`,
+      budget: { max_tokens: 10000, max_cost_usd: 1, max_tool_calls: 5, max_duration_ms: 30000, used_tokens: 0, used_cost_usd: 0, used_tool_calls: 0 },
+      retry_count: 0,
+      max_retries: 0,
+      created_at: new Date().toISOString(),
+      ...extra,
+    };
+    db.insertTask(task);
+    return task;
+  };
+
+  await runTest("Gate 14 · Delivery-delay template sends only through an approval step; the draft step cannot send", async () => {
+    const plan = await taskPlanner.planObjective(contextA.tenant.id, "Review delayed Steadfast delivery exception and update customer");
+    const types = plan.steps.map((s) => s.task_type);
+    assert.deepStrictEqual(types, ["TRACK_PARCEL_STATUS", "NOTIFY_CUSTOMER_EMPATHY", "OUTBOUND_MESSAGE_APPROVAL"], `steps: ${types.join(",")}`);
+
+    let rejected = false;
+    try {
+      await handlers.executeTypedWorkflowTask({
+        task: { ...insertTask(newWorkflow(), "NOTIFY_CUSTOMER_EMPATHY", "CUSTOMER_SUPPORT", { order_id: sampleOrder.id, send: true }), status: TaskStatus.RUNNING },
+        executionContext: contextA,
+      });
+    } catch (e: unknown) {
+      rejected = e instanceof AppError && e.code === "VALIDATION_ERROR";
+    }
+    assert.ok(rejected, "NOTIFY_CUSTOMER_EMPATHY must reject a send flag");
+  });
+
+  await runTest("A customer message labelled LOW risk is raised to HIGH and still needs approval at autonomy level 3", async () => {
+    setSupervisorLevel(AutonomyLevel.LEVEL_3_CONDITIONAL);
+    const task = insertTask(newWorkflow(), "OUTBOUND_MESSAGE_APPROVAL", "SUPERVISOR", {
+      customer_id: sampleOrder.customer_id,
+      message_text: "Your parcel is delayed by one day.",
+    });
+    const res = await taskExecutor.executeTask(task);
+    assert.strictEqual(res.status, TaskStatus.WAITING_APPROVAL, res.error);
+    assert.strictEqual(db.getTaskById(contextA.tenant.id, task.id)!.risk_level, ActionRiskLevel.HIGH);
+    assert.strictEqual(handlers.effectiveRiskLevel("APPROVAL_REFUND_DISBURSEMENT", "LOW"), "CRITICAL");
+  });
+
+  await runTest("The approval binds the drafted text; a later change to the draft cannot change what is sent", async () => {
+    setSupervisorLevel(AutonomyLevel.LEVEL_2_ASSISTED);
+    const wf = newWorkflow();
+    const draft = insertTask(wf, "GENERATE_PERSONALIZED_MESSAGE", "SALES", {}, {
+      status: TaskStatus.COMPLETED,
+      output: { draft_text: "Approved draft text", customer_id: sampleOrder.customer_id },
+    });
+    const send = insertTask(wf, "OUTBOUND_MESSAGE_APPROVAL", "SUPERVISOR", {}, {
+      risk_level: ActionRiskLevel.HIGH,
+      dependencies: [{ task_id: draft.id, required_status: TaskStatus.COMPLETED }],
+    });
+    const waiting = await taskExecutor.executeTask(send);
+    assert.strictEqual(waiting.status, TaskStatus.WAITING_APPROVAL, waiting.error);
+    const approval = db.getApprovalRequestById(contextA.tenant.id, waiting.approvalId!)!;
+    assert.strictEqual((approval.payload as Record<string, unknown>).message_text, "Approved draft text", "approver sees the exact text");
+
+    db.updateTask(contextA.tenant.id, draft.id, { output: { draft_text: "Swapped after approval", customer_id: sampleOrder.customer_id } });
+    await approvalEngine.approveAction(contextA.tenant.id, approval.id, "op_approver_g14");
+    const done = await taskExecutor.executeTask(db.getTaskById(contextA.tenant.id, send.id)!);
+    assert.strictEqual(done.status, TaskStatus.COMPLETED, done.error);
+    assert.strictEqual(done.output?.draft_text, "Approved draft text");
+    assert.strictEqual(done.output?.delivery_status, "NOT_SENT");
+
+    // Editing the frozen input after approval breaks the binding and the executor refuses.
+    const wf2 = newWorkflow();
+    const send2 = insertTask(wf2, "OUTBOUND_MESSAGE_APPROVAL", "SUPERVISOR", { customer_id: sampleOrder.customer_id, message_text: "Original" });
+    const waiting2 = await taskExecutor.executeTask(send2);
+    await approvalEngine.approveAction(contextA.tenant.id, waiting2.approvalId!, "op_approver_g14");
+    db.updateTask(contextA.tenant.id, send2.id, { input: { customer_id: sampleOrder.customer_id, message_text: "Tampered" } });
+    const refused = await taskExecutor.executeTask(db.getTaskById(contextA.tenant.id, send2.id)!);
+    assert.strictEqual(refused.status, TaskStatus.FAILED);
+    assert.ok(/payload no longer matches the reviewed approval/.test(refused.error || ""), refused.error);
+  });
+
+  await runTest("An outbound message with no text and no draft fails instead of sending a default message", async () => {
+    setSupervisorLevel(AutonomyLevel.LEVEL_2_ASSISTED);
+    const task = insertTask(newWorkflow(), "OUTBOUND_MESSAGE_APPROVAL", "SUPERVISOR", { customer_id: sampleOrder.customer_id }, { risk_level: ActionRiskLevel.HIGH });
+    const res = await taskExecutor.executeTask(task);
+    assert.strictEqual(res.status, TaskStatus.FAILED);
+    assert.ok(/approved text/.test(res.error || ""), res.error);
+  });
+
+  await runTest("Refunds are capped at the refundable amount, re-checked at execution, and report that no money moved", async () => {
+    setSupervisorLevel(AutonomyLevel.LEVEL_2_ASSISTED);
+    const refundOrder = await OrderService.createOrder(contextA, {
+      customer: { first_name: "Refund", last_name: "Test", phone: "+8801712345679", email: "refund-g14@example.com" },
+      delivery_address: { division: "Dhaka", district: "Dhaka", address_line_1: "Mirpur 10" },
+      items: [{ variant_id: sampleVariant.id, quantity: 1 }],
+      delivery_zone: "INSIDE_DHAKA",
+      payment_method: "BKASH",
+    });
+    db.createPayment({
+      id: `pay_g14_${Date.now()}`,
+      tenant_id: contextA.tenant.id,
+      order_id: refundOrder.id,
+      provider: "BKASH",
+      amount: 1000,
+      currency: "BDT",
+      status: "PAID",
+      created_at: new Date().toISOString(),
+    });
+
+    // Over the ceiling: refused before any approval is created.
+    const over = insertTask(newWorkflow(), "APPROVAL_REFUND_DISBURSEMENT", "SUPERVISOR", { order_id: refundOrder.id, amount: 1500 });
+    const overRes = await taskExecutor.executeTask(over);
+    assert.strictEqual(overRes.status, TaskStatus.FAILED);
+    assert.ok(/exceeds/.test(overRes.error || ""), overRes.error);
+    assert.ok(!db.getTaskById(contextA.tenant.id, over.id)!.approval_id, "no approval for an impossible refund");
+
+    // No amount: the approval names the remaining refundable amount explicitly.
+    const full = insertTask(newWorkflow(), "APPROVAL_REFUND_DISBURSEMENT", "SUPERVISOR", { order_id: refundOrder.id });
+    const waiting = await taskExecutor.executeTask(full);
+    assert.strictEqual(waiting.status, TaskStatus.WAITING_APPROVAL, waiting.error);
+    assert.strictEqual(db.getTaskById(contextA.tenant.id, full.id)!.risk_level, ActionRiskLevel.CRITICAL);
+    const approval = db.getApprovalRequestById(contextA.tenant.id, waiting.approvalId!)!;
+    assert.strictEqual((approval.payload as Record<string, unknown>).amount, 1000);
+
+    // A partial refund recorded after approval shrinks the ceiling; the approved 1000 BDT is refused at execution.
+    const partial = insertTask(newWorkflow(), "APPROVAL_REFUND_DISBURSEMENT", "SUPERVISOR", { order_id: refundOrder.id, amount: 300 });
+    const partialWait = await taskExecutor.executeTask(partial);
+    await approvalEngine.approveAction(contextA.tenant.id, partialWait.approvalId!, "op_approver_g14");
+    const partialDone = await taskExecutor.executeTask(db.getTaskById(contextA.tenant.id, partial.id)!);
+    assert.strictEqual(partialDone.status, TaskStatus.COMPLETED, partialDone.error);
+    assert.strictEqual(partialDone.output?.money_movement, "NOT_PERFORMED");
+    assert.strictEqual(partialDone.output?.settlement, "MANUAL_REQUIRED");
+    assert.strictEqual(partialDone.output?.status, "REFUND_RECORDED", "never reported as a completed money refund");
+    assert.strictEqual((await handlers.refundableAmount(contextA.tenant.id, refundOrder.id))?.refundable, 700);
+
+    const refundsBefore = db.getRefunds(contextA.tenant.id).filter((r) => r.order_id === refundOrder.id).length;
+    await approvalEngine.approveAction(contextA.tenant.id, approval.id, "op_approver_g14");
+    const stale = await taskExecutor.executeTask(db.getTaskById(contextA.tenant.id, full.id)!);
+    assert.notStrictEqual(stale.status, TaskStatus.COMPLETED);
+    assert.strictEqual(db.getRefunds(contextA.tenant.id).filter((r) => r.order_id === refundOrder.id).length, refundsBefore, "no second refund recorded");
+
+    // Execution-time ceiling, reached directly: approve 600 of the remaining 700, then a refund recorded elsewhere
+    // (no order or payment change, so the state binding still matches) leaves 500, and the executor refuses.
+    const late = insertTask(newWorkflow(), "APPROVAL_REFUND_DISBURSEMENT", "SUPERVISOR", { order_id: refundOrder.id, amount: 600 });
+    const lateWait = await taskExecutor.executeTask(late);
+    assert.strictEqual(lateWait.status, TaskStatus.WAITING_APPROVAL, lateWait.error);
+    await approvalEngine.approveAction(contextA.tenant.id, lateWait.approvalId!, "op_approver_g14");
+    const paidPaymentId = (await handlers.refundableAmount(contextA.tenant.id, refundOrder.id))!.paymentId;
+    db.createRefund({
+      id: `ref_g14_manual_${Date.now()}`,
+      tenant_id: contextA.tenant.id,
+      order_id: refundOrder.id,
+      payment_id: paidPaymentId,
+      amount: 200,
+      currency: "BDT",
+      status: "COMPLETED",
+      reason: "Recorded by staff outside the workflow",
+      created_at: new Date().toISOString(),
+    });
+    const lateRes = await taskExecutor.executeTask(db.getTaskById(contextA.tenant.id, late.id)!);
+    assert.notStrictEqual(lateRes.status, TaskStatus.COMPLETED);
+    assert.ok(/no longer within the refundable amount/.test(lateRes.error || ""), lateRes.error);
+
+    // A return id that isn't a return of this order is refused before approval.
+    const wrongReturn = insertTask(newWorkflow(), "APPROVAL_REFUND_DISBURSEMENT", "SUPERVISOR", { order_id: refundOrder.id, amount: 100, return_id: "ret_not_this_order" });
+    const wrongRes = await taskExecutor.executeTask(wrongReturn);
+    assert.strictEqual(wrongRes.status, TaskStatus.FAILED);
+    assert.ok(/is not a return of order/.test(wrongRes.error || ""), wrongRes.error);
+  });
+
+  // ---- PR #82 review: consent before marketing sends, a conversation for customer-only sends ----
+  const makeConversation = (customerId: string, channelStatus: "ACTIVE" | "DISCONNECTED" = "ACTIVE") => {
+    const seq = randomUUID().replace(/-/g, "").slice(0, 16);
+    const now = new Date().toISOString();
+    const channel = db.createConnectedChannel({
+      id: `ch_g14_${seq}`,
+      tenant_id: contextA.tenant.id,
+      type: "WHATSAPP",
+      name: "Shop WhatsApp",
+      status: channelStatus,
+      provider_account_id: `pn_${seq}`,
+      credentials_encrypted: "",
+      configuration: {},
+      created_at: now,
+      updated_at: now,
+    } as unknown as Parameters<typeof db.createConnectedChannel>[0]);
+    return db.createConversation({
+      id: `conv_g14_${seq}`,
+      tenant_id: contextA.tenant.id,
+      channel_id: channel.id,
+      channel_type: "WHATSAPP",
+      customer_id: customerId,
+      external_conversation_id: `ext_${seq}`,
+      status: "OPEN",
+      priority: "NORMAL",
+      mode: "AI",
+      automation_paused: false,
+      last_message_at: now,
+      unread_count: 0,
+      tags: [],
+      source: "INBOUND",
+      created_at: now,
+      updated_at: now,
+    } as unknown as Parameters<typeof db.createConversation>[0]);
+  };
+
+  await runTest("PR #82 review: a customer-only send is addressed to the customer's latest reachable conversation, shown in the approval", async () => {
+    setSupervisorLevel(AutonomyLevel.LEVEL_2_ASSISTED);
+    const customerId = sampleOrder.customer_id;
+    makeConversation(customerId, "DISCONNECTED");
+    const reachable = makeConversation(customerId, "ACTIVE");
+    const send = insertTask(newWorkflow(), "OUTBOUND_MESSAGE_APPROVAL", "SUPERVISOR", { customer_id: customerId, message_text: "Your order is on its way." });
+    const waiting = await taskExecutor.executeTask(send);
+    assert.strictEqual(waiting.status, TaskStatus.WAITING_APPROVAL, waiting.error);
+    const payload = db.getApprovalRequestById(contextA.tenant.id, waiting.approvalId!)!.payload as Record<string, unknown>;
+    assert.strictEqual(payload.conversation_id, reachable.id, "the approver sees which conversation it goes to");
+    assert.strictEqual(payload.purpose, "MARKETING", "a send with no delivery-notice draft is treated as marketing");
+
+    const other = insertTask(newWorkflow(), "OUTBOUND_MESSAGE_APPROVAL", "SUPERVISOR", {
+      customer_id: `cust_someone_else_${Date.now()}`,
+      conversation_id: reachable.id,
+      message_text: "Hello",
+    });
+    const refused = await taskExecutor.executeTask(other);
+    assert.strictEqual(refused.status, TaskStatus.FAILED);
+    assert.ok(/different customer/.test(refused.error || ""), refused.error);
+  });
+
+  await runTest("PR #82 review: a marketing send to an opted-out customer is not sent; a delivery notice (service) is not blocked by marketing opt-out", async () => {
+    setSupervisorLevel(AutonomyLevel.LEVEL_2_ASSISTED);
+    const customerId = sampleOrder.customer_id;
+    const conv = makeConversation(customerId, "ACTIVE");
+    consentService.suppressCustomer(contextA.tenant.id, customerId, "CUSTOMER_OPT_OUT", "WHATSAPP");
+
+    const wf = newWorkflow();
+    const draft = insertTask(wf, "GENERATE_PERSONALIZED_MESSAGE", "SALES", {}, {
+      status: TaskStatus.COMPLETED,
+      output: { draft_text: "Your cart is waiting, 10% off today!", customer_id: customerId, conversation_id: conv.id },
+    });
+    const send = insertTask(wf, "OUTBOUND_MESSAGE_APPROVAL", "SUPERVISOR", {}, { dependencies: [{ task_id: draft.id, required_status: TaskStatus.COMPLETED }] });
+    const waiting = await taskExecutor.executeTask(send);
+    await approvalEngine.approveAction(contextA.tenant.id, waiting.approvalId!, "op_approver_g14");
+    const done = await taskExecutor.executeTask(db.getTaskById(contextA.tenant.id, send.id)!);
+    assert.strictEqual(done.status, TaskStatus.COMPLETED, done.error);
+    assert.strictEqual(done.output?.delivery_status, "NOT_SENT");
+    assert.ok(/Marketing message not sent/.test(String(done.output?.reason)), String(done.output?.reason));
+
+    const wf2 = newWorkflow();
+    const notice = insertTask(wf2, "NOTIFY_CUSTOMER_EMPATHY", "CUSTOMER_SUPPORT", {}, {
+      status: TaskStatus.COMPLETED,
+      output: { draft_text: "Your parcel is delayed by a day, sorry.", customer_id: customerId, conversation_id: conv.id },
+    });
+    // Simulated: the real send would then meet WhatsApp's 24-hour rule, which is not what this checks
+    const send2 = insertTask(wf2, "OUTBOUND_MESSAGE_APPROVAL", "SUPERVISOR", { simulate: true }, { dependencies: [{ task_id: notice.id, required_status: TaskStatus.COMPLETED }] });
+    const waiting2 = await taskExecutor.executeTask(send2);
+    assert.strictEqual((db.getApprovalRequestById(contextA.tenant.id, waiting2.approvalId!)!.payload as Record<string, unknown>).purpose, "SERVICE");
+    await approvalEngine.approveAction(contextA.tenant.id, waiting2.approvalId!, "op_approver_g14");
+    const done2 = await taskExecutor.executeTask(db.getTaskById(contextA.tenant.id, send2.id)!);
+    assert.strictEqual(done2.status, TaskStatus.COMPLETED, done2.error);
+    assert.ok(!/Marketing message not sent/.test(String(done2.output?.reason ?? "")), "service messages skip the marketing check");
+  });
+
+  await runTest("Draft artifacts start unverified and are marked verified only after the verifier accepts the task", async () => {
+    const wf = newWorkflow();
+    const quoteTask = insertTask(wf, "FORMULATE_WHOLESALE_QUOTE", "SALES", { variant_id: sampleVariant.id, quantity: 60, city: "Dhaka" }, { status: TaskStatus.RUNNING });
+    await handlers.executeTypedWorkflowTask({ task: quoteTask, executionContext: contextA });
+    const before = db.getWorkflowArtifacts(contextA.tenant.id, wf).filter((a) => a.task_id === quoteTask.id);
+    assert.ok(before.length > 0 && before.every((a) => a.is_verified === false), "unverified until checked");
+
+    const wf2 = newWorkflow();
+    const quoteTask2 = insertTask(wf2, "FORMULATE_WHOLESALE_QUOTE", "SALES", { variant_id: sampleVariant.id, quantity: 60, city: "Dhaka" });
+    const res = await taskExecutor.executeTask(quoteTask2);
+    assert.strictEqual(res.status, TaskStatus.COMPLETED, res.error);
+    const after = db.getWorkflowArtifacts(contextA.tenant.id, wf2).filter((a) => a.task_id === quoteTask2.id);
+    assert.ok(after.length > 0 && after.every((a) => a.is_verified === true), "verified after the verifier passed");
   });
 
   // ============================================================
