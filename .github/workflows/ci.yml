@@ -39,7 +39,7 @@ jobs:
         run: npm run rag:replay:offline
       - name: Upload RAG replay report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rag-replay-report
           path: tests/rag-replay-report.json
