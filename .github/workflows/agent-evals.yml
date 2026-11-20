@@ -1,23 +1,29 @@
-# Live agent eval gate (FX-80, audit F12). Live runs spend real model tokens, so they are rationed:
+# Live agent eval gate (FX-80, audit F12). Live runs spend real model tokens, so they never run on their own:
 #   - Every PR: only the free offline eval gate (`npm run test:eval` in ci.yml, demo model, no tokens).
-#   - Nightly: the full live suite, skipped when main has not changed since the last completed nightly run.
-#   - A PR on demand: add the `run-live-eval` label to run the 26-case smoke subset once. New pushes do not re-run it;
+#   - Manual: Actions > Agent evals > "Run workflow" (workflow_dispatch). Pick the branch and the suite: `smoke`
+#     (26 cases, the default, cheapest) or `full` (golden + red-team + real-embedding retrieval eval).
+#     CLI: gh workflow run agent-evals.yml --ref <branch> -f suite=smoke|full
+#   - A PR on demand: add the `run-live-eval` label to run the smoke subset once. New pushes do not re-run it;
 #     remove and re-add the label to run it again.
-#   - Manual: "Run workflow" (workflow_dispatch) always runs the full suite.
-# All live runs use the provider profile below, with an eval key kept in the `evals` environment, never the production key.
+# Merging to main never starts a live run (there is no schedule; the deploy gate in deploy.yml is off unless
+# AGENT_EVAL_GATE=on). All live runs use the provider profile below, with an eval key kept in the `evals`
+# environment, never the production key.
 name: Agent evals
 
 on:
   pull_request:
     types: [labeled]
-  schedule:
-    - cron: "30 21 * * *" # 03:30 Asia/Dhaka
   workflow_dispatch:
+    inputs:
+      suite:
+        description: "smoke = 26-case subset (cheap); full = all golden + red-team cases and the retrieval eval"
+        type: choice
+        options: [smoke, full]
+        default: smoke
 
 permissions:
   contents: read
   pull-requests: write
-  actions: read # the nightly change check reads this workflow's previous runs
 
 concurrency:
   # Keyed on the label too: adding some other label to a PR must not cancel a live run already in progress
@@ -25,44 +31,20 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  changed:
-    name: Main changed since the last nightly run?
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      run: ${{ steps.check.outputs.run }}
-    steps:
-      - id: check
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          if [ "${{ github.event_name }}" != "schedule" ]; then
-            echo "run=true" >> "$GITHUB_OUTPUT"; exit 0
-          fi
-          last=$(gh api "repos/${{ github.repository }}/actions/workflows/agent-evals.yml/runs?event=schedule&status=completed&per_page=1" --jq '.workflow_runs[0].head_sha // ""')
-          if [ "$last" = "${{ github.sha }}" ]; then
-            echo "main is still at $last, already evaluated by the last nightly run: skipping (no tokens spent)."
-            echo "run=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "main moved from '${last:-none}' to ${{ github.sha }}: running the full live eval."
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          fi
-
   live:
     name: Golden + red-team on the configured model
-    needs: changed
     # PRs: only when the run-live-eval label was just added, and never for forks (they never get the eval key)
     if: >-
-      needs.changed.outputs.run == 'true' &&
-      (github.event_name != 'pull_request' ||
+      github.event_name != 'pull_request' ||
         (github.event.label.name == 'run-live-eval' &&
-         github.event.pull_request.head.repo.full_name == github.repository))
+         github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 120
     environment: evals
     env:
       TEST_LLM_LIVE: "1"
+      # smoke: a labeled PR, or a manual run that picked smoke. full: a manual run that picked full.
+      SUITE: ${{ github.event_name == 'pull_request' && 'smoke' || inputs.suite }}
       # Provider profile under test (implementation plan §2a). Switching provider = changing these lines.
       LLM_PROVIDER_NAME: mwapi
       LLM_BASE_URL: https://api.mwapi.dev/v1
@@ -76,24 +58,24 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version-file: .nvmrc, cache: npm }
       - run: npm ci
-      - name: Smoke subset (PR)
-        if: github.event_name == 'pull_request'
+      - name: Smoke subset (labeled PR / manual smoke)
+        if: env.SUITE == 'smoke'
         env:
           EVAL_CASES: G01,G03,G06,G19,G25,G28,G33,G37,G41,G44,G55,G59,R03,R04,R06,R07,R11,R12,R16,R21,R25,R26,R27,R35,R42,R43
           LLM_API_KEY: ${{ secrets.LLM_EVAL_API_KEY }}
         shell: bash # pipefail: an aborted eval fails this step instead of tee's 0 hiding it
         run: node tests/ts-runner.cjs ./tests/agent-evals/run-evals.ts | tee eval.log
-      - name: Full suite (nightly / manual)
-        if: github.event_name != 'pull_request'
+      - name: Full suite (manual full)
+        if: env.SUITE == 'full'
         shell: bash # pipefail: an aborted eval fails this step instead of tee's 0 hiding it
         run: node tests/ts-runner.cjs ./tests/agent-evals/run-evals.ts | tee eval.log
         env:
           LLM_API_KEY: ${{ secrets.LLM_EVAL_API_KEY }}
       - name: Gate
         run: node tests/agent-evals/check-thresholds.mjs "$(ls -d tests/agent-evals/results/live-* | tail -1)"
-      # FX-82: Recall@2 ≥ 95% per language with real embeddings (nightly; synthetic policy text only)
-      - name: Retrieval eval (nightly / manual)
-        if: github.event_name != 'pull_request'
+      # FX-82: Recall@2 ≥ 95% per language with real embeddings (manual full run; synthetic policy text only)
+      - name: Retrieval eval (manual full)
+        if: env.SUITE == 'full'
         env:
           EVAL_REAL_EMBEDDINGS: "1"
           LLM_EMBEDDING_BASE_URL: https://generativelanguage.googleapis.com/v1beta/openai
