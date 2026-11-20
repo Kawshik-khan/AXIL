@@ -25,7 +25,14 @@ import { BentoGrid } from "@/components/bento/BentoGrid";
 import { BentoCard } from "@/components/bento/BentoCard";
 import { Badge } from "@/components/ui/Badge/Badge";
 import { Button } from "@/components/ui/Button/Button";
+import { Input } from "@/components/ui/Input/Input";
 import { LoadingState, EmptyState, ErrorState } from "@/components/ui/States/States";
+import { fetchWithStepUp } from "@/lib/step-up-client";
+
+interface ApprovalDecisionResponse {
+  data?: { success?: boolean; reason?: string };
+  error?: { message?: string };
+}
 
 export default function WorkflowDetailPage() {
   // Next 16 hands page params over as a Promise; in a client component useParams() reads them synchronously
@@ -57,6 +64,51 @@ export default function WorkflowDetailPage() {
   useEffect(() => {
     fetchWorkflow();
   }, [fetchWorkflow]);
+
+  // Approve or reject a task's pending approval here; /ai/approvals has no page of its own
+  const [approvalBusy, setApprovalBusy] = useState(false);
+  const [approvalNote, setApprovalNote] = useState<string | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
+  const selectedTaskId: string | undefined = selectedTask?.id;
+
+  useEffect(() => {
+    setApprovalNote(null);
+    setRejectReason("");
+  }, [selectedTaskId]);
+
+  const decideApproval = async (approvalId: string, taskId: string, action: "APPROVE" | "REJECT") => {
+    setApprovalBusy(true);
+    setApprovalNote(null);
+    try {
+      // Approving asks for a fresh authenticator code (step-up) when the server requires one
+      const res = await fetchWithStepUp(`/api/v1/ai/approvals/${encodeURIComponent(approvalId)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(action === "REJECT" ? { action, reason: rejectReason.trim() } : { action }),
+      });
+      const body: ApprovalDecisionResponse = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setApprovalNote(body.error?.message || "The decision was not saved.");
+      } else if (body.data?.success === false) {
+        setApprovalNote(body.data.reason || "This approval is no longer valid.");
+      } else {
+        setApprovalNote(action === "APPROVE" ? "Approved. The task will continue." : "Rejected. The task is cancelled.");
+        setRejectReason("");
+      }
+      const refreshed = await fetch(`/api/v1/ai/workflows/${id}`);
+      const refreshedBody = await refreshed.json();
+      if (refreshed.ok && refreshedBody.data) {
+        setWorkflow(refreshedBody.data);
+        const tasksAfter: Array<{ id: string }> = refreshedBody.data.tasks || [];
+        const updated = tasksAfter.find((task) => task.id === taskId);
+        if (updated) setSelectedTask(updated);
+      }
+    } catch {
+      setApprovalNote("Could not reach the server.");
+    } finally {
+      setApprovalBusy(false);
+    }
+  };
 
   const handleAction = async (action: string) => {
     try {
@@ -274,9 +326,45 @@ export default function WorkflowDetailPage() {
                 {selectedTask.approval_id && (
                   <div style={{ borderBottom: "1px solid #2d2f36", paddingBottom: "0.75rem", marginBottom: "0.75rem" }}>
                     <div style={{ color: "var(--color-text-muted)", fontSize: "0.75rem" }}>APPROVAL REQUIRED</div>
-                    <Link href="/ai/approvals" style={{ color: "var(--color-warning-ink)", fontSize: "0.8rem", textDecoration: "underline" }}>
-                      Approval ID: {selectedTask.approval_id} &rarr;
-                    </Link>
+                    <code style={{ color: "var(--color-warning-ink)", fontSize: "0.8rem" }}>{selectedTask.approval_id}</code>
+                    {selectedTask.status === "WAITING_APPROVAL" ? (
+                      <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", marginTop: "0.5rem" }}>
+                        <Input
+                          aria-label="Reason for rejecting"
+                          placeholder="Reason (needed to reject)"
+                          maxLength={500}
+                          value={rejectReason}
+                          onChange={(event) => setRejectReason(event.target.value)}
+                        />
+                        <div style={{ display: "flex", gap: "0.5rem" }}>
+                          <Button
+                            size="sm"
+                            variant="primary"
+                            isLoading={approvalBusy}
+                            onClick={() => decideApproval(selectedTask.approval_id, selectedTask.id, "APPROVE")}
+                          >
+                            <ShieldCheck size={14} /> Approve
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="danger"
+                            disabled={approvalBusy || !rejectReason.trim()}
+                            onClick={() => decideApproval(selectedTask.approval_id, selectedTask.id, "REJECT")}
+                          >
+                            <XCircle size={14} /> Reject
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ color: "var(--color-text-muted)", fontSize: "0.75rem", marginTop: "0.25rem" }}>
+                        No decision pending · task is {selectedTask.status}
+                      </div>
+                    )}
+                    {approvalNote && (
+                      <div role="status" style={{ color: "var(--color-text-secondary)", fontSize: "0.75rem", marginTop: "0.5rem" }}>
+                        {approvalNote}
+                      </div>
+                    )}
                   </div>
                 )}
 
