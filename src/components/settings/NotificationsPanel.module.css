@@ -507,8 +507,38 @@
   color: var(--color-text-secondary);
 }
 
+/* Owner Assistant settings (ADR-127): threshold and quiet hours, each an inline form */
+.assistantForms {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-16);
+  margin-top: var(--space-16);
+}
+
+.inlineForm {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-12);
+  padding: var(--space-16);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-soft);
+  border: 1px solid var(--color-border-subtle);
+}
+
+.inlineForm > * {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.inlineForm > :global(button) {
+  flex: 0 0 auto;
+}
+
 @media (max-width: 1024px) {
   .steps {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .assistantForms {
     grid-template-columns: minmax(0, 1fr);
   }
 }
@@ -534,6 +564,12 @@
   .linkButton {
     width: 100%;
     justify-content: center;
+  }
+  .inlineForm {
+    flex-wrap: wrap;
+  }
+  .inlineForm > * {
+    flex-basis: 100%;
   }
 }
 

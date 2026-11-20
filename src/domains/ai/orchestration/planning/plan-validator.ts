@@ -1,6 +1,7 @@
 import { ActionRiskLevel } from '@/types/orchestration';
 import { agentRegistry } from '../agent-registry';
 import { AgentType } from '@/types/ai';
+import { isWorkflowTaskHandlerRegistered } from '../engine/workflow-task-handlers';
 
 const TASK_AGENT_CONTRACT: Readonly<Record<string, AgentType>> = Object.freeze({
   IDENTIFY_ABANDONED_CARTS: "ORDER_ASSISTANT", RETRIEVE_CUSTOMER_CONTEXT: "CUSTOMER_SUPPORT",
@@ -11,6 +12,7 @@ const TASK_AGENT_CONTRACT: Readonly<Record<string, AgentType>> = Object.freeze({
   VERIFY_PAYMENT_TRX: "PAYMENT", INSPECT_ORDER_RETURN_STATE: "ORDER_ASSISTANT",
   APPROVAL_REFUND_DISBURSEMENT: "SUPERVISOR", VALIDATE_PRODUCT_SPEC: "SALES",
   AUDIT_BULK_STOCK: "INVENTORY", CALCULATE_BULK_SHIPPING: "SHIPPING",
+  CALCULATE_SHIPPING_ESTIMATE: "SHIPPING", CALCULATE_ESTIMATE: "SHIPPING",
   FORMULATE_WHOLESALE_QUOTE: "SALES",
 });
 const RISK_LEVELS = new Set<ActionRiskLevel>(Object.values(ActionRiskLevel));
@@ -91,9 +93,9 @@ export class PlanValidator {
       const taskType = step.task_type || step.action;
       if (!/^[A-Z][A-Z0-9_]{1,79}$/.test(taskType || "")) {
         errors.push(`Step "${step.id}" has an invalid task type.`);
-      } else if (!TASK_AGENT_CONTRACT[taskType]) {
+      } else if (!TASK_AGENT_CONTRACT[taskType] || !isWorkflowTaskHandlerRegistered(taskType)) {
         errors.push(`Step "${step.id}" uses an unregistered task type "${taskType}".`);
-      } else if (TASK_AGENT_CONTRACT[taskType] !== step.agent_type) {
+      } else if (TASK_AGENT_CONTRACT[taskType] !== step.agent_type || !isWorkflowTaskHandlerRegistered(taskType, step.agent_type)) {
         errors.push(`Step "${step.id}" assigns task type "${taskType}" to the wrong agent.`);
       }
       if (!step.name || step.name.length > 240 || (step.objective && step.objective.length > 1000)) {

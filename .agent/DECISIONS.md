@@ -2198,3 +2198,129 @@ and nothing could bring it back.
 - Inbound messages keep being received for a LOCKED workspace; whether AI auto-replies should stop then is not decided
   (today plan limits fall back to global defaults, as before).
 - No gateway has been exercised end to end for a subscription (ADR-123 still applies).
+
+## ADR-126: Workflow Effects Are Gated by What They Do, and the Approved Payload Is What Runs
+
+**Date**: 2026-11-19 · **Status**: Accepted (built; tested offline, in memory and on PGlite; no live provider) · **Builds on**: ADR-111
+**Note**: numbered 126 because ADR-125 is already used by two different, unmerged decisions (the paywall in the main
+checkout and a billing decision in another worktree); renumber those when they merge.
+
+### Context
+The workflow orchestrator gained typed handlers for all five templates, including two kinds of effect: sending a
+message to a customer (`OUTBOUND_MESSAGE_APPROVAL`) and recording a refund (`APPROVAL_REFUND_DISBURSEMENT`). Review
+found that approval depended on the risk label a template gave a step, not on the step's effect: the delivery-delay
+draft step (MEDIUM) could also send, so at autonomy level 3 a customer message went out with no approval. The
+approval digest covered only the task's stored input, while the message text and refund amount were taken at run
+time from earlier steps or workflow context, so the approver neither saw nor bound them, and a missing draft fell
+back to a hard-coded message. Refund amounts had no ceiling, and refunds were reported as COMPLETED although no
+payment gateway is called.
+
+### Decision
+1. **One effect, one task type, one gate.** Only `OUTBOUND_MESSAGE_APPROVAL` sends and only
+   `APPROVAL_REFUND_DISBURSEMENT` refunds. Draft steps (`NOTIFY_CUSTOMER_EMPATHY`, `GENERATE_PERSONALIZED_MESSAGE`)
+   never send and reject a `send` flag; the delivery-delay template ends with an `OUTBOUND_MESSAGE_APPROVAL` step
+   (templates are now version 2).
+2. **Risk floors by effect** (`EFFECT_TASK_RISK_FLOOR`): messages at least HIGH, refunds CRITICAL. The executor raises
+   the task's risk to the floor before the autonomy check, so no template, planner or stored task can label an effect
+   lower. Autonomy policy still decides the rest: at LEVEL_4_HIGH a HIGH message runs without approval; refunds always
+   need approval.
+3. **Freeze, then approve.** Before an approval is requested, `freezeEffectPayload` resolves the final parameters
+   (message text, recipient, channel; order, return, payment and refund amount) and the executor stores them as the
+   task's input. The approval digest covers that input, the approver sees it, and the effect handlers read only
+   `task.input`. Changing the input after approval fails the binding ("payload no longer matches"). No text means no
+   send; there is no default message.
+4. **Refund ceiling** (`refundableAmount`): computed on the same payment `ReturnService.processRefund` records against
+   (first PAID, else the first payment), only if it was paid, minus every non-FAILED refund on it. Checked when
+   freezing (an impossible refund gets no approval) and again just before recording. `return_id` must be a return of
+   that order.
+5. **Truthful results.** A workflow refund reports `status: REFUND_RECORDED`, `money_movement: NOT_PERFORMED`,
+   `settlement: MANUAL_REQUIRED` (the refund row's own status is `record_status`). Draft artifacts start with
+   `is_verified: false`, become true only when the verifier accepts the task, and say `verification_scope:
+   STRUCTURED_NUMBERS_ONLY` (the verifier does not read model-written text).
+
+### Consequences
+- A person approves the exact words and amount that will run; a delivery-delay workflow now pauses for approval
+  before messaging the customer.
+- Refund money still moves outside CommerceOS; a gateway refund adapter (bKash/SSLCommerz refund APIs) is future work.
+- Open: two different approved refunds on one order running at the same moment are not serialized beyond the store's
+  version check; `conversation_id` is not checked against `customer_id`; the verifier does not check numbers inside
+  draft text; the reconcile/uncertain routes have no UI yet.
+
+## ADR-127: Owner Assistant — Business Q&A and Event Alerts for the Shop Owner
+
+**Date**: 2026-11-19 · **Status**: Accepted (built; tested offline with a stub model and a fake Telegram; no live model, bot or WhatsApp) · **Builds on**: ADR-110, ADR-111
+**Note**: numbered 127: ADR-126 is the orchestrator effect gate (merged in #82), and ADR-125 is taken by unmerged work (the
+paywall in the main checkout, a billing decision in another worktree); renumber that when it merges.
+
+### Context
+Owners asked to check their shop from their phone ("how much did I sell today?", "what is low on stock?") and to hear
+about things that need them now (a customer waiting for a person, a big order, a failed online payment). The Telegram
+alerts bot already links one chat per workspace with a one-time code and sends four scheduled alerts; there was no way
+to ask it anything, and no event-driven alert.
+
+### Decision
+1. **Read-only assistant, own agent.** `OWNER_ASSISTANT` (`src/domains/ai/owner-assistant/`) is separate from the
+   customer agent: different principal, prompt and tools. Seven read-only tools (sales summary with comparison, top
+   products, low stock with days of cover, delivery issues, returns, unreconciled COD, open escalations), each with a
+   strict Zod input, the tenant from the principal only, and a permission; the model is offered only the tools the
+   person's current role allows. Changes and percentages are computed by the tools, never by the model.
+2. **Grounded numbers.** Every number in a model answer must appear in that turn's tool results (Bangla digits and
+   separators normalised). An ungrounded answer is retried once with the offending numbers named, then replaced by the
+   offline answer. No model configured, the AI budget spent, or a provider failure also give the offline answer: keyword
+   routing (English, Banglish, Bangla) and fixed wording over the same tools, marked `BASIC`.
+3. **No model call under the store lock.** `answerQuestion` never writes; the dashboard POST is `{ unit: false }` and
+   saves in one short unit. A Telegram question is stored PENDING by the webhook and answered by the background worker
+   (customer-agent worker loop), which re-checks that the chat is still linked and that the person who linked it is
+   still an active member with `ai.run`, answers as that person, saves the answer, then sends it (a crash can lose a
+   reply but never send it twice).
+4. **Who can ask where.** Dashboard: each member has their own chat (`ai.run`). Telegram: only the linked chat of a
+   workspace; a chat linked to several workspaces gets no answers; group chats only when `group_questions` is on (off by
+   default) and the bot is mentioned or replied to. 20 questions per chat or user per 10 minutes. `/forget` and the
+   dashboard's Clear delete a chat. Questions and answers are kept 30 days.
+5. **Event alerts through an outbox.** `chat_escalated` (on by default), `new_order_high_value` (threshold in settings,
+   default ৳5,000) and `payment_failed` (a gateway-reported failure, not a cancelled checkout) are queued in the same
+   unit as their event, once per dedupe key, only when wanted, and sent by the worker: claimed before the Telegram call,
+   and an alert left mid-send is marked FAILED, never re-sent. Quiet hours (shop timezone) defer delivery. Alert texts
+   carry no customer names, phone numbers or escalation reasons, because the linked chat may be a group.
+
+### Consequences
+- The owner can ask from the dashboard ("Ask your shop") and the linked Telegram chat; numbers are the store's.
+- Model answers count against `ai_monthly_runs`, the AI budget and `agent_runs` / `ai_usage` (the run keeps the answer's
+  length, not its text); offline answers cost nothing.
+- Not done: WhatsApp for owners (needs approved templates outside the 24-hour window and finished WhatsApp sending,
+  FX-50); actions (the assistant only reads; any action would go through the approval-gated orchestrator); live
+  verification with a real model and bot.
+
+## ADR-128: Two Telegram Bots (Customers, Owner) and Random Alerts-Bot Webhook Secrets
+
+**Date**: 2026-11-19 · **Status**: Accepted (built; tested offline with a fake Telegram; not registered against a live bot) · **Builds on**: ADR-127
+**Note**: numbered after ADR-127.
+
+### Context
+The alerts bot's webhook secret was `HMAC(bot token, constant)`. A workspace that saved its own alerts bot knew that
+token, so it could compute the secret and send forged updates; ADR-127's review limited such updates to the bot's own
+workspace, but a leaked token still let anyone forge updates, two workspaces could save the same bot (first match
+won), and a rotated secret couldn't be revoked without changing the token. Separately, the alerts bot fell back to the
+workspace's customer bot, so owner questions could land in the customer flow.
+
+### Decision
+1. **Two bots, two roles.** Customers talk to the shop's own bot (Connectors → Telegram). The owner talks to the alerts
+   bot: the platform bot by default (no setup), or a second bot the workspace saves. No fallback to the customer bot.
+   Saving an alerts bot is refused when it is the platform bot, any workspace's customer bot, or another workspace's
+   alerts bot (bot id = the token's numeric prefix); connecting a customer bot is refused when it is any alerts bot.
+2. **Random secret, own address.** A workspace bot gets a random 32-character address key and a random secret, stored
+   encrypted, registered with `setWebhook` at `/api/v1/notifications/telegram/webhook/<key>`. Saving the bot again
+   rotates both; changing or removing it deletes the old bot's webhook. The platform bot uses
+   `TELEGRAM_ALERTS_WEBHOOK_SECRET` when set, else the token-derived secret (its token is known only to the server).
+3. **A chat belongs to the bot it pressed Start on** (`telegram.via`, `telegram.bot_id`). Switching bots disconnects a
+   chat linked through another bot; alerts and answers reach a chat only through its own bot.
+4. **Migration.** Bots saved earlier keep their token-derived secret on the shared address, for their own workspace
+   only, until Connect Telegram, Send test or a save registers the random address and secret; after that the derived
+   secret is refused.
+
+### Consequences
+- A forged update needs the bot's random secret, which only the server and Telegram have; a token leak no longer lets
+  anyone send updates as that bot to us.
+- Owners using the platform bot see no change. Owners with their own bot are moved over the next time they press Send
+  test or Connect, or save the bot again; until then the old secret still works for their own workspace only.
+- Not verified against a live Telegram bot: `setWebhook` / `deleteWebhook` are exercised only against a fake transport.

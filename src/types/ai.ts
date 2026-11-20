@@ -11,6 +11,8 @@ export type AgentType =
   | "SUPERVISOR"
   /** The single customer-facing agent (ADR-111, FX-77): acts as the conversation, through its own nine tools. */
   | "CUSTOMER_AGENT"
+  /** Answers the shop owner's questions about their own business, read-only (ADR-127). */
+  | "OWNER_ASSISTANT"
   | "CUSTOMER_SUPPORT"
   | "SALES"
   | "ORDER_ASSISTANT"

@@ -14,6 +14,7 @@ import { BadRequestError, NotFoundError } from "@/lib/errors";
 import { orderRepository } from "./order.repository";
 import { RtoScoringService } from "@/domains/rto/rto-scoring.service";
 import { loadCustomerRows, loadOrderRows, loadTenantRows, loadTenantRowsWhere } from "@/infrastructure/db/tenant-rows";
+import { OwnerAlertService } from "@/domains/notifications/owner-alerts.service";
 
 export class OrderService {
   public static async listOrders(
@@ -282,6 +283,17 @@ export class OrderService {
         item_count: orderItems.length,
       },
     });
+
+    // Owner alert (ADR-127), in this unit: a high-value order. Order number and amount only: no customer details.
+    if (newOrder.grand_total >= OwnerAlertService.highValueThreshold(context.tenant.id)) {
+      const units = orderItems.reduce((n, i) => n + i.quantity, 0);
+      OwnerAlertService.enqueue(
+        context.tenant.id,
+        "new_order_high_value",
+        `💰 New high-value order ${orderNumber}: ৳${newOrder.grand_total.toLocaleString("en-US")} (${units} item${units === 1 ? "" : "s"}, ${newOrder.payment_method}).`,
+        orderId,
+      );
+    }
 
     // 9. Audit logging
     db.createAuditLog({

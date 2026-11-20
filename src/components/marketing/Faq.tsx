@@ -1,7 +1,4 @@
-"use client";
-
-import { query } from "@lucasmarkes/hairline";
-import { Figure } from "./Figure";
+import { Icon } from "./Icons";
 import { c } from "./classes";
 import { PLANS, taka } from "./plans";
 
@@ -33,32 +30,38 @@ const QUESTIONS = [
   },
   {
     q: "What does it cost?",
-    a: `Early-access plans start free, then run from ${FROM} to ${TO} a month per workspace, as listed above. These prices may change before general availability, and plan payments are not collected inside the app yet.`,
+    a: `Early-access plans start free, then run from ${FROM} to ${TO} a month per workspace, as listed above. Yearly billing is a preview and not on sale yet. These prices may change before general availability, and plan payments are not collected inside the app yet.`,
   },
 ] as const;
 
 export function Faq() {
   return (
-    <section className={c("panel line gridbg gmFaq")} id="faq">
-      <div data-reveal className={c("two faq-wrap")}>
-        <div>
-          <span className={c("eyebrow")}>Questions</span>
-          <h2>Straight answers.</h2>
+    <section id="faq" className={c("sec")}>
+      <div className={c("wrap")}>
+        <div className={c("faq-grid")}>
+          <div>
+            <span className={c("eyebrow")}><i />Questions</span>
+            <h2 className={c("h2")}>Straight <span className={c("hl")}>answers.</span></h2>
+            <p className={c("lede")}>Every answer is checked against what is actually built, so nothing here promises more than the product does.</p>
+            <div className={c("ask-card")}>
+              <span className={c("ask-ic")}><Icon.chat size={20} /></span>
+              <h3>Still have a question?</h3>
+              <p>Ask us in Bangla or English. A person replies, not a bot.</p>
+              <a className={c("btn lime")} href="#contact">Write to us</a>
+            </div>
+          </div>
           <div className={c("faq")}>
-            {QUESTIONS.map((item) => (
-              <details key={item.q}>
-                <summary>{item.q}</summary>
+            {QUESTIONS.map((item, i) => (
+              <details key={item.q} open={i === 0}>
+                <summary>
+                  <span>{item.q}</span>
+                  <span className={c("pm")} aria-hidden="true"><Icon.plus size={14} /></span>
+                </summary>
                 <p>{item.a}</p>
               </details>
             ))}
           </div>
         </div>
-        <Figure
-          mount={query}
-          options={{ theme: "light", intensity: 0.6, play: true }}
-          label="A question mark standing on a disc"
-          className={c("fig on-white faq-fig")}
-        />
       </div>
     </section>
   );

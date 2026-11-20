@@ -24,6 +24,7 @@ import type {
 } from "@/types/payments";
 import { ConnectorConfigRecord, ConnectionResource, EXCLUSIVE_RESOURCE_KINDS, type ConnectionResourceKind } from "@/types/connector";
 import type { NotificationSettingsRecord } from "@/types/notifications";
+import type { OwnerAlertRecord, OwnerAssistantTurnRecord } from "@/types/owner-assistant";
 import {
   NetworkDeliveryReputationRecord,
   OrderRtoEvaluationRecord,
@@ -414,6 +415,18 @@ import {
   AutomationAuditRecord,
 } from "@/types/automation";
 
+/**
+ * A landing-page newsletter sign-up (platform scope, no tenant). Only consented addresses are stored; nothing is
+ * emailed. The id is derived from the normalised email, so one address can only ever have one record.
+ */
+export interface NewsletterSubscriptionRecord {
+  id: string;
+  email: string;
+  source: "landing";
+  consented_at: string;
+  created_at: string;
+}
+
 export interface DatabaseSchema {
   tenants: TenantRecord[];
   users: UserRecord[];
@@ -462,6 +475,8 @@ export interface DatabaseSchema {
   domain_events: DomainEventOutboxRecord[];
   job_runs: JobRunRecord[];
   notification_settings: NotificationSettingsRecord[];
+  owner_assistant_turns: OwnerAssistantTurnRecord[];
+  owner_alerts: OwnerAlertRecord[];
   csp_reports: CspReportRecord[];
   agent_tool_calls: AgentToolCallRecord[];
   agent_prompts: AgentPrompt[];
@@ -678,6 +693,8 @@ export interface DatabaseSchema {
   payment_links: PaymentLinkRecord[];
   gateway_payment_attempts: GatewayPaymentAttemptRecord[];
   billing_invoices: BillingInvoiceRecord[];
+  // Landing-page newsletter sign-ups (platform scope; JSONB documents, nothing is emailed)
+  newsletter_subscriptions: NewsletterSubscriptionRecord[];
 }
 
 /**
@@ -1407,6 +1424,8 @@ export class CommerceDatabase {
       domain_events: parsed.domain_events || [],
       job_runs: parsed.job_runs || [],
       notification_settings: parsed.notification_settings || [],
+      owner_assistant_turns: parsed.owner_assistant_turns || [],
+      owner_alerts: parsed.owner_alerts || [],
       csp_reports: parsed.csp_reports || [],
       agent_tool_calls: parsed.agent_tool_calls || [],
       agent_prompts: parsed.agent_prompts || [],
@@ -1611,6 +1630,7 @@ export class CommerceDatabase {
       payment_links: parsed.payment_links || [],
       gateway_payment_attempts: parsed.gateway_payment_attempts || [],
       billing_invoices: parsed.billing_invoices || [],
+      newsletter_subscriptions: parsed.newsletter_subscriptions || [],
     };
 
     if (unhydrated && unhydrated.size > 0) {
@@ -1713,6 +1733,8 @@ export class CommerceDatabase {
       domain_events: [],
       job_runs: [],
       notification_settings: [],
+      owner_assistant_turns: [],
+      owner_alerts: [],
       csp_reports: [],
       agent_tool_calls: [],
       agent_prompts: [],
@@ -1922,6 +1944,7 @@ export class CommerceDatabase {
       payment_links: [],
       gateway_payment_attempts: [],
       billing_invoices: [],
+      newsletter_subscriptions: [],
     };
   }
 
@@ -6486,6 +6509,112 @@ export class CommerceDatabase {
     return record;
   }
 
+  // ---- Owner Assistant (ADR-127): questions and answers, per tenant
+  public insertOwnerAssistantTurn(turn: OwnerAssistantTurnRecord): OwnerAssistantTurnRecord {
+    this.data.owner_assistant_turns.push(turn);
+    this.persist(["owner_assistant_turns"]);
+    return turn;
+  }
+
+  public updateOwnerAssistantTurn(tenantId: string, id: string, patch: Partial<OwnerAssistantTurnRecord>): OwnerAssistantTurnRecord | undefined {
+    const idx = this.data.owner_assistant_turns.findIndex((t) => t.tenant_id === tenantId && t.id === id);
+    if (idx === -1) return undefined;
+    const { id: _id, tenant_id: _tenant, ...rest } = patch;
+    this.data.owner_assistant_turns[idx] = { ...this.data.owner_assistant_turns[idx], ...rest };
+    this.persist(["owner_assistant_turns"]);
+    return this.data.owner_assistant_turns[idx];
+  }
+
+  public findOwnerAssistantTurn(tenantId: string, id: string): OwnerAssistantTurnRecord | undefined {
+    return this.data.owner_assistant_turns.find((t) => t.tenant_id === tenantId && t.id === id);
+  }
+
+  /** One chat's turns, oldest first, the last `limit`. */
+  public getOwnerAssistantTurns(tenantId: string, chatKey: string, limit = 20): OwnerAssistantTurnRecord[] {
+    return this.data.owner_assistant_turns
+      .filter((t) => t.tenant_id === tenantId && t.chat_key === chatKey)
+      .sort((a, b) => a.created_at.localeCompare(b.created_at))
+      .slice(-limit);
+  }
+
+  /** Telegram questions waiting for the worker (any tenant): PENDING, or ANSWERING with a claim older than `staleBefore`. */
+  public getDueOwnerAssistantTurns(staleBefore: string, limit = 20): OwnerAssistantTurnRecord[] {
+    return this.data.owner_assistant_turns
+      .filter((t) => t.channel === "TELEGRAM" && (t.status === "PENDING" || (t.status === "ANSWERING" && (t.claimed_at ?? "") < staleBefore)))
+      .sort((a, b) => a.created_at.localeCompare(b.created_at))
+      .slice(0, limit);
+  }
+
+  /** Forget one chat: removes its turns. Returns how many. */
+  public deleteOwnerAssistantTurns(tenantId: string, chatKey: string): number {
+    const before = this.data.owner_assistant_turns.length;
+    this.data.owner_assistant_turns = this.data.owner_assistant_turns.filter((t) => !(t.tenant_id === tenantId && t.chat_key === chatKey));
+    const removed = before - this.data.owner_assistant_turns.length;
+    if (removed) this.persist(["owner_assistant_turns"]);
+    return removed;
+  }
+
+  /** Retention: removes turns created before `cutoff` (all tenants). */
+  public purgeOwnerAssistantTurns(cutoff: string): number {
+    const before = this.data.owner_assistant_turns.length;
+    this.data.owner_assistant_turns = this.data.owner_assistant_turns.filter((t) => t.created_at >= cutoff);
+    const removed = before - this.data.owner_assistant_turns.length;
+    if (removed) this.persist(["owner_assistant_turns"]);
+    return removed;
+  }
+
+  // ---- Owner alerts outbox (ADR-127)
+  /** Inserts the alert unless one with the same dedupe key exists for this tenant; returns the stored one either way. */
+  public insertOwnerAlertOnce(alert: OwnerAlertRecord): { alert: OwnerAlertRecord; created: boolean } {
+    const existing = this.data.owner_alerts.find((a) => a.tenant_id === alert.tenant_id && a.dedupe_key === alert.dedupe_key);
+    if (existing) return { alert: existing, created: false };
+    this.data.owner_alerts.push(alert);
+    this.persist(["owner_alerts"]);
+    return { alert, created: true };
+  }
+
+  public updateOwnerAlert(tenantId: string, id: string, patch: Partial<OwnerAlertRecord>): OwnerAlertRecord | undefined {
+    const idx = this.data.owner_alerts.findIndex((a) => a.tenant_id === tenantId && a.id === id);
+    if (idx === -1) return undefined;
+    const { id: _id, tenant_id: _tenant, ...rest } = patch;
+    this.data.owner_alerts[idx] = { ...this.data.owner_alerts[idx], ...rest };
+    this.persist(["owner_alerts"]);
+    return this.data.owner_alerts[idx];
+  }
+
+  public findOwnerAlert(tenantId: string, id: string): OwnerAlertRecord | undefined {
+    return this.data.owner_alerts.find((a) => a.tenant_id === tenantId && a.id === id);
+  }
+
+  /** Alerts due now (any tenant), oldest first. */
+  public getDueOwnerAlerts(nowIso: string, limit = 50): OwnerAlertRecord[] {
+    return this.data.owner_alerts
+      .filter((a) => a.status === "PENDING" && a.deliver_after <= nowIso)
+      .sort((a, b) => a.created_at.localeCompare(b.created_at))
+      .slice(0, limit);
+  }
+
+  /** Every tenant's alerts in one state (the worker: claims left SENDING by a crashed pass). */
+  public getAllOwnerAlertsInState(status: OwnerAlertRecord["status"]): OwnerAlertRecord[] {
+    return this.data.owner_alerts.filter((a) => a.status === status);
+  }
+
+  public getOwnerAlerts(tenantId: string, limit = 50): OwnerAlertRecord[] {
+    return this.data.owner_alerts
+      .filter((a) => a.tenant_id === tenantId)
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))
+      .slice(0, limit);
+  }
+
+  /** Retention: removes delivered or abandoned alerts created before `cutoff` (pending ones are kept). */
+  public purgeOwnerAlerts(cutoff: string): number {
+    const before = this.data.owner_alerts.length;
+    this.data.owner_alerts = this.data.owner_alerts.filter((a) => a.status === "PENDING" || a.created_at >= cutoff);
+    const removed = before - this.data.owner_alerts.length;
+    if (removed) this.persist(["owner_alerts"]);
+    return removed;
+  }
+
   // ---- Scheduled job runs (FX-99 Part B), platform scope
   public findJobRun(id: string): JobRunRecord | undefined {
     return this.data.job_runs.find((r) => r.id === id);
@@ -8177,6 +8306,19 @@ export class CommerceDatabase {
     return artifact;
   }
 
+  /** Marks a task's artifacts verified; called only after the verifier accepted that task's output. */
+  public markWorkflowArtifactsVerified(tenantId: string, workflowId: string, taskId: string): number {
+    let changed = 0;
+    for (const artifact of this.data.workflow_artifacts) {
+      if (artifact.tenant_id === tenantId && artifact.workflow_id === workflowId && artifact.task_id === taskId && !artifact.is_verified) {
+        artifact.is_verified = true;
+        changed++;
+      }
+    }
+    if (changed > 0) this.persist(["workflow_artifacts"]);
+    return changed;
+  }
+
   // --- Checkpoints ---
   public getWorkflowCheckpoints(tenantId: string, workflowId: string): WorkflowCheckpoint[] {
     return this.data.workflow_checkpoints
@@ -9724,6 +9866,8 @@ export class CommerceDatabase {
       domain_events: [],
       job_runs: [],
       notification_settings: [],
+      owner_assistant_turns: [],
+      owner_alerts: [],
       csp_reports: [],
       agent_tool_calls: [],
       agent_prompts: [],
@@ -9933,6 +10077,7 @@ export class CommerceDatabase {
       payment_links: [],
       gateway_payment_attempts: [],
       billing_invoices: [],
+      newsletter_subscriptions: [],
     };
     this.ensureDefaultSeed();
   }
@@ -11617,6 +11762,26 @@ export class CommerceDatabase {
     else this.data.billing_invoices.push(invoice);
     this.persist(["billing_invoices"]);
     return invoice;
+  }
+
+  /** Platform scope: the newsletter sign-up for an already-normalised (trimmed, lowercased) email. */
+  public findNewsletterSubscriptionByEmail(email: string): NewsletterSubscriptionRecord | undefined {
+    return (this.data.newsletter_subscriptions || []).find((s) => s.email === email);
+  }
+
+  /** Platform scope: every newsletter sign-up, newest first (for a later operator export). */
+  public getAllNewsletterSubscriptions(): NewsletterSubscriptionRecord[] {
+    return [...(this.data.newsletter_subscriptions || [])].sort((a, b) => b.created_at.localeCompare(a.created_at));
+  }
+
+  /** Adds a sign-up; an existing record for the same email or id is left as it is (idempotent). */
+  public addNewsletterSubscription(record: NewsletterSubscriptionRecord): NewsletterSubscriptionRecord {
+    if (!this.data.newsletter_subscriptions) this.data.newsletter_subscriptions = [];
+    const existing = this.data.newsletter_subscriptions.find((s) => s.id === record.id || s.email === record.email);
+    if (existing) return existing;
+    this.data.newsletter_subscriptions.push(record);
+    this.persist(["newsletter_subscriptions"]);
+    return record;
   }
 }
 

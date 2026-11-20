@@ -24,6 +24,7 @@ import { BillingService } from "@/domains/billing/billing.service";
 import { gatewayAdapter, platformGatewayAccount, sandboxSettles, storeGatewayAccount } from "./gateways/gateway-accounts";
 import { ATTEMPT_ID_PATTERN, sameAmount, type GatewayAccount, type GatewayConfirmation, type GatewayReturn } from "./gateways/gateway.types";
 import { amountDue, PaymentLinkService } from "./payment-link.service";
+import { OwnerAlertService } from "@/domains/notifications/owner-alerts.service";
 
 /** Checkout attempts one link or invoice may open: bounds what an anonymous link holder can ask of a shop's gateway. */
 export const MAX_ATTEMPTS_PER_REFERENCE = 12;
@@ -258,6 +259,16 @@ export class GatewayPaymentService {
       // Asking again and hearing the same thing writes nothing
       if (next !== attempt.status || reason !== attempt.failure_reason) {
         db.saveGatewayPaymentAttempt({ ...attempt, status: next, failure_reason: reason, updated_at: now });
+      }
+      // Owner alert (ADR-127), in this unit: a store payment the gateway itself reported as failed (not a payer who
+      // cancelled), once per attempt. Amount and provider only.
+      if (next === "FAILED" && attempt.status !== "FAILED" && attempt.scope === "STORE") {
+        OwnerAlertService.enqueue(
+          attempt.tenant_id,
+          "payment_failed",
+          `⚠️ An online payment of ৳${attempt.amount.toLocaleString("en-US")} through ${attempt.provider} failed${attempt.mode === "SANDBOX" ? " (sandbox test)" : ""}. Check Payments in CommerceOS.`,
+          attempt.id,
+        );
       }
       return outcome(attempt, confirmation.status);
     }

@@ -56,7 +56,7 @@ const HUBS: Hub[] = [
   {
     label: "Insights",
     icon: <BarChart3 size={20} strokeWidth={2} />,
-    pages: [page("Analytics", "/analytics"), page("Intelligence", "/intelligence")],
+    pages: [page("Analytics", "/analytics"), page("Intelligence", "/intelligence"), page("Ask your shop", "/assistant")],
   },
 ];
 
