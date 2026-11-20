@@ -88,7 +88,7 @@ run, shown as history in each report), `lab-out/tests/<run>/{report.json, junit.
 
 ## Recommended setup (the "best solution")
 
-Three loops, from cheap and every-commit to expensive and nightly:
+Three loops, from cheap and every-commit to expensive and on demand:
 
 1. **Every PR, offline, deterministic (minutes, free).** `npm test` (includes `lab-tests`) and
    `npm run lab:chaos -- --gate --baseline <main baseline>`. Gate: zero safety violations under the storm profile
@@ -96,7 +96,8 @@ Three loops, from cheap and every-commit to expensive and nightly:
 2. **PRs that touch the agent (prompt, tools, runtime), live smoke on demand.** Add the `run-live-eval` label to run the
    `agent-evals.yml` smoke subset once, plus `lab:agent --brain live --trials 3 --limit 20`. Gate: no case that was
    pass^k on the baseline regresses.
-3. **Nightly, live full run (dollars).** `--brain live --trials 3` over both suites, and `--brain live --faults flaky`
+3. **Manual, live full run (dollars).** Actions > Agent evals > Run workflow with `suite: full` (nothing runs it on a
+   schedule or on merge), plus `--brain live --trials 3` over both suites, and `--brain live --faults flaky`
    once a week. Store `results.json` as the new baseline artifact when main is green; the threshold gate in
    `tests/agent-evals/thresholds.json` stays the merge contract.
 
