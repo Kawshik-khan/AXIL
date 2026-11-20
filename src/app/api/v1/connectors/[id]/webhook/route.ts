@@ -80,7 +80,8 @@ async function ingest(request: Request, id: string) {
   // (or `/stop` for a linked alert chat), handle it as a notification command instead of a customer message.
   if (channel.type === "TELEGRAM" && NotificationService.isNotificationCommand(payload)) {
     const handled = await db.unit(
-      () => NotificationService.handleTelegramUpdate(payload),
+      // The connector belongs to one workspace: the update may only act on that workspace's alert chat
+      () => NotificationService.handleTelegramUpdate(payload, { kind: "tenant", tenantId: channel.tenant_id }),
       () => true
     );
     return NextResponse.json({ status: "EVENT_RECEIVED", ...handled });

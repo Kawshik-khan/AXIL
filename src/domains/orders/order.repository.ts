@@ -188,7 +188,11 @@ export class OrderRepository extends BaseRepository<Order> {
     tenantId: string,
     startIso: string,
     endIso: string,
-    options?: { hydrate?: boolean }
+    /**
+     * includeCancelled: also return CANCELLED orders (default: left out). endExclusive: `[start, end)` instead of
+     * `[start, end]`, so adjacent windows (a day and the day before) never both count an order at the boundary.
+     */
+    options?: { hydrate?: boolean; includeCancelled?: boolean; endExclusive?: boolean }
   ): Promise<(Order & { customer_name?: string; customer_phone?: string })[]> {
     const client = this.getClient();
     if (!client) {
@@ -197,13 +201,13 @@ export class OrderRepository extends BaseRepository<Order> {
       const all = db.getAllOrders(tenantId, options as any);
       return all.filter((o) => {
         const t = new Date(o.created_at).getTime();
-        return t >= from && t <= to && o.status !== "CANCELLED";
+        return t >= from && (options?.endExclusive ? t < to : t <= to) && (options?.includeCancelled || o.status !== "CANCELLED");
       }) as any;
     }
 
     const orderRows = await client.query<{ data: Order | string }>(
       `SELECT data FROM commerceos.orders
-       WHERE tenant_id = $1 AND status != 'CANCELLED' AND created_at >= $2 AND created_at <= $3
+       WHERE tenant_id = $1${options?.includeCancelled ? "" : " AND status != 'CANCELLED'"} AND created_at >= $2 AND created_at ${options?.endExclusive ? "<" : "<="} $3
        ORDER BY created_at DESC`,
       [tenantId, startIso, endIso]
     );

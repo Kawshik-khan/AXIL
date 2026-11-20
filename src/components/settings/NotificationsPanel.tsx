@@ -7,12 +7,16 @@ import {
   BellRing,
   CheckCircle2,
   Clock,
+  CreditCard,
   ExternalLink,
   Loader2,
+  MessageCircleQuestion,
   PackageMinus,
   Send,
   Truck,
+  TrendingUp,
   Unplug,
+  UserRoundCheck,
   Users,
 } from "lucide-react";
 import { BentoGrid } from "@/components/bento/BentoGrid";
@@ -24,12 +28,20 @@ import { Switch } from "@/components/ui/Switch/Switch";
 import { ErrorState, LoadingSkeleton, PermissionDenied } from "@/components/ui/States/States";
 import styles from "./NotificationsPanel.module.css";
 
-type AlertKey = "daily_summary" | "low_stock" | "failed_deliveries" | "cod_weekly";
+type AlertKey = "daily_summary" | "low_stock" | "failed_deliveries" | "cod_weekly" | "chat_escalated" | "new_order_high_value" | "payment_failed";
+
+interface AssistantSettings {
+  questions_enabled: boolean;
+  group_questions: boolean;
+  high_value_order_bdt: number;
+  quiet_hours: { start_hour: number; end_hour: number };
+}
 
 interface SettingsView {
   bot: { configured: boolean; username: string | null };
   telegram: { connected: boolean; chat_label: string | null; linked_at: string | null; paused: boolean };
   alerts: Record<AlertKey, boolean>;
+  assistant: AssistantSettings;
   pending_link_expires_at: string | null;
   last_test_at: string | null;
   can_manage: boolean;
@@ -69,6 +81,27 @@ const ALERTS: Array<{ key: AlertKey; title: string; when: string; description: s
     when: "Once a week",
     description: "Cash-on-delivery orders delivered per courier, to check against each payout.",
     icon: <Banknote size={18} />,
+  },
+  {
+    key: "chat_escalated",
+    title: "Customer needs a person",
+    when: "As it happens",
+    description: "A customer chat was handed to your team. No customer details are included in the message.",
+    icon: <UserRoundCheck size={18} />,
+  },
+  {
+    key: "new_order_high_value",
+    title: "High-value order",
+    when: "As it happens",
+    description: "An order at or above your threshold (set below). Order number and amount only.",
+    icon: <TrendingUp size={18} />,
+  },
+  {
+    key: "payment_failed",
+    title: "Failed online payment",
+    when: "As it happens",
+    description: "bKash or card checkout that the gateway reported as failed.",
+    icon: <CreditCard size={18} />,
   },
 ];
 
@@ -110,6 +143,9 @@ export function NotificationsPanel() {
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
   const [botTokenInput, setBotTokenInput] = useState("");
   const [editingBot, setEditingBot] = useState(false);
+  const [assistantSaving, setAssistantSaving] = useState<keyof AssistantSettings | null>(null);
+  const [thresholdInput, setThresholdInput] = useState("");
+  const [quietInput, setQuietInput] = useState<{ start: string; end: string }>({ start: "", end: "" });
   const wasConnected = useRef(false);
 
   const load = useCallback(async (quiet = false) => {
@@ -213,6 +249,49 @@ export function NotificationsPanel() {
     }
   };
 
+  const saveAssistant = async (field: keyof AssistantSettings, patch: Partial<AssistantSettings>): Promise<boolean> => {
+    if (!view) return false;
+    const before = view.assistant;
+    setAssistantSaving(field);
+    setView({ ...view, assistant: { ...view.assistant, ...patch } }); // reversible: put back if the save fails
+    try {
+      const data = await call<{ assistant: AssistantSettings }>("/api/v1/notifications/settings", {
+        method: "PATCH",
+        body: JSON.stringify({ assistant: patch }),
+      });
+      setView((v) => (v ? { ...v, assistant: data.assistant } : v));
+      return true;
+    } catch (err) {
+      setView((v) => (v ? { ...v, assistant: before } : v));
+      setNotice({ tone: "error", text: `Couldn't save: ${asError(err).message}` });
+      return false;
+    } finally {
+      setAssistantSaving(null);
+    }
+  };
+
+  const saveThreshold = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const n = Number(thresholdInput);
+    if (!Number.isInteger(n) || n < 100) {
+      setNotice({ tone: "error", text: "Enter a whole amount of at least ৳100." });
+      return;
+    }
+    if (await saveAssistant("high_value_order_bdt", { high_value_order_bdt: n })) setThresholdInput("");
+  };
+
+  const saveQuietHours = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!view) return;
+    const start = quietInput.start === "" ? view.assistant.quiet_hours.start_hour : Number(quietInput.start);
+    const end = quietInput.end === "" ? view.assistant.quiet_hours.end_hour : Number(quietInput.end);
+    if (![start, end].every((h) => Number.isInteger(h) && h >= 0 && h <= 23)) {
+      setNotice({ tone: "error", text: "Quiet hours are whole hours from 0 to 23." });
+      return;
+    }
+    if (await saveAssistant("quiet_hours", { quiet_hours: { start_hour: start, end_hour: end } })) setQuietInput({ start: "", end: "" });
+  };
+
   const sendTest = async () => {
     setAction("test");
     setNotice(null);
@@ -306,8 +385,9 @@ export function NotificationsPanel() {
             ) : (
               <form className={styles.botForm} onSubmit={(e) => void saveBotToken(e)}>
                 <p className={styles.muted}>
-                  Create a bot with <strong>@BotFather</strong> on Telegram (or paste your shop&apos;s Telegram bot token) to
-                  enable live phone alerts for this workspace. Your alert choices below are saved automatically.
+                  Create a bot with <strong>@BotFather</strong> on Telegram just for you and your team, then paste its token to
+                  enable live phone alerts for this workspace. Use a different bot from the one your customers chat with:
+                  owner alerts and customer chats never share a bot. Your alert choices below are saved automatically.
                 </p>
                 <Input
                   id="alerts-bot-token"
@@ -337,6 +417,12 @@ export function NotificationsPanel() {
                     </Button>
                   )}
                 </div>
+                {editingBot && view.telegram.connected && (
+                  <p className={styles.muted}>
+                    Switching to a different bot disconnects <strong>{view.telegram.chat_label}</strong>: connect Telegram again
+                    afterwards, through the new bot.
+                  </p>
+                )}
               </form>
             )
           ) : view.telegram.connected ? (
@@ -496,6 +582,112 @@ export function NotificationsPanel() {
             })}
           </ul>
           {readOnly && <p className={styles.footnote}>You can see these settings; only an owner or admin can change them.</p>}
+        </BentoCard>
+
+        <BentoCard
+          span={12}
+          title="Ask your shop on Telegram"
+          subtitle="The connected chat can ask about sales, stock, deliveries and more. Answers use your real numbers and never change anything."
+        >
+          <ul className={styles.alertList}>
+            <li className={`${styles.alertRow} ${view.assistant.questions_enabled ? styles.alertOn : ""}`}>
+              <div className={styles.alertIcon}>
+                <MessageCircleQuestion size={18} />
+              </div>
+              <div className={styles.alertText}>
+                <label htmlFor="assistant-questions" className={styles.alertTitle}>
+                  Answer questions in the connected chat
+                </label>
+                <p className={styles.alertDescription}>
+                  Answers are for the person who connected the chat, limited to what their role may see. Send /forget in Telegram to clear the chat.
+                </p>
+              </div>
+              <Switch
+                id="assistant-questions"
+                label="Answer questions in the connected chat"
+                checked={view.assistant.questions_enabled}
+                disabled={readOnly}
+                busy={assistantSaving === "questions_enabled"}
+                onChange={(next) => void saveAssistant("questions_enabled", { questions_enabled: next })}
+              />
+            </li>
+            <li className={`${styles.alertRow} ${view.assistant.group_questions ? styles.alertOn : ""}`}>
+              <div className={styles.alertIcon}>
+                <Users size={18} />
+              </div>
+              <div className={styles.alertText}>
+                <label htmlFor="assistant-group" className={styles.alertTitle}>
+                  Also answer in a team group
+                </label>
+                <p className={styles.alertDescription}>
+                  Only when someone mentions the bot or replies to it. Everyone in the group sees the answer, including revenue.
+                </p>
+              </div>
+              <Switch
+                id="assistant-group"
+                label="Also answer in a team group"
+                checked={view.assistant.group_questions}
+                disabled={readOnly || !view.assistant.questions_enabled}
+                busy={assistantSaving === "group_questions"}
+                onChange={(next) => void saveAssistant("group_questions", { group_questions: next })}
+              />
+            </li>
+          </ul>
+          <div className={styles.assistantForms}>
+            <form className={styles.inlineForm} onSubmit={(e) => void saveThreshold(e)}>
+              <Input
+                id="assistant-threshold"
+                type="number"
+                inputMode="numeric"
+                min={100}
+                step={1}
+                label="High-value order from (৳)"
+                hint={`Now: ৳${view.assistant.high_value_order_bdt.toLocaleString("en-US")}`}
+                placeholder={String(view.assistant.high_value_order_bdt)}
+                value={thresholdInput}
+                onChange={(e) => setThresholdInput(e.target.value)}
+                disabled={readOnly}
+              />
+              <Button type="submit" variant="outline" disabled={readOnly || !thresholdInput || assistantSaving !== null}>
+                {assistantSaving === "high_value_order_bdt" ? <Loader2 size={16} className={styles.spin} /> : null}
+                Save
+              </Button>
+            </form>
+            <form className={styles.inlineForm} onSubmit={(e) => void saveQuietHours(e)}>
+              <Input
+                id="assistant-quiet-start"
+                type="number"
+                min={0}
+                max={23}
+                label="Quiet from (hour)"
+                placeholder={String(view.assistant.quiet_hours.start_hour)}
+                value={quietInput.start}
+                onChange={(e) => setQuietInput((q) => ({ ...q, start: e.target.value }))}
+                disabled={readOnly}
+              />
+              <Input
+                id="assistant-quiet-end"
+                type="number"
+                min={0}
+                max={23}
+                label="Until (hour)"
+                hint={
+                  view.assistant.quiet_hours.start_hour === view.assistant.quiet_hours.end_hour
+                    ? "No quiet hours now"
+                    : `Now ${view.assistant.quiet_hours.start_hour}:00 to ${view.assistant.quiet_hours.end_hour}:00`
+                }
+                placeholder={String(view.assistant.quiet_hours.end_hour)}
+                value={quietInput.end}
+                onChange={(e) => setQuietInput((q) => ({ ...q, end: e.target.value }))}
+                disabled={readOnly}
+              />
+              <Button type="submit" variant="outline" disabled={readOnly || (quietInput.start === "" && quietInput.end === "") || assistantSaving !== null}>
+                {assistantSaving === "quiet_hours" ? <Loader2 size={16} className={styles.spin} /> : null}
+                Save
+              </Button>
+            </form>
+          </div>
+          <p className={styles.footnote}>Event alerts raised during quiet hours are sent when they end. The same hour twice means no quiet hours.</p>
         </BentoCard>
       </BentoGrid>
 

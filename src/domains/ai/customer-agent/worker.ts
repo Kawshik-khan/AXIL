@@ -34,6 +34,8 @@ import { quoteShownIn } from "./output";
 import { loadCustomerRows } from "@/infrastructure/db/tenant-rows";
 import { agentPaused, controlOf } from "@/domains/social/conversations/conversation-control.state";
 import { runDeliveriesOnce } from "@/domains/social/outbound/outbound-delivery";
+import { answerTelegramQuestionsOnce } from "@/domains/ai/owner-assistant/telegram-worker";
+import { OwnerAlertService } from "@/domains/notifications/owner-alerts.service";
 
 /** The turn's lease on the chat (ADR-121 S2), when the job was claimed with one. */
 const leaseOf = (job: AgentJob) => (job.control_version === undefined ? undefined : { version: job.control_version, turnId: job.id });
@@ -398,6 +400,11 @@ export function startCustomerAgentWorker(): void {
         // Comment-to-inbox replies: retries and anything the webhook's own kick missed
         const c = await dispatchCommentTriggersOnce();
         if (c.sent || c.failed || c.retrying) logger.info("comment_trigger.dispatch_pass", c);
+        // Owner Assistant (ADR-127): questions asked in linked Telegram chats, then event alerts to owners
+        const q = await answerTelegramQuestionsOnce();
+        if (q.answered || q.failed) logger.info("owner_assistant.telegram_pass", q);
+        const a = await OwnerAlertService.dispatchOnce();
+        if (a.sent || a.not_sent || a.failed || a.abandoned) logger.info("owner_alerts.dispatch_pass", a);
         if (Date.now() - lastAlertCheck >= ALERT_INTERVAL_MS) {
           lastAlertCheck = Date.now();
           await db.unit(async () => AgentHealthService.raiseAlerts(), () => true);

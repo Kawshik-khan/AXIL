@@ -15,6 +15,7 @@ import type {
 } from "@/types/ai";
 import { ModelRouter } from "../providers/model-router";
 import { ConversationControlService, type ControlActor } from "@/domains/social/conversations/conversation-control.service";
+import { OwnerAlertService } from "@/domains/notifications/owner-alerts.service";
 
 const SLA_MINUTES: Record<EscalationPriority, number> = {
   URGENT: 5,
@@ -104,7 +105,17 @@ export class HitlEscalationService {
       updated_at: now,
     };
 
-    return db.saveAgentHitlEscalation(escalation);
+    const saved = db.saveAgentHitlEscalation(escalation);
+    // Owner alert (ADR-127), in this same unit: one per chat per 30 minutes. No customer text or phone in it (the
+    // linked chat may be a group, and the trigger reason can carry the customer's or the model's words).
+    const bucket = Math.floor(Date.now() / (30 * 60_000));
+    OwnerAlertService.enqueue(
+      tenantId,
+      "chat_escalated",
+      `🙋 A customer chat needs a person (priority ${priority}, reply within ${SLA_MINUTES[priority] || 60} minutes). Open the Inbox in CommerceOS.`,
+      `${conversationId}:${bucket}`,
+    );
+    return saved;
   }
 
   /**
