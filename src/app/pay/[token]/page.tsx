@@ -8,6 +8,8 @@ import { Input } from "@/components/ui/Input/Input";
 import { LoadingSkeleton } from "@/components/ui/States/States";
 import { api, formatBdt, formatDateTime, GATEWAY_HINTS, GATEWAY_NAMES, type ApiFailure } from "@/components/payments/api";
 import styles from "@/components/payments/Payments.module.css";
+import { BrandIcon, brandFor } from "@/components/brand/BrandIcon";
+import { MethodMark } from "@/components/payments/payment-ui";
 
 type ManualMethod = "BKASH" | "NAGAD" | "ROCKET";
 
@@ -230,10 +232,13 @@ export default function PayPage() {
                 <h2 className={styles.sectionTitle}>Pay online</h2>
                 {link.methods.gateways.map((provider) => (
                   <button key={provider} type="button" className={styles.methodButton} disabled={busy !== null} onClick={() => void payOnline(provider)}>
-                    <span>
-                      {busy === provider ? "Opening" : "Pay with"} {GATEWAY_NAMES[provider] ?? provider}
-                      <br />
-                      <span className={styles.methodHint}>{GATEWAY_HINTS[provider] ?? ""}</span>
+                    <span className={styles.methodLead}>
+                      {brandFor(provider) && <BrandIcon brand={brandFor(provider)!} size={32} />}
+                      <span>
+                        {busy === provider ? "Opening" : "Pay with"} {GATEWAY_NAMES[provider] ?? provider}
+                        <br />
+                        <span className={styles.methodHint}>{GATEWAY_HINTS[provider] ?? ""}</span>
+                      </span>
                     </span>
                     <ChevronRight size={18} aria-hidden />
                   </button>
@@ -248,8 +253,11 @@ export default function PayPage() {
                 <div>
                   {wallets.map((wallet) => (
                     <div key={wallet.method} className={styles.walletRow}>
-                      <span>
-                        {wallet.label} <span className={styles.methodHint}>({wallet.how})</span>
+                      <span className={styles.methodLead}>
+                        <MethodMark provider={wallet.method} small />
+                        <span>
+                          {wallet.label} <span className={styles.methodHint}>({wallet.how})</span>
+                        </span>
                       </span>
                       <span className={styles.walletNumber}>{wallet.number}</span>
                     </div>

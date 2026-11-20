@@ -2146,3 +2146,55 @@ a merchant account with Payment Gateway access can look a transaction up by id (
 - A customer who pays by checkout and submits the same TrxID by hand before the callback arrives is stopped only by
   the transaction-type check (wording unverified); the money still counts once.
 - `payer_last4` is new stored customer data, visible to staff with payments.read.
+
+## ADR-125: Paywall for Public Sign-ups, and a Setup Guide That Can't Be Lost
+
+**Date:** 2026-11-19 · **Status:** Accepted
+
+### Context
+A shop that signed up on the public page could finish setup on "Stay on Free", or create an invoice and never pay it,
+and still use the whole dashboard: nothing tied access to a paid subscription. On this install no subscription payment
+method was configured at all (platform gateways and manual accounts came only from env vars), so an invoice could not be
+paid even by a shop that wanted to. Separately, "Hide" on the dashboard launch checklist set `checklist_dismissed_at`
+and nothing could bring it back.
+
+### Decision
+- **Who is paywalled:** only workspaces created by `POST /api/v1/auth/register` (`settings.access_gate.paid_required_since`,
+  set by `AuthService.registerTenantWithOwner(..., { publicSignUp: true })`). Seeded, operator-created and older
+  workspaces are untouched. The general settings route can't set or clear the marker (strict body). Platform setting
+  `billing.require_paid_subscription` (default on, HIGH risk) switches it off platform-wide.
+- **One resolver, computed on read, never stored:** `WorkspaceAccessService.resolve` →
+  `SETUP_REQUIRED` (onboarding unfinished) · `PAYMENT_REQUIRED` · `PAYMENT_PENDING` (manual transfer being checked) ·
+  `ACTIVE` · `GRACE` (PAST_DUE or trial ended, within `billing.past_due_grace_days`) · `LOCKED`. It reuses
+  `PlatformEntitlementService.planApplicability` (no second copy of the grace math). A trial counts as access (owner decision, 2026-11-19: keep the self-serve trial; operators can switch it off with feature flag `billing.self_serve_trial`).
+  Access flips to ACTIVE the moment `BillingService.settle` marks the invoice PAID; there is no other writer.
+- **Server enforcement in one place:** `extractRequestContext` calls `WorkspaceAccessService.assertAllowed`, so every
+  workspace route is covered. Without access only `/api/v1/auth/**`, `/api/v1/billing/**`, `/api/v1/onboarding` (and,
+  during setup, `/api/v1/ai/simulate` for the setup test chat) answer; everything else is **402** with code
+  `WORKSPACE_<STATE>` and `details.next_path`. A platform operator's support session is not held back. Public pay
+  pages, gateway callbacks and inbound channel webhooks don't use a workspace session and are unaffected (customer
+  messages are still received).
+- **UX:** the session payload carries `access`; the dashboard layout redirects before rendering; the shared `api()`
+  helper follows a 402 to `next_path`; `/activate` (outside the dashboard shell) shows the open invoice and the paid
+  plans / trial, polls after a gateway return, and opens the dashboard when ACTIVE. GRACE shows a "Pay now" banner.
+  Setup no longer offers Free to a paywalled shop (`choose_free_plan` → 409 `PAID_PLAN_REQUIRED`).
+- **Payment methods operators can set:** `billing.manual_bkash_number`, `billing.manual_nagad_number`,
+  `billing.manual_bank_details` are platform settings (CRITICAL: a second operator approves the exact value, versioned,
+  audited) and win over the `PLATFORM_BILLING_*` env vars. Gateway credentials stay in the server environment (secrets).
+  `GET /api/v1/platform/billing/payment-methods` (billing.read; names only, never credentials) drives a red banner on
+  Super Admin → Billing when workspaces have no way to pay.
+- **Setup guide:** "Hide" folds the guide (`checklist_collapsed`, stored in the old `checklist_dismissed_at` field so
+  earlier hides read as folded); a dashboard bar and a "Setup guide" dock entry unfold it. It goes away for good only
+  when all six required items are done (the first order is optional).
+
+### Consequences
+- A paywalled shop on an install with no payment method is stuck on `/activate` (it says so); operators see the banner.
+- Seeds and the 36 test suites that call `registerTenantWithOwner` directly are not paywalled; the paywall tests sign up
+  with `publicSignUp: true`.
+
+### Open
+- Workspaces that self-registered before this change have no marker, so they are not paywalled. Backfilling them is an
+  operator decision (it would lock shops that are using Free today).
+- Inbound messages keep being received for a LOCKED workspace; whether AI auto-replies should stop then is not decided
+  (today plan limits fall back to global defaults, as before).
+- No gateway has been exercised end to end for a subscription (ADR-123 still applies).

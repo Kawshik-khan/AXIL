@@ -1,0 +1,7 @@
+/* Brand logos are already round, filled badges: no tile or background behind them */
+.icon {
+  display: inline-block;
+  flex: none;
+  vertical-align: middle;
+  border-radius: var(--radius-pill);
+}

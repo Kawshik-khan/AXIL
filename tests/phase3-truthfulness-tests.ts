@@ -992,6 +992,7 @@ async function main() {
       assert.strictEqual(requests[0].url, "https://llm.example.test/v1/chat/completions");
       assert.strictEqual(requests[0].auth, "Bearer sk-p3-test");
       assert.strictEqual(requests[0].body.model, "m-fast");
+      assert.ok(!("reasoning_effort" in requests[0].body), "no effort field unless LLM_REASONING_EFFORT is set");
 
       // The assistant turn that called the tool goes back with its tool_calls, before the tool result
       await router.chatWithRouting("TIER_1_FAST", [
@@ -1018,6 +1019,37 @@ async function main() {
         router.chatWithRouting("TIER_1_FAST", [{ role: "user", content: "charge?" }], tools),
         (e: Error & { code?: string }) => e.code === "AI_TOOL_VALIDATION_FAILED"
       );
+    } finally {
+      setOutboundTransportForTesting(null);
+      router.configure({ AI_DEMO_MODE: "1" } as NodeJS.ProcessEnv);
+    }
+  });
+
+  await runTest("LLM_REASONING_EFFORT is sent as reasoning_effort on chat calls only; a typo refuses clearly", async () => {
+    const router = ModelRouter.getInstance();
+    const bodies: Array<{ path: string; body: Record<string, unknown> }> = [];
+    setOutboundTransportForTesting(async (url, options) => {
+      const path = new URL(url.toString()).pathname;
+      bodies.push({ path, body: JSON.parse(String(options.body ?? "{}")) as Record<string, unknown> });
+      const body = path.endsWith("/embeddings")
+        ? { data: [{ embedding: [0.1, 0.2, 0.3] }] }
+        : { model: "m-fast", choices: [{ message: { content: "ok" } }], usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 } };
+      return { status: 200, headers: {}, body: JSON.stringify(body), truncated: false, durationMs: 5 };
+    });
+    const base = { LLM_BASE_URL: "https://llm.example.test/v1", LLM_API_KEY: "sk-p3-test", LLM_MODEL_FAST: "m-fast", LLM_EMBEDDING_MODEL: "m-embed" };
+    try {
+      router.configure({ ...base, LLM_REASONING_EFFORT: " Medium " } as NodeJS.ProcessEnv);
+      await router.chatWithRouting("TIER_1_FAST", [{ role: "user", content: "hi" }]);
+      assert.strictEqual(bodies[0].body.reasoning_effort, "medium");
+      await router.generateEmbedding("hello");
+      assert.ok(!("reasoning_effort" in bodies[1].body), "never on embedding calls");
+
+      router.configure({ ...base, LLM_REASONING_EFFORT: "turbo" } as NodeJS.ProcessEnv);
+      await assert.rejects(
+        router.chatWithRouting("TIER_1_FAST", [{ role: "user", content: "hi" }]),
+        (e: Error & { code?: string }) => e.code === "AI_PROVIDER_NOT_CONFIGURED" && /LLM_REASONING_EFFORT/.test(e.message)
+      );
+      assert.strictEqual(bodies.length, 2, "nothing sent with an invalid effort");
     } finally {
       setOutboundTransportForTesting(null);
       router.configure({ AI_DEMO_MODE: "1" } as NodeJS.ProcessEnv);

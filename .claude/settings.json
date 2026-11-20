@@ -39,26 +39,6 @@
             "timeout": 10
           }
         ]
-      },
-      {
-        "matcher": "Bash|Grep",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/home/shown/.local/bin/graphify hook-guard search",
-            "timeout": 10
-          }
-        ]
-      },
-      {
-        "matcher": "Read|Glob",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/home/shown/.local/bin/graphify hook-guard read",
-            "timeout": 10
-          }
-        ]
       }
     ],
     "PostToolUse": [

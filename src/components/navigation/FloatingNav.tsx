@@ -3,44 +3,76 @@
 import React from "react";
 import { useRouter } from "next/navigation";
 import {
-  LayoutDashboard,
+  House,
   ShoppingBag,
   Package,
-  Boxes,
-  Truck,
   Users,
   MessageSquareText,
   Megaphone,
   BarChart3,
-  Workflow,
-  TrendingUp,
-  Rocket,
-  PlugZap,
-  Heart,
-  Target,
-  Wallet,
+  Settings,
 } from "lucide-react";
+import { useSetupGuide } from "@/components/onboarding/useSetupGuide";
+import { SETUP_GUIDE_HREF } from "@/components/onboarding/LaunchChecklist";
 import { Dock, type DockItem } from "./Dock";
 import { canAccessPath } from "./module-access";
 
-const DOCK_ROUTES: DockItem[] = [
-  { label: "Overview", href: "/", icon: <LayoutDashboard size={20} strokeWidth={2} /> },
-  { label: "Orders", href: "/orders", icon: <ShoppingBag size={20} strokeWidth={2} /> },
-  { label: "Products", href: "/products", icon: <Package size={20} strokeWidth={2} /> },
-  { label: "Inventory", href: "/inventory", icon: <Boxes size={20} strokeWidth={2} /> },
-  { label: "Shipments", href: "/shipments", icon: <Truck size={20} strokeWidth={2} /> },
-  { label: "Payments", href: "/payments", icon: <Wallet size={20} strokeWidth={2} /> },
-  { label: "Customers", href: "/customers", icon: <Users size={20} strokeWidth={2} /> },
-  { label: "Conversations", href: "/conversations", icon: <MessageSquareText size={20} strokeWidth={2} />, badge: "Omni" },
-  { label: "Growth", href: "/growth", icon: <Rocket size={20} strokeWidth={2} /> },
-  { label: "Marketing", href: "/marketing", icon: <Megaphone size={20} strokeWidth={2} /> },
-  { label: "Engagement", href: "/engagement", icon: <Heart size={20} strokeWidth={2} /> },
-  { label: "Ad Manager", href: "/ads", icon: <Target size={20} strokeWidth={2} /> },
-  { label: "Analytics", href: "/analytics", icon: <BarChart3 size={20} strokeWidth={2} /> },
-  { label: "Intelligence", href: "/intelligence", icon: <TrendingUp size={20} strokeWidth={2} />, badge: "AI" },
-  { label: "Knowledge", href: "/knowledge", icon: <Workflow size={20} strokeWidth={2} /> },
-  { label: "Connectors", href: "/connector", icon: <PlugZap size={20} strokeWidth={2} />, badge: "Hub" },
+type HubPage = Pick<DockItem, "label" | "href" | "badge" | "match">;
+interface Hub {
+  label: string;
+  icon: React.ReactNode;
+  pages: HubPage[];
+}
+
+const page = (label: string, href: string): HubPage => ({ label, href, match: href === "/" ? "exact" : "prefix" });
+
+/**
+ * Seven hubs instead of one icon per page: related pages share a hub, and hovering a hub lists them. Every page that
+ * had its own dock icon is still one click away (hub → flyout) and keeps its URL.
+ */
+const HUBS: Hub[] = [
+  { label: "Home", icon: <House size={20} strokeWidth={2} />, pages: [page("Overview", "/")] },
+  { label: "Inbox", icon: <MessageSquareText size={20} strokeWidth={2} />, pages: [page("Conversations", "/conversations")] },
+  {
+    label: "Orders",
+    icon: <ShoppingBag size={20} strokeWidth={2} />,
+    pages: [page("Orders", "/orders"), page("Shipments", "/shipments"), page("Payments", "/payments")],
+  },
+  {
+    label: "Catalog",
+    icon: <Package size={20} strokeWidth={2} />,
+    pages: [page("Products", "/products"), page("Inventory", "/inventory")],
+  },
+  {
+    label: "Customers",
+    icon: <Users size={20} strokeWidth={2} />,
+    pages: [page("Customers", "/customers"), page("Engagement", "/engagement")],
+  },
+  {
+    label: "Growth",
+    icon: <Megaphone size={20} strokeWidth={2} />,
+    pages: [page("Growth", "/growth"), page("Marketing", "/marketing"), page("Ad Manager", "/ads")],
+  },
+  {
+    label: "Insights",
+    icon: <BarChart3 size={20} strokeWidth={2} />,
+    pages: [page("Analytics", "/analytics"), page("Intelligence", "/intelligence")],
+  },
 ];
+
+const SETTINGS_HUB: Hub = {
+  label: "Settings",
+  icon: <Settings size={20} strokeWidth={2} />,
+  pages: [page("Settings", "/settings"), page("Connectors", "/connector"), page("Knowledge", "/knowledge")],
+};
+
+/** Keeps the pages this role can open; a hub with none is hidden, otherwise it links to its first open page. */
+function toDockItem(hub: Hub, permissions: string[] | undefined): DockItem | null {
+  const pages = hub.pages.filter((p) => canAccessPath(p.href, permissions));
+  if (pages.length === 0) return null;
+  const children: DockItem[] = pages.map((p) => ({ ...p, icon: null }));
+  return { label: hub.label, href: pages[0].href, icon: hub.icon, match: pages[0].match, children };
+}
 
 export interface FloatingNavProps {
   tenantName?: string;
@@ -53,9 +85,21 @@ export interface FloatingNavProps {
 
 export const FloatingNav: React.FC<FloatingNavProps> = ({ permissions, onOpenCommandPalette }) => {
   const router = useRouter();
+  // The setup guide stays reachable here until every required item is done, even after "Hide" on the dashboard
+  const { status: guide } = useSetupGuide();
 
   // Show only the modules this role can use (FX-10); the API enforces the same permissions.
-  const filteredRoutes = DOCK_ROUTES.filter((route) => canAccessPath(route.href, permissions));
+  const hubs = HUBS.map((hub) => {
+    if (hub.label !== "Home" || !guide?.show_checklist) return hub;
+    const progress = `${guide.required_done}/${guide.required_total}`;
+    return { ...hub, pages: [...hub.pages, { label: "Setup guide", href: SETUP_GUIDE_HREF, badge: progress }] };
+  });
+  const items = hubs.map((hub) => toDockItem(hub, permissions)).filter((item): item is DockItem => item !== null);
+  // The Home hub carries the setup guide's dot while the guide is unfinished
+  const withGuideDot = items.map((item) =>
+    item.label === "Home" && guide?.show_checklist ? { ...item, badge: `${guide.required_done}/${guide.required_total}` } : item,
+  );
+  const settings = toDockItem(SETTINGS_HUB, permissions);
 
   const handleLogout = async () => {
     try {
@@ -69,6 +113,12 @@ export const FloatingNav: React.FC<FloatingNavProps> = ({ permissions, onOpenCom
   };
 
   return (
-    <Dock items={filteredRoutes} onSearch={onOpenCommandPalette} settingsHref="/settings" onLogout={handleLogout} />
+    <Dock
+      items={withGuideDot}
+      onSearch={onOpenCommandPalette}
+      trailingItems={settings ? [settings] : []}
+      showLabels
+      onLogout={handleLogout}
+    />
   );
 };

@@ -7,6 +7,7 @@ import { RbacService } from "@/domains/rbac/service";
 import { AuditService } from "@/domains/audit/service";
 import { TenantService } from "@/domains/tenants/service";
 import { OnboardingService } from "@/domains/onboarding/onboarding.service";
+import { accessGateMarker } from "@/domains/billing/workspace-access.service";
 import { WorkspaceMfaService, type MfaMethod } from "@/domains/auth/workspace-mfa.service";
 import { RoleName } from "@/lib/permissions";
 
@@ -38,7 +39,11 @@ export interface AuthResult {
 export type LoginStart = { mfa_required: false; result: AuthResult } | { mfa_required: true; mfa_token: string };
 
 export class AuthService {
-  public static async registerTenantWithOwner(input: RegisterInput): Promise<AuthResult> {
+  /**
+   * `options.publicSignUp`: the workspace was created from the public sign-up page, so it must finish setup and pay for
+   * a plan before it can use CommerceOS (WorkspaceAccessService, ADR-125). Only the register route sets it.
+   */
+  public static async registerTenantWithOwner(input: RegisterInput, options: { publicSignUp?: boolean } = {}): Promise<AuthResult> {
     const normalizedEmail = (input.email ?? "").trim().toLowerCase();
 
     if (!normalizedEmail.includes("@")) {
@@ -66,7 +71,9 @@ export class AuthService {
       currency: input.currency || "BDT",
     });
     // A self-registered shop is walked through setup (OnboardingService); workspaces made any other way are not
-    TenantService.updateTenantSettings(tenant.id, { settings: { onboarding: OnboardingService.initialState() } });
+    TenantService.updateTenantSettings(tenant.id, {
+      settings: { onboarding: OnboardingService.initialState(), ...(options.publicSignUp ? { access_gate: accessGateMarker() } : {}) },
+    });
 
     // 2. Hash Password & Create User
     const passwordHash = await hashPassword(input.password);

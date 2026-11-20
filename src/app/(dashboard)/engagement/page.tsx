@@ -11,6 +11,7 @@ import { SuggestionPanel } from "@/components/insights/SuggestionPanel";
 import { CommentTriggers } from "@/components/social/CommentTriggers";
 import styles from "@/components/insights/insights.module.css";
 import type { EngagementReport, ContentPost } from "@/domains/social/insights/engagement-analysis.service";
+import { BrandIcon } from "@/components/brand/BrandIcon";
 
 const RANGES = [7, 14, 30, 90] as const;
 type DailyMetric = "engagements" | "impressions" | "likes" | "comments" | "shares" | "posts";
@@ -106,6 +107,7 @@ export default function EngagementPage() {
           {report.sources.map((s) => (
             <span key={s.platform} className={`${styles.sourceChip} ${styles[`source${s.status}`]}`} title={s.message ?? undefined}>
               <span className={styles.dot} aria-hidden />
+              <BrandIcon brand={s.platform === "FACEBOOK" ? "facebook" : "instagram"} size={16} />
               {s.platform === "FACEBOOK" ? "Facebook" : "Instagram"}
               {s.account_name ? ` · ${s.account_name}` : ""}
               {s.followers !== null ? ` · ${compact(s.followers)} followers` : ""}
@@ -192,7 +194,12 @@ export default function EngagementPage() {
                       .filter((s) => s.totals)
                       .map((s) => (
                         <tr key={s.platform}>
-                          <td>{s.platform === "FACEBOOK" ? "Facebook" : "Instagram"}</td>
+                          <td>
+                            <span className={styles.platformName}>
+                              <BrandIcon brand={s.platform === "FACEBOOK" ? "facebook" : "instagram"} size={16} />
+                              {s.platform === "FACEBOOK" ? "Facebook" : "Instagram"}
+                            </span>
+                          </td>
                           <td>{s.totals?.posts}</td>
                           <td>{compact(s.totals?.engagements)}</td>
                           <td>{pct(s.totals?.engagement_rate)}</td>
@@ -263,7 +270,10 @@ export default function EngagementPage() {
                       {posts.map((p) => (
                         <tr key={p.id}>
                           <td className={styles.postCell}>
-                            <span className={styles.platformTag}>{p.platform === "FACEBOOK" ? "FB" : "IG"} · {FORMAT_LABEL[p.format]}</span>
+                            <span className={styles.platformTag}>
+                              <BrandIcon brand={p.platform === "FACEBOOK" ? "facebook" : "instagram"} size={14} label />
+                              {FORMAT_LABEL[p.format]}
+                            </span>
                             <span className={styles.caption}>{p.caption || "(no caption)"}</span>
                             <small>
                               {new Date(p.created_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}

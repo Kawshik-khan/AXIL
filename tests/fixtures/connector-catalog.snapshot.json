@@ -598,6 +598,17 @@
       "fields": []
     },
     {
+      "id": "sslcommerz",
+      "name": "SSLCommerz",
+      "category": "PAYMENTS",
+      "status": "BETA",
+      "default_endpoint": null,
+      "auth_method": "api_key",
+      "goal": "GET_PAID",
+      "resource_kinds": [],
+      "fields": []
+    },
+    {
       "id": "qdrant",
       "name": "Qdrant (Vector Database)",
       "category": "VECTOR_DB",

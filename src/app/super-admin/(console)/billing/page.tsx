@@ -80,6 +80,10 @@ export default function BillingPage() {
 
   const plans = usePlatformResource<PlanView[]>("/api/v1/platform/plans", { isEmpty: (p) => p.length === 0 });
   const overview = usePlatformResource<PlatformOverviewMetrics>(can(PLATFORM_PERMISSIONS.PLATFORM_READ) ? "/api/v1/platform/overview" : null);
+  // Can workspaces pay at all? Without a gateway or a manual account every new shop is stuck on the paywall.
+  const payMethods = usePlatformResource<{ configured: boolean; gateways: string[] }>(
+    can(PLATFORM_PERMISSIONS.BILLING_READ) ? "/api/v1/platform/billing/payment-methods" : null
+  );
   const catalog = usePlatformResource<CatalogRow[]>(tab === "catalog" ? "/api/v1/platform/entitlements" : null);
   const addons = usePlatformResource<AddonView[]>(tab === "addons" ? "/api/v1/platform/addons" : null, { isEmpty: (a) => a.length === 0 });
   const subs = usePlatformResource<SubscriptionRow[]>(tab === "subscriptions" ? "/api/v1/platform/subscriptions" : null, { isEmpty: (s) => s.length === 0 });
@@ -140,6 +144,16 @@ export default function BillingPage() {
           </>
         }
       />
+
+      {payMethods.state.kind === "ready" && !payMethods.state.data.configured && (
+        <div className={`${styles.banner} ${styles.bannerDanger}`} role="alert">
+          <span>
+            <strong>Workspaces can&apos;t pay for a plan.</strong> No subscription payment method is set up, so new shops stay locked on the
+            activation page. Set the bKash, Nagad or bank details under <Link href={`${CONSOLE_ROOT}/settings`}>Settings → Billing</Link>, or the
+            platform SSLCommerz / bKash gateway account in the server environment.
+          </span>
+        </div>
+      )}
 
       {notice && (
         <div className={`${styles.banner} ${styles.bannerInfo}`} role="status">

@@ -74,6 +74,12 @@
   margin-bottom: var(--space-16);
 }
 
+.titleWithIcon {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-12);
+}
+
 .titleArea {
   display: flex;
   flex-direction: column;

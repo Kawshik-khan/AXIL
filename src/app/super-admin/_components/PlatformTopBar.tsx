@@ -8,6 +8,7 @@ import { usePlatformSession } from "../_lib/platform-session";
 import { formatCountdown, formatDhakaTime, humanize } from "../_lib/format";
 import { CONSOLE_ROOT } from "../_lib/platform-module-access";
 import { StatusPill } from "./StatusPill";
+import { BrandLogo } from "@/components/brand/BrandLogo";
 import { useConsoleTheme } from "../_lib/console-theme";
 
 export interface PlatformTopBarProps {
@@ -63,6 +64,9 @@ export const PlatformTopBar: React.FC<PlatformTopBarProps> = ({
   return (
     <header className={styles.topBar}>
       <div className={styles.leftSection}>
+        <Link href={CONSOLE_ROOT} className={styles.brandLink} aria-label="CommerceOS platform console home">
+          <BrandLogo size={30} label="CommerceOS" />
+        </Link>
         <div className={styles.tenantBadge} title="Bangladesh time (Asia/Dhaka)">
           <span>Platform console</span>
           <span suppressHydrationWarning>· {formatDhakaTime(new Date(now))} Dhaka</span>

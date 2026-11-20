@@ -4,6 +4,7 @@ import React, { useMemo } from "react";
 import { Search, MessageSquare, Phone, Globe, RefreshCw } from "lucide-react";
 import { Conversation, ChannelType } from "@/types/social";
 import styles from "./SocialInbox.module.css";
+import { BrandIcon, brandFor } from "@/components/brand/BrandIcon";
 import { agentPaused } from "@/domains/social/conversations/conversation-control.state";
 
 interface UnifiedInboxProps {
@@ -155,18 +156,21 @@ export const UnifiedInbox: React.FC<UnifiedInboxProps> = ({
             className={`${styles.filterBadge} ${filterChannel === "WHATSAPP" ? styles.filterBadgeActive : ""}`}
             onClick={() => onFilterChannelChange("WHATSAPP")}
           >
+            <BrandIcon brand="whatsapp" size={14} />
             WhatsApp <span className={styles.pillCount}>{waCount}</span>
           </button>
           <button
             className={`${styles.filterBadge} ${filterChannel === "FACEBOOK_MESSENGER" ? styles.filterBadgeActive : ""}`}
             onClick={() => onFilterChannelChange("FACEBOOK_MESSENGER")}
           >
+            <BrandIcon brand="facebook" size={14} />
             Facebook <span className={styles.pillCount}>{fbCount}</span>
           </button>
           <button
             className={`${styles.filterBadge} ${filterChannel === "INSTAGRAM" ? styles.filterBadgeActive : ""}`}
             onClick={() => onFilterChannelChange("INSTAGRAM")}
           >
+            <BrandIcon brand="instagram" size={14} />
             Instagram <span className={styles.pillCount}>{igCount}</span>
           </button>
           <button
@@ -208,9 +212,18 @@ export const UnifiedInbox: React.FC<UnifiedInboxProps> = ({
                 {/* Left User Avatar */}
                 <div className={styles.userAvatar}>
                   {initials}
-                  <span className={`${styles.avatarPlatformBadge} ${getBadgeClass(convo.channel_type)}`}>
-                    {getChannelLabel(convo.channel_type)}
-                  </span>
+                  {brandFor(convo.channel_type) ? (
+                    <BrandIcon
+                      brand={brandFor(convo.channel_type)!}
+                      size={16}
+                      label
+                      className={styles.avatarPlatformLogo}
+                    />
+                  ) : (
+                    <span className={`${styles.avatarPlatformBadge} ${getBadgeClass(convo.channel_type)}`}>
+                      {getChannelLabel(convo.channel_type)}
+                    </span>
+                  )}
                 </div>
 
                 {/* Right Conversation Details */}

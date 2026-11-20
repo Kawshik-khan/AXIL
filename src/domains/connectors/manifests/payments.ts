@@ -43,4 +43,40 @@ export const PAYMENTS_MANIFESTS: ConnectorProviderDefinition[] = [
       ],
     },
   },
+  {
+    id: "sslcommerz",
+    name: "SSLCommerz",
+    category: "PAYMENTS",
+    goal: "GET_PAID",
+    status: "BETA",
+    capabilities: ["PAYMENT"],
+    auth_method: "api_key",
+    resource_kinds: [],
+    badge: "🇧🇩 Cards, wallets & banking",
+    description:
+      "One hosted checkout page for bKash, Nagad, Rocket, cards and internet banking through your own SSLCommerz merchant account. The order is marked paid only after SSLCommerz's validation API confirms the payment.",
+    portal_url: "https://merchant.sslcommerz.com",
+    documentation_url: "https://developer.sslcommerz.com/doc/v4/",
+    managed_at: "/payments",
+    fields: [],
+    guidelines: {
+      portal_url: "https://developer.sslcommerz.com/registration/",
+      prerequisites: [
+        "An SSLCommerz merchant account (or a free sandbox store to test first).",
+        "Your store ID and store password from SSLCommerz.",
+      ],
+      steps: [
+        "Register a sandbox store at SSLCommerz and note the store ID and store password it emails you.",
+        "Open Payments in CommerceOS and find the SSLCommerz card.",
+        "Paste the store ID and store password, keep Mode on Sandbox, switch the gateway on and save (you'll be asked for your authenticator code).",
+        "Send yourself a payment link and pay it with an SSLCommerz sandbox card or wallet to check the flow.",
+        "When SSLCommerz approves your live store, save the live credentials with Mode set to Live.",
+      ],
+      tips: [
+        "Credentials are stored encrypted and never shown again; leave the fields empty to keep the saved ones.",
+        "SSLCommerz needs the customer's email address on a payment link.",
+        "Each payment must be between 10 and 500,000 BDT.",
+      ],
+    },
+  },
 ];

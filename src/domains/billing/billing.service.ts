@@ -24,6 +24,7 @@ import { PlatformEntitlementService } from "@/domains/platform/services/platform
 import { periodEnd } from "@/domains/platform/services/platform-subscription.service";
 import { PlatformSettingsService } from "@/domains/platform/services/platform-settings.service";
 import { AuditService } from "@/domains/audit/service";
+import { WorkspaceAccessService, type WorkspaceAccess } from "@/domains/billing/workspace-access.service";
 import { isFeatureEnabled } from "@/lib/safety-gate";
 import { platformGateways, platformManualAccounts, type PlatformManualAccounts } from "@/domains/payments/gateways/gateway-accounts";
 
@@ -115,6 +116,8 @@ export interface BillingOverview {
   plans: BillingPlanOption[];
   invoices: BillingInvoiceRecord[];
   payment_options: { gateways: GatewayProvider[]; manual: PlatformManualAccounts };
+  /** Where this workspace stands with setup and payment (ADR-125). Computed, never stored. */
+  access: WorkspaceAccess;
   /** A free trial this workspace can start itself; null once it has had any subscription. */
   trial_offer: TrialOffer | null;
 }
@@ -182,6 +185,7 @@ export class BillingService {
       invoices: db.getBillingInvoices(tenantId),
       payment_options: { gateways: platformGateways(), manual: platformManualAccounts() },
       trial_offer: BillingService.trialOffer(tenantId),
+      access: WorkspaceAccessService.resolve(tenantId),
     };
   }
 

@@ -130,7 +130,8 @@ export function InvoicePayCard({
               <p className={styles.muted}>Only an owner or admin can pay this invoice (needs settings.update).</p>
             ) : nothingConfigured ? (
               <div className={styles.noticeWarning} role="status">
-                No payment method is set up on this CommerceOS installation yet, so this invoice can't be paid from here. Contact CommerceOS support.
+                <strong>Payment isn&apos;t open yet.</strong> CommerceOS hasn&apos;t switched on a way to pay for plans on this server yet, so this
+                invoice can&apos;t be paid from here. Your invoice is saved: contact CommerceOS support and they&apos;ll help you pay it.
               </div>
             ) : (
               <div className={styles.grid}>

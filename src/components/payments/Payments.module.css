@@ -366,6 +366,14 @@
   color: var(--color-text-muted);
 }
 
+/* A payment method's logo beside its name */
+.methodLead {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-12);
+  text-align: left;
+}
+
 .walletRow {
   display: flex;
   justify-content: space-between;

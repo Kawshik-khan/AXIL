@@ -19,8 +19,6 @@ import {
   X,
   BookOpen,
   ShieldCheck,
-  Zap,
-  Building2,
 } from "lucide-react";
 import {
   ConnectorCategory,
@@ -79,7 +77,7 @@ interface GatewayStatusView {
 }
 
 /** Catalog ids of providers set up on the Payments page, mapped to their key in its gateway settings. */
-const PAYMENT_GATEWAY_KEYS: Record<string, "BKASH" | "SSLCOMMERZ"> = { bkash: "BKASH" };
+const PAYMENT_GATEWAY_KEYS: Record<string, "BKASH" | "SSLCOMMERZ"> = { bkash: "BKASH", sslcommerz: "SSLCOMMERZ" };
 
 function gatewayStatus(views: Record<string, GatewayStatusView> | null, key: string): { label: string; tone: "ok" | "warn" | "none" } {
   if (!views) return { label: "Status unknown", tone: "none" };
@@ -98,21 +96,13 @@ const SIGN_IN_CARDS: Record<string, { provider: SignInProvider; label: string }>
 export default function ConnectorPage() {
   const [providers, setProviders] = useState<ConnectorProviderDefinition[]>([]);
   const [configurations, setConfigurations] = useState<Array<Omit<ConnectorConfigRecord, "credentials_encrypted">>>([]);
-  const [stats, setStats] = useState<any>(null);
   const [session, setSession] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // View Scope: STORE (Delivery, Social, Google Ads) vs INFRA (LLMs, Vector DB, Redis, DBs, ERP) vs ALL
-  const [viewScope, setViewScope] = useState<"STORE" | "INFRA" | "ALL">("STORE");
   // Active filter & search
   const [activeCategory, setActiveCategory] = useState<ConnectorCategory | "ALL" | "GOOGLE_ADS">("ALL");
   const [searchQuery, setSearchQuery] = useState("");
-
-  const isAdmin =
-    session?.role === "ADMIN" ||
-    session?.role === "OWNER" ||
-    session?.role === "DEV";
 
   const router = useRouter();
   /** The sign-in card whose popup is opening, if any. */
@@ -205,7 +195,6 @@ export default function ConnectorPage() {
       const json = await res.json();
       setProviders(json.data.providers || []);
       setConfigurations(json.data.configurations || []);
-      setStats(json.data.stats || null);
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : "Error fetching connector catalog.");
     } finally {
@@ -251,26 +240,15 @@ export default function ConnectorPage() {
   // Filtered providers
   const filteredProviders = useMemo(() => {
     return providers.filter((p) => {
-      // The store view shows what a shop connects, grouped by goal; infrastructure is the platform view's
-      const storeView = !isAdmin || viewScope === "STORE";
-      if (storeView) {
-        if (!STORE_GOALS.includes(p.goal)) return false;
-      } else if (viewScope === "INFRA") {
-        if (STORE_GOALS.includes(p.goal)) return false;
-      }
+      // The page shows what a shop connects; infrastructure (LLMs, vector DBs, ERPs) isn't listed here
+      if (!STORE_GOALS.includes(p.goal)) return false;
 
+      // Tabs filter by goal: SOCIAL_ADS = Sell & chat, LOGISTICS = Deliver, GOOGLE_ADS = Ads & growth
       let matchCategory = true;
-      if (storeView) {
-        // Store tabs filter by goal: SOCIAL_ADS = Sell & chat, LOGISTICS = Deliver, GOOGLE_ADS = Ads & growth
-        if (activeCategory === "SOCIAL_ADS") matchCategory = p.goal === "SELL_CHAT";
-        else if (activeCategory === "LOGISTICS") matchCategory = p.goal === "DELIVER";
-        else if (activeCategory === "GOOGLE_ADS") matchCategory = p.goal === "ADS";
-        else if (activeCategory === "PAYMENTS") matchCategory = p.goal === "GET_PAID";
-      } else if (activeCategory === "GOOGLE_ADS") {
-        matchCategory = p.id === "google_ads";
-      } else if (activeCategory !== "ALL") {
-        matchCategory = p.category === activeCategory;
-      }
+      if (activeCategory === "SOCIAL_ADS") matchCategory = p.goal === "SELL_CHAT";
+      else if (activeCategory === "LOGISTICS") matchCategory = p.goal === "DELIVER";
+      else if (activeCategory === "GOOGLE_ADS") matchCategory = p.goal === "ADS";
+      else if (activeCategory === "PAYMENTS") matchCategory = p.goal === "GET_PAID";
 
       const matchQuery =
         searchQuery.trim() === "" ||
@@ -280,7 +258,7 @@ export default function ConnectorPage() {
         (p.suggested_models && p.suggested_models.some((m) => m.toLowerCase().includes(searchQuery.toLowerCase())));
       return matchCategory && matchQuery;
     });
-  }, [providers, activeCategory, searchQuery, isAdmin, viewScope]);
+  }, [providers, activeCategory, searchQuery]);
 
   // Map of active configs by provider ID
   const configMap = useMemo(() => {
@@ -543,8 +521,21 @@ export default function ConnectorPage() {
     return { label: "Not connected", tone: "none" };
   };
 
-  const storeView = !isAdmin || viewScope === "STORE";
-  const storeGrouped = storeView && activeCategory === "ALL" && searchQuery.trim() === "";
+  /** One grid: connected first, then ready to connect, then coming soon; same-goal cards stay together. */
+  const cardRank = (p: ConnectorProviderDefinition) => {
+    if (p.status === "COMING_SOON") return 2;
+    return cardStatus(p).tone === "none" ? 1 : 0;
+  };
+  const orderedProviders = [...filteredProviders].sort(
+    (a, b) => cardRank(a) - cardRank(b) || GROUP_ORDER.indexOf(a.goal) - GROUP_ORDER.indexOf(b.goal)
+  );
+
+  /** The summary strip counts every store connector, whatever tab or search is active. */
+  const storeProviders = providers.filter((p) => STORE_GOALS.includes(p.goal));
+  const isLinked = (p: ConnectorProviderDefinition) => p.status !== "COMING_SOON" && cardStatus(p).tone !== "none";
+  const linkedTotal = storeProviders.filter(isLinked).length;
+  const needsAttention = storeProviders.filter((p) => cardStatus(p).tone === "warn").length;
+  const linkedPct = storeProviders.length > 0 ? Math.round((linkedTotal / storeProviders.length) * 100) : 0;
 
   /** Pauses or resumes every connection of a provider (POST /api/v1/connectors/{id}/disable|enable), then reloads. */
   const setPaused = async (provider: ConnectorProviderDefinition, connectionIds: string[], pause: boolean) => {
@@ -685,18 +676,10 @@ export default function ConnectorPage() {
             <span className={styles.titleIcon} aria-hidden="true">
               <PlugZap size={22} />
             </span>
-            <h1 className={styles.pageTitle}>
-              {!isAdmin || viewScope === "STORE"
-                ? "Connectors"
-                : viewScope === "INFRA"
-                ? "Cloud Infrastructure & AI Gateway Hub"
-                : "Connectors & Integrations Gateway"}
-            </h1>
+            <h1 className={styles.pageTitle}>Connectors</h1>
           </div>
           <p className={styles.pageSubtitle}>
-            {!isAdmin || viewScope === "STORE"
-              ? "Connect where you sell, how you get paid and who delivers. Each card shows what's really connected."
-              : "Unified multi-server gateway. Connect frontier LLM models (OpenAI, Claude, Gemini, Ollama), vector databases (Qdrant, Pinecone), Redis caching, and enterprise ERPs with AES-256-GCM encryption."}
+            Connect where you sell, how you get paid and who delivers. Each card shows what&apos;s really connected.
           </p>
         </div>
 
@@ -707,7 +690,7 @@ export default function ConnectorPage() {
             className={styles.guideButton}
             title="Refresh connectors"
           >
-            <RefreshCw size={14} /> Refresh Catalog
+            <RefreshCw size={14} /> Refresh
           </button>
         </div>
       </div>
@@ -718,292 +701,89 @@ export default function ConnectorPage() {
         </p>
       )}
 
-      {/* Admin Scope Switcher */}
-      {isAdmin && (
-        <div className={styles.scopeBar} role="group" aria-label="Connector view mode">
-          <button
-            type="button"
-            className={`${styles.scopeButton} ${viewScope === "STORE" ? styles.scopeButtonActive : ""}`}
-            onClick={() => {
-              setViewScope("STORE");
-              setActiveCategory("ALL");
-            }}
-          >
-            📦 Store Channels
-          </button>
-          <button
-            type="button"
-            className={`${styles.scopeButton} ${viewScope === "INFRA" ? styles.scopeButtonActive : ""}`}
-            onClick={() => {
-              setViewScope("INFRA");
-              setActiveCategory("ALL");
-            }}
-          >
-            ⚡ Cloud & Infrastructure
-          </button>
-          <button
-            type="button"
-            className={`${styles.scopeButton} ${viewScope === "ALL" ? styles.scopeButtonActive : ""}`}
-            onClick={() => {
-              setViewScope("ALL");
-              setActiveCategory("ALL");
-            }}
-          >
-            🌐 All Connectors
-          </button>
-        </div>
-      )}
-
-      {/* Metrics Overview Strip */}
-      <div className={styles.metricsStrip}>
-        <div className={styles.metricCard}>
-          <span className={styles.metricLabel}>
-            <Zap size={13} style={{ color: "#4CAF70" }} /> Active Connections
+      {/* Summary strip: how much of the store is connected, per goal (from each card's real status) */}
+      <div className={styles.summaryBar}>
+        <div className={styles.summaryMain}>
+          <span className={styles.summaryValue}>
+            {linkedTotal}
+            <span className={styles.summaryOf}>/{storeProviders.length}</span>
           </span>
-          <div className={styles.metricValueRow}>
-            <span className={styles.metricValue}>
-              {!isAdmin || viewScope === "STORE"
-                ? configurations.filter((c) => c.category === "LOGISTICS" || c.category === "SOCIAL_ADS").length
-                : stats?.total_active ?? configurations.length}
+          <div className={styles.summaryMeta}>
+            <span className={styles.summaryLabel}>
+              Connected{needsAttention > 0 ? ` · ${needsAttention} need${needsAttention === 1 ? "s" : ""} attention` : ""}
             </span>
-            <span className={styles.metricSubtext}>
-              of {filteredProviders.length} in this view
-            </span>
+            <div
+              className={styles.summaryTrack}
+              role="progressbar"
+              aria-label="Connectors connected"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={linkedPct}
+            >
+              <span className={styles.summaryFill} style={{ width: `${linkedPct}%` }} />
+            </div>
           </div>
         </div>
-
-        {(!isAdmin || viewScope === "STORE") ? (
-          <>
-            <div className={styles.metricCard}>
-              <span className={styles.metricLabel}>
-                <Truck size={13} style={{ color: "var(--color-warning-ink)" }} /> Parcel Delivery
-              </span>
-              <div className={styles.metricValueRow}>
-                <span className={styles.metricValue}>
-                  {configurations.find((c) => c.category === "LOGISTICS")?.name || "Pending setup"}
-                </span>
-                <span className={styles.metricSubtext}>
-                  {configurations.filter((c) => c.category === "LOGISTICS").length} connected
-                </span>
-              </div>
-            </div>
-
-            <div className={styles.metricCard}>
-              <span className={styles.metricLabel}>
-                <Share2 size={13} style={{ color: "#00897B" }} /> Social Channels
-              </span>
-              <div className={styles.metricValueRow}>
-                <span className={styles.metricValue}>
-                  {configurations.filter((c) => c.category === "SOCIAL_ADS" && c.provider_id !== "google_ads").length} active
-                </span>
-                <span className={styles.metricSubtext}>Meta, WhatsApp, TikTok, TG</span>
-              </div>
-            </div>
-
-            <div className={styles.metricCard}>
-              <span className={styles.metricLabel}>
-                <Sparkles size={13} style={{ color: "#4285F4" }} /> Google Ads Connect
-              </span>
-              <div className={styles.metricValueRow}>
-                <span className={styles.metricValue}>
-                  {configurations.find((c) => c.provider_id === "google_ads") ? "Active" : "Not Linked"}
-                </span>
-                <span className={styles.metricSubtext}>Offline conversion sync</span>
-              </div>
-            </div>
-          </>
-        ) : (
-          <>
-            <div className={styles.metricCard}>
-              <span className={styles.metricLabel}>
-                <Sparkles size={13} style={{ color: "#7B61FF" }} /> ✦ AI & LLM Servers
-              </span>
-              <div className={styles.metricValueRow}>
-                <span className={styles.metricValue}>
-                  {configurations.find((c) => c.category === "AI_LLM")?.default_model || "None active"}
-                </span>
-                <span className={styles.metricSubtext}>
-                  {stats?.by_category?.AI_LLM?.active ?? 0} connected
-                </span>
-              </div>
-            </div>
-
-            <div className={styles.metricCard}>
-              <span className={styles.metricLabel}>
-                <Building2 size={13} style={{ color: "#F3B63F" }} /> Enterprise & ERP
-              </span>
-              <div className={styles.metricValueRow}>
-                <span className={styles.metricValue}>
-                  {configurations.find((c) => c.category === "ENTERPRISE")?.name || "Ready to connect"}
-                </span>
-                <span className={styles.metricSubtext}>
-                  {stats?.by_category?.ENTERPRISE?.active ?? 0} active
-                </span>
-              </div>
-            </div>
-          </>
-        )}
+        <ul className={styles.summaryChips}>
+          {GROUP_ORDER.map((goal) => {
+            const items = storeProviders.filter((p) => p.goal === goal);
+            if (items.length === 0) return null;
+            const linked = items.filter(isLinked).length;
+            return (
+              <li key={goal} className={`${styles.summaryChip} ${linked > 0 ? styles.summaryChipOn : ""}`}>
+                <span>{GOAL_LABEL[goal]}</span>
+                <strong>
+                  {linked}/{items.length}
+                </strong>
+              </li>
+            );
+          })}
+        </ul>
       </div>
 
       {/* Controls Bar: Tabs & Search */}
       <div className={styles.controlsBar}>
         <div className={styles.tabsList} role="tablist">
-          {(!isAdmin || viewScope === "STORE") ? (
-            <>
-              <button
-                type="button"
-                className={`${styles.tabButton} ${activeCategory === "ALL" ? styles.activeTab : ""}`}
-                onClick={() => setActiveCategory("ALL")}
-              >
-                All
-                <span className={styles.tabBadge}>
-                  {providers.filter((p) => STORE_GOALS.includes(p.goal)).length}
-                </span>
-              </button>
-              <button
-                type="button"
-                className={`${styles.tabButton} ${activeCategory === "LOGISTICS" ? styles.activeTab : ""}`}
-                onClick={() => setActiveCategory("LOGISTICS")}
-              >
-                {GOAL_LABEL.DELIVER}
-                <span className={styles.tabBadge}>
-                  {providers.filter((p) => p.goal === "DELIVER").length}
-                </span>
-              </button>
-              <button
-                type="button"
-                className={`${styles.tabButton} ${activeCategory === "PAYMENTS" ? styles.activeTab : ""}`}
-                onClick={() => setActiveCategory("PAYMENTS")}
-              >
-                {GOAL_LABEL.GET_PAID}
-                <span className={styles.tabBadge}>
-                  {providers.filter((p) => p.goal === "GET_PAID").length}
-                </span>
-              </button>
-              <button
-                type="button"
-                className={`${styles.tabButton} ${activeCategory === "SOCIAL_ADS" ? styles.activeTab : ""}`}
-                onClick={() => setActiveCategory("SOCIAL_ADS")}
-              >
-                {GOAL_LABEL.SELL_CHAT}
-                <span className={styles.tabBadge}>
-                  {providers.filter((p) => p.goal === "SELL_CHAT").length}
-                </span>
-              </button>
-              <button
-                type="button"
-                className={`${styles.tabButton} ${activeCategory === "GOOGLE_ADS" ? styles.activeTab : ""}`}
-                onClick={() => setActiveCategory("GOOGLE_ADS")}
-              >
-                {GOAL_LABEL.ADS}
-                <span className={styles.tabBadge}>{providers.filter((p) => p.goal === "ADS").length}</span>
-              </button>
-            </>
-          ) : viewScope === "INFRA" ? (
-            <>
-              <button
-                type="button"
-                className={`${styles.tabButton} ${activeCategory === "ALL" ? styles.activeTab : ""}`}
-                onClick={() => setActiveCategory("ALL")}
-              >
-                All Infrastructure
-                <span className={styles.tabBadge}>
-                  {providers.filter((p) => p.category !== "LOGISTICS" && p.category !== "SOCIAL_ADS").length}
-                </span>
-              </button>
-              <button
-                type="button"
-                className={`${styles.tabButton} ${activeCategory === "AI_LLM" ? styles.activeTab : ""}`}
-                onClick={() => setActiveCategory("AI_LLM")}
-              >
-                ✦ AI & LLM Models
-                <span className={styles.tabBadge}>
-                  {providers.filter((p) => p.category === "AI_LLM").length}
-                </span>
-              </button>
-              <button
-                type="button"
-                className={`${styles.tabButton} ${activeCategory === "VECTOR_DB" ? styles.activeTab : ""}`}
-                onClick={() => setActiveCategory("VECTOR_DB")}
-              >
-                Vector Databases (RAG)
-                <span className={styles.tabBadge}>
-                  {providers.filter((p) => p.category === "VECTOR_DB").length}
-                </span>
-              </button>
-              <button
-                type="button"
-                className={`${styles.tabButton} ${activeCategory === "ENTERPRISE" ? styles.activeTab : ""}`}
-                onClick={() => setActiveCategory("ENTERPRISE")}
-              >
-                Enterprise & ERP Systems
-                <span className={styles.tabBadge}>
-                  {providers.filter((p) => p.category === "ENTERPRISE").length}
-                </span>
-              </button>
-            </>
-          ) : (
-            <>
-              <button
-                type="button"
-                className={`${styles.tabButton} ${activeCategory === "ALL" ? styles.activeTab : ""}`}
-                onClick={() => setActiveCategory("ALL")}
-              >
-                All Connectors
-                <span className={styles.tabBadge}>{providers.length}</span>
-              </button>
-              <button
-                type="button"
-                className={`${styles.tabButton} ${activeCategory === "LOGISTICS" ? styles.activeTab : ""}`}
-                onClick={() => setActiveCategory("LOGISTICS")}
-              >
-                Parcel Delivery
-                <span className={styles.tabBadge}>
-                  {providers.filter((p) => p.category === "LOGISTICS").length}
-                </span>
-              </button>
-              <button
-                type="button"
-                className={`${styles.tabButton} ${activeCategory === "SOCIAL_ADS" ? styles.activeTab : ""}`}
-                onClick={() => setActiveCategory("SOCIAL_ADS")}
-              >
-                Social Media & Ads
-                <span className={styles.tabBadge}>
-                  {providers.filter((p) => p.category === "SOCIAL_ADS").length}
-                </span>
-              </button>
-              <button
-                type="button"
-                className={`${styles.tabButton} ${activeCategory === "AI_LLM" ? styles.activeTab : ""}`}
-                onClick={() => setActiveCategory("AI_LLM")}
-              >
-                ✦ AI Models
-                <span className={styles.tabBadge}>
-                  {providers.filter((p) => p.category === "AI_LLM").length}
-                </span>
-              </button>
-              <button
-                type="button"
-                className={`${styles.tabButton} ${activeCategory === "VECTOR_DB" ? styles.activeTab : ""}`}
-                onClick={() => setActiveCategory("VECTOR_DB")}
-              >
-                Vector DB
-                <span className={styles.tabBadge}>
-                  {providers.filter((p) => p.category === "VECTOR_DB").length}
-                </span>
-              </button>
-              <button
-                type="button"
-                className={`${styles.tabButton} ${activeCategory === "ENTERPRISE" ? styles.activeTab : ""}`}
-                onClick={() => setActiveCategory("ENTERPRISE")}
-              >
-                Enterprise
-                <span className={styles.tabBadge}>
-                  {providers.filter((p) => p.category === "ENTERPRISE").length}
-                </span>
-              </button>
-            </>
-          )}
+          <button
+            type="button"
+            className={`${styles.tabButton} ${activeCategory === "ALL" ? styles.activeTab : ""}`}
+            onClick={() => setActiveCategory("ALL")}
+          >
+            All
+            <span className={styles.tabBadge}>{storeProviders.length}</span>
+          </button>
+          <button
+            type="button"
+            className={`${styles.tabButton} ${activeCategory === "SOCIAL_ADS" ? styles.activeTab : ""}`}
+            onClick={() => setActiveCategory("SOCIAL_ADS")}
+          >
+            {GOAL_LABEL.SELL_CHAT}
+            <span className={styles.tabBadge}>{providers.filter((p) => p.goal === "SELL_CHAT").length}</span>
+          </button>
+          <button
+            type="button"
+            className={`${styles.tabButton} ${activeCategory === "PAYMENTS" ? styles.activeTab : ""}`}
+            onClick={() => setActiveCategory("PAYMENTS")}
+          >
+            {GOAL_LABEL.GET_PAID}
+            <span className={styles.tabBadge}>{providers.filter((p) => p.goal === "GET_PAID").length}</span>
+          </button>
+          <button
+            type="button"
+            className={`${styles.tabButton} ${activeCategory === "LOGISTICS" ? styles.activeTab : ""}`}
+            onClick={() => setActiveCategory("LOGISTICS")}
+          >
+            {GOAL_LABEL.DELIVER}
+            <span className={styles.tabBadge}>{providers.filter((p) => p.goal === "DELIVER").length}</span>
+          </button>
+          <button
+            type="button"
+            className={`${styles.tabButton} ${activeCategory === "GOOGLE_ADS" ? styles.activeTab : ""}`}
+            onClick={() => setActiveCategory("GOOGLE_ADS")}
+          >
+            {GOAL_LABEL.ADS}
+            <span className={styles.tabBadge}>{providers.filter((p) => p.goal === "ADS").length}</span>
+          </button>
         </div>
 
         <div className={styles.searchBox}>
@@ -1011,7 +791,7 @@ export default function ConnectorPage() {
           <input
             type="text"
             className={styles.searchInput}
-            placeholder="Search model, courier, or database..."
+            placeholder="Search channel, courier or gateway..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
@@ -1027,8 +807,8 @@ export default function ConnectorPage() {
         </div>
       </div>
 
-      {/* Connector cards: grouped by what they're for in the store view, one grid otherwise */}
-      {filteredProviders.length === 0 ? (
+      {/* Connector cards: one grid, connected first */}
+      {orderedProviders.length === 0 ? (
         <div className={styles.emptyState}>
           <EmptyState
             title="No connectors found"
@@ -1040,29 +820,8 @@ export default function ConnectorPage() {
             }}
           />
         </div>
-      ) : storeGrouped ? (
-        <div style={{ display: "grid", gap: "var(--space-32)" }}>
-          {GROUP_ORDER.map((goal) => {
-            const items = filteredProviders.filter((p) => p.goal === goal);
-            if (items.length === 0) return null;
-            const connectedCount = items.filter((p) => cardStatus(p).tone === "ok").length;
-            return (
-              <section key={goal} className={cardStyles.group} aria-labelledby={`goal-${goal}`}>
-                <div className={cardStyles.groupHead}>
-                  <h2 id={`goal-${goal}`} className={cardStyles.groupTitle}>
-                    {GOAL_LABEL[goal]}
-                  </h2>
-                  <span className={cardStyles.groupCount}>
-                    {connectedCount} of {items.length} connected
-                  </span>
-                </div>
-                <div className={cardStyles.grid}>{items.map(renderCard)}</div>
-              </section>
-            );
-          })}
-        </div>
       ) : (
-        <div className={cardStyles.grid}>{filteredProviders.map(renderCard)}</div>
+        <div className={cardStyles.grid}>{orderedProviders.map(renderCard)}</div>
       )}
 
       {/* Connection detail drawer (ADR-119 P6) */}

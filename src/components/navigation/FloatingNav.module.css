@@ -152,6 +152,157 @@
   transform: translateX(0);
 }
 
+/* ---------- hubs: a wrapper per dock entry, optional labels and a flyout of the hub's pages ---------- */
+.dockEntry {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.dockLabel {
+  max-width: 64px;
+  font-size: var(--font-size-meta);
+  line-height: var(--line-height-meta);
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+.dockLabelActive {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.withLabels .dockPill {
+  gap: var(--space-4);
+}
+
+/* Room for the labels without moving the circles or crowding the page: the column's left edge moves in by the same
+   amount its side padding grows, so circles stay centred at 45px and labels end before the 80px content margin. */
+@media (min-width: 769px) {
+  .dockWrapper.withLabels {
+    left: 13px;
+  }
+  .withLabels .dockPill {
+    width: 64px;
+    padding: 4px 0 !important;
+  }
+}
+
+/* Fixed, like the tooltip, so the scrolling dock column doesn't clip it; with no `top` it sits where the hub is */
+.flyout {
+  position: fixed;
+  left: 76px;
+  margin-top: -10px;
+  z-index: 106;
+  min-width: 216px;
+  padding: var(--space-8);
+  border-radius: var(--radius-card);
+  background: var(--glass-bg);
+  border: 1px solid var(--color-border-subtle);
+  box-shadow: var(--glass-shadow-floating);
+  backdrop-filter: var(--glass-backdrop-blur);
+  -webkit-backdrop-filter: var(--glass-backdrop-blur);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateX(-6px);
+  transition: opacity 0.15s cubic-bezier(0.16, 1, 0.3, 1), transform 0.15s cubic-bezier(0.16, 1, 0.3, 1),
+    visibility 0.15s;
+}
+
+/* Invisible bridge over the gap between the circle and the flyout, so moving the pointer across keeps it open */
+.flyout::before {
+  content: "";
+  position: absolute;
+  left: -18px;
+  top: 0;
+  bottom: 0;
+  width: 18px;
+}
+
+.hasFlyout:hover .flyout,
+.hasFlyout:focus-within .flyout {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateX(0);
+}
+
+.flyoutTitle {
+  padding: var(--space-4) var(--space-12) var(--space-8);
+  font-size: var(--font-size-card);
+  line-height: var(--line-height-card);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.flyoutList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-left: var(--space-12);
+  padding-left: var(--space-8);
+  border-left: 1px solid var(--color-border-medium);
+}
+
+.flyoutLink {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+  min-height: 34px;
+  padding: 0 var(--space-12);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-body);
+  line-height: var(--line-height-body);
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.flyoutLink:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text-primary);
+}
+
+.flyoutLink:focus-visible {
+  outline: 2px solid var(--color-lime-primary);
+  outline-offset: 1px;
+}
+
+.flyoutLinkActive,
+.flyoutLinkActive:hover {
+  background: var(--color-ink-action);
+  color: var(--color-ink-action-text);
+  font-weight: 600;
+}
+
+.flyoutBadge {
+  font-size: var(--font-size-meta);
+  line-height: var(--line-height-meta);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted);
+}
+
+.flyoutLinkActive .flyoutBadge {
+  color: var(--color-ink-action-text);
+  opacity: 0.72;
+}
+
+.dockCircle:focus-visible {
+  outline: 2px solid var(--color-lime-primary);
+  outline-offset: 2px;
+}
+
 /* On smaller screen heights (e.g., small laptops), ensure comfortable breathing room */
 @media (max-height: 700px) {
   .dockCircle {
@@ -168,6 +319,10 @@
   .iconContainer svg {
     width: 16px !important;
     height: 16px !important;
+  }
+  /* labels don't fit a short screen; the tooltip-free hubs still show their name in the flyout */
+  .dockLabel {
+    display: none;
   }
 }
 
@@ -208,6 +363,12 @@
   }
 
   .dockTooltip {
+    display: none !important;
+  }
+
+  /* the bottom dock links each hub straight to its first page: no flyouts, and no labels (the bar stays one row) */
+  .flyout,
+  .dockLabel {
     display: none !important;
   }
 }

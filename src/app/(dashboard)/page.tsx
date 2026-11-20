@@ -45,6 +45,7 @@ import type { db } from "@/infrastructure/db";
 import type { FinancialMetrics } from "@/types/analytics";
 import type { AgentRun } from "@/types/ai";
 import type { Opportunity, Recommendation, Risk } from "@/types/intelligence";
+import { BrandIcon, brandFor } from "@/components/brand/BrandIcon";
 
 /** Shapes of the endpoints this page reads (type-only; nothing server-side is bundled). */
 type DashboardMetrics = ReturnType<typeof db.getDashboardMetrics>;
@@ -1169,7 +1170,7 @@ export default function DashboardPage() {
             {(metrics?.paymentMix ?? []).length === 0 && <span style={{ color: "var(--color-text-muted)" }}>no orders yet</span>}
             {(metrics?.paymentMix ?? []).map((m) => (
               <span key={m.method} className={m.method === "COD" ? styles.codPill : m.method === "BKASH" ? styles.bkashPill : styles.nagadPill}>
-                {m.method} {m.percent}%
+                {brandFor(m.method) && <BrandIcon brand={brandFor(m.method)!} size={12} />} {m.method} {m.percent}%
               </span>
             ))}
           </div>

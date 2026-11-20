@@ -4,6 +4,7 @@
  *   - platformGatewayAccount: CommerceOS's merchant account, from the platform environment. Shop → CommerceOS.
  */
 import { db } from "@/infrastructure/db";
+import { PlatformSettingsService } from "@/domains/platform/services/platform-settings.service";
 import { IntegrationNotConfiguredError } from "@/lib/errors";
 import { decryptCredential } from "@/lib/security";
 import type { BkashCredentials, GatewayCredentials, GatewayMode, GatewayProvider, SslcommerzCredentials } from "@/types/payments";
@@ -100,12 +101,22 @@ export interface PlatformManualAccounts {
   bank_details: string | null;
 }
 
-/** Where a workspace sends a subscription payment by hand; an operator then checks the transaction id. */
+/**
+ * Where a workspace sends a subscription payment by hand; an operator then checks the transaction id. The super-admin
+ * console's platform settings (billing.manual_*) win; the environment is the fallback for installs configured that way.
+ */
 export function platformManualAccounts(env: NodeJS.ProcessEnv = process.env): PlatformManualAccounts {
-  const read = (name: string) => env[name]?.trim() || null;
+  const read = (setting: string, name: string) => PlatformSettingsService.getEffectiveSetting<string>(setting).trim() || env[name]?.trim() || null;
   return {
-    bkash_number: read("PLATFORM_BILLING_BKASH_NUMBER"),
-    nagad_number: read("PLATFORM_BILLING_NAGAD_NUMBER"),
-    bank_details: read("PLATFORM_BILLING_BANK_DETAILS"),
+    bkash_number: read("billing.manual_bkash_number", "PLATFORM_BILLING_BKASH_NUMBER"),
+    nagad_number: read("billing.manual_nagad_number", "PLATFORM_BILLING_NAGAD_NUMBER"),
+    bank_details: read("billing.manual_bank_details", "PLATFORM_BILLING_BANK_DETAILS"),
   };
+}
+
+/** Whether workspaces have any way to pay a subscription on this install (for the operator readiness warning). */
+export function platformBillingReadiness(env: NodeJS.ProcessEnv = process.env): { configured: boolean; gateways: GatewayProvider[]; manual: PlatformManualAccounts } {
+  const gateways = platformGateways(env);
+  const manual = platformManualAccounts(env);
+  return { configured: gateways.length > 0 || Object.values(manual).some(Boolean), gateways, manual };
 }

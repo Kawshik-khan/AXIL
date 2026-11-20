@@ -4,6 +4,7 @@ import React, { useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Search, Bell, LogOut, Settings, UserCheck, Shield, Sun, Moon, ChevronDown } from "lucide-react";
+import { BrandLogo } from "@/components/brand/BrandLogo";
 import { useMerchantTheme } from "./merchant-theme";
 import styles from "./TopBar.module.css";
 
@@ -61,6 +62,9 @@ export const TopBar: React.FC<TopBarProps> = ({
   return (
     <header className={styles.topBar}>
       <div className={styles.leftSection}>
+        <Link href="/" className={styles.brandLink} aria-label="CommerceOS home">
+          <BrandLogo size={30} label="CommerceOS" />
+        </Link>
         <div className={styles.tenantBadge} title="Active Workspace">
           <span className={styles.tenantIcon}>🏢</span>
           <span>{tenantName}</span>
