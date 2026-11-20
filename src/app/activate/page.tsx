@@ -6,6 +6,7 @@ import { BrandLogo } from "@/components/brand/BrandLogo";
 import { InvoicePayCard, type BillingInvoice, type BillingPaymentOptions } from "@/components/payments/InvoicePayCard";
 import { api, formatBdt, formatDate } from "@/components/payments/api";
 import { limitText, type PlanOption } from "@/components/billing/PlanCards";
+import { activationInvoices } from "@/components/billing/activation-invoice";
 import { ErrorState, LoadingSkeleton } from "@/components/ui/States/States";
 import { PERMISSIONS } from "@/lib/permissions";
 import stage from "@/app/(auth)/stage.module.css";
@@ -88,7 +89,10 @@ export default function ActivatePage() {
     }
     const paid = data.plans.filter((p) => (p.monthly_price_bdt ?? p.annual_price_bdt ?? 0) > 0);
     setOverview({ ...data, plans: paid });
-    setSelected((s) => s ?? (data.trial_offer ? "TRIAL" : paid.find((p) => p.highlight_label)?.id ?? paid[0]?.id ?? null));
+    // A past-due invoice can't be paid any more: offer its plan again first, so a new invoice is one click away
+    const expiredPlan = activationInvoices(data.invoices).expired?.plan_id;
+    const again = expiredPlan && paid.some((p) => p.id === expiredPlan) ? expiredPlan : null;
+    setSelected((s) => s ?? again ?? (data.trial_offer ? "TRIAL" : paid.find((p) => p.highlight_label)?.id ?? paid[0]?.id ?? null));
     setLoadError(null);
     return data;
   }, []);
@@ -160,7 +164,8 @@ export default function ActivatePage() {
 
   const { access, invoices, payment_options: options, plans, trial_offer: offer } = overview;
   const heading = HEADINGS[access.state];
-  const open = invoices.find((i) => i.status === "ISSUED" || i.status === "PENDING_VERIFICATION");
+  // Only a payable invoice counts as open; a past-due one is replaced by choosing the plan again (ADR-125)
+  const { open, expired } = activationInvoices(invoices);
   const returnedInvoice = returned.invoice ? invoices.find((i) => i.id === returned.invoice) : undefined;
   const note = returned.payment && returnedInvoice?.status !== "PAID" ? RETURN_NOTES[returned.payment] : undefined;
   const planName = (id: string) => plans.find((p) => p.id === id)?.name ?? id;
@@ -205,6 +210,12 @@ export default function ActivatePage() {
         </div>
       ) : (
         <section className={styles.plans} aria-labelledby="activate-plans">
+          {expired && (
+            <div className={styles.notice} role="status">
+              Invoice {expired.invoice_number} passed its due date on {formatDate(expired.due_date)}, so it can&apos;t be paid any more.
+              Choose your plan again to get a new invoice; nothing was charged.
+            </div>
+          )}
           <h2 id="activate-plans" className={styles.subTitle}>
             Choose your plan
           </h2>

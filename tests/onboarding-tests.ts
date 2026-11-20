@@ -11,6 +11,7 @@ import { AuthService } from "@/domains/auth/service";
 import { PricingService } from "@/domains/pricing/pricing.service";
 import { WorkspaceAccessService } from "@/domains/billing/workspace-access.service";
 import { BillingService, SELF_SERVE_TRIAL_FLAG, SELF_SERVE_TRIAL_PLAN_ID } from "@/domains/billing/billing.service";
+import { activationInvoices } from "@/components/billing/activation-invoice";
 import { hashPassword, signSessionToken } from "@/lib/security";
 import { resetRateLimitsForTesting } from "@/lib/rate-limit";
 
@@ -376,6 +377,43 @@ async function main() {
       setPaywall(true);
     }
     await expect402(R.auth, "WORKSPACE_SETUP_REQUIRED", "/onboarding");
+  });
+
+  await runTest("a past-due invoice isn't offered as payable on /activate; choosing the plan again replaces it", async () => {
+    const S = await signUp("S");
+    assert.strictEqual((await call("onboarding", "PATCH", S.auth, { step: "plan", complete: true })).status, 200);
+    const first = await call("billing/invoices", "POST", S.auth, { plan_id: SELF_SERVE_TRIAL_PLAN_ID, billing_period: "MONTHLY" });
+    assert.strictEqual(first.status, 201, JSON.stringify(first.body));
+    const old = db.getBillingInvoices(S.tenantId).find((i) => i.status === "ISSUED")!;
+    assert.strictEqual(activationInvoices(db.getBillingInvoices(S.tenantId)).open?.id, old.id, "payable before its due date");
+    db.saveBillingInvoice({ ...old, due_date: new Date(Date.now() - 60_000).toISOString(), updated_at: new Date().toISOString() });
+
+    // The server refuses payment for it, so the page must not present it as the open invoice
+    const manual = (await import("@/app/api/v1/billing/invoices/[id]/manual-payment/route")) as unknown as Record<string, Handler>;
+    const refusedRes = await manual.POST(
+      new NextRequest(`http://localhost:3000/api/v1/billing/invoices/${old.id}/manual-payment`, {
+        method: "POST",
+        headers: { ...S.auth, "content-type": "application/json" },
+        body: JSON.stringify({ method: "MANUAL_BKASH", transaction_id: "TRX99887766" }),
+      }),
+      { params: Promise.resolve({ id: old.id }) },
+    );
+    const refused = (await refusedRes.json()) as Envelope;
+    assert.strictEqual(refusedRes.status, 409, JSON.stringify(refused));
+    assert.match(String(refused.error!.message), /due date/);
+    const listed = (await call("billing", "GET", S.auth)).body.data!.invoices as Array<{ id: string; status: string; due_date: string }>;
+    const view = activationInvoices(listed);
+    assert.strictEqual(view.open, undefined);
+    assert.strictEqual(view.expired?.id, old.id);
+
+    // Choosing the plan again voids the old invoice and gives a payable one
+    const again = await call("billing/invoices", "POST", S.auth, { plan_id: SELF_SERVE_TRIAL_PLAN_ID, billing_period: "MONTHLY" });
+    assert.strictEqual(again.status, 201, JSON.stringify(again.body));
+    const after = db.getBillingInvoices(S.tenantId);
+    assert.strictEqual(after.find((i) => i.id === old.id)!.status, "VOID");
+    const next = activationInvoices(after);
+    assert.ok(next.open && next.open.id !== old.id && next.expired === undefined);
+    await expect402(S.auth, "WORKSPACE_PAYMENT_REQUIRED", "/activate");
   });
 
   console.log(`\n${BOLD}====================================================${RESET}`);
