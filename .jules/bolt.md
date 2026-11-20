@@ -12,3 +12,7 @@
 ## 2023-10-27 - Debouncing Search Filters in React
 **Learning:** In-memory filtering arrays (e.g. `filteredOrders` and `filteredCustomers`) using an un-debounced `searchQuery` state variable can cause a noticeable performance degradation due to unnecessary recalculations on every keystroke, especially as the list size grows. By wrapping the filtering logic in `useMemo` and changing the dependency from `searchQuery` to `debouncedSearchQuery`, the expensive recalculation is postponed until the user stops typing, while leaving the input responsive.
 **Action:** When working with local data arrays and input searches, leverage `useMemo` combined with a debounced state to delay the filtering execution, ensuring UI inputs remain responsive without triggering heavy computations on every keystroke.
+
+## 2023-10-27 - Debouncing Search Filters in React (Addendum)
+**Learning:** Hoisting the `.toLowerCase()` calculation outside of the `.filter` loop provides an additional computational performance win when iterating over long lists, alongside debouncing the text input to prevent unnecessary renders and filtering during keystrokes.
+**Action:** Always prefer hoisting invariant calculations (like `.toLowerCase()` on the search string) outside of loops inside `useMemo` blocks.
