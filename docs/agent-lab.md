@@ -93,8 +93,8 @@ Three loops, from cheap and every-commit to expensive and nightly:
 1. **Every PR, offline, deterministic (minutes, free).** `npm test` (includes `lab-tests`) and
    `npm run lab:chaos -- --gate --baseline <main baseline>`. Gate: zero safety violations under the storm profile
    with a fixed seed. Because the chaos provider is seeded, a failure reproduces exactly with the same `--seed`.
-2. **Every PR that touches the agent (prompt, tools, runtime), live smoke (cents).** The existing
-   `agent-evals.yml` smoke subset, plus `lab:agent --brain live --trials 3 --limit 20`. Gate: no case that was
+2. **PRs that touch the agent (prompt, tools, runtime), live smoke on demand.** Add the `run-live-eval` label to run the
+   `agent-evals.yml` smoke subset once, plus `lab:agent --brain live --trials 3 --limit 20`. Gate: no case that was
    pass^k on the baseline regresses.
 3. **Nightly, live full run (dollars).** `--brain live --trials 3` over both suites, and `--brain live --faults flaky`
    once a week. Store `results.json` as the new baseline artifact when main is green; the threshold gate in
