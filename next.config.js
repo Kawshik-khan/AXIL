@@ -25,6 +25,9 @@ const nextConfig = {
   // src/instrumentation.ts loads the Postgres-backed store at server start (ADR-108); no flag needed since Next 15.
   reactStrictMode: true,
   poweredByHeader: false,
+  experimental: {
+    agentUpgrade: "security",
+  },
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },
