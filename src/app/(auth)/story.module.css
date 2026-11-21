@@ -1,0 +1,50 @@
+/* The sign-in story panel (StoryPanel.tsx): a gray card with lime glows, the isometric structure, film grain, a glass
+   slide panel and arrows in a notch cut from the bottom-right corner. Colours are --auth-* tokens from tokens.css. */
+
+/* overflow: clip, not hidden: the illustration spills past the edges, and a hidden box could still be scrolled when the
+   arrows get focus, which would slide the whole panel sideways */
+.story { position: relative; isolation: isolate; overflow: hidden; overflow: clip; display: flex; flex-direction: column; justify-content: flex-end;
+  min-height: 100%; padding: 28px; border-radius: 22px; background: var(--auth-story); color: var(--auth-on-story); }
+
+/* ---------- background: glows, illustration, grain ---------- */
+.blob { position: absolute; z-index: -1; border-radius: 50%; filter: blur(70px); pointer-events: none; }
+.b1 { width: 520px; height: 520px; left: -120px; bottom: -160px; background: var(--auth-art-lime); opacity: .55; animation: drift 14s ease-in-out infinite alternate; }
+.b2 { width: 380px; height: 380px; right: -80px; top: -60px; background: var(--auth-art-lime-soft); opacity: .35; animation: drift 18s ease-in-out infinite alternate-reverse; }
+.b3 { width: 260px; height: 260px; left: 42%; top: 30%; background: var(--auth-art-lime-deep); opacity: .6; }
+@keyframes drift { to { transform: translate(60px, -40px) scale(1.08); } }
+
+.art { position: absolute; z-index: -1; top: 28px; left: 28px; right: 28px; width: calc(100% - 56px); height: 54%; overflow: visible; pointer-events: none; }
+.rise { animation: rise 10s ease-in-out infinite alternate; }
+@keyframes rise { to { transform: translateY(-10px); } }
+
+.grain { position: absolute; z-index: -1; inset: 0; width: 100%; height: 100%; pointer-events: none; mix-blend-mode: soft-light; opacity: .5; }
+
+/* ---------- the slides ---------- */
+.glass { display: flex; flex-direction: column; gap: 22px; margin-right: 120px; padding: 28px; border-radius: 20px;
+  border: 1px solid var(--auth-glass-edge); background: var(--auth-glass); -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px); }
+.slide { display: flex; flex-direction: column; gap: 18px; animation: fade .45s ease both; }
+.eyebrow { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--auth-art-lime); }
+.eyebrow i { width: 8px; height: 8px; border-radius: 50%; background: var(--auth-art-lime); box-shadow: 0 0 0 3px var(--auth-lime-ring); }
+.headline { margin: 0; max-width: 560px; font-size: clamp(22px, 2.2vw, 32px); line-height: 1.2; font-weight: 500; letter-spacing: -.02em; }
+.dots { display: flex; gap: 6px; }
+.dots i { width: 6px; height: 6px; border-radius: 999px; background: var(--auth-dot); transition: width .25s, background .25s; }
+.dots i.dotOn { width: 22px; background: var(--auth-art-lime); }
+@keyframes fade { from { opacity: 0; transform: translateY(8px); } }
+
+/* ---------- the notch with the arrows (its colour matches the page behind the panel) ---------- */
+.notch { position: absolute; right: 0; bottom: 0; z-index: 2; display: flex; gap: 10px; padding: 14px 0 0 14px; background: var(--auth-page); border-top-left-radius: 24px; }
+.notch::before, .notch::after { content: ""; position: absolute; width: 24px; height: 24px;
+  background: radial-gradient(circle at 0 0, transparent 23.5px, var(--auth-page) 24px); }
+.notch::before { right: 0; top: -24px; }
+.notch::after { left: -24px; bottom: 0; }
+.arrow { width: 52px; height: 52px; display: grid; place-items: center; border-radius: 16px; cursor: pointer;
+  border: 1px solid var(--mk-line); background: var(--auth-panel-edge); color: var(--auth-art-ink-800); transition: background .2s, border-color .2s, color .2s; }
+.arrow svg { width: 20px; height: 20px; }
+.arrow:hover { background: var(--auth-page); }
+.arrow.next { background: var(--auth-art-ink-800); border-color: var(--auth-art-ink-800); color: var(--auth-on-story); }
+.arrow.next:hover { background: var(--auth-art-lime); border-color: var(--auth-art-lime); color: var(--auth-art-ink-800); }
+.arrow:focus-visible { outline: 2px solid var(--auth-art-ink-800); outline-offset: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .b1, .b2, .rise, .slide { animation: none; }
+}
