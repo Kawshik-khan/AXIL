@@ -63,6 +63,13 @@
 
 Basic CRUD (orders, products, inventory, customers, inbox, settings) is genuinely functional on the JSON store.
 
+Customers page (2026-11-22): `GET /api/v1/customers` filters by `segment` (NEW / ONE_TIME / REPEAT / HIGH_VALUE, worked
+out from each customer's own `total_orders` / `total_spent`; high value from ৳25,000, `src/lib/customer-segments.ts`)
+and sorts (`newest`, `lifetime_value`, `orders`, `last_order`, `name`) on both the JSON store and Postgres, returns
+`meta.segment_counts`, and adds each row's chat channels from its customer identities. CSV export is client-side
+(selected rows or the current page only). Tested in `tests/customer-list-tests.ts` (memory/Postgres parity) and in the
+browser on the 10,000-customer demo store. The ৳25,000 threshold is a code constant, not yet a shop setting.
+
 ---
 
 ## 4. Open findings by priority

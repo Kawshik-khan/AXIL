@@ -16,6 +16,15 @@ import { logger } from '@/lib/logger';
 import { NotFoundError } from '@/lib/errors';
 import { Customer, CustomerAddress } from '@/types/commerce';
 import {
+  CUSTOMER_SEGMENTS,
+  SORT_SQL,
+  emptySegmentCounts,
+  segmentSqlCondition,
+  type CustomerSegment,
+  type CustomerSort,
+  type SegmentCounts,
+} from '@/lib/customer-segments';
+import {
   encodeCursor,
   decodeCursor,
   buildKeysetClause,
@@ -74,16 +83,18 @@ export class CustomerRepository extends BaseRepository<Customer> {
   }
 
   /**
-   * One page of customers, newest first, with addresses: db.getCustomers, in SQL under zero-hydration (search on
-   * first name, last name, phone or email).
+   * One page of customers with addresses: db.getCustomers, in SQL under zero-hydration (search on first name, last
+   * name, phone or email; an optional segment filter and sort). `segment_counts` covers the search before the segment
+   * filter, for the page's segment chips.
    */
   async listCustomers(
     tenantId: string,
-    options: { search?: string; limit: number; offset?: number }
-  ): Promise<{ customers: Customer[]; total: number }> {
+    options: { search?: string; limit: number; offset?: number; segment?: CustomerSegment; sort?: CustomerSort }
+  ): Promise<{ customers: Customer[]; total: number; segment_counts: SegmentCounts }> {
     const client = this.getClient();
     if (!client) return db.getCustomers(tenantId, options);
     const params: unknown[] = [tenantId];
+    const condition = segmentSqlCondition;
     let where = `tenant_id = $1`;
     const q = options.search?.toLowerCase().trim().slice(0, 200);
     if (q) {
@@ -91,15 +102,26 @@ export class CustomerRepository extends BaseRepository<Customer> {
       const p = `$${params.length}`;
       where += ` AND (lower(data->>'first_name') LIKE ${p} OR lower(data->>'last_name') LIKE ${p} OR phone LIKE ${p} OR email_key LIKE ${p})`;
     }
-    const countRes = await client.query<{ n: string }>(`SELECT count(*)::text AS n FROM commerceos.customers WHERE ${where}`, params);
+    // The segments split every customer exactly once, so their counts also give the unfiltered total
+    const countsRes = await client.query<Record<CustomerSegment, string>>(
+      `SELECT ${CUSTOMER_SEGMENTS.map((s) => `count(*) FILTER (WHERE ${condition(s)})::text AS "${s}"`).join(", ")}
+       FROM commerceos.customers WHERE ${where}`,
+      params
+    );
+    const segment_counts = emptySegmentCounts();
+    for (const s of CUSTOMER_SEGMENTS) segment_counts[s] = Number(countsRes.rows[0]?.[s] ?? 0);
+    const total = options.segment
+      ? segment_counts[options.segment]
+      : CUSTOMER_SEGMENTS.reduce((sum, s) => sum + segment_counts[s], 0);
+    if (options.segment) where += ` AND ${condition(options.segment)}`;
     params.push(pageLimit(options.limit), pageOffset(options.offset));
     const rowsRes = await client.query<{ data: Customer | string }>(
       `SELECT data FROM commerceos.customers WHERE ${where}
-       ORDER BY created_at DESC NULLS LAST, id DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
+       ORDER BY ${SORT_SQL[options.sort ?? "newest"]} LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params
     );
     const customers = await this.withAddresses(client, tenantId, rowsRes.rows.map((r) => parseJsonData<Customer>(r.data)));
-    return { customers, total: Number(countRes.rows[0]?.n ?? 0) };
+    return { customers, total, segment_counts };
   }
 
   async findByPhone(tenantId: string, phone: string): Promise<Customer | null> {
