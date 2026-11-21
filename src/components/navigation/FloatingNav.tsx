@@ -117,7 +117,6 @@ export const FloatingNav: React.FC<FloatingNavProps> = ({ permissions, onOpenCom
       items={withGuideDot}
       onSearch={onOpenCommandPalette}
       trailingItems={settings ? [settings] : []}
-      showLabels
       onLogout={handleLogout}
     />
   );

@@ -9,6 +9,7 @@ import { envNumber } from "@/lib/env-number";
 import { AppError, ConflictError, NotFoundError } from "@/lib/errors";
 import { mergeComputedRow } from "@/lib/computed-rows";
 import { channelOfOrder, SALES_CHANNEL_NAMES } from "@/lib/sales-channel";
+import { compareCustomers, countSegments, customerSegment, type CustomerSegment, type CustomerSort, type SegmentCounts } from "@/lib/customer-segments";
 import type { SalesChannel as OrderSalesChannel } from "@/types/analytics";
 import bcrypt from "bcryptjs";
 import { RoleName, type Permission } from "@/lib/permissions";
@@ -5935,10 +5936,11 @@ export class CommerceDatabase {
    * One page of customers. `limit` is required (FX-22): analytics that need every customer must use getAllCustomers,
    * not a silently truncated page.
    */
+  /** One page of a tenant's customers. `segment_counts` covers the search, before the segment filter (chip counts). */
   public getCustomers(
     tenantId: string,
-    options: { search?: string; limit: number; offset?: number }
-  ): { customers: Customer[]; total: number } {
+    options: { search?: string; limit: number; offset?: number; segment?: CustomerSegment; sort?: CustomerSort }
+  ): { customers: Customer[]; total: number; segment_counts: SegmentCounts } {
     let list = this.rowsOf("customers", tenantId).filter((c) => c.tenant_id === tenantId);
 
     if (options?.search) {
@@ -5952,14 +5954,16 @@ export class CommerceDatabase {
       );
     }
 
-    list.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    const segment_counts = countSegments(list);
+    if (options?.segment) list = list.filter((c) => customerSegment(c) === options.segment);
+    list.sort(compareCustomers(options?.sort ?? "newest"));
     const total = list.length;
     const offset = options.offset || 0;
     const page = list.slice(offset, offset + options.limit);
     const addressesByCustomer = this.addressesByCustomer(tenantId, new Set(page.map((c) => c.id)));
     const populated = page.map((c) => ({ ...c, addresses: addressesByCustomer.get(c.id) ?? [] }));
 
-    return { customers: populated, total };
+    return { customers: populated, total, segment_counts };
   }
 
   /** Every customer of a tenant with addresses, in O(customers + addresses) (FX-22). For analytics, not UI pages. */

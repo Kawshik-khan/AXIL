@@ -1,39 +1,52 @@
 "use client";
 
-import React, { useEffect, useState, useMemo } from "react";
-import {
-  Users,
-  Plus,
-  Search,
-  Phone,
-  Mail,
-  MapPin,
-  ShoppingBag,
-  CheckCircle2,
-  AlertCircle,
-  Eye,
-} from "lucide-react";
-import { BentoCard } from "@/components/bento/BentoCard";
+import React, { useCallback, useEffect, useState } from "react";
+import { Users, Plus, Search, AlertCircle, Download } from "lucide-react";
 import { Button } from "@/components/ui/Button/Button";
 import { Input } from "@/components/ui/Input/Input";
 import { Modal } from "@/components/ui/Modal/Modal";
 import { Badge } from "@/components/ui/Badge/Badge";
 import { EmptyState, LoadingState } from "@/components/ui/States/States";
-import { Customer } from "@/types/commerce";
 import { useDebounce } from "@/hooks/useDebounce";
+import type { Customer, CustomerAddress, Order } from "@/types/commerce";
+import {
+  CUSTOMER_SEGMENTS,
+  CUSTOMER_SORTS,
+  type CustomerListItem,
+  type CustomerSegment,
+  type CustomerSort,
+  type SegmentCounts,
+} from "@/lib/customer-segments";
+import { CustomerTable } from "./CustomerTable";
+import { SEGMENT_LABELS, SORT_LABELS, customersCsv } from "./customer-display";
+import styles from "./customers.module.css";
+
+const PAGE_SIZE = 25;
+
+/** GET /api/v1/customers/:id; `orders` is null when the role can't read orders. */
+interface CustomerDetails {
+  customer: Customer;
+  addresses?: CustomerAddress[];
+  orders: Order[] | null;
+}
 
 export default function CustomersPage() {
-  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [customers, setCustomers] = useState<CustomerListItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
-  // ⚡ Bolt: Debounce search query to reduce API calls while typing
+  // Debounce search query to reduce API calls while typing
   const debouncedSearchQuery = useDebounce(searchQuery, 300);
+  const [segment, setSegment] = useState<CustomerSegment | null>(null);
+  const [sort, setSort] = useState<CustomerSort>("newest");
+  const [segmentCounts, setSegmentCounts] = useState<SegmentCounts | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState("");
 
   // Customer Drawer
-  const [selectedCustomer, setSelectedCustomer] = useState<any | null>(null);
+  const [selectedCustomer, setSelectedCustomer] = useState<CustomerDetails | null>(null);
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
 
   // New customer form
@@ -47,40 +60,76 @@ export default function CustomersPage() {
 
   const [totalCount, setTotalCount] = useState(0);
   const [page, setPage] = useState(0);
-  const PAGE_SIZE = 25;
 
-  const loadCustomers = async (p = page, q = debouncedSearchQuery) => {
+  const loadCustomers = useCallback(async () => {
     try {
       setIsLoading(true);
+      setLoadError("");
       const params = new URLSearchParams({
         limit: String(PAGE_SIZE),
-        offset: String(p * PAGE_SIZE),
+        offset: String(page * PAGE_SIZE),
+        sort,
       });
-      if (q.trim()) {
-        params.append("search", q.trim());
-      }
+      if (debouncedSearchQuery.trim()) params.append("search", debouncedSearchQuery.trim());
+      if (segment) params.append("segment", segment);
       const res = await fetch(`/api/v1/customers?${params.toString()}`);
-      if (res.ok) {
-        const json = await res.json();
-        setCustomers(json.data || []);
-        setTotalCount(json.meta?.total || (json.data ? json.data.length : 0));
-      }
+      if (!res.ok) throw new Error(`Customers could not be loaded (${res.status}).`);
+      const json = await res.json();
+      setCustomers(json.data || []);
+      setTotalCount(json.meta?.total ?? (json.data ? json.data.length : 0));
+      setSegmentCounts(json.meta?.segment_counts ?? null);
     } catch (err) {
-      console.error("Failed to load customers:", err);
+      setLoadError(err instanceof Error ? err.message : "Customers could not be loaded.");
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [page, sort, segment, debouncedSearchQuery]);
 
   useEffect(() => {
-    loadCustomers(page, debouncedSearchQuery);
-  }, [page, debouncedSearchQuery]);
+    loadCustomers();
+  }, [loadCustomers]);
+
+  // A new filter shows its first page and starts a fresh selection
+  const resetPaging = () => {
+    setPage(0);
+    setSelected(new Set());
+  };
 
   const handleSearch = (val: string) => {
     setSearchQuery(val);
-    if (page !== 0) {
-      setPage(0);
-    }
+    resetPaging();
+  };
+
+  const toggleSelected = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const toggleAll = () =>
+    setSelected((prev) => {
+      const allOn = customers.length > 0 && customers.every((c) => prev.has(c.id));
+      const next = new Set(prev);
+      for (const c of customers) {
+        if (allOn) next.delete(c.id);
+        else next.add(c.id);
+      }
+      return next;
+    });
+
+  /** Downloads the selected customers on this page, or the whole page when none is selected. */
+  const exportCsv = () => {
+    const rows = selected.size > 0 ? customers.filter((c) => selected.has(c.id)) : customers;
+    if (rows.length === 0) return;
+    const blob = new Blob(["﻿" + customersCsv(rows)], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `customers-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
   };
 
   const openCustomerDetails = async (id: string) => {
@@ -141,117 +190,133 @@ export default function CustomersPage() {
       setEmail("");
       setAddressLine("");
       await loadCustomers();
-    } catch (err: any) {
-      setFormError(err.message || "An error occurred");
+    } catch (err) {
+      setFormError(err instanceof Error && err.message ? err.message : "An error occurred");
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const filteredCustomers = useMemo(() => {
-    const query = debouncedSearchQuery.toLowerCase();
-    return customers.filter((c) => {
-      return (
-        c.first_name.toLowerCase().includes(query) ||
-        c.last_name.toLowerCase().includes(query) ||
-        c.phone.includes(query) ||
-        (c.email && c.email.toLowerCase().includes(query))
-      );
-    });
-  }, [customers, debouncedSearchQuery]);
+  const allCount = segmentCounts ? CUSTOMER_SEGMENTS.reduce((sum, s) => sum + segmentCounts[s], 0) : totalCount;
+  const chips: Array<{ key: CustomerSegment | null; label: string; count: number | undefined }> = [
+    { key: null, label: "All", count: allCount },
+    ...CUSTOMER_SEGMENTS.map((s) => ({ key: s, label: SEGMENT_LABELS[s], count: segmentCounts?.[s] })),
+  ];
+  const isFiltered = Boolean(segment || debouncedSearchQuery.trim());
 
   return (
     <>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "24px" }}>
+      <header className={styles.header}>
         <div>
-          <h1 style={{ fontSize: "24px", fontWeight: 700, margin: 0 }}>Customer Directory</h1>
-          <p style={{ color: "var(--color-text-muted)", fontSize: "14px", marginTop: "4px" }}>
-            Unified customer profiles with phone deduplication (+880 normalization) and lifetime spend tracking.
-          </p>
+          <div className={styles.titleRow}>
+            <h1 className={styles.title}>Customers</h1>
+            {segmentCounts && <span className={styles.count}>{allCount.toLocaleString()}</span>}
+          </div>
+          <p className={styles.subtitle}>Everyone who has ordered from your shop, in one place.</p>
         </div>
-        <Button variant="primary" size="md" onClick={() => setIsModalOpen(true)}>
-          <Plus size={16} style={{ marginRight: 6 }} /> New Customer
-        </Button>
-      </div>
+        <div className={styles.actions}>
+          <div className={styles.search}>
+            <Input
+              type="search"
+              aria-label="Search customers"
+              placeholder="Search name, phone or email"
+              value={searchQuery}
+              onChange={(e) => handleSearch(e.target.value)}
+              leftIcon={<Search size={15} color="var(--color-text-secondary)" />}
+            />
+          </div>
+          <button type="button" className={styles.inkButton} onClick={() => setIsModalOpen(true)}>
+            <Plus size={16} /> New customer
+          </button>
+        </div>
+      </header>
 
-      <div style={{ marginBottom: "20px" }}>
-        <Input
-          placeholder="Search by name, phone (+880...), or email..."
-          value={searchQuery}
-          onChange={(e) => handleSearch(e.target.value)}
-          leftIcon={<Search size={16} color="var(--color-text-muted)" />}
-        />
-      </div>
+      <section className={styles.panel} aria-label="Customer list">
+        <div className={styles.toolbar}>
+          <div className={styles.chips} role="group" aria-label="Filter by segment">
+            {chips.map((chip) => {
+              const active = segment === chip.key;
+              return (
+                <button
+                  key={chip.label}
+                  type="button"
+                  aria-pressed={active}
+                  className={`${styles.chip} ${active ? styles.chipActive : ""}`}
+                  onClick={() => {
+                    setSegment(chip.key);
+                    resetPaging();
+                  }}
+                >
+                  {chip.label}
+                  {chip.count !== undefined && <span className={styles.chipCount}>{chip.count.toLocaleString()}</span>}
+                </button>
+              );
+            })}
+          </div>
+          <div className={styles.tools}>
+            {selected.size > 0 && <span className={styles.selection}>{selected.size} selected</span>}
+            <label className={styles.sortLabel}>
+              Sort
+              <select
+                className={styles.sortSelect}
+                value={sort}
+                onChange={(e) => {
+                  setSort(e.target.value as CustomerSort);
+                  resetPaging();
+                }}
+              >
+                {CUSTOMER_SORTS.map((s) => (
+                  <option key={s} value={s}>
+                    {SORT_LABELS[s]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button type="button" className={styles.toolButton} onClick={exportCsv} disabled={customers.length === 0}>
+              <Download size={14} />
+              {selected.size > 0 ? "Export selected" : "Export CSV"}
+            </button>
+          </div>
+        </div>
 
-      <BentoCard span={12} title="Verified Customers" subtitle={`Total registered: ${totalCount.toLocaleString()} customers across Bangladesh`}>
         {isLoading ? (
-          <LoadingState message="Fetching customer directory from database..." />
+          <LoadingState message="Loading customers…" />
+        ) : loadError ? (
+          <EmptyState
+            icon={<AlertCircle size={36} color="var(--color-danger)" />}
+            title="Customers could not be loaded"
+            description={loadError}
+            actionText="Try again"
+            onAction={() => loadCustomers()}
+          />
         ) : customers.length === 0 ? (
           <EmptyState
-            icon={<Users size={36} color="var(--color-lime-hover)" />}
-            title="No customers found"
-            description="No customers match your search criteria. You can clear the search or register a new customer."
-            actionText="+ Add Customer"
+            icon={<Users size={36} color="var(--color-text-secondary)" />}
+            title={isFiltered ? "No customers match" : "No customers yet"}
+            description={
+              isFiltered
+                ? "Try another segment or search, or add the customer yourself."
+                : "Customers appear here when they order or message your shop. You can also add one yourself."
+            }
+            actionText="+ Add customer"
             onAction={() => setIsModalOpen(true)}
           />
         ) : (
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
-              <thead>
-                <tr style={{ borderBottom: "1px solid var(--color-border-subtle)", textAlign: "left" }}>
-                  <th style={{ padding: "12px 10px", color: "var(--color-text-secondary)" }}>Name</th>
-                  <th style={{ padding: "12px 10px", color: "var(--color-text-secondary)" }}>Phone</th>
-                  <th style={{ padding: "12px 10px", color: "var(--color-text-secondary)" }}>Email</th>
-                  <th style={{ padding: "12px 10px", color: "var(--color-text-secondary)" }}>Orders</th>
-                  <th style={{ padding: "12px 10px", color: "var(--color-text-secondary)" }}>Total Spent</th>
-                  <th style={{ padding: "12px 10px", color: "var(--color-text-secondary)" }}>Source</th>
-                  <th style={{ padding: "12px 10px", color: "var(--color-text-secondary)", textAlign: "right" }}>
-                    Action
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {customers.map((cust) => (
-                  <tr key={cust.id} style={{ borderBottom: "1px solid var(--color-border-subtle)" }}>
-                    <td style={{ padding: "14px 10px", fontWeight: 600 }}>
-                      {cust.first_name} {cust.last_name}
-                    </td>
-                    <td style={{ padding: "14px 10px" }}>
-                      <code>{cust.phone}</code>
-                    </td>
-                    <td style={{ padding: "14px 10px", color: "var(--color-text-muted)" }}>
-                      {cust.email || "—"}
-                    </td>
-                    <td style={{ padding: "14px 10px" }}>{cust.total_orders}</td>
-                    <td style={{ padding: "14px 10px", fontWeight: 600 }}>
-                      {(cust.total_spent ?? 0).toLocaleString("en-BD")} ৳
-                    </td>
-                    <td style={{ padding: "14px 10px" }}>
-                      <Badge variant="default">{cust.source || "MANUAL"}</Badge>
-                    </td>
-                    <td style={{ padding: "14px 10px", textAlign: "right" }}>
-                      <Button variant="outline" size="sm" onClick={() => openCustomerDetails(cust.id)}>
-                        <Eye size={14} style={{ marginRight: 4 }} /> View
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-
-            {/* Pagination Controls */}
-            {totalCount > PAGE_SIZE && (
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "16px", paddingTop: "12px", borderTop: "1px solid var(--color-border-subtle)" }}>
-                <span style={{ fontSize: "13px", color: "var(--color-text-muted)" }}>
-                  Showing {page * PAGE_SIZE + 1} to {Math.min((page + 1) * PAGE_SIZE, totalCount)} of {totalCount.toLocaleString()} customers
-                </span>
-                <div style={{ display: "flex", gap: "8px" }}>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={page === 0}
-                    onClick={() => setPage((prev) => Math.max(0, prev - 1))}
-                  >
+          <>
+            <CustomerTable
+              customers={customers}
+              selected={selected}
+              onToggle={toggleSelected}
+              onToggleAll={toggleAll}
+              onOpen={openCustomerDetails}
+            />
+            <div className={styles.footer}>
+              <span>
+                {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, totalCount)} of {totalCount.toLocaleString()}
+              </span>
+              {totalCount > PAGE_SIZE && (
+                <div className={styles.pager}>
+                  <Button variant="outline" size="sm" disabled={page === 0} onClick={() => setPage((prev) => Math.max(0, prev - 1))}>
                     Previous
                   </Button>
                   <Button
@@ -263,11 +328,11 @@ export default function CustomersPage() {
                     Next
                   </Button>
                 </div>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
+          </>
         )}
-      </BentoCard>
+      </section>
 
       {/* Add Customer Modal */}
       <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title="Register Customer">
@@ -409,7 +474,7 @@ export default function CustomersPage() {
                 <p style={{ color: "var(--color-text-muted)" }}>No addresses recorded yet.</p>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                  {selectedCustomer.addresses.map((addr: any) => (
+                  {(selectedCustomer.addresses ?? []).map((addr) => (
                     <div
                       key={addr.id}
                       style={{
@@ -436,7 +501,7 @@ export default function CustomersPage() {
                 <p style={{ color: "var(--color-text-muted)" }}>No prior orders found.</p>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-                  {selectedCustomer.orders.map((o: any) => (
+                  {selectedCustomer.orders.map((o) => (
                     <div
                       key={o.id}
                       style={{

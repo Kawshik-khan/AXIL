@@ -10,7 +10,15 @@ import { BadRequestError, ConflictError, NotFoundError } from "@/lib/errors";
 
 import { sliceForCursor } from "@/lib/cursor-pagination";
 import { customerRepository } from "./customer.repository";
-import { loadCustomerRows } from "@/infrastructure/db/tenant-rows";
+import { loadCustomerRows, readTenantRows } from "@/infrastructure/db/tenant-rows";
+import {
+  customerSegment,
+  type CustomerListItem,
+  type CustomerSegment,
+  type CustomerSort,
+  type SegmentCounts,
+} from "@/lib/customer-segments";
+import type { ChannelType, CustomerIdentity } from "@/types/social";
 
 export class CustomerService {
   /**
@@ -34,31 +42,66 @@ export class CustomerService {
     return cleaned.startsWith("+") ? cleaned : `+${cleaned}`;
   }
 
+  /**
+   * One page of the tenant's customers, each with its segment (from its order counters) and the chat channels it has
+   * written from. Segment filters and sorts apply to offset pages; a cursor page is always newest first.
+   */
   public static async listCustomers(
     context: RequestContext,
-    options?: { search?: string; limit?: number; offset?: number; cursor?: string }
+    options?: { search?: string; limit?: number; offset?: number; cursor?: string; segment?: CustomerSegment; sort?: CustomerSort }
   ): Promise<{
-    customers: Customer[];
+    customers: CustomerListItem[];
     total: number;
+    segment_counts?: SegmentCounts;
     next_cursor?: string | null;
     has_more?: boolean;
   }> {
     RbacService.assertCan(context, PERMISSIONS.CUSTOMERS_READ);
+    const tenantId = context.tenant.id;
     if (options?.cursor !== undefined) {
-      const res = await customerRepository.listWithCursor(context.tenant.id, {
+      if (options.segment || (options.sort && options.sort !== "newest")) {
+        throw new BadRequestError("Segment and sort filters work with offset pages, not with a cursor.");
+      }
+      const res = await customerRepository.listWithCursor(tenantId, {
         search: options.search,
         limit: options.limit ?? 20,
         cursor: options.cursor,
       });
       return {
-        customers: res.items,
+        customers: await this.asListItems(tenantId, res.items),
         total: res.total ?? res.items.length,
         next_cursor: res.pagination.next_cursor,
         has_more: res.pagination.has_more,
       };
     }
     // One page (SQL under zero-hydration); analytics use getAllCustomers
-    return customerRepository.listCustomers(context.tenant.id, { search: options?.search, limit: options?.limit ?? 50, offset: options?.offset });
+    const page = await customerRepository.listCustomers(tenantId, {
+      search: options?.search,
+      limit: options?.limit ?? 50,
+      offset: options?.offset,
+      segment: options?.segment,
+      sort: options?.sort,
+    });
+    return { customers: await this.asListItems(tenantId, page.customers), total: page.total, segment_counts: page.segment_counts };
+  }
+
+  /** Adds each customer's segment and the channel types of its chat identities (only this page's customers are read). */
+  private static async asListItems(tenantId: string, customers: Customer[]): Promise<CustomerListItem[]> {
+    const identities = await readTenantRows<CustomerIdentity>("customer_identities", tenantId, {
+      field: "customer_id",
+      values: customers.map((c) => c.id),
+    });
+    const channelsByCustomer = new Map<string, Set<ChannelType>>();
+    for (const identity of identities) {
+      const set = channelsByCustomer.get(identity.customer_id) ?? new Set<ChannelType>();
+      set.add(identity.channel_type);
+      channelsByCustomer.set(identity.customer_id, set);
+    }
+    return customers.map((c) => ({
+      ...c,
+      segment: customerSegment(c),
+      channels: [...(channelsByCustomer.get(c.id) ?? [])].sort(),
+    }));
   }
 
   public static async getCustomerById(
