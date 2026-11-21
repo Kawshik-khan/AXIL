@@ -2,15 +2,14 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { IsoGrid } from "@/components/marketing/IsoGrid";
 import { BrandLogo } from "@/components/brand/BrandLogo";
-import { LockScene } from "../LockScene";
+import { StoryPanel } from "../StoryPanel";
 import styles from "../stage.module.css";
+import layout from "../split.module.css";
 
 /**
- * Workspace sign-in. One light stage: the isometric grid fills the page, the lock scene on the left follows the attempt
- * (see LockScene; on success its lines light up, then the grid flashes), and the form floats on the right as a
- * frosted-glass card.
+ * Workspace sign-in. The form sits in a panel on the left; the story panel on the right (StoryPanel) carries the
+ * isometric illustration and a short carousel about what CommerceOS does. Phones and tablets get the form alone.
  * The request itself is unchanged: POST /api/v1/auth/login, then the dashboard.
  * Accounts with an authenticator turned on get a second step: the login answers `mfa_required` with a short-lived
  * token, and POST /api/v1/auth/mfa/verify exchanges it plus the 6-digit code (or a recovery code) for the session.
@@ -41,7 +40,6 @@ export default function LoginPage() {
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
   const [shake, setShake] = useState(0);
-  const [flash, setFlash] = useState(0);
   const [errorField, setErrorField] = useState<ErrorField>("email");
   const [mfaToken, setMfaToken] = useState<string | null>(null);
   const [code, setCode] = useState("");
@@ -74,13 +72,12 @@ export default function LoginPage() {
   }, [shake, errorField]);
 
   const succeed = () => {
-    // The padlock opens and the shutter rolls up, the grid flashes, then the dashboard opens.
+    // The button says the store is opening for a moment, then the dashboard opens.
     setStatus("success");
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (!reduce) window.setTimeout(() => setFlash((n) => n + 1), 450);
     window.setTimeout(() => {
       window.location.href = "/";
-    }, reduce ? 0 : 1250);
+    }, reduce ? 0 : 700);
   };
 
   const readServerMessage = async (res: Response): Promise<string | undefined> => {
@@ -180,24 +177,34 @@ export default function LoginPage() {
   const busy = status === "submitting" || status === "success";
 
   return (
-    <main className={`${styles.page} ${status === "success" ? styles.unlocked : ""}`}>
-      <IsoGrid flash={flash} />
+    <main className={layout.page}>
+      <section className={layout.panel}>
+        <header className={layout.top}>
+          <Link href="/welcome" className={layout.brand}>
+            <BrandLogo size={32} tile /> CommerceOS
+          </Link>
+          <span className={layout.switch}>
+            New here?{" "}
+            <Link href="/register" className={layout.link}>
+              Create your store
+            </Link>
+          </span>
+        </header>
 
-      <header className={styles.top}>
-        <Link href="/welcome" className={styles.brandMark}>
-          <BrandLogo size={34} tile /> CommerceOS
-        </Link>
-        <Link href="/welcome" className={styles.back}>
-          <span aria-hidden="true">←</span> Back to site
-        </Link>
-      </header>
-
-      <div className={styles.stage}>
-        <LockScene status={status} />
-
-        <div className={styles.cardWrap}>
-        <div key={shake} className={`${styles.card} ${shake ? styles.shake : ""}`}>
-          <h1>{mfaToken ? "Enter your code" : "Sign in"}</h1>
+        <div className={layout.center}>
+        <div key={shake} className={`${layout.inner} ${shake ? layout.shake : ""}`}>
+          {mfaToken ? (
+            <h1 className={layout.heading}>
+              Enter your <span className={layout.hl}>code</span>.
+            </h1>
+          ) : (
+            <h1 className={layout.heading}>
+              Welcome back to your <span className={layout.hl}>shop</span>.
+            </h1>
+          )}
+          <p className={layout.lede}>
+            {mfaToken ? "One more step: the code from your authenticator app." : "Sign in to pick up where your agents left off."}
+          </p>
 
           <div className={styles.alertSlot} aria-live="assertive">
             {error && (
@@ -350,14 +357,14 @@ export default function LoginPage() {
               {status === "submitting" && <i className={styles.progress} aria-hidden="true" />}
             </button>
           </form>
-
-          <p className={styles.switch}>
-            New here? <Link href="/register">Create your store</Link>
-          </p>
           </>
           )}
         </div>
         </div>
+      </section>
+
+      <div className={layout.storyCol}>
+        <StoryPanel />
       </div>
     </main>
   );

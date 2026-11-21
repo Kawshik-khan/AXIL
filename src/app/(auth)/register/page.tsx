@@ -2,16 +2,15 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { IsoGrid } from "@/components/marketing/IsoGrid";
 import { takeSignupEmail } from "@/components/marketing/signup-handoff";
 import { BrandLogo } from "@/components/brand/BrandLogo";
-import { LockScene } from "../LockScene";
+import { StoryPanel } from "../StoryPanel";
 import styles from "../stage.module.css";
+import layout from "../split.module.css";
 
 /**
- * Create a store (workspace + owner). Same stage as sign-in: the isometric grid, the shop scene on the left and a
- * frosted-glass form on the right. The tag under the shop shows the store's name as it is typed; when the store is
- * created the shutter rolls up and the dashboard opens.
+ * Create a store (workspace + owner). Same layout as sign-in: the form in a panel on the left, the story panel on the
+ * right (StoryPanel), the form alone on phones and tablets. When the store is created, shop setup (onboarding) opens.
  * The request is unchanged: POST /api/v1/auth/register with { name, workspaceName, email, password, currency }.
  */
 
@@ -56,7 +55,6 @@ export default function RegisterPage() {
   const [errorField, setErrorField] = useState<Field>("workspaceName");
   const [conflict, setConflict] = useState(false);
   const [shake, setShake] = useState(0);
-  const [flash, setFlash] = useState(0);
 
   const refs: Record<Field, React.RefObject<HTMLInputElement>> = {
     workspaceName: useRef<HTMLInputElement>(null),
@@ -119,47 +117,39 @@ export default function RegisterPage() {
       return;
     }
 
-    // The padlock opens and the shutter rolls up, the grid flashes, then shop setup (onboarding) opens.
+    // The button says the store is open for a moment, then shop setup (onboarding) opens.
     setStatus("success");
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (!reduce) window.setTimeout(() => setFlash((n) => n + 1), 450);
     window.setTimeout(() => {
       window.location.href = "/onboarding";
-    }, reduce ? 0 : 1250);
+    }, reduce ? 0 : 700);
   };
 
   const onPasswordKey = (e: React.KeyboardEvent<HTMLInputElement>) => setCapsLock(e.getModifierState("CapsLock"));
   const busy = status === "submitting" || status === "success";
   const invalid = (field: Field) => (status === "error" && errorField === field ? true : undefined);
-  const storeName = workspaceName.trim();
   const longEnough = password.length >= MIN_PASSWORD;
 
   return (
-    <main className={`${styles.page} ${status === "success" ? styles.unlocked : ""}`}>
-      <IsoGrid flash={flash} />
+    <main className={layout.page}>
+      <section className={layout.panel}>
+        <header className={layout.top}>
+          <Link href="/welcome" className={layout.brand}>
+            <BrandLogo size={32} tile /> CommerceOS
+          </Link>
+          <span className={layout.switch}>
+            Have an account?{" "}
+            <Link href="/login" className={layout.link}>
+              Sign in
+            </Link>
+          </span>
+        </header>
 
-      <header className={styles.top}>
-        <Link href="/welcome" className={styles.brandMark}>
-          <BrandLogo size={34} tile /> CommerceOS
-        </Link>
-        <Link href="/welcome" className={styles.back}>
-          <span aria-hidden="true">←</span> Back to site
-        </Link>
-      </header>
-
-      <div className={styles.stage}>
-        <LockScene
-          status={status}
-          tag={{
-            idle: storeName || "Your shop",
-            busy: "Setting up…",
-            done: storeName ? `${storeName} is open` : "Open",
-          }}
-        />
-
-        <div className={styles.cardWrap}>
-          <div key={shake} className={`${styles.card} ${shake ? styles.shake : ""}`}>
-            <h1>Create your store</h1>
+        <div className={layout.center}>
+          <div key={shake} className={`${layout.inner} ${shake ? layout.shake : ""}`}>
+            <h1 className={layout.heading}>
+              Open your <span className={layout.hl}>shop</span>.
+            </h1>
 
             <div className={styles.alertSlot} aria-live="assertive">
               {error && (
@@ -302,12 +292,12 @@ export default function RegisterPage() {
                 {status === "submitting" && <i className={styles.progress} aria-hidden="true" />}
               </button>
             </form>
-
-            <p className={styles.switch}>
-              Already have a store? <Link href="/login">Sign in</Link>
-            </p>
           </div>
         </div>
+      </section>
+
+      <div className={layout.storyCol}>
+        <StoryPanel />
       </div>
     </main>
   );

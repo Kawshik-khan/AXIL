@@ -46,7 +46,10 @@ export function PhonePreview({
   tag,
   ready = false,
   learned,
+  compact = false,
 }: {
+  /** A smaller phone, for the "See what customers see" sheet on narrow screens. */
+  compact?: boolean;
   shopName: string;
   category: string | null;
   lines: ChatLine[];
@@ -61,23 +64,8 @@ export function PhonePreview({
   const name = shopName.trim();
   return (
     <div className={styles.preview} aria-label="Preview of your shop's chat">
-      {learned?.left && (
-        <span className={`${styles.learned} ${styles.learnedLeft}`} aria-hidden="true">
-          <span className={styles.tick}>
-            <Check size={11} strokeWidth={3.5} />
-          </span>
-          {learned.left}
-        </span>
-      )}
-      {learned?.right && (
-        <span className={`${styles.learned} ${styles.learnedRight}`} aria-hidden="true">
-          <span className={styles.tick}>
-            <Check size={11} strokeWidth={3.5} />
-          </span>
-          {learned.right}
-        </span>
-      )}
-      <div className={styles.phone}>
+      <p className={`${styles.tag} ${ready ? styles.tagReady : ""}`}>{tag}</p>
+      <div className={`${styles.phone} ${compact ? styles.phoneCompact : ""}`}>
         <div className={styles.screen}>
           <div className={styles.chatHead}>
             {waiting || !name ? (
@@ -129,7 +117,17 @@ export function PhonePreview({
           </div>
         </div>
       </div>
-      <p className={`${styles.tag} ${ready ? styles.tagReady : ""}`}>{tag}</p>
+      {/* what the assistant has picked up so far, in a row under the phone */}
+      <div className={styles.learnedRow} aria-hidden="true">
+        {[learned?.left, learned?.right].filter(Boolean).map((text) => (
+          <span key={text} className={styles.learned}>
+            <span className={styles.tick}>
+              <Check size={11} strokeWidth={3.5} />
+            </span>
+            {text}
+          </span>
+        ))}
+      </div>
     </div>
   );
 }
