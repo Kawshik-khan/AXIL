@@ -183,8 +183,8 @@ export const UNHYDRATED_CORE_TABLES = new Set<string>([
 ]);
 
 /**
- * Full Phase D Zero-Hydration core business tables: excluded from startup hydration in production
- * or when ZERO_HYDRATION=1 is set.
+ * Full Phase D Zero-Hydration core business tables: excluded from startup hydration in production and `next dev`
+ * with DATA_BACKEND=pg, or when ZERO_HYDRATION=1 is set (ZERO_HYDRATION=0 turns it off).
  */
 export const ZERO_HYDRATION_CORE_TABLES = new Set<string>([
   "audit_logs",
@@ -219,7 +219,11 @@ export const UNHYDRATED_DOCUMENT_COLLECTIONS = new Set<string>([
 export function isZeroHydrationActive(options?: { zeroHydration?: boolean; all?: boolean }): boolean {
   if (options?.all) return false;
   if (options?.zeroHydration !== undefined) return options.zeroHydration;
-  return process.env.ZERO_HYDRATION === "1" || (process.env.DATA_BACKEND === "pg" && process.env.NODE_ENV === "production");
+  if (process.env.ZERO_HYDRATION === "1") return true;
+  if (process.env.ZERO_HYDRATION === "0") return false;
+  // `next dev` too: hydrating every core table from Neon held dev start-up for minutes (214 s for 5k orders / 10k customers).
+  const env = process.env.NODE_ENV;
+  return process.env.DATA_BACKEND === "pg" && (env === "production" || env === "development");
 }
 
 export function getActiveUnhydratedCoreTables(options?: { zeroHydration?: boolean; all?: boolean }): Set<string> {

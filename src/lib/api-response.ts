@@ -26,6 +26,7 @@ import {
 } from "@/lib/permissions";
 import { loadTenantRows } from "@/infrastructure/db/tenant-rows";
 import { recordServerError } from "@/lib/ops-signals";
+import { WorkspaceAccessService } from "@/domains/billing/workspace-access.service";
 
 export function apiSuccess<T>(data: T, meta?: Record<string, unknown>, status = 200) {
   return NextResponse.json(
@@ -157,6 +158,9 @@ export async function extractRequestContext(request: Request): Promise<RequestCo
   // Enforced platform controls (FX-34): a paused workspace can still read, but changes nothing
   if (mutating) assertNotKilled(context.tenant.id);
   const path = new URL(request.url).pathname;
+  // Paywall (ADR-125): a workspace from the public sign-up can only finish setup and pay until its plan is paid. A
+  // platform operator's support session is not the workspace using the product, so it is never held back.
+  WorkspaceAccessService.assertAllowed(context.tenant.id, path, { bypass: Boolean(impersonated?.impersonation) });
   for (const [prefix, flag] of GATED_MODULES) {
     if (path.startsWith(prefix) && !isFeatureEnabled(flag, context.tenant.id)) {
       throw new FeatureNotEntitledError(flag);

@@ -4,17 +4,19 @@ import React from "react";
 import { CreditCard, Wallet } from "lucide-react";
 import styles from "./PaymentsPage.module.css";
 import ws from "@/components/ui/WorkScreen/WorkScreen.module.css";
+import { BrandIcon, brandFor } from "@/components/brand/BrandIcon";
 
 export const METHOD_NAMES: Record<string, string> = { BKASH: "bKash", NAGAD: "Nagad", ROCKET: "Rocket", CARD: "Card / bank", COD: "Cash on delivery" };
 
 const MARKS: Record<string, { letter: string; className: string }> = {
-  BKASH: { letter: "b", className: styles.markBkash },
   NAGAD: { letter: "N", className: styles.markNagad },
   ROCKET: { letter: "R", className: styles.markRocket },
 };
 
-/** A wallet's brand-coloured mark, so staff recognise the method at a glance. */
+/** A wallet's logo (or brand-coloured mark when there is no logo), so staff recognise the method at a glance. */
 export function MethodMark({ provider, small = false }: { provider: string; small?: boolean }) {
+  const brand = brandFor(provider);
+  if (brand) return <BrandIcon brand={brand} size={small ? 22 : 32} />;
   const mark = MARKS[provider];
   const className = `${styles.mark} ${small ? styles.markSm : ""} ${mark?.className ?? ""}`;
   return (

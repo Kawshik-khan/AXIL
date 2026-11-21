@@ -11,6 +11,7 @@ import {
   ExecutiveDigest,
 } from "@/types/analytics";
 import { useDebounce } from "@/hooks/useDebounce";
+import { BrandIcon, brandFor } from "@/components/brand/BrandIcon";
 
 type ActiveTab = "financials" | "rto" | "channels" | "digests";
 
@@ -749,15 +750,20 @@ export default function AnalyticsPage() {
                       <div key={ch.channel} className={styles.channelCard}>
                         <div className={styles.channelCardHeader}>
                           <span className={styles.channelCardName}>
+                            {brandFor(ch.channel) ? (
+                              <BrandIcon brand={brandFor(ch.channel)!} size={18} />
+                            ) : (
+                              <span aria-hidden="true">{ch.channel === "WEBSITE" ? "🌐" : "🏪"}</span>
+                            )}
                             {ch.channel === "WHATSAPP"
-                              ? "💬 WhatsApp"
+                              ? "WhatsApp"
                               : ch.channel === "FACEBOOK_MESSENGER"
-                              ? "💙 Facebook"
+                              ? "Facebook"
                               : ch.channel === "WEBSITE"
-                              ? "🌐 Website"
+                              ? "Website"
                               : ch.channel === "INSTAGRAM"
-                              ? "📸 Instagram"
-                              : "🏪 Manual POS"}
+                              ? "Instagram"
+                              : "Manual POS"}
                           </span>
                           <span className={styles.badgeLime}>{ch.gmv_share_pct}% GMV</span>
                         </div>

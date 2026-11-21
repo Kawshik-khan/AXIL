@@ -5,7 +5,7 @@
 
 import { LLMProvider, LLMResponse, LLMMessage, LLMToolDefinition, LLMProviderOptions } from "./llm-provider.interface";
 import { MockLLMProvider } from "./mock-llm.provider";
-import { OpenAICompatibleProvider, UnconfiguredProvider } from "./openai-compatible.provider";
+import { OpenAICompatibleProvider, REASONING_EFFORTS, UnconfiguredProvider, type ReasoningEffort } from "./openai-compatible.provider";
 import { PlatformSafetyService } from "@/domains/platform/services/platform-safety.service";
 import { KillSwitchActiveError } from "@/lib/errors";
 import { LLM_BUSY, LLM_DEADLINE } from "./resilience";
@@ -107,9 +107,16 @@ export class ModelRouter {
       TIER_2_REASONING: env.LLM_MODEL_REASONING?.trim() || env.LLM_MODEL_FAST?.trim() || "",
       TIER_3_EMBEDDING: env.LLM_EMBEDDING_MODEL?.trim() || "",
     };
+    // LLM_REASONING_EFFORT: optional, primary provider only. A typo refuses clearly instead of being sent or dropped.
+    const effortRaw = env.LLM_REASONING_EFFORT?.trim().toLowerCase() || "";
+    const effort = (REASONING_EFFORTS as readonly string[]).includes(effortRaw) ? (effortRaw as ReasoningEffort) : undefined;
     if (env.LLM_BASE_URL && !models.TIER_1_FAST) {
       this.primaryProvider = new UnconfiguredProvider(
         `LLM_MODEL_FAST is not set for AI provider ${env.LLM_PROVIDER_NAME || "at LLM_BASE_URL"}. Set the model names explicitly.`
+      );
+    } else if (env.LLM_BASE_URL && effortRaw && !effort) {
+      this.primaryProvider = new UnconfiguredProvider(
+        `LLM_REASONING_EFFORT must be one of ${REASONING_EFFORTS.join(", ")} (or unset).`
       );
     } else if (env.LLM_BASE_URL) {
       this.primaryProvider = new OpenAICompatibleProvider({
@@ -118,6 +125,7 @@ export class ModelRouter {
         name: env.LLM_PROVIDER_NAME,
         models,
         maxConcurrency: concurrencyShare(env.LLM_MAX_CONCURRENCY, env),
+        reasoningEffort: effort,
       });
     } else if (env.AI_DEMO_MODE === "1") {
       this.primaryProvider = new MockLLMProvider();

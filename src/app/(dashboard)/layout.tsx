@@ -38,6 +38,13 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
           return;
         }
         const data = await res.json();
+        // Paywall (ADR-125): a workspace that hasn't finished setup or paid goes there first. The API enforces the
+        // same rule (402); this only keeps the dashboard from flashing before the redirect.
+        const access = data.data?.access as { state: string; next_path: string | null } | null | undefined;
+        if (access?.next_path && access.state !== "ACTIVE" && access.state !== "GRACE") {
+          router.replace(`${access.next_path}${window.location.search}`);
+          return;
+        }
         setSession(data.data);
       } catch {
         router.push("/login");
@@ -127,6 +134,18 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
           onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
         />
         <main className={styles.mainContent}>
+          {session.access?.state === "GRACE" && (
+            <div role="alert" className={styles.paywallNotice}>
+              <span>
+                Your plan&apos;s payment is overdue. Pay by{" "}
+                {session.access.grace_ends_at ? new Date(session.access.grace_ends_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : "soon"} to
+                keep using CommerceOS.
+              </span>
+              <a href="/activate" className={styles.paywallNoticeAction}>
+                Pay now
+              </a>
+            </div>
+          )}
           <PlatformNotices />
           {children}
         </main>

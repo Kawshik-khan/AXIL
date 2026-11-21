@@ -7,6 +7,7 @@ import { BentoCard } from "@/components/bento/BentoCard";
 import { LoadingSkeleton, EmptyState, ErrorState, PermissionDenied } from "@/components/ui/States/States";
 import type { CommentTriggerChannel, CommentTriggerEvent, CommentTriggerRule } from "@/types/social";
 import styles from "./CommentTriggers.module.css";
+import { BrandIcon, brandFor } from "@/components/brand/BrandIcon";
 
 const PLATFORM_LABEL: Record<CommentTriggerChannel, string> = { FACEBOOK_MESSENGER: "Facebook", INSTAGRAM: "Instagram" };
 const STATUS_LABEL: Record<CommentTriggerEvent["status"], string> = {
@@ -223,7 +224,8 @@ export function CommentTriggers() {
             <div className={styles.checkRow}>
               {(Object.keys(PLATFORM_LABEL) as CommentTriggerChannel[]).map((ch) => (
                 <label key={ch}>
-                  <input type="checkbox" checked={form.channel_types.includes(ch)} onChange={() => toggleChannel(ch)} /> {PLATFORM_LABEL[ch]}
+                  <input type="checkbox" checked={form.channel_types.includes(ch)} onChange={() => toggleChannel(ch)} />{" "}
+                  {brandFor(ch) && <BrandIcon brand={brandFor(ch)!} size={16} />} {PLATFORM_LABEL[ch]}
                 </label>
               ))}
               <label>

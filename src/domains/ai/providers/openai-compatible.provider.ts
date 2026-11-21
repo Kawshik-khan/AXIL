@@ -42,7 +42,15 @@ export interface OpenAICompatibleConfig {
   };
   /** At most this many calls in flight to this provider (LLM_MAX_CONCURRENCY, FX-79). Unset: no limit. */
   maxConcurrency?: number;
+  /**
+   * Sent as `reasoning_effort` on chat calls (LLM_REASONING_EFFORT). Unset: the field is not sent and the model uses
+   * its own default. Whether a gateway maps it to the model's effort setting is the gateway's business: probe it.
+   */
+  reasoningEffort?: ReasoningEffort;
 }
+
+export const REASONING_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
 
 import { envNumber } from "@/lib/env-number";
 
@@ -294,6 +302,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
                 : {}),
               temperature: options?.temperature ?? 0.2,
               max_tokens: options?.max_tokens ?? DEFAULT_MAX_TOKENS,
+              ...(this.cfg.reasoningEffort ? { reasoning_effort: this.cfg.reasoningEffort } : {}),
             },
             Math.min(
               remainingMs,

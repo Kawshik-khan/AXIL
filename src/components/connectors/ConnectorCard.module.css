@@ -85,6 +85,30 @@
   box-shadow: inset 0 0 0 1px var(--mk-white-a120);
 }
 
+/* Brand logo SVGs are already round, filled badges: no tile behind them */
+.logo {
+  display: block;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-pill);
+}
+
+/* Two-brand connector: the second logo peeks out to the right, behind the first */
+.markWrapPair {
+  margin-right: 22px;
+}
+
+.markWrapPair > .logo:not(.logoSecond) {
+  position: relative;
+}
+
+.logoSecond {
+  position: absolute;
+  top: 0;
+  left: 22px;
+  box-shadow: 0 0 0 2px var(--color-surface-pure);
+}
+
 .markFacebook { background: var(--color-brand-facebook); }
 .markWhatsapp { background: var(--color-brand-whatsapp); }
 .markTelegram { background: var(--color-brand-telegram); }

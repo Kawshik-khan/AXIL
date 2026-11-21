@@ -26,7 +26,9 @@ const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   experimental: {
-    agentUpgrade: "security",
+    // Next 16.4 defaults this to "security": `next dev` exits to show an upgrade notice whenever it thinks an AI agent
+    // started it, which includes terminals opened from the Claude desktop app. Upgrades are done on purpose instead.
+    agentUpgrade: false,
   },
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];

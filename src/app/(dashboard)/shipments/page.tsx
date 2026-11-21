@@ -13,6 +13,7 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { BentoCard } from "@/components/bento/BentoCard";
+import { BrandIcon, brandFor } from "@/components/brand/BrandIcon";
 import { Button } from "@/components/ui/Button/Button";
 import { Input } from "@/components/ui/Input/Input";
 import { Modal } from "@/components/ui/Modal/Modal";
@@ -154,8 +155,12 @@ export default function ShipmentsPage() {
               background: courierFilter === c ? "var(--color-charcoal)" : "transparent",
               color: courierFilter === c ? "var(--color-lime)" : "var(--color-text-secondary)",
               cursor: "pointer",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
             }}
           >
+            {brandFor(c) && <BrandIcon brand={brandFor(c)!} size={16} />}
             {c}
           </button>
         ))}
@@ -195,7 +200,10 @@ export default function ShipmentsPage() {
                       <code>{s.tracking_number}</code>
                     </td>
                     <td style={{ padding: "14px 10px" }}>
-                      <Badge variant="role">{s.courier_provider}</Badge>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                        {brandFor(s.courier_provider) && <BrandIcon brand={brandFor(s.courier_provider)!} size={18} />}
+                        <Badge variant="role">{s.courier_provider}</Badge>
+                      </span>
                     </td>
                     <td style={{ padding: "14px 10px", color: "var(--color-text-muted)" }}>
                       {s.consignment_id || "—"}

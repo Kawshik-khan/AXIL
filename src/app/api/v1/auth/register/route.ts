@@ -48,7 +48,7 @@ async function handlePOST(request: Request) {
     if (client) await enforceRateLimit(`register:client:${client}`, 5, 60 * MINUTE);
     await enforceRateLimit("register:global", 30, 60 * MINUTE); // always, so no header can lift the overall cap
     const body = parseRegisterBody(await readJson(request));
-    const result = await AuthService.registerTenantWithOwner(body);
+    const result = await AuthService.registerTenantWithOwner(body, { publicSignUp: true });
 
     const response = apiSuccess(
       {

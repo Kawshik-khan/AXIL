@@ -34,6 +34,11 @@ export async function api<T>(url: string, init: RequestInit & { json?: unknown; 
     const response = stepUp ? await fetchWithStepUp(url, request) : await fetch(url, request);
     const body = (await response.json().catch(() => null)) as Envelope<T> | null;
     if (response.ok && body?.success !== false) return { ok: true, status: response.status, data: body?.data ?? null, error: null };
+    // Paywall (ADR-125): the workspace can't use this until setup is finished or the plan is paid; go there
+    const nextPath = body?.error?.details?.next_path;
+    if (response.status === 402 && body?.error?.code?.startsWith("WORKSPACE_") && (nextPath === "/activate" || nextPath === "/onboarding")) {
+      if (typeof window !== "undefined" && window.location.pathname !== nextPath) window.location.assign(nextPath);
+    }
     return {
       ok: false,
       status: response.status,

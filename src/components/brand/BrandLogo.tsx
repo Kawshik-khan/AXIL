@@ -1,5 +1,5 @@
 import type { SVGProps } from "react";
-import { HUB_BODY, HUB_CORE, HUB_VIEWBOX } from "./hub-mark";
+import { BRAND_BODY, BRAND_SPARK, BRAND_VIEWBOX } from "./brand-mark";
 import { LogoMark } from "./LogoMark";
 
 type BrandLogoProps = SVGProps<SVGSVGElement> & {
@@ -10,9 +10,9 @@ type BrandLogoProps = SVGProps<SVGSVGElement> & {
 };
 
 /**
- * CommerceOS brand mark (Hub). Without `tile` the body takes the surrounding text colour
- * (currentColor) and the core stays lime, so it reads on light and dark headers alike.
- * With `tile` it renders the app-icon version on its ink tile.
+ * CommerceOS brand mark (Agent C). Without `tile` the bubble takes the surrounding text colour
+ * (currentColor) and the spark stays lime with a currentColor outline, so it reads on light and dark
+ * headers alike. With `tile` it renders the app-icon version on its ink tile.
  */
 export function BrandLogo({ size, height, tile = false, label = "CommerceOS", ...props }: BrandLogoProps) {
   const dimension = size ?? height ?? 44;
@@ -22,9 +22,15 @@ export function BrandLogo({ size, height, tile = false, label = "CommerceOS", ..
   }
 
   return (
-    <svg width={dimension} height={dimension} viewBox={HUB_VIEWBOX} role="img" aria-label={label} {...props}>
-      <path d={HUB_BODY} fillRule="evenodd" fill="currentColor" />
-      <circle {...HUB_CORE} style={{ fill: "var(--color-logo-core)" }} />
+    <svg width={dimension} height={dimension} viewBox={BRAND_VIEWBOX} role="img" aria-label={label} {...props}>
+      <path d={BRAND_BODY} fill="currentColor" />
+      <path
+        d={BRAND_SPARK}
+        stroke="currentColor"
+        strokeWidth={3}
+        strokeLinejoin="round"
+        style={{ fill: "var(--color-logo-core)" }}
+      />
     </svg>
   );
 }

@@ -18,6 +18,8 @@ interface Overview {
   plans: PlanOption[];
   trial_offer: TrialOffer | null;
   subscription: { status: string; plan_name: string | null } | null;
+  /** paywalled: this shop signed up publicly and needs a paid plan or a trial; Free isn't offered then (ADR-125). */
+  access: { paywalled: boolean };
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -37,9 +39,11 @@ export function PlanStep({ onDone, onBack }: { onDone: (choice: "trial" | "free"
     setLoadError(null);
     const result = await api<Overview>("/api/v1/billing");
     if (result.ok && result.data) {
-      setOverview(result.data);
-      const free = result.data.plans.find((p) => (p.monthly_price_bdt ?? 0) === 0);
-      setSelected((s) => s ?? (result.data!.trial_offer ? "TRIAL" : free?.id ?? result.data!.plans[0]?.id ?? null));
+      const paywalled = result.data.access?.paywalled === true;
+      const plans = paywalled ? result.data.plans.filter((p) => (p.monthly_price_bdt ?? p.annual_price_bdt ?? 0) > 0) : result.data.plans;
+      setOverview({ ...result.data, plans });
+      const free = plans.find((p) => (p.monthly_price_bdt ?? 0) === 0);
+      setSelected((s) => s ?? (result.data!.trial_offer ? "TRIAL" : free?.id ?? plans[0]?.id ?? null));
     } else {
       setLoadError(result.error?.message ?? "Could not load the plans.");
     }
@@ -94,7 +98,9 @@ export function PlanStep({ onDone, onBack }: { onDone: (choice: "trial" | "free"
       ? "No payment now. Nothing is charged when the trial ends."
       : isFree
         ? "Upgrade any time in Plan & billing."
-        : "Next you pay the first invoice in Plan & billing. The plan starts when it's paid.";
+        : overview.access?.paywalled
+          ? "Next you pay the first invoice. Your workspace opens as soon as the payment is confirmed."
+          : "Next you pay the first invoice in Plan & billing. The plan starts when it's paid.";
 
   return (
     <div className={styles.planStage}>
@@ -156,7 +162,10 @@ export function PlanStep({ onDone, onBack }: { onDone: (choice: "trial" | "free"
               <span className={styles.when}>
                 <i />
                 <span>
-                  <b>{trialEnds}</b>Pay to keep {offer.plan_name}, or move to Free. Nothing is charged by itself.
+                  <b>{trialEnds}</b>
+                  {overview.access?.paywalled
+                    ? `Pay to keep using ${offer.plan_name}. Nothing is charged by itself.`
+                    : `Pay to keep ${offer.plan_name}, or move to Free. Nothing is charged by itself.`}
                 </span>
               </span>
             </span>

@@ -697,7 +697,15 @@ async function zeroHydratedRouteTests(client: SqlClient) {
     });
     assert.strictEqual(reg.status, 201, JSON.stringify(reg.json));
     const newToken = (await AuthService.login(reg.json.data.user.email, password, reg.json.data.tenant.id)).token;
-    const dash = await call("GET", "reports/dashboard", "reports/dashboard", { authorization: `Bearer ${newToken}` });
+    const newAuth = { authorization: `Bearer ${newToken}` };
+    // A public sign-up is paywalled (ADR-125): setup first, then a plan or the trial, and only then the dashboard
+    const early = await call("GET", "reports/dashboard", "reports/dashboard", newAuth);
+    assert.strictEqual(early.status, 402, JSON.stringify(early.json));
+    const setup = await call("PATCH", "onboarding", "onboarding", newAuth, {}, { step: "plan", complete: true });
+    assert.strictEqual(setup.status, 200, JSON.stringify(setup.json));
+    const trial = await call("POST", "billing/trial", "billing/trial", newAuth);
+    assert.strictEqual(trial.status, 201, JSON.stringify(trial.json));
+    const dash = await call("GET", "reports/dashboard", "reports/dashboard", newAuth);
     assert.strictEqual(dash.status, 200, JSON.stringify(dash.json));
     assert.strictEqual(dash.json.data.metrics.totalOrders, 0);
   });

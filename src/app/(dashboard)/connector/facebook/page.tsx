@@ -3,7 +3,8 @@
 import React, { Suspense, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Facebook, Instagram, RefreshCw } from "lucide-react";
+import { RefreshCw } from "lucide-react";
+import { BrandIcon } from "@/components/brand/BrandIcon";
 import { LoadingSkeleton, PermissionDenied } from "@/components/ui/States/States";
 import type { ConnectedChannel } from "@/types/social";
 import { handOffSignInToOpener, popupQueryOf } from "@/components/social/meta-login-popup";
@@ -203,7 +204,7 @@ function ConnectFacebook() {
     <div className={styles.page}>
       <header className={styles.header}>
         <h1 className={styles.title}>
-          <Facebook size={22} /> Connect Facebook &amp; Instagram
+          <BrandIcon brand="facebook" size={22} /> Connect Facebook &amp; Instagram
         </h1>
         <p className={styles.subtitle}>
           Sign in with Facebook and choose your Pages. CommerceOS will receive their comments and messages, so Comment → Inbox
@@ -272,11 +273,11 @@ function ConnectFacebook() {
                         <span className={styles.pageName}>{p.name}</span>
                         <div className={styles.badges}>
                           <span className={`${styles.badge} ${blocked ? styles.badgeBad : ""}`}>
-                            <Facebook size={12} /> {STATE_LABEL[p.facebook]}
+                            <BrandIcon brand="facebook" size={14} /> {STATE_LABEL[p.facebook]}
                           </span>
                           {p.instagram ? (
                             <span className={`${styles.badge} ${p.instagram.state === "IN_ANOTHER_WORKSPACE" ? styles.badgeBad : ""}`}>
-                              <Instagram size={12} /> {p.instagram.username ? `@${p.instagram.username}` : "Instagram"} · {STATE_LABEL[p.instagram.state]}
+                              <BrandIcon brand="instagram" size={14} /> {p.instagram.username ? `@${p.instagram.username}` : "Instagram"} · {STATE_LABEL[p.instagram.state]}
                             </span>
                           ) : (
                             <span className={styles.badge}>No linked Instagram</span>
@@ -345,7 +346,7 @@ function ConnectFacebook() {
               <li>Come back here and confirm. Comments and messages start arriving right away.</li>
             </ol>
             <button type="button" className={styles.primaryButton} onClick={() => start()} disabled={busy}>
-              <Facebook size={16} /> {busy ? "Opening Facebook…" : "Connect with Facebook"}
+              <BrandIcon brand="facebook" size={18} /> {busy ? "Opening Facebook…" : "Connect with Facebook"}
             </button>
           </section>
         )

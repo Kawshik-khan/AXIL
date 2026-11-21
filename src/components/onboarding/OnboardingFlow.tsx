@@ -158,8 +158,9 @@ export function OnboardingFlow() {
       json: { step: "plan", complete: true, ...(choice === "free" ? { choose_free_plan: true } : {}) },
     });
     if (!result.ok) throw new Error(result.error?.message ?? "Could not finish setup.");
-    // A paid plan needs its first invoice paid: that happens in Plan & billing
-    window.location.href = choice === "paid" ? "/settings/billing" : "/";
+    // A paid plan needs its first invoice paid: the activation page (it sends a shop that isn't paywalled on to
+    // Plan & billing, and one that already has access to its dashboard)
+    window.location.href = choice === "paid" ? "/activate" : "/";
   };
 
   if (loadError) {

@@ -9,7 +9,9 @@ import { NextRequest } from "next/server";
 import { db } from "@/infrastructure/db";
 import { AuthService } from "@/domains/auth/service";
 import { PricingService } from "@/domains/pricing/pricing.service";
-import { SELF_SERVE_TRIAL_FLAG, SELF_SERVE_TRIAL_PLAN_ID } from "@/domains/billing/billing.service";
+import { WorkspaceAccessService } from "@/domains/billing/workspace-access.service";
+import { BillingService, SELF_SERVE_TRIAL_FLAG, SELF_SERVE_TRIAL_PLAN_ID } from "@/domains/billing/billing.service";
+import { activationInvoices } from "@/components/billing/activation-invoice";
 import { hashPassword, signSessionToken } from "@/lib/security";
 import { resetRateLimitsForTesting } from "@/lib/rate-limit";
 
@@ -135,10 +137,33 @@ async function main() {
     assert.strictEqual(data.done_count, 3);
   });
 
-  await runTest("hiding the checklist sticks", async () => {
+  await runTest("hiding folds the setup guide; it stays reachable and unfolds again until setup is finished", async () => {
     const res = await call("onboarding", "PATCH", A.auth, { dismiss_checklist: true });
-    assert.strictEqual(res.body.data!.show_checklist, false);
-    assert.strictEqual((await call("onboarding", "GET", A.auth)).body.data!.show_checklist, false);
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    assert.strictEqual(res.body.data!.show_checklist, true, "folded, not gone");
+    assert.strictEqual(res.body.data!.checklist_collapsed, true);
+    const read = (await call("onboarding", "GET", A.auth)).body.data!;
+    assert.strictEqual(read.show_checklist, true);
+    assert.strictEqual(read.checklist_collapsed, true, "the fold sticks across reads");
+    const open = await call("onboarding", "PATCH", A.auth, { checklist_collapsed: false });
+    assert.strictEqual(open.body.data!.checklist_collapsed, false);
+    const fold = await call("onboarding", "PATCH", A.auth, { checklist_collapsed: true });
+    assert.strictEqual(fold.body.data!.checklist_collapsed, true);
+    assert.strictEqual((await call("onboarding", "PATCH", A.auth, { checklist_collapsed: "yes" })).status, 400);
+  });
+
+  await runTest("the guide counts required items only; real records tick them; it stays while any is open", async () => {
+    let data = (await call("onboarding", "GET", A.auth)).body.data!;
+    assert.strictEqual(data.required_total, 6, "the first order is optional");
+    assert.strictEqual(data.checklist.find((i: { id: string }) => i.id === "first_order").required, false);
+    assert.strictEqual(data.setup_finished, false);
+    // Complete the open required items with real records (payments, product, channel)
+    const now = new Date().toISOString();
+    db.saveTenantPaymentSettings({ tenant_id: A.tenantId, manual: { bkash_number: "01711111111" }, gateways: {}, updated_by: "usr_test", updated_at: now });
+    const done = new Set(data.checklist.filter((i: { done: boolean }) => i.done).map((i: { id: string }) => i.id));
+    data = (await call("onboarding", "GET", A.auth)).body.data!;
+    assert.strictEqual(data.required_done, done.size + 1, "a wallet number ticks 'a way to get paid'");
+    assert.strictEqual(data.show_checklist, true, "still open while product and channel are missing");
   });
 
   await runTest("a workspace that existed before onboarding is never sent through it", async () => {
@@ -214,6 +239,181 @@ async function main() {
     });
     assert.strictEqual((await call("billing", "GET", C.auth)).body.data!.trial_offer, null);
     assert.strictEqual((await call("billing/trial", "POST", C.auth)).status, 409);
+  });
+
+  console.log(`${BOLD}[3] Paywall: public sign-ups use CommerceOS only after paying (ADR-125)${RESET}`);
+
+  const signUp = async (label: string) => {
+    const shop = await AuthService.registerTenantWithOwner(
+      { email: `paywall_${label}_${crypto.randomUUID().slice(0, 8)}@onboarding.test`, password, name: `${label} Owner`, workspaceName: `Paywall Shop ${label}` },
+      { publicSignUp: true }
+    );
+    const token = (await AuthService.login(shop.user.email, password, shop.tenant.id)).token;
+    return { tenantId: shop.tenant.id, auth: { authorization: `Bearer ${token}` } };
+  };
+  const setPaywall = (on: boolean) =>
+    db.savePlatformSetting({ key: "billing.require_paid_subscription", value: on, category: "BILLING", description: "test", is_sensitive: false, updated_at: new Date().toISOString() });
+  const P = await signUp("P");
+  const Q = await signUp("Q");
+  const expect402 = async (auth: Record<string, string>, code: string, nextPath: string) => {
+    const res = await call("products", "GET", auth);
+    assert.strictEqual(res.status, 402, JSON.stringify(res.body));
+    assert.strictEqual(res.body.error!.code, code);
+    assert.strictEqual((res.body.error as { details?: { next_path?: string } }).details?.next_path, nextPath);
+  };
+
+  await runTest("only the public sign-up route marks a workspace for the paywall", async () => {
+    const { POST } = await import("@/app/api/v1/auth/register/route");
+    const res = await POST(
+      new NextRequest("http://localhost:3000/api/v1/auth/register", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: `route_${crypto.randomUUID().slice(0, 8)}@onboarding.test`, password, name: "Route Owner", workspaceName: "Route Shop" }),
+      }),
+      { params: Promise.resolve({}) }
+    );
+    assert.strictEqual(res.status, 201);
+    const tenantId = ((await res.json()) as { data: { tenant: { id: string } } }).data.tenant.id;
+    assert.ok((db.findTenantById(tenantId)!.settings as Record<string, unknown>).access_gate, "route sign-up is paywalled");
+    assert.strictEqual((db.findTenantById(A.tenantId)!.settings as Record<string, unknown>).access_gate, undefined, "other workspaces are not");
+    assert.strictEqual((await call("products", "GET", A.auth)).status, 200, "a workspace without the marker is never held back");
+  });
+
+  await runTest("before setup is finished: shop data is 402 (go to setup); setup, billing, session and the test chat work", async () => {
+    await expect402(P.auth, "WORKSPACE_SETUP_REQUIRED", "/onboarding");
+    assert.strictEqual((await call("onboarding", "GET", P.auth)).status, 200);
+    assert.strictEqual((await call("billing", "GET", P.auth)).status, 200);
+    const session = await call("auth/session", "GET", P.auth);
+    assert.strictEqual(session.status, 200);
+    assert.strictEqual(session.body.data!.access.state, "SETUP_REQUIRED");
+    assert.notStrictEqual((await call("ai/simulate", "POST", P.auth, { message: "hi" })).status, 402, "the setup step's test chat is allowed");
+    assert.strictEqual((await call("products", "POST", P.auth, { name: "Sneaky" })).status, 402, "writes are held back too");
+  });
+
+  await runTest("staying on Free is refused for a paywalled shop (409) and nothing is saved", async () => {
+    const res = await call("onboarding", "PATCH", P.auth, { step: "plan", complete: true, choose_free_plan: true });
+    assert.strictEqual(res.status, 409, JSON.stringify(res.body));
+    assert.strictEqual(res.body.error!.code, "PAID_PLAN_REQUIRED");
+    const onboarding = (db.findTenantById(P.tenantId)!.settings as Record<string, { completed_at: string | null }>).onboarding;
+    assert.strictEqual(onboarding.completed_at, null);
+  });
+
+  await runTest("setup finished, nothing paid: 402 (go pay); the test chat is closed now", async () => {
+    const res = await call("onboarding", "PATCH", P.auth, { step: "plan", complete: true });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    await expect402(P.auth, "WORKSPACE_PAYMENT_REQUIRED", "/activate");
+    assert.strictEqual((await call("ai/simulate", "POST", P.auth, { message: "hi" })).status, 402);
+    const billing = await call("billing", "GET", P.auth);
+    assert.strictEqual(billing.body.data!.access.state, "PAYMENT_REQUIRED");
+    assert.strictEqual(billing.body.data!.access.paywalled, true);
+  });
+
+  await runTest("an unpaid invoice opens nothing; a manual payment being checked is PAYMENT_PENDING", async () => {
+    const created = await call("billing/invoices", "POST", P.auth, { plan_id: SELF_SERVE_TRIAL_PLAN_ID, billing_period: "MONTHLY" });
+    assert.strictEqual(created.status, 201, JSON.stringify(created.body));
+    await expect402(P.auth, "WORKSPACE_PAYMENT_REQUIRED", "/activate");
+    const invoice = db.getBillingInvoices(P.tenantId).find((i) => i.status === "ISSUED")!;
+    db.saveBillingInvoice({ ...invoice, status: "PENDING_VERIFICATION", manual_transaction_id: "TRX123456", updated_at: new Date().toISOString() });
+    await expect402(P.auth, "WORKSPACE_PAYMENT_PENDING", "/activate");
+  });
+
+  await runTest("the paid invoice opens the workspace at once; another paywalled shop stays closed", async () => {
+    const invoice = db.getBillingInvoices(P.tenantId).find((i) => i.status === "PENDING_VERIFICATION")!;
+    BillingService.settle(invoice, { method: "MANUAL_BKASH", reference: "TRX123456", verifiedBy: "usr_test_operator" });
+    assert.strictEqual((await call("products", "GET", P.auth)).status, 200);
+    assert.strictEqual((await call("auth/session", "GET", P.auth)).body.data!.access.state, "ACTIVE");
+    await expect402(Q.auth, "WORKSPACE_SETUP_REQUIRED", "/onboarding");
+  });
+
+  await runTest("overdue within the grace period: still open (GRACE); after it, or ended: LOCKED with billing open", async () => {
+    const sub = db.findSubscriptionByTenantId(P.tenantId)!;
+    const day = 24 * 60 * 60 * 1000;
+    db.saveSubscription({ ...sub, status: "PAST_DUE", current_period_end: new Date(Date.now() - day).toISOString() });
+    assert.strictEqual((await call("products", "GET", P.auth)).status, 200);
+    const grace = (await call("auth/session", "GET", P.auth)).body.data!.access;
+    assert.strictEqual(grace.state, "GRACE");
+    assert.ok(Date.parse(grace.grace_ends_at) > Date.now());
+    db.saveSubscription({ ...sub, status: "PAST_DUE", current_period_end: new Date(Date.now() - 60 * day).toISOString() });
+    await expect402(P.auth, "WORKSPACE_LOCKED", "/activate");
+    db.saveSubscription({ ...sub, status: "EXPIRED" });
+    await expect402(P.auth, "WORKSPACE_LOCKED", "/activate");
+    assert.strictEqual((await call("billing", "GET", P.auth)).status, 200, "billing stays open so the shop can pay");
+    db.saveSubscription(sub);
+    assert.strictEqual((await call("products", "GET", P.auth)).status, 200);
+  });
+
+  await runTest("a trial gives access while it runs", async () => {
+    await call("onboarding", "PATCH", Q.auth, { step: "plan", complete: true });
+    const res = await call("billing/trial", "POST", Q.auth);
+    if (res.status === 201) assert.strictEqual((await call("products", "GET", Q.auth)).status, 200);
+    else assert.strictEqual(res.body.error!.code, "TRIAL_NOT_AVAILABLE", JSON.stringify(res.body));
+  });
+
+  await runTest("the paywall marker can't be removed through the settings route", async () => {
+    const R = await signUp("R2");
+    const res = await call("tenants/current/settings", "PATCH", R.auth, { settings: { access_gate: null } });
+    assert.notStrictEqual(res.status, 200);
+    assert.ok((db.findTenantById(R.tenantId)!.settings as Record<string, unknown>).access_gate);
+  });
+
+  await runTest("look-alike and dot-segment paths don't slip through the allow-list", async () => {
+    const R = await signUp("R3");
+    for (const path of ["/api/v1/billingx", "/api/v1/authx/products", "/api/v1/onboarding-export", new URL("http://x/api/v1/auth/../products").pathname, new URL("http://x/api/v1/billing/%2e%2e/products").pathname]) {
+      assert.throws(() => WorkspaceAccessService.assertAllowed(R.tenantId, path), (e: { statusCode?: number }) => e.statusCode === 402, path);
+    }
+    for (const path of ["/api/v1/billing", "/api/v1/billing/invoices", "/api/v1/auth/session", "/api/v1/onboarding"]) {
+      WorkspaceAccessService.assertAllowed(R.tenantId, path);
+    }
+    WorkspaceAccessService.assertAllowed(R.tenantId, "/api/v1/products", { bypass: true }); // a support session
+  });
+
+  await runTest("operators can turn the paywall off platform-wide", async () => {
+    const R = await signUp("R");
+    await expect402(R.auth, "WORKSPACE_SETUP_REQUIRED", "/onboarding");
+    setPaywall(false);
+    try {
+      assert.strictEqual((await call("products", "GET", R.auth)).status, 200);
+    } finally {
+      setPaywall(true);
+    }
+    await expect402(R.auth, "WORKSPACE_SETUP_REQUIRED", "/onboarding");
+  });
+
+  await runTest("a past-due invoice isn't offered as payable on /activate; choosing the plan again replaces it", async () => {
+    const S = await signUp("S");
+    assert.strictEqual((await call("onboarding", "PATCH", S.auth, { step: "plan", complete: true })).status, 200);
+    const first = await call("billing/invoices", "POST", S.auth, { plan_id: SELF_SERVE_TRIAL_PLAN_ID, billing_period: "MONTHLY" });
+    assert.strictEqual(first.status, 201, JSON.stringify(first.body));
+    const old = db.getBillingInvoices(S.tenantId).find((i) => i.status === "ISSUED")!;
+    assert.strictEqual(activationInvoices(db.getBillingInvoices(S.tenantId)).open?.id, old.id, "payable before its due date");
+    db.saveBillingInvoice({ ...old, due_date: new Date(Date.now() - 60_000).toISOString(), updated_at: new Date().toISOString() });
+
+    // The server refuses payment for it, so the page must not present it as the open invoice
+    const manual = (await import("@/app/api/v1/billing/invoices/[id]/manual-payment/route")) as unknown as Record<string, Handler>;
+    const refusedRes = await manual.POST(
+      new NextRequest(`http://localhost:3000/api/v1/billing/invoices/${old.id}/manual-payment`, {
+        method: "POST",
+        headers: { ...S.auth, "content-type": "application/json" },
+        body: JSON.stringify({ method: "MANUAL_BKASH", transaction_id: "TRX99887766" }),
+      }),
+      { params: Promise.resolve({ id: old.id }) },
+    );
+    const refused = (await refusedRes.json()) as Envelope;
+    assert.strictEqual(refusedRes.status, 409, JSON.stringify(refused));
+    assert.match(String(refused.error!.message), /due date/);
+    const listed = (await call("billing", "GET", S.auth)).body.data!.invoices as Array<{ id: string; status: string; due_date: string }>;
+    const view = activationInvoices(listed);
+    assert.strictEqual(view.open, undefined);
+    assert.strictEqual(view.expired?.id, old.id);
+
+    // Choosing the plan again voids the old invoice and gives a payable one
+    const again = await call("billing/invoices", "POST", S.auth, { plan_id: SELF_SERVE_TRIAL_PLAN_ID, billing_period: "MONTHLY" });
+    assert.strictEqual(again.status, 201, JSON.stringify(again.body));
+    const after = db.getBillingInvoices(S.tenantId);
+    assert.strictEqual(after.find((i) => i.id === old.id)!.status, "VOID");
+    const next = activationInvoices(after);
+    assert.ok(next.open && next.open.id !== old.id && next.expired === undefined);
+    await expect402(S.auth, "WORKSPACE_PAYMENT_REQUIRED", "/activate");
   });
 
   console.log(`\n${BOLD}====================================================${RESET}`);

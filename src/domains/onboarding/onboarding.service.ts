@@ -17,6 +17,8 @@ import { AuditService } from "@/domains/audit/service";
 import { productRepository } from "@/domains/catalog/product.repository";
 import { orderRepository } from "@/domains/orders/order.repository";
 import { AppError } from "@/lib/errors";
+import { WorkspaceAccessService } from "@/domains/billing/workspace-access.service";
+import { PlatformEntitlementService } from "@/domains/platform/services/platform-entitlement.service";
 
 export const ONBOARDING_STEPS = ["welcome", "shop", "delivery", "try", "plan"] as const;
 export type OnboardingStep = (typeof ONBOARDING_STEPS)[number];
@@ -31,6 +33,11 @@ interface OnboardingState {
   step: OnboardingStep;
   started_at: string;
   completed_at: string | null;
+  /**
+   * When the owner folded the setup guide away ("Hide"). Folding is reversible: the guide stays reachable from the
+   * dashboard bar and the navigation until every required item is done. Stored under its original name, so workspaces
+   * that hid it before this change see it folded, not gone.
+   */
   checklist_dismissed_at: string | null;
   /** Set when the owner chose to stay on Free (no subscription is created for that). */
   free_plan_chosen_at: string | null;
@@ -41,8 +48,10 @@ export const OnboardingUpdateSchema = z
     step: z.enum(ONBOARDING_STEPS),
     /** Finishes onboarding; the dashboard shows the launch checklist from then on. */
     complete: z.literal(true),
-    /** Hides the launch checklist card for good. */
+    /** Folds the setup guide away (same as checklist_collapsed: true). Kept for older clients. */
     dismiss_checklist: z.literal(true),
+    /** Folds (true) or unfolds (false) the setup guide. It goes away for good only when every required item is done. */
+    checklist_collapsed: z.boolean(),
     /** The owner chose to stay on the Free plan. */
     choose_free_plan: z.literal(true),
     language: z.enum(SHOP_LANGUAGES),
@@ -61,6 +70,8 @@ export interface ChecklistItem {
   label: string;
   hint: string;
   done: boolean;
+  /** Required items decide when setup is finished; optional ones (the first order) can't be done by the owner. */
+  required: boolean;
   /** Where in the app the owner finishes this item. */
   href: string;
 }
@@ -70,8 +81,14 @@ export interface OnboardingStatus {
   state: OnboardingState | null;
   /** True while a self-registered workspace has not finished the setup steps. */
   needs_onboarding: boolean;
-  /** True when the launch checklist card should show: onboarding started, items left, not dismissed. */
+  /** True while the setup guide exists: onboarding finished and a required item is still open (folded or not). */
   show_checklist: boolean;
+  /** True when the owner folded the guide away; it then shows as a slim bar and a navigation entry. */
+  checklist_collapsed: boolean;
+  /** Every required item is done: the guide is gone for good. Computed from real data on each read. */
+  setup_finished: boolean;
+  required_done: number;
+  required_total: number;
   profile: {
     shop_name: string;
     language: string;
@@ -122,21 +139,40 @@ export class OnboardingService {
     const [productCount, orderCount] = await Promise.all([productRepository.countByTenant(tenantId), orderRepository.countByTenant(tenantId)]);
     const channelCount = db.getConnectedChannels(tenantId).filter((c) => c.status === "ACTIVE").length;
 
+    // A plan counts once it actually applies (paid, or a trial that hasn't run out). Staying on Free counts only where
+    // the paywall doesn't apply.
+    const paywalled = WorkspaceAccessService.isPaywalled(tenantId);
+    const planDone = PlatformEntitlementService.planApplicability(tenantId).applies || (!paywalled && Boolean(state?.free_plan_chosen_at));
+
     const checklist: ChecklistItem[] = [
-      { id: "shop", label: "Shop name and category", hint: "Who you are and what you sell", done: Boolean(tenant.name?.trim()) && category !== null, href: "/onboarding" },
-      { id: "delivery", label: "Delivery charges", hint: "Inside and outside Dhaka", done: deliveryFeesSet, href: "/settings" },
-      { id: "payments", label: "A way to get paid", hint: "bKash, Nagad or Rocket number, or a payment gateway", done: hasWallet || hasGateway, href: "/payments" },
-      { id: "product", label: "Your first product", hint: "Your assistant can only sell what's in your catalog", done: productCount > 0, href: "/products" },
-      { id: "channel", label: "Connect a sales channel", hint: "Facebook Page, Instagram or WhatsApp", done: channelCount > 0, href: "/connector" },
-      { id: "plan", label: "Choose a plan or start your trial", hint: "Free, a paid plan or a free trial", done: Boolean(db.findSubscriptionByTenantId(tenantId) || state?.free_plan_chosen_at), href: "/settings/billing" },
-      { id: "first_order", label: "Get your first order", hint: "Ticks itself when a customer orders", done: orderCount > 0, href: "/orders" },
+      { id: "shop", label: "Shop name and category", hint: "Who you are and what you sell", done: Boolean(tenant.name?.trim()) && category !== null, href: "/onboarding", required: true },
+      { id: "delivery", label: "Delivery charges", hint: "Inside and outside Dhaka", done: deliveryFeesSet, href: "/settings", required: true },
+      { id: "payments", label: "A way to get paid", hint: "bKash, Nagad or Rocket number, or a payment gateway", done: hasWallet || hasGateway, href: "/payments", required: true },
+      { id: "product", label: "Your first product", hint: "Your assistant can only sell what's in your catalog", done: productCount > 0, href: "/products", required: true },
+      { id: "channel", label: "Connect a sales channel", hint: "Facebook Page, Instagram or WhatsApp", done: channelCount > 0, href: "/connector", required: true },
+      {
+        id: "plan",
+        label: paywalled ? "Pay for your plan" : "Choose a plan or start your trial",
+        hint: paywalled ? "Your workspace opens when the first invoice is paid" : "Free, a paid plan or a free trial",
+        done: planDone,
+        href: "/settings/billing",
+        required: true,
+      },
+      { id: "first_order", label: "Get your first order", hint: "Ticks itself when a customer orders", done: orderCount > 0, href: "/orders", required: false },
     ];
     const doneCount = checklist.filter((item) => item.done).length;
+    const required = checklist.filter((item) => item.required);
+    const requiredDone = required.filter((item) => item.done).length;
+    const setupFinished = Boolean(state?.completed_at) && requiredDone === required.length;
 
     return {
       state,
       needs_onboarding: Boolean(state && !state.completed_at),
-      show_checklist: Boolean(state && state.completed_at && !state.checklist_dismissed_at && doneCount < checklist.length),
+      show_checklist: Boolean(state && state.completed_at && !setupFinished),
+      checklist_collapsed: Boolean(state?.checklist_dismissed_at),
+      setup_finished: setupFinished,
+      required_done: requiredDone,
+      required_total: required.length,
       profile: {
         shop_name: tenant.name,
         language: tenant.language ?? "bn",
@@ -159,11 +195,16 @@ export class OnboardingService {
     const current = readState((tenant.settings ?? {}) as Record<string, unknown>);
     // Only self-registered shops have onboarding; older workspaces change these things in Settings
     if (!current) throw new AppError("ONBOARDING_NOT_AVAILABLE", "This workspace doesn't use shop setup. Change these in Settings.", 409);
+    // A workspace that signed up publicly needs a paid plan (or a trial): staying on Free isn't offered
+    if (input.choose_free_plan && WorkspaceAccessService.isPaywalled(tenantId)) {
+      throw new AppError("PAID_PLAN_REQUIRED", "Choose a paid plan or start your free trial to open your workspace.", 409);
+    }
     const next: OnboardingState = {
       ...current,
       ...(input.step ? { step: input.step } : {}),
       ...(input.complete ? { completed_at: current.completed_at ?? now } : {}),
-      ...(input.dismiss_checklist ? { checklist_dismissed_at: now } : {}),
+      ...(input.dismiss_checklist || input.checklist_collapsed === true ? { checklist_dismissed_at: current.checklist_dismissed_at ?? now } : {}),
+      ...(input.checklist_collapsed === false ? { checklist_dismissed_at: null } : {}),
       ...(input.choose_free_plan ? { free_plan_chosen_at: current.free_plan_chosen_at ?? now } : {}),
     };
 

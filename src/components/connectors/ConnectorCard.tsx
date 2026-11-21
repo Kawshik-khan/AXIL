@@ -3,6 +3,7 @@
 import React from "react";
 import { ExternalLink, Link2 } from "lucide-react";
 import styles from "./ConnectorCard.module.css";
+import { BrandIcon, type Brand } from "@/components/brand/BrandIcon";
 
 export type ConnectorTone = "ok" | "warn" | "none";
 
@@ -17,6 +18,21 @@ const MARKS: Record<string, { text: string; className: string }> = {
   pathao: { text: "P", className: styles.markPathao },
   redx: { text: "RX", className: styles.markRedx },
   dhl_express: { text: "DHL", className: styles.markDhl },
+};
+
+/** Brand logos; a provider listed here shows its logo instead of the lettered tile. */
+const LOGOS: Record<string, Brand> = {
+  meta_graph: "facebook",
+  whatsapp_cloud: "whatsapp",
+  telegram: "telegram",
+  bkash: "bkash",
+  sslcommerz: "sslcommerz",
+  steadfast: "steadfast",
+};
+
+/** A second logo tucked behind the first, for a connector that covers two brands (Meta: Facebook and Instagram). */
+const SECOND_LOGOS: Record<string, Brand> = {
+  meta_graph: "instagram",
 };
 
 function initials(name: string): string {
@@ -70,14 +86,21 @@ export function ConnectorCard({
   onGuide: () => void;
 }) {
   const mark = MARKS[providerId];
+  const logo = LOGOS[providerId];
+  const secondLogo = SECOND_LOGOS[providerId];
   const dot = paused ? styles.dotPaused : tone === "ok" ? styles.dotOk : tone === "warn" ? styles.dotWarn : null;
 
   return (
     <article className={styles.card} aria-label={`${name}${stateText ? `: ${stateText}` : ""}`}>
       <div className={styles.body}>
         <div className={styles.top}>
-          <span className={styles.markWrap} aria-hidden="true">
-            <span className={`${styles.mark} ${mark?.className ?? ""}`}>{mark ? mark.text : initials(name)}</span>
+          <span className={`${styles.markWrap} ${secondLogo ? styles.markWrapPair : ""}`} aria-hidden="true">
+            {secondLogo && <BrandIcon brand={secondLogo} size={36} className={`${styles.logo} ${styles.logoSecond}`} />}
+            {logo ? (
+              <BrandIcon brand={logo} size={36} className={styles.logo} />
+            ) : (
+              <span className={`${styles.mark} ${mark?.className ?? ""}`}>{mark ? mark.text : initials(name)}</span>
+            )}
             {dot && <span className={`${styles.dot} ${dot}`} />}
           </span>
           <button type="button" className={styles.linkOut} onClick={onGuide} aria-label={`${name} setup guide`} title="Setup guide">

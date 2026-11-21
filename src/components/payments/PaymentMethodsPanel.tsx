@@ -8,6 +8,7 @@ import { Switch } from "@/components/ui/Switch/Switch";
 import { ErrorState, LoadingSkeleton, PermissionDenied } from "@/components/ui/States/States";
 import { api, formatDateTime, GATEWAY_NAMES, type ApiFailure } from "./api";
 import styles from "./Payments.module.css";
+import { BrandIcon } from "@/components/brand/BrandIcon";
 
 type Provider = "SSLCOMMERZ" | "BKASH";
 type AccountType = "PERSONAL" | "MERCHANT";
@@ -258,6 +259,7 @@ export function PaymentMethodsPanel({ canEdit }: { canEdit: boolean }) {
             key={provider}
             span={6}
             title={`${GATEWAY_NAMES[provider]} checkout`}
+            icon={<BrandIcon brand={provider === "BKASH" ? "bkash" : "sslcommerz"} size={32} />}
             subtitle={GATEWAY_ABOUT[provider]}
             action={
               <span className={`${styles.pill} ${view.enabled ? styles.pillSuccess : ""}`}>
