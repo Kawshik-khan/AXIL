@@ -32,7 +32,26 @@ const ATTEMPT_WINDOW_MS = 24 * 60 * 60 * 1000;
 /** An unpaid attempt is asked about at the gateway for this long (a bKash payment id lives 24 hours), then left alone. */
 export const ATTEMPT_CONFIRM_WINDOW_MS = 48 * 60 * 60 * 1000;
 
-const recentAttempts = (attempts: GatewayPaymentAttemptRecord[]) => attempts.filter((a) => Date.parse(a.created_at) > Date.now() - ATTEMPT_WINDOW_MS).length;
+/** Attempts one reconcile run asks about (oldest first); a second run picks up the rest. */
+export const RECONCILE_BATCH_LIMIT = 50;
+/** A run stops starting new gateway calls after this long (a hanging gateway); the rest are reported as deferred. */
+export const RECONCILE_TIME_BUDGET_MS = 60_000;
+
+export interface ReconcileSummary {
+  checked: number;
+  paid: number;
+  /** Sandbox payments the gateway confirmed; recorded, nothing marked paid (ADR-123). */
+  test: number;
+  closed: number;
+  still_open: number;
+  errors: number;
+  /** Not asked this run: the time budget ran out. */
+  deferred: number;
+  /** The invoices this run settled, for the operator's audit row. */
+  settled: Array<{ attempt_id: string; tenant_id: string; invoice_id: string }>;
+}
+
+const recentAttempts =(attempts: GatewayPaymentAttemptRecord[]) => attempts.filter((a) => Date.parse(a.created_at) > Date.now() - ATTEMPT_WINDOW_MS).length;
 
 export interface GatewayOutcome {
   /** TEST: the gateway's sandbox confirmed the payment and nothing was marked paid. */
@@ -379,6 +398,53 @@ export class GatewayPaymentService {
       },
       created_at: now,
     });
+  }
+
+  /**
+   * Asks the gateway again about subscription attempts nobody came back for (the payer closed the tab and the IPN was
+   * lost). Each attempt goes through `complete`, so the same checks apply and a payment settles at most once. Only
+   * attempts older than `olderThanMinutes` (a payer may still be on the gateway's page) and inside the confirm window
+   * are asked; an unpaid answer leaves the attempt open, so nothing a payer could still finish is closed here.
+   */
+  public static async reconcilePlatformAttempts(olderThanMinutes: number): Promise<ReconcileSummary> {
+    const now = Date.now();
+    const cutoff = now - Math.max(1, olderThanMinutes) * 60_000;
+    const due = db
+      .getUnpaidPlatformGatewayAttempts()
+      .filter((a) => {
+        const created = Date.parse(a.created_at);
+        return created <= cutoff && created >= now - ATTEMPT_CONFIRM_WINDOW_MS;
+      })
+      .sort((a, b) => a.created_at.localeCompare(b.created_at))
+      .slice(0, RECONCILE_BATCH_LIMIT);
+
+    const summary: ReconcileSummary = { checked: 0, paid: 0, test: 0, closed: 0, still_open: 0, errors: 0, deferred: 0, settled: [] };
+    const deadline = Date.now() + RECONCILE_TIME_BUDGET_MS;
+    for (const attempt of due) {
+      if (Date.now() > deadline) {
+        summary.deferred++;
+        continue;
+      }
+      summary.checked++;
+      try {
+        const result = await this.complete(attempt.provider, attempt.id, {});
+        if (result.status === "PAID") {
+          summary.paid++;
+          summary.settled.push({ attempt_id: attempt.id, tenant_id: attempt.tenant_id, invoice_id: attempt.reference_id });
+        }
+        else if (result.status === "TEST") summary.test++;
+        else if (result.status === "FAILED" || result.status === "CANCELLED") summary.closed++;
+        else summary.still_open++;
+      } catch (err) {
+        summary.errors++;
+        logger.warn("billing.gateway.reconcile_failed", {
+          attempt_id: attempt.id,
+          provider: attempt.provider,
+          error: err instanceof Error ? err.message.slice(0, 160) : "unknown",
+        });
+      }
+    }
+    return summary;
   }
 
   /** Workspace → platform: the invoice is paid and the plan applies. */

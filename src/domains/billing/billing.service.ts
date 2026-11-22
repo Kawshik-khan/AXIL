@@ -26,7 +26,7 @@ import { PlatformSettingsService } from "@/domains/platform/services/platform-se
 import { AuditService } from "@/domains/audit/service";
 import { WorkspaceAccessService, type WorkspaceAccess } from "@/domains/billing/workspace-access.service";
 import { isFeatureEnabled } from "@/lib/safety-gate";
-import { platformGateways, platformManualAccounts, type PlatformManualAccounts } from "@/domains/payments/gateways/gateway-accounts";
+import { platformBillingConfigured, platformGateways, platformManualAccounts, type PlatformManualAccounts } from "@/domains/payments/gateways/gateway-accounts";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** Days an issued invoice stays payable before its due date passes. Business config lives in code (non-negotiable 6). */
@@ -98,6 +98,23 @@ function planLimits(version: PlanVersionRecord): PlanLimit[] {
 export const SELF_SERVE_TRIAL_PLAN_ID = "GROWTH";
 /** Platform feature flag that turns self-serve trials off when an operator creates it disabled. */
 export const SELF_SERVE_TRIAL_FLAG = "billing.self_serve_trial";
+/** Platform setting: offer the trial anyway while the install has no way to pay (declared in settings-registry.ts). */
+export const TRIAL_WHEN_UNPAYABLE_SETTING = "billing.trial_when_unpayable";
+/** Platform setting: where a workspace that can't pay is sent for help (WhatsApp number or email; empty = none). */
+export const SUPPORT_CONTACT_SETTING = "billing.support_contact";
+
+export interface SupportContact {
+  kind: "WHATSAPP" | "EMAIL";
+  value: string;
+}
+
+/** The billing support contact in force, typed for the activation page; null when none is set. */
+export function billingSupportContact(): SupportContact | null {
+  const value = String(PlatformSettingsService.getEffectiveSetting<string>(SUPPORT_CONTACT_SETTING) ?? "").trim();
+  if (/^01[3-9]\d{8}$/.test(value)) return { kind: "WHATSAPP", value };
+  if (/^[A-Za-z0-9._+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}$/.test(value)) return { kind: "EMAIL", value };
+  return null;
+}
 
 export interface TrialOffer {
   plan_id: string;
@@ -120,6 +137,10 @@ export interface BillingOverview {
   access: WorkspaceAccess;
   /** A free trial this workspace can start itself; null once it has had any subscription. */
   trial_offer: TrialOffer | null;
+  /** Where to get help paying (the platform's billing.support_contact); null when none is set. */
+  support_contact: SupportContact | null;
+  /** Who the invoice is for, from the session: the workspace, and the signed-in payer the gateway sends the receipt to. */
+  billed_to: { workspace_name: string; payer_name: string; payer_email: string };
 }
 
 function offeredTo(plan: PlanRecord, tenantId: string): boolean {
@@ -185,6 +206,8 @@ export class BillingService {
       invoices: db.getBillingInvoices(tenantId),
       payment_options: { gateways: platformGateways(), manual: platformManualAccounts() },
       trial_offer: BillingService.trialOffer(tenantId),
+      support_contact: billingSupportContact(),
+      billed_to: { workspace_name: context.tenant.name, payer_name: context.user.name, payer_email: context.user.email },
       access: WorkspaceAccessService.resolve(tenantId),
     };
   }
@@ -195,8 +218,12 @@ export class BillingService {
    * Length: the plan version's trial_days, else the platform's billing.trial_default_days.
    */
   public static trialOffer(tenantId: string): TrialOffer | null {
-    // Operators can switch self-serve trials off (feature flag; no flag = on)
-    if (!isFeatureEnabled(SELF_SERVE_TRIAL_FLAG, tenantId)) return null;
+    // Operators can switch self-serve trials off (feature flag; no flag = on). The safety net: while the install has
+    // no way to pay at all, the trial is offered anyway (billing.trial_when_unpayable), so nobody is locked out.
+    if (!isFeatureEnabled(SELF_SERVE_TRIAL_FLAG, tenantId)) {
+      const safetyNet = PlatformSettingsService.getEffectiveSetting<boolean>(TRIAL_WHEN_UNPAYABLE_SETTING) === true && !platformBillingConfigured();
+      if (!safetyNet) return null;
+    }
     if (db.findSubscriptionByTenantId(tenantId)) return null;
     // A workspace an operator put on a paid plan directly (no subscription record) keeps it
     const currentPlan = db.findTenantById(tenantId)?.plan_id;

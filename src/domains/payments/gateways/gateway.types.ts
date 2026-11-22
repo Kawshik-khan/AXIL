@@ -62,8 +62,9 @@ export interface PaymentGatewayAdapter {
 
 /** The gateway refused the request or answered something unusable. The message never carries the gateway's body. */
 export class PaymentGatewayError extends AppError {
-  constructor(provider: GatewayProvider, what: string) {
-    super("PAYMENT_GATEWAY_ERROR", `${provider === "BKASH" ? "bKash" : "SSLCommerz"} ${what}. No payment was taken.`, 502, { provider });
+  /** `outcome` replaces "No payment was taken." where that may not be true (asking about a payment already made). */
+  constructor(provider: GatewayProvider, what: string, outcome = "No payment was taken.") {
+    super("PAYMENT_GATEWAY_ERROR", `${provider === "BKASH" ? "bKash" : "SSLCommerz"} ${what}. ${outcome}`, 502, { provider });
   }
 }
 

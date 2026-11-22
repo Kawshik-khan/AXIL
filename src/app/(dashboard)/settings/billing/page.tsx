@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { ErrorState, LoadingSkeleton, PermissionDenied } from "@/components/ui/States/States";
-import { InvoicePayCard, type BillingInvoice, type BillingPaymentOptions } from "@/components/payments/InvoicePayCard";
+import { InvoicePayCard, type BillingInvoice, type BillingPaymentOptions, type BillingSupportContact, type BilledTo } from "@/components/payments/InvoicePayCard";
 import { api, formatBdt, formatDate, GATEWAY_NAMES, type ApiFailure } from "@/components/payments/api";
 import { CurrentPlan, PlanCard, yearlySaving, type Period, type PlanOption, type Subscription, type WorkspaceUsage } from "@/components/billing/PlanCards";
 import { PERMISSIONS } from "@/lib/permissions";
@@ -17,6 +17,8 @@ interface Overview {
   plans: PlanOption[];
   invoices: BillingInvoice[];
   payment_options: BillingPaymentOptions;
+  support_contact: BillingSupportContact | null;
+  billed_to?: BilledTo;
   usage: WorkspaceUsage[];
 }
 
@@ -141,7 +143,7 @@ export default function BillingPage() {
 
       {open && (
         <div className={legacy.grid}>
-          <InvoicePayCard invoice={open} planName={planName(open.plan_id)} options={options} canPay={canPay} onChanged={load} />
+          <InvoicePayCard invoice={open} planName={planName(open.plan_id)} options={options} canPay={canPay} onChanged={load} supportContact={overview.support_contact} billedTo={overview.billed_to} />
         </div>
       )}
 

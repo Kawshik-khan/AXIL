@@ -1,0 +1,577 @@
+<!doctype html>
+<html lang="en" data-console-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Mockup · Plans &amp; Billing → Payment methods · CommerceOS console</title>
+<style>
+/* Token values copied from src/styles/tokens.css (light + console dark theme). */
+:root {
+  --color-lime-primary:#C7F900; --color-lime-soft:#EFFFAD; --color-lime-ink:#4A5E00;
+  --color-bg-base:#F5F6F3; --color-surface-pure:#FFFFFF; --color-surface-soft:#FAFBF8;
+  --color-dark-card:#1D1E22; --color-border-dark:rgba(255,255,255,.10);
+  --color-text-primary:#202124; --color-text-secondary:#70736F; --color-text-muted:#9A9D98;
+  --color-text-inverse:#FFFFFF; --color-text-dark-muted:rgba(255,255,255,.6);
+  --color-border-subtle:rgba(30,32,30,.08); --color-border-medium:rgba(30,32,30,.14);
+  --color-success:#4CAF70; --color-success-bg:rgba(76,175,112,.12); --color-success-ink:#047857;
+  --color-warning:#F3B63F; --color-warning-bg:rgba(243,182,63,.12); --color-warning-ink:#9A5B00;
+  --color-danger:#EF7F82; --color-danger-bg:rgba(239,127,130,.12); --color-danger-ink:#B42318;
+  --color-info:#6C9EFF; --color-info-bg:rgba(108,158,255,.12); --color-info-ink:#1D4ED8;
+  --color-ink-action:#16171A; --color-ink-action-hover:#2A2C30; --color-ink-action-text:#FFFFFF;
+  --color-brand-bkash:#E2136E; --color-brand-nagad:#EC1C24; --color-brand-mark-text:#FFFFFF;
+  --color-track:#F1F3F5;
+  --glass-bg:rgba(255,255,255,.78); --glass-border:1px solid rgba(255,255,255,.65);
+  --glass-shadow-floating:0 14px 40px rgba(0,0,0,.12);
+  --card-sheen:none; --page-backdrop:none;
+  --font-family-base:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --font-family-mono:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;
+  --radius-sm:10px; --radius-control:12px; --radius-card:18px; --radius-dock:28px; --radius-pill:9999px;
+  --shadow-sm:0 1px 3px rgba(0,0,0,.04),0 1px 2px rgba(0,0,0,.02);
+  --mk-white-a850:rgba(255,255,255,.85); --mk-white-a600:rgba(255,255,255,.6); --mk-black-a070:rgba(0,0,0,.07); --mk-black-a350:rgba(0,0,0,.35);
+  --demo-bar:#0B0C0E;
+}
+html[data-console-theme="dark"] {
+  color-scheme:dark;
+  --color-bg-base:#0A0B0D; --color-surface-pure:#141518; --color-surface-soft:#1B1C20; --color-dark-card:#1F2024;
+  --color-text-primary:#F3F4EF; --color-text-secondary:#B4B7B0; --color-text-muted:#8A8D86;
+  --color-border-subtle:rgba(255,255,255,.07); --color-border-medium:rgba(255,255,255,.14);
+  --color-lime-ink:#D8FF38; --color-info-ink:#93B8FF; --color-success-ink:#5FD79A; --color-warning-ink:#FFC15C; --color-danger-ink:#FF9EA1;
+  --color-ink-action:#F3F4EF; --color-ink-action-hover:#FFFFFF; --color-ink-action-text:#0A0B0D;
+  --color-track:rgba(255,255,255,.07);
+  --glass-bg:rgba(22,23,26,.78); --glass-border:1px solid rgba(255,255,255,.08); --glass-shadow-floating:0 14px 40px rgba(0,0,0,.5);
+  --card-sheen:linear-gradient(180deg,rgba(255,255,255,.045) 0%,rgba(255,255,255,.012) 100%);
+  --page-backdrop:radial-gradient(1100px 620px at 8% -8%,rgba(199,249,0,.075),transparent 62%),radial-gradient(900px 600px at 100% 0%,rgba(108,158,255,.07),transparent 60%);
+  --mk-white-a850:rgba(255,255,255,.08); --mk-white-a600:rgba(255,255,255,.04);
+}
+* { box-sizing:border-box; }
+body { margin:0; font-family:var(--font-family-base); font-size:14px; line-height:20px; color:var(--color-text-primary);
+  background:var(--page-backdrop), var(--color-bg-base); min-height:100vh; }
+button, input, textarea, select { font:inherit; color:inherit; }
+code, .mono { font-family:var(--font-family-mono); font-size:12px; }
+
+/* ---- Demo controls (not part of the design) ---- */
+.demo { position:sticky; top:0; z-index:50; display:flex; gap:12px; align-items:center; flex-wrap:wrap; padding:8px 24px;
+  background:var(--demo-bar); color:#FFFFFF; font-size:12px; }
+.demo strong { color:var(--color-lime-primary); font-weight:600; letter-spacing:.04em; text-transform:uppercase; }
+.demo .seg { display:flex; gap:2px; background:rgba(255,255,255,.08); border-radius:var(--radius-pill); padding:2px; }
+.demo .seg button { border:0; background:transparent; color:rgba(255,255,255,.7); padding:4px 10px; border-radius:var(--radius-pill); cursor:pointer; }
+.demo .seg button[aria-pressed="true"] { background:#FFFFFF; color:#0B0C0E; }
+.demo .spacer { flex:1; }
+
+/* ---- Top bar: transparent, ⌘K search ---- */
+.topbar { display:flex; align-items:center; justify-content:space-between; padding:20px 40px 0; }
+.brand { display:flex; align-items:center; gap:10px; font-weight:600; }
+.logo { width:32px; height:32px; border-radius:10px; background:#141512; display:grid; place-items:center; }
+.logo i { width:14px; height:14px; border-radius:50%; border:3px solid #F3F5EC; border-right-color:transparent; position:relative; }
+.logo i::after { content:""; position:absolute; width:4px; height:4px; background:#C7F900; border-radius:50%; right:-3px; top:2px; }
+.consoleTag { font-size:12px; font-weight:500; color:var(--color-text-secondary); padding:2px 8px; border:1px solid var(--color-border-medium); border-radius:var(--radius-pill); }
+.search { display:flex; align-items:center; gap:8px; width:320px; padding:8px 14px; border-radius:var(--radius-pill);
+  background:var(--glass-bg); border:var(--glass-border); box-shadow:0 0 0 1px var(--color-border-subtle); color:var(--color-text-muted); }
+.search kbd { margin-left:auto; font-family:var(--font-family-mono); font-size:11px; border:1px solid var(--color-border-medium); border-radius:6px; padding:0 5px; }
+.avatar { width:32px; height:32px; border-radius:50%; background:var(--color-ink-action); color:var(--color-ink-action-text); display:grid; place-items:center; font-size:12px; font-weight:600; }
+
+/* ---- Page ---- */
+main { max-width:1320px; margin:0 auto; padding:28px 40px 140px; display:flex; flex-direction:column; gap:20px; }
+.pageHeader { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; }
+.pageTitle { font-size:clamp(32px,2.6vw,44px); line-height:1.05; font-weight:500; letter-spacing:-.035em; margin:0; }
+.pageActions { display:flex; gap:8px; }
+.btn { display:inline-flex; align-items:center; gap:6px; height:34px; padding:0 14px; border-radius:var(--radius-pill); border:1px solid var(--color-border-medium);
+  background:var(--color-surface-pure); cursor:pointer; font-weight:500; font-size:13px; white-space:nowrap; }
+.btn:hover { background:var(--color-surface-soft); }
+.btn.glass { background:linear-gradient(160deg,var(--mk-white-a850),var(--mk-white-a600)); backdrop-filter:blur(14px) saturate(150%);
+  border:1px solid var(--mk-white-a850); box-shadow:0 0 0 1px var(--mk-black-a070), 0 8px 24px -14px var(--mk-black-a350); }
+.btn.primary { background:var(--color-ink-action); color:var(--color-ink-action-text); border-color:var(--color-ink-action); }
+.btn.primary:hover { background:var(--color-ink-action-hover); }
+.btn.ghost { border-color:transparent; background:transparent; }
+.btn.ghost:hover { background:var(--color-track); }
+.btn.sm { height:28px; padding:0 10px; font-size:12px; }
+.btn:disabled { opacity:.45; cursor:not-allowed; }
+
+.banner { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 16px; border-radius:var(--radius-control); font-weight:500; }
+.banner.danger { background:var(--color-danger-bg); border:1px solid var(--color-danger); }
+.banner.ok { background:var(--color-success-bg); border:1px solid var(--color-success); }
+.banner.warn { background:var(--color-warning-bg); border:1px solid var(--color-warning); }
+.banner span { font-weight:400; }
+
+.tabs { display:flex; gap:4px; border-bottom:1px solid var(--color-border-subtle); overflow-x:auto; }
+.tab { border:0; border-bottom:2px solid transparent; background:transparent; padding:8px 12px; font-weight:500; color:var(--color-text-secondary); cursor:pointer; white-space:nowrap; }
+.tab.active { color:var(--color-text-primary); border-bottom-color:var(--color-text-primary); }
+.tab .dot { display:inline-block; width:6px; height:6px; border-radius:50%; background:var(--color-danger); margin-left:6px; vertical-align:middle; }
+
+/* ---- Bento ---- */
+.grid { display:grid; grid-template-columns:repeat(12,1fr); gap:16px; }
+.card { grid-column:span var(--span,12); background:var(--card-sheen), var(--color-surface-pure); border:1px solid var(--color-border-subtle);
+  border-radius:var(--radius-card); padding:20px; box-shadow:var(--shadow-sm); display:flex; flex-direction:column; gap:14px; min-width:0; }
+.card.dark { background:var(--color-dark-card); border-color:var(--color-border-dark); color:var(--color-text-inverse);
+  --color-success-ink:#5FD79A; --color-warning-ink:#FFC15C; --color-danger-ink:#FF9EA1; --color-lime-ink:#D8FF38; }
+.card.dark .sub { color:var(--color-text-dark-muted); }
+.cardHead { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
+.cardTitle { margin:0; font-size:16px; line-height:24px; font-weight:600; }
+.sub { margin:2px 0 0; color:var(--color-text-secondary); font-size:13px; }
+.kpiLabel { font-size:12px; font-weight:500; color:var(--color-text-secondary); text-transform:uppercase; letter-spacing:.02em; }
+.card.dark .kpiLabel { color:var(--color-text-dark-muted); }
+.kpiValue { font-size:32px; line-height:40px; font-weight:500; letter-spacing:-.02em; }
+.hint { font-size:12px; color:var(--color-text-muted); }
+
+.pill { display:inline-flex; align-items:center; gap:5px; padding:2px 9px; border-radius:var(--radius-pill); font-size:12px; font-weight:500; white-space:nowrap; }
+.pill::before { content:""; width:6px; height:6px; border-radius:50%; background:currentColor; }
+.pill.good { background:var(--color-success-bg); color:var(--color-success-ink); }
+.pill.warn { background:var(--color-warning-bg); color:var(--color-warning-ink); }
+.pill.bad { background:var(--color-danger-bg); color:var(--color-danger-ink); }
+.pill.info { background:var(--color-info-bg); color:var(--color-info-ink); }
+.pill.neutral { background:var(--color-track); color:var(--color-text-secondary); }
+.pill.lime { background:var(--color-lime-primary); color:#16171A; }
+.pill.lime::before { background:#16171A; }
+
+/* readiness card */
+.readiness { display:grid; grid-template-columns:1.1fr 1fr; gap:24px; align-items:stretch; }
+.bigState { display:flex; flex-direction:column; gap:8px; }
+.bigState h2 { margin:0; font-size:28px; line-height:34px; font-weight:500; letter-spacing:-.02em; }
+.checks { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:10px; }
+.checks li { display:flex; gap:10px; align-items:flex-start; }
+.tick { flex:none; width:20px; height:20px; border-radius:50%; display:grid; place-items:center; font-size:12px; font-weight:700; }
+.tick.on { background:var(--color-lime-primary); color:#16171A; }
+.tick.off { background:rgba(255,255,255,.1); color:var(--color-text-dark-muted); }
+.checks small { display:block; color:var(--color-text-dark-muted); font-size:12px; }
+
+/* method rows */
+.methods { display:flex; flex-direction:column; }
+.method { display:grid; grid-template-columns:40px 1fr auto auto; gap:14px; align-items:center; padding:14px 0; border-top:1px solid var(--color-border-subtle); }
+.method:first-child { border-top:0; padding-top:4px; }
+.mark { width:40px; height:40px; border-radius:var(--radius-sm); display:grid; place-items:center; color:var(--color-brand-mark-text); font-weight:700; font-size:13px; }
+.mark.bkash { background:var(--color-brand-bkash); }
+.mark.nagad { background:var(--color-brand-nagad); }
+.mark.bank { background:var(--color-ink-action); color:var(--color-ink-action-text); }
+.mark.ssl { background:var(--color-info-bg); color:var(--color-info-ink); border:1px solid var(--color-border-subtle); }
+.methodName { font-weight:600; }
+.methodValue { color:var(--color-text-secondary); font-size:13px; }
+.methodValue.empty { color:var(--color-text-muted); font-style:italic; }
+.pending { margin-top:6px; display:flex; gap:8px; align-items:center; font-size:12px; color:var(--color-warning-ink); }
+
+.envList { margin:0; padding:10px 12px; border-radius:var(--radius-control); background:var(--color-surface-soft); border:1px dashed var(--color-border-medium); display:grid; gap:2px; }
+.envList code { color:var(--color-text-secondary); }
+
+/* toggle */
+.switchRow { display:flex; justify-content:space-between; gap:16px; align-items:flex-start; }
+.switch { flex:none; width:40px; height:24px; border-radius:var(--radius-pill); background:var(--color-track); border:1px solid var(--color-border-medium); position:relative; cursor:pointer; padding:0; }
+.switch::after { content:""; position:absolute; top:2px; left:2px; width:18px; height:18px; border-radius:50%; background:var(--color-surface-pure); box-shadow:var(--shadow-sm); transition:transform .2s; }
+.switch[aria-checked="true"] { background:var(--color-ink-action); border-color:var(--color-ink-action); }
+.switch[aria-checked="true"]::after { transform:translateX(16px); background:var(--color-ink-action-text); }
+.divider { height:1px; background:var(--color-border-subtle); }
+.field { display:flex; flex-direction:column; gap:6px; font-weight:500; font-size:13px; }
+.input { height:38px; padding:0 12px; border-radius:var(--radius-control); border:1px solid var(--color-border-medium); background:var(--color-surface-pure); }
+textarea.input { height:auto; padding:10px 12px; resize:vertical; }
+.input:focus { outline:2px solid var(--color-lime-primary); outline-offset:1px; }
+.inline { display:flex; gap:8px; align-items:center; }
+
+/* merchant preview */
+.previewFrame { border-radius:var(--radius-card); border:1px solid var(--color-border-medium); background:#EEEEEE; padding:18px; color:#202124; }
+.previewFrame .inv { background:#FFFFFF; border-radius:14px; padding:16px; display:flex; flex-direction:column; gap:12px; box-shadow:0 1px 3px rgba(0,0,0,.06); }
+.invHead { display:flex; justify-content:space-between; font-weight:600; font-size:13px; }
+.invHead small { display:block; font-weight:400; color:#70736F; font-size:11px; }
+.payBtn { display:flex; justify-content:space-between; align-items:center; padding:10px 12px; border:1px solid rgba(30,32,30,.14); border-radius:12px; font-size:12px; font-weight:500; }
+.payBtn span small { display:block; color:#9A9D98; font-weight:400; }
+.wallet { display:flex; justify-content:space-between; font-size:12px; padding:6px 0; border-bottom:1px solid rgba(30,32,30,.08); }
+.wallet b { font-family:var(--font-family-mono); }
+.stuckNote { padding:10px 12px; border-radius:12px; background:rgba(243,182,63,.14); border:1px solid #F3B63F; font-size:12px; }
+.miniCols { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+
+/* table */
+table { width:100%; border-collapse:collapse; }
+th { text-align:left; font-size:12px; font-weight:500; color:var(--color-text-secondary); padding:8px 10px; border-bottom:1px solid var(--color-border-subtle); }
+td { padding:10px; border-bottom:1px solid var(--color-border-subtle); font-size:13px; }
+tr:last-child td { border-bottom:0; }
+
+/* dialog */
+.scrim { position:fixed; inset:0; background:rgba(10,11,13,.45); backdrop-filter:blur(4px); display:none; place-items:center; z-index:80; }
+.scrim.open { display:grid; }
+.dialog { width:min(520px,92vw); background:var(--color-surface-pure); border:1px solid var(--color-border-subtle); border-radius:var(--radius-card); padding:22px; display:flex; flex-direction:column; gap:14px; box-shadow:var(--glass-shadow-floating); }
+.dialog h3 { margin:0; font-size:18px; font-weight:600; }
+.riskBox { padding:10px 12px; border-radius:var(--radius-control); background:var(--color-danger-bg); border:1px solid var(--color-danger); font-size:12px; }
+.diff { display:grid; grid-template-columns:auto 1fr; gap:4px 12px; font-size:13px; padding:10px 12px; border-radius:var(--radius-control); background:var(--color-surface-soft); }
+.diff dt { color:var(--color-text-secondary); }
+.diff dd { margin:0; font-family:var(--font-family-mono); font-size:12px; }
+.err { color:var(--color-danger-ink); font-size:12px; font-weight:400; }
+.dialogActions { display:flex; justify-content:flex-end; gap:8px; }
+
+/* ---- Floating circular dock ---- */
+.dock { position:fixed; bottom:20px; left:50%; transform:translateX(-50%); display:flex; gap:6px; padding:8px; border-radius:var(--radius-dock);
+  background:var(--glass-bg); border:var(--glass-border); box-shadow:var(--glass-shadow-floating); backdrop-filter:blur(18px); z-index:40; }
+.dock a { width:44px; height:44px; border-radius:50%; display:grid; place-items:center; color:var(--color-text-secondary); text-decoration:none; }
+.dock a:hover { background:var(--color-track); }
+.dock a.active { background:var(--color-ink-action); color:var(--color-ink-action-text); }
+.dock svg { width:20px; height:20px; }
+
+@media (max-width: 980px) {
+  .card { grid-column:span 12 !important; }
+  .readiness, .miniCols { grid-template-columns:1fr; }
+  .search { display:none; }
+  main, .topbar { padding-left:16px; padding-right:16px; }
+}
+</style>
+</head>
+<body>
+
+<div class="demo" role="region" aria-label="Mockup controls">
+  <strong>Mockup</strong>
+  <span>Scenario</span>
+  <div class="seg" id="scenario">
+    <button data-s="none" aria-pressed="true">Nothing set up</button>
+    <button data-s="manual" aria-pressed="false">Manual only</button>
+    <button data-s="full" aria-pressed="false">Gateway + manual</button>
+  </div>
+  <span>Theme</span>
+  <div class="seg" id="theme">
+    <button data-t="light" aria-pressed="true">Light</button>
+    <button data-t="dark" aria-pressed="false">Dark</button>
+  </div>
+  <span class="spacer"></span>
+  <span>Sample data, nothing is saved</span>
+</div>
+
+<header class="topbar">
+  <div class="brand"><span class="logo"><i></i></span>CommerceOS <span class="consoleTag">Platform console</span></div>
+  <div class="search">⌕ Search tenants, invoices, settings <kbd>⌘K</kbd></div>
+  <div class="avatar" title="Signed-in operator">OP</div>
+</header>
+
+<main>
+  <div class="pageHeader">
+    <h1 class="pageTitle">Plans &amp; Billing</h1>
+    <div class="pageActions">
+      <button class="btn glass">↻ Refresh</button>
+      <button class="btn primary">+ New plan</button>
+    </div>
+  </div>
+
+  <div id="topBanner"></div>
+
+  <nav class="tabs" aria-label="Billing sections">
+    <button class="tab">Plans</button>
+    <button class="tab">Entitlement catalog</button>
+    <button class="tab">Add-ons</button>
+    <button class="tab">Subscriptions</button>
+    <button class="tab">Invoices</button>
+    <button class="tab active" aria-current="page">Payment methods<span class="dot" id="tabDot"></span></button>
+    <button class="tab">Move tenants</button>
+  </nav>
+
+  <section class="grid">
+    <!-- 1. Readiness: can a new workspace pay right now? -->
+    <article class="card dark" style="--span:12">
+      <div class="readiness">
+        <div class="bigState">
+          <div class="kpiLabel">Can a new workspace pay for a plan?</div>
+          <h2 id="stateTitle"></h2>
+          <p class="sub" id="stateText"></p>
+          <div class="inline" style="margin-top:6px" id="stateStats"></div>
+        </div>
+        <ul class="checks" id="checks"></ul>
+      </div>
+    </article>
+
+    <!-- 2. Manual accounts (editable here, governed) -->
+    <article class="card" style="--span:7">
+      <div class="cardHead">
+        <div>
+          <h3 class="cardTitle">Send-money accounts</h3>
+          <p class="sub">Workspaces send the invoice amount here and submit the transaction ID. An operator confirms it in Invoices.</p>
+        </div>
+        <span class="pill bad">Critical · 2 operators</span>
+      </div>
+      <div class="methods" id="manualList"></div>
+      <p class="hint">Changing where money goes needs a reason and a second operator's approval of the exact value. Every change is in the audit log.</p>
+    </article>
+
+    <!-- 3. Online gateways (server environment, read-only here) -->
+    <article class="card" style="--span:5">
+      <div class="cardHead">
+        <div>
+          <h3 class="cardTitle">Online checkout</h3>
+          <p class="sub">CommerceOS's own merchant accounts. Credentials stay in the server environment and are never shown here.</p>
+        </div>
+      </div>
+      <div class="methods" id="gatewayList"></div>
+      <details>
+        <summary class="hint" style="cursor:pointer">How to connect a gateway</summary>
+        <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
+          <span class="hint">Set these on the server (Render → Environment), then redeploy. Use <code>sandbox</code> mode until the merchant account is approved.</span>
+          <div class="envList">
+            <code>PLATFORM_SSLCOMMERZ_STORE_ID</code><code>PLATFORM_SSLCOMMERZ_STORE_PASSWORD</code><code>PLATFORM_SSLCOMMERZ_MODE=live</code>
+            <code>PLATFORM_BKASH_APP_KEY · _APP_SECRET · _USERNAME · _PASSWORD</code><code>PLATFORM_BKASH_MODE=live</code>
+          </div>
+        </div>
+      </details>
+    </article>
+
+    <!-- 4. Access policy -->
+    <article class="card" style="--span:5">
+      <div class="cardHead">
+        <div>
+          <h3 class="cardTitle">Sign-up access</h3>
+          <p class="sub">What a new workspace gets before it has paid.</p>
+        </div>
+      </div>
+      <div class="switchRow">
+        <div>
+          <div style="font-weight:500">Require a paid plan after sign-up</div>
+          <div class="hint">Off: new shops get in without paying.</div>
+        </div>
+        <button class="switch" role="switch" aria-checked="true" id="paywall" aria-label="Require a paid plan after sign-up"></button>
+      </div>
+      <div class="divider"></div>
+      <div class="switchRow">
+        <div>
+          <div style="font-weight:500">Start a trial when no payment method is set up</div>
+          <div class="hint">A safety net: a new shop gets a trial instead of a locked page, until a way to pay exists.</div>
+        </div>
+        <button class="switch" role="switch" aria-checked="true" id="fallback" aria-label="Start a trial when no payment method is set up"></button>
+      </div>
+      <label class="field">Trial length
+        <div class="inline"><input class="input" style="width:90px" value="14" inputmode="numeric" aria-label="Trial days" /> <span class="hint">days (0–90)</span></div>
+      </label>
+      <div class="divider"></div>
+      <label class="field">Support contact shown on the activation page
+        <input class="input" value="+8801XXXXXXXXX (WhatsApp)" />
+        <span class="hint">Opens with the invoice number filled in.</span>
+      </label>
+    </article>
+
+    <!-- 5. What the merchant sees -->
+    <article class="card" style="--span:7">
+      <div class="cardHead">
+        <div>
+          <h3 class="cardTitle">What a new workspace sees</h3>
+          <p class="sub">The activation page with today's settings. Updates as you change them.</p>
+        </div>
+        <span class="pill neutral">Preview</span>
+      </div>
+      <div class="previewFrame" aria-label="Merchant activation preview">
+        <div class="inv" id="preview"></div>
+      </div>
+    </article>
+
+    <!-- 6. Waiting invoices -->
+    <article class="card" style="--span:12">
+      <div class="cardHead">
+        <div>
+          <h3 class="cardTitle">Workspaces waiting to pay</h3>
+          <p class="sub">Open invoices from sign-up. Contact them once a way to pay is set up.</p>
+        </div>
+        <button class="btn sm">Open Invoices tab →</button>
+      </div>
+      <table>
+        <thead><tr><th>Workspace</th><th>Plan</th><th>Invoice</th><th>Amount</th><th>Waiting since</th><th>Status</th></tr></thead>
+        <tbody id="waiting"></tbody>
+      </table>
+    </article>
+  </section>
+</main>
+
+<nav class="dock" aria-label="Console navigation">
+  <a href="#" title="Overview"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg></a>
+  <a href="#" title="Tenants"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 21V8l9-5 9 5v13"/><path d="M9 21v-6h6v6"/></svg></a>
+  <a href="#" class="active" title="Plans &amp; Billing"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="5" width="20" height="14" rx="3"/><path d="M2 10h20"/></svg></a>
+  <a href="#" title="AI"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5z"/></svg></a>
+  <a href="#" title="Security"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/></svg></a>
+  <a href="#" title="Settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg></a>
+</nav>
+
+<div class="scrim" id="scrim" role="dialog" aria-modal="true" aria-labelledby="dlgTitle">
+  <form class="dialog" id="dlg">
+    <h3 id="dlgTitle"></h3>
+    <div class="riskBox"><b>Critical change.</b> This changes where workspaces send money. It takes effect only after a second operator approves this exact value.</div>
+    <label class="field"><span id="dlgLabel"></span>
+      <input class="input" id="dlgValue" autocomplete="off" />
+      <textarea class="input" id="dlgBank" rows="3" style="display:none"></textarea>
+      <span class="err" id="dlgErr"></span>
+    </label>
+    <dl class="diff"><dt>Now</dt><dd id="dlgFrom"></dd><dt>After approval</dt><dd id="dlgTo">—</dd></dl>
+    <label class="field">Reason
+      <input class="input" id="dlgReason" placeholder="e.g. New merchant bKash account opened for subscriptions" />
+    </label>
+    <label class="field">Ticket (optional)<input class="input" placeholder="OPS-123" /></label>
+    <div class="dialogActions">
+      <button type="button" class="btn ghost" id="dlgCancel">Cancel</button>
+      <button type="submit" class="btn primary" id="dlgSubmit" disabled>Request approval</button>
+    </div>
+  </form>
+</div>
+
+<script>
+const SCENARIOS = {
+  none:   { manual: { bkash: null, nagad: null, bank: null }, gateways: { SSLCOMMERZ: null, BKASH: null } },
+  manual: { manual: { bkash: "01711-000000", nagad: null, bank: null }, gateways: { SSLCOMMERZ: null, BKASH: null } },
+  full:   { manual: { bkash: "01711-000000", nagad: "01811-000000", bank: "Dutch-Bangla Bank · CommerceOS Ltd · 123.110.000000 · Gulshan branch" },
+            gateways: { SSLCOMMERZ: "LIVE", BKASH: "SANDBOX" } },
+};
+const MANUAL_META = [
+  { key: "bkash", name: "bKash", mark: "bKash", cls: "bkash", label: "bKash personal or merchant number", setting: "billing.manual_bkash_number" },
+  { key: "nagad", name: "Nagad", mark: "N", cls: "nagad", label: "Nagad number", setting: "billing.manual_nagad_number" },
+  { key: "bank",  name: "Bank transfer", mark: "BANK", cls: "bank", label: "Bank, account name, account number, branch", setting: "billing.manual_bank_details" },
+];
+const GATEWAY_META = [
+  { key: "SSLCOMMERZ", name: "SSLCommerz", hint: "Cards, mobile banking, net banking", mark: "SSL", cls: "ssl" },
+  { key: "BKASH", name: "bKash checkout", hint: "Tokenized bKash payment", mark: "bKash", cls: "bkash" },
+];
+const WAITING = [
+  ["Rongdhonu Fashion", "Starter", "INV-202611-46377CBB", "৳1,999", "2 days"],
+  ["Dhaka Gadget Hub", "Growth", "INV-202611-91A2F0C1", "৳4,999", "5 hours"],
+  ["Nokshi Crafts", "Starter", "INV-202611-0D7E33A9", "৳1,999", "40 min"],
+];
+
+let state = structuredClone(SCENARIOS.none);
+let pending = {};          // key -> value awaiting a second operator
+let paywall = true, fallback = true;
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+function counts() {
+  const manual = Object.values(state.manual).filter(Boolean).length;
+  const gateways = Object.values(state.gateways).filter(Boolean).length;
+  const liveGateways = Object.values(state.gateways).filter((m) => m === "LIVE").length;
+  return { manual, gateways, liveGateways, any: manual + gateways > 0 };
+}
+
+function render() {
+  const c = counts();
+
+  // banner + tab dot
+  $("tabDot").style.display = c.any ? "none" : "inline-block";
+  $("topBanner").innerHTML = c.any ? "" :
+    `<div class="banner danger" role="alert"><div><b>Workspaces can't pay for a plan.</b> <span>No subscription payment method is set up${paywall && !fallback ? ", so new shops stay locked on the activation page." : "."}</span></div><button class="btn sm primary" onclick="openDialog('bkash')">Add bKash number</button></div>`;
+
+  // readiness
+  let title, text, pill;
+  if (!c.any && paywall && !fallback) { title = "No. New shops are locked out."; text = "Sign-up asks for payment but there is no way to pay. Add a send-money account or connect a gateway."; pill = '<span class="pill bad">Blocking sign-ups</span>'; }
+  else if (!c.any) { title = "Not yet. New shops start on a trial."; text = "Nobody is locked out, but nobody can pay either. Add a way to pay before trials end."; pill = '<span class="pill warn">Trial fallback active</span>'; }
+  else if (c.liveGateways === 0) { title = "Yes, by sending money."; text = "Each payment waits for an operator to confirm the transaction ID. Connect a live gateway so plans start instantly."; pill = '<span class="pill warn">Manual confirmation</span>'; }
+  else { title = "Yes. Plans start the moment they pay."; text = "Online checkout confirms automatically; send-money stays as a backup."; pill = '<span class="pill lime">Ready</span>'; }
+  $("stateTitle").textContent = title;
+  $("stateText").textContent = text;
+  $("stateStats").innerHTML = pill + `<span class="sub">${WAITING.length} workspaces waiting · ${c.manual} of 3 accounts · ${c.gateways} of 2 gateways</span>`;
+  const check = (on, t, s) => `<li><span class="tick ${on ? "on" : "off"}">${on ? "✓" : ""}</span><div>${t}<small>${s}</small></div></li>`;
+  $("checks").innerHTML =
+    check(c.manual > 0, "A send-money account", c.manual ? `${c.manual} set: workspaces can pay by bKash, Nagad or bank` : "bKash, Nagad or bank details for manual payments") +
+    check(c.gateways > 0, "An online gateway", c.gateways ? `${c.gateways} connected${c.liveGateways < c.gateways ? ", some in sandbox (test money only)" : ""}` : "SSLCommerz or bKash: plans start without an operator") +
+    check(c.liveGateways > 0, "A live gateway", c.liveGateways ? "Real payments confirm automatically" : "Sandbox payments never buy a real plan") +
+    check(c.any || !paywall || fallback, "No one is locked out", c.any ? "Every new shop has a way in" : (fallback ? "Trial fallback is on" : "Turn on the trial fallback or add a method"));
+
+  // manual list
+  $("manualList").innerHTML = MANUAL_META.map((m) => {
+    const v = state.manual[m.key];
+    const p = pending[m.key];
+    return `<div class="method">
+      <span class="mark ${m.cls}">${m.mark}</span>
+      <div><div class="methodName">${m.name}</div>
+        <div class="methodValue ${v ? "" : "empty"}">${v ? esc(v) : "Not set"}</div>
+        ${p ? `<div class="pending">⏳ Waiting for a second operator: <code>${esc(p)}</code> <button class="btn sm ghost" onclick="approve('${m.key}')">Simulate approval</button></div>` : ""}
+      </div>
+      ${v ? '<span class="pill good">Shown to workspaces</span>' : '<span class="pill neutral">Off</span>'}
+      <div class="inline">
+        <button class="btn sm" onclick="openDialog('${m.key}')" ${p ? "disabled" : ""}>${v ? "Change" : "Add"}</button>
+        ${v ? `<button class="btn sm ghost" onclick="openDialog('${m.key}', true)" ${p ? "disabled" : ""}>Remove</button>` : ""}
+      </div>
+    </div>`;
+  }).join("");
+
+  // gateways
+  $("gatewayList").innerHTML = GATEWAY_META.map((g) => {
+    const mode = state.gateways[g.key];
+    const status = mode === "LIVE" ? '<span class="pill good">Live</span>' : mode === "SANDBOX" ? '<span class="pill warn">Sandbox</span>' : '<span class="pill neutral">Not connected</span>';
+    return `<div class="method" style="grid-template-columns:40px 1fr auto">
+      <span class="mark ${g.cls}">${g.mark}</span>
+      <div><div class="methodName">${g.name}</div><div class="methodValue">${mode ? g.hint : "Set in the server environment"}</div></div>
+      ${status}
+    </div>`;
+  }).join("");
+
+  // preview
+  const gw = GATEWAY_META.filter((g) => state.gateways[g.key]);
+  const mm = MANUAL_META.filter((m) => state.manual[m.key]);
+  let body;
+  if (!c.any && paywall && !fallback) {
+    body = `<div class="stuckNote"><b>Payment isn't open yet.</b> Your invoice is saved. Message CommerceOS support and we'll help you pay it.</div>
+      <div class="payBtn"><span>Message support on WhatsApp<small>Invoice INV-202611-46377CBB is filled in</small></span>›</div>`;
+  } else if (!c.any) {
+    body = `<div class="stuckNote" style="background:rgba(199,249,0,.18);border-color:#C7F900"><b>Your 14-day trial has started.</b> Payment opens soon; your dashboard is ready now.</div>
+      <div class="payBtn" style="background:#16171A;color:#FFFFFF;border-color:#16171A"><span>Go to my dashboard</span>›</div>`;
+  } else {
+    body = `<div class="miniCols">
+      ${gw.length ? `<div style="display:flex;flex-direction:column;gap:8px"><b style="font-size:12px">Pay online</b>${gw.map((g) => `<div class="payBtn"><span>Pay with ${g.name}<small>${state.gateways[g.key] === "SANDBOX" ? "Test mode" : g.hint}</small></span>›</div>`).join("")}</div>` : ""}
+      ${mm.length ? `<div style="display:flex;flex-direction:column;gap:6px"><b style="font-size:12px">Or send ৳1,999 yourself</b>${mm.map((m) => `<div class="wallet"><span>${m.name}</span><b>${esc(m.key === "bank" ? "See bank details" : state.manual[m.key])}</b></div>`).join("")}<div class="payBtn"><span>Submit transaction ID</span>›</div></div>` : ""}
+    </div>`;
+  }
+  $("preview").innerHTML = `<div class="invHead"><div>Invoice INV-202611-46377CBB<small>Starter · 1 month · due 29 Nov 2026</small></div><div>৳1,999</div></div>${body}`;
+
+  // waiting
+  $("waiting").innerHTML = WAITING.map((w) => `<tr><td>${w[0]}</td><td>${w[1]}</td><td class="mono">${w[2]}</td><td>${w[3]}</td><td>${w[4]}</td><td>${c.any ? '<span class="pill info">Can pay now</span>' : '<span class="pill bad">No way to pay</span>'}</td></tr>`).join("");
+}
+
+// ---- dialog ----
+let editing = null, removing = false;
+function openDialog(key, remove = false) {
+  editing = MANUAL_META.find((m) => m.key === key); removing = remove;
+  const isBank = key === "bank";
+  $("dlgTitle").textContent = remove ? `Remove ${editing.name}` : `${state.manual[key] ? "Change" : "Add"} ${editing.name} for subscriptions`;
+  $("dlgLabel").textContent = remove ? "Workspaces will no longer see this account." : editing.label;
+  $("dlgValue").style.display = isBank || remove ? "none" : "";
+  $("dlgBank").style.display = isBank && !remove ? "" : "none";
+  $("dlgValue").value = ""; $("dlgBank").value = ""; $("dlgReason").value = ""; $("dlgErr").textContent = "";
+  $("dlgValue").placeholder = "01XXXXXXXXX";
+  $("dlgFrom").textContent = state.manual[key] || "Not set";
+  $("dlgTo").textContent = remove ? "Not set" : "—";
+  $("scrim").classList.add("open");
+  validate();
+  (isBank ? $("dlgBank") : $("dlgValue")).focus();
+}
+function currentValue() { return editing.key === "bank" ? $("dlgBank").value.trim() : $("dlgValue").value.replace(/[\s-]/g, ""); }
+function validate() {
+  let ok = $("dlgReason").value.trim().length >= 8, err = "";
+  if (!removing) {
+    const v = currentValue();
+    if (editing.key === "bank") { if (v.length < 10) ok = false; }
+    else if (v && !/^01[3-9]\d{8}$/.test(v)) { err = "Enter an 11-digit Bangladeshi mobile number (01XXXXXXXXX)."; ok = false; }
+    else if (!v) ok = false;
+    $("dlgTo").textContent = v || "—";
+  }
+  $("dlgErr").textContent = err;
+  $("dlgSubmit").disabled = !ok;
+}
+["dlgValue", "dlgBank", "dlgReason"].forEach((id) => $(id).addEventListener("input", validate));
+$("dlgCancel").onclick = () => $("scrim").classList.remove("open");
+$("dlg").onsubmit = (e) => {
+  e.preventDefault();
+  pending[editing.key] = removing ? "(remove)" : currentValue();
+  $("scrim").classList.remove("open");
+  render();
+};
+function approve(key) {
+  const v = pending[key]; delete pending[key];
+  state.manual[key] = v === "(remove)" ? null : (key === "bank" ? v : v.replace(/^(\d{5})(\d{6})$/, "$1-$2"));
+  render();
+}
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") $("scrim").classList.remove("open"); });
+
+// ---- controls ----
+$("scenario").onclick = (e) => {
+  const s = e.target.dataset.s; if (!s) return;
+  state = structuredClone(SCENARIOS[s]); pending = {};
+  if (s === "none") { paywall = true; fallback = false; $("paywall").setAttribute("aria-checked", "true"); $("fallback").setAttribute("aria-checked", "false"); }
+  [...$("scenario").children].forEach((b) => b.setAttribute("aria-pressed", String(b === e.target)));
+  render();
+};
+$("theme").onclick = (e) => {
+  const t = e.target.dataset.t; if (!t) return;
+  document.documentElement.dataset.consoleTheme = t;
+  [...$("theme").children].forEach((b) => b.setAttribute("aria-pressed", String(b === e.target)));
+};
+$("paywall").onclick = () => { paywall = !paywall; $("paywall").setAttribute("aria-checked", String(paywall)); render(); };
+$("fallback").onclick = () => { fallback = !fallback; $("fallback").setAttribute("aria-checked", String(fallback)); render(); };
+
+// Start on today's real state: nothing set up, paywall on, no fallback (the locked page from the bug report).
+fallback = false; $("fallback").setAttribute("aria-checked", "false");
+render();
+</script>
+</body>
+</html>

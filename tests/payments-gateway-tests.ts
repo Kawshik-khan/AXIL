@@ -117,6 +117,14 @@ function installGatewayStub() {
       const record = gateway.ssl.validations.get(url.searchParams.get("val_id") ?? "");
       return json(200, record ?? { status: "INVALID_TRANSACTION" });
     }
+    if (url.hostname === "sandbox.sslcommerz.com" && url.pathname === "/validator/api/merchantTransIDvalidationAPI.php") {
+      // Transaction Query API: every payment SSLCommerz holds for this tran_id, for the store that asks
+      if (url.searchParams.get("store_passwd") !== "shop-pass@ssl" && url.searchParams.get("store_passwd") !== "platform-pass@ssl") {
+        return json(200, { APIConnect: "INVALID_REQUEST" });
+      }
+      const element = [...gateway.ssl.validations.values()].filter((v) => v.tran_id === url.searchParams.get("tran_id"));
+      return json(200, { APIConnect: "DONE", no_of_trans_found: element.length, element });
+    }
     if (url.hostname === "tokenized.sandbox.bka.sh") {
       if (url.pathname.endsWith("/auth/grant-token")) {
         gateway.bkash.grants++;
@@ -1130,6 +1138,83 @@ async function main() {
     assert.strictEqual(invoice.period_start, before.current_period_end, "added after the period already paid for");
     assert.ok(Date.parse(after.current_period_end) > Date.parse(before.current_period_end));
     assert.strictEqual(db.getPayments(A.tenantId).filter((p) => p.idempotency_key === `gateway:${paid2.tran_id}`).length, 0, "a subscription payment is never a store payment");
+  });
+
+  await runTest("reconcile: a paid subscription whose payer never came back (and whose IPN was lost) is found by tran_id and settles once", async () => {
+    const open = (await call("billing", "GET", { headers: B.auth })).body.data!.invoices.find((inv: { status: string }) => inv.status === "ISSUED");
+    assert.ok(open, "workspace B has an unpaid invoice");
+    const started = await call("billing/invoices/[id]/checkout", "POST", { headers: B.auth, params: { id: open.id }, body: { provider: "SSLCOMMERZ", phone: "01711000333" } });
+    assert.strictEqual(started.status, 200, JSON.stringify(started.body));
+    const paid = sslPay(started.body.data!.redirect_url); // paid at SSLCommerz; no IPN arrives
+    // ...and an unverified cancel claim reaches the return URL first (anyone holding the tran_id can send one)
+    await call("payments/gateway/sslcommerz/return", "POST", { form: { tran_id: paid.tran_id, status: "CANCELLED" } });
+    assert.strictEqual(db.findGatewayPaymentAttempt(paid.tran_id)!.status, "CANCELLED");
+    // A second attempt the payer abandoned on the gateway's page: nothing to find
+    const abandoned = await call("billing/invoices/[id]/checkout", "POST", { headers: B.auth, params: { id: open.id }, body: { provider: "SSLCOMMERZ", phone: "01711000333" } });
+    const abandonedId = gateway.ssl.sessions.get(abandoned.body.data!.redirect_url.split("/").pop()!)!.tran_id;
+
+    // Who may run it
+    assert.ok([401, 403].includes((await call("platform/billing/reconcile", "POST", { headers: B.auth, body: {} })).status), "a workspace OWNER can't");
+    assert.strictEqual((await call("platform/billing/reconcile", "POST", { headers: support.headers, body: {} })).status, 403, "billing.manage is required");
+    assert.strictEqual((await call("platform/billing/reconcile", "POST", { headers: finance.headers, body: { older_than_minutes: 15, tenant_id: B.tenantId } })).status, 400, "strict body");
+
+    // Too young: the payer may still be on the gateway's page
+    const young = await call("platform/billing/reconcile", "POST", { headers: finance.headers, body: {} });
+    assert.strictEqual(young.status, 200, JSON.stringify(young.body));
+    assert.strictEqual(young.body.data!.summary.checked, 0);
+    assert.strictEqual(db.findBillingInvoiceById(B.tenantId, open.id)!.status, "ISSUED");
+
+    const backdate = (id: string) => {
+      const attempt = db.findGatewayPaymentAttempt(id)!;
+      db.saveGatewayPaymentAttempt({ ...attempt, created_at: new Date(Date.now() - 20 * 60_000).toISOString() });
+    };
+    backdate(paid.tran_id);
+    backdate(abandonedId);
+    const before = gateway.requests.length;
+    const run = await call("platform/billing/reconcile", "POST", { headers: finance.headers, body: {} });
+    assert.strictEqual(run.status, 200, JSON.stringify(run.body));
+    const { settled, ...counts } = run.body.data!.summary;
+    assert.deepStrictEqual(counts, { checked: 2, paid: 1, test: 0, closed: 0, still_open: 1, errors: 0, deferred: 0 });
+    assert.deepStrictEqual(settled, [{ attempt_id: paid.tran_id, tenant_id: B.tenantId, invoice_id: open.id }]);
+    const queried = gateway.requests.slice(before).filter((r) => r.url.includes("merchantTransIDvalidationAPI")).map((r) => new URL(r.url));
+    assert.ok(queried.every((u) => u.searchParams.get("store_id") === "platformstore"), "the platform's account, never a shop's");
+    assert.ok(gateway.requests.slice(before).some((r) => r.url.includes("validationserverAPI") && r.url.includes(paid.val_id)), "the found val_id is still checked with the Order Validation API");
+
+    const invoice = db.findBillingInvoiceById(B.tenantId, open.id)!;
+    assert.strictEqual(invoice.status, "PAID");
+    assert.strictEqual(invoice.verified_by, "gateway:SSLCOMMERZ");
+    assert.strictEqual(db.findGatewayPaymentAttempt(abandonedId)!.status, "INITIATED", "an attempt with no payment stays open");
+    const audit = db.getPlatformAuditLogs({ action: "billing.reconcile_gateway_payments" }).logs;
+    assert.ok(audit.some((l) => l.actor_id === finance.id && l.resource_id === "gateway_attempts"), "the run is audited");
+    assert.ok(audit.some((l) => l.actor_id === finance.id && l.resource_id === open.id && l.target_tenant_id === B.tenantId), "the settled invoice is audited against its workspace");
+
+    const again = await call("platform/billing/reconcile", "POST", { headers: finance.headers, body: {} });
+    assert.strictEqual(again.body.data!.summary.paid, 0, "a settled attempt is not asked about or settled again");
+    const stacked = await call("platform/billing/reconcile", "POST", { headers: finance.headers, body: {} });
+    assert.strictEqual(stacked.status, 429, "runs are limited platform-wide");
+  });
+
+  await runTest("reconcile: the SSLCommerz transaction lookup is only a pointer (a VALID answer for another tran_id pays nothing)", async () => {
+    const { sslcommerzAdapter } = await import("@/domains/payments/gateways/sslcommerz.adapter");
+    const account = { mode: "SANDBOX" as const, credentials: { store_id: "platformstore", store_password: "platform-pass@ssl" } };
+    const val_id = `VAL${crypto.randomBytes(6).toString("hex")}`;
+    const stranger = `gp${crypto.randomBytes(13).toString("hex")}`;
+    gateway.ssl.validations.set(val_id, { status: "VALID", tran_id: stranger, val_id, currency_amount: "999.00", currency_type: "BDT", bank_tran_id: "BANKX1", risk_level: "0" });
+    const mine = `gp${crypto.randomBytes(13).toString("hex")}`;
+    const answer = await sslcommerzAdapter.confirm(account, { id: mine }, {});
+    assert.strictEqual(answer.status, "PENDING");
+    const cancelled = await sslcommerzAdapter.confirm(account, { id: mine }, { claimedStatus: "CANCELLED" });
+    assert.strictEqual(cancelled.status, "CANCELLED", "a cancel claim with no val_id still closes without a lookup");
+
+    // A lookup that fails must not claim that nothing was taken
+    const real = `gp${crypto.randomBytes(13).toString("hex")}`;
+    gateway.ssl.validations.set(`VALDOWN${real}`, { status: "VALID", tran_id: real, val_id: "x" });
+    setOutboundTransportForTesting(async () => json(500, "down"));
+    try {
+      await assert.rejects(sslcommerzAdapter.confirm(account, { id: real }, {}), (err: Error) => /SSLCommerz is asked again/.test(err.message) && !/No payment was taken/.test(err.message));
+    } finally {
+      installGatewayStub();
+    }
   });
 
   // =====================================================================================================================

@@ -14,6 +14,20 @@ import { StatusPill } from "../../_components/StatusPill";
 import { PrivilegedActionDialog } from "../../_components/PrivilegedActionDialog";
 import styles from "../../super-admin.module.css";
 
+type ReconcileSummary = { checked: number; paid: number; test: number; closed: number; still_open: number; errors: number; deferred: number };
+
+function describeReconcile(s: ReconcileSummary): string {
+  if (s.checked === 0) return "No gateway payment older than 15 minutes is waiting for confirmation.";
+  const parts = [`Asked about ${s.checked} payment${s.checked === 1 ? "" : "s"}`];
+  if (s.paid) parts.push(`${s.paid} confirmed and paid`);
+  if (s.test) parts.push(`${s.test} sandbox (nothing paid)`);
+  if (s.closed) parts.push(`${s.closed} failed or cancelled`);
+  if (s.still_open) parts.push(`${s.still_open} not paid at the gateway`);
+  if (s.errors) parts.push(`${s.errors} could not be asked (see the server log)`);
+  if (s.deferred) parts.push(`${s.deferred} left for the next run`);
+  return `${parts.join(" · ")}.`;
+}
+
 type Decision = { kind: "verify" | "reject"; invoice: PlatformInvoiceView } | null;
 
 const METHOD: Record<string, string> = {
@@ -34,6 +48,23 @@ export function InvoiceQueue({ canManage }: { canManage: boolean }) {
     isEmpty: (d) => d.invoices.length === 0,
   });
   const [decision, setDecision] = useState<Decision>(null);
+  const [checking, setChecking] = useState(false);
+  const [checkResult, setCheckResult] = useState<string | null>(null);
+
+  // Lost IPN / payer never came back: ask the gateways about subscription payments started 15+ minutes ago.
+  const checkGateways = async () => {
+    setChecking(true);
+    setCheckResult(null);
+    try {
+      const { summary } = (await platformRequest<{ summary: ReconcileSummary }>("/api/v1/platform/billing/reconcile", { method: "POST", json: {} })).data;
+      setCheckResult(describeReconcile(summary));
+      if (summary.paid > 0) invoices.reload();
+    } catch (err) {
+      setCheckResult(err instanceof Error ? err.message : "The gateways could not be asked.");
+    } finally {
+      setChecking(false);
+    }
+  };
 
   return (
     <>
@@ -41,7 +72,19 @@ export function InvoiceQueue({ canManage }: { canManage: boolean }) {
         span={12}
         title="Invoices"
         subtitle="Confirm a payment only after finding the transaction ID and amount in the platform's own statement"
+        action={
+          canManage ? (
+            <Button size="sm" variant="outline" onClick={checkGateways} disabled={checking}>
+              {checking ? "Asking the gateways…" : "Check unconfirmed gateway payments"}
+            </Button>
+          ) : undefined
+        }
       >
+        {checkResult && (
+          <p className={styles.kpiSub} role="status">
+            {checkResult}
+          </p>
+        )}
         <ResourceView
           state={invoices.state}
           onRetry={invoices.reload}

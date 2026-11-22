@@ -11721,6 +11721,14 @@ export class CommerceDatabase {
     );
   }
 
+  /**
+   * Platform-scope (subscription invoice) attempts not PAID: the reconcile job's work list. Cancelled and failed ones
+   * are included because a cancel claim is unverified and a payment can still complete after it.
+   */
+  public getUnpaidPlatformGatewayAttempts(): GatewayPaymentAttemptRecord[] {
+    return this.data.gateway_payment_attempts.filter((a) => a.scope === "PLATFORM" && a.status !== "PAID");
+  }
+
   /** Another settled attempt already carrying this gateway transaction id (one gateway payment settles one attempt). */
   public findPaidGatewayAttemptByTransaction(
     provider: GatewayPaymentAttemptRecord["provider"],

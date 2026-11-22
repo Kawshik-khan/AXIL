@@ -8,9 +8,14 @@ import type { PlatformContext } from "@/lib/context";
 import { AppError, NotFoundError } from "@/lib/errors";
 import type { BillingInvoiceRecord, BillingInvoiceStatus } from "@/types/payments";
 import { BillingService } from "@/domains/billing/billing.service";
+import { GatewayPaymentService, type ReconcileSummary } from "@/domains/payments/gateway-payment.service";
 import { PlatformAuthorizationService } from "./platform-authorization.service";
 import { PlatformAuditService } from "./platform-audit.service";
 import { PrivilegedActionGate } from "./privileged-action-gate";
+import { enforceRateLimit, MINUTE } from "@/lib/rate-limit";
+
+/** Reconcile runs per minute, platform-wide: a run can take a minute of gateway calls, so no stacked runs. */
+export const RECONCILE_RUNS_PER_MINUTE = 3;
 
 export interface PlatformInvoiceView extends BillingInvoiceRecord {
   tenant_name: string | null;
@@ -114,5 +119,46 @@ export class PlatformBillingService {
       context
     );
     return rejected;
+  }
+
+  /**
+   * Asks the gateways again about subscription payments that were started and never confirmed (lost IPN, payer never
+   * came back). It decides nothing itself: a payment settles only when the gateway confirms it, through the same path
+   * as an IPN (risk LOW, no reason or approval). Runs outside the store lock (gateway calls). Audited as one run row
+   * plus one row per settled invoice naming its tenant, since settling changes that workspace's plan.
+   */
+  public static async reconcileGatewayPayments(context: PlatformContext, olderThanMinutes: number): Promise<ReconcileSummary> {
+    PrivilegedActionGate.assert(context, "billing.reconcile_gateway_payments", { reason: "", payload: { older_than_minutes: olderThanMinutes } });
+    await enforceRateLimit("platform:billing:reconcile", RECONCILE_RUNS_PER_MINUTE, MINUTE);
+    const summary = await GatewayPaymentService.reconcilePlatformAttempts(olderThanMinutes);
+    await db.unit(async () => {
+      const { settled, ...counts } = summary;
+      const run = PlatformAuditService.record(
+        {
+          action: "billing.reconcile_gateway_payments",
+          resource_type: "billing_invoice",
+          resource_id: "gateway_attempts",
+          reason: `Asked the gateways about unconfirmed subscription payments older than ${olderThanMinutes} minutes.`,
+          after_state: { older_than_minutes: olderThanMinutes, ...counts, settled },
+          result: summary.errors > 0 ? "FAILED" : "SUCCESS",
+        },
+        context
+      );
+      for (const item of settled) {
+        PlatformAuditService.record(
+          {
+            action: "billing.reconcile_gateway_payments",
+            resource_type: "billing_invoice",
+            resource_id: item.invoice_id,
+            target_tenant_id: item.tenant_id,
+            reason: "The gateway confirmed this payment when asked by a reconcile run.",
+            after_state: { invoice_status: db.findBillingInvoiceById(item.tenant_id, item.invoice_id)?.status ?? null, gateway_attempt_id: item.attempt_id, run_audit_id: run.id },
+            result: "SUCCESS",
+          },
+          context
+        );
+      }
+    }, () => true);
+    return summary;
   }
 }

@@ -72,6 +72,15 @@
   --color-brand-rocket: #8C3494;
   --color-brand-mark-text: #FFFFFF;
 
+  /* Checkout selection (plan invoice pay card): selected option fill, its indicator, its border, an empty indicator */
+  --color-select-bg:        #171717;
+  --color-select-text:      #FFFFFF;
+  --color-select-indicator: #84CC16;
+  --color-select-border:    #D9F99D;
+  --color-select-idle:      #A3A3A3;
+  /* The flat grey of the checkout cube illustration (public/images/billing/checkout-cubes.webp) */
+  --checkout-art-bg:        #EDEDED;
+
   /* Connector brand marks (Connectors page tiles); shades chosen so white text keeps 4.5:1 */
   --color-brand-facebook:  #0B5FCC;
   --color-brand-whatsapp:  #0B6E57;
