@@ -1,20 +1,30 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import Link from "next/link";
-import { ArrowRight, SendHorizontal } from "lucide-react";
-import { IsoGrid } from "@/components/marketing/IsoGrid";
-import { BrandLogo } from "@/components/brand/BrandLogo";
+import { ArrowLeft, ArrowRight, SendHorizontal, Smartphone, X } from "lucide-react";
 import { api } from "@/components/payments/api";
 import { ErrorState, LoadingSkeleton } from "@/components/ui/States/States";
 import stage from "@/app/(auth)/stage.module.css";
 import { CATEGORY_LABELS, greeting, PhonePreview, type ChatLine } from "./PhonePreview";
 import { PlanStep } from "./PlanStep";
+import { StepRail } from "./StepRail";
 import styles from "./Onboarding.module.css";
+import setup from "./Setup.module.css";
 
 type Step = "welcome" | "shop" | "delivery" | "try" | "plan";
 const STEPS: Step[] = ["welcome", "shop", "delivery", "try", "plan"];
-const STEP_NAMES: Record<Step, string> = { welcome: "Welcome", shop: "Your shop", delivery: "Delivery", try: "Try it", plan: "Your plan" };
+const STEP_NAMES: Record<Step, string> = { welcome: "Language", shop: "Your shop", delivery: "Delivery", try: "Try it", plan: "Your plan" };
+const STEP_PROMPTS: Record<Step, string> = {
+  welcome: "Pick a language",
+  shop: "Name and category",
+  delivery: "Inside and outside Dhaka",
+  try: "Chat as a customer",
+  plan: "Choose what fits",
+};
+const LANGUAGES = [
+  { value: "bn", label: "বাংলা", note: "Replies start in Bangla" },
+  { value: "en", label: "English", note: "Replies start in English" },
+] as const;
 const CATEGORIES = ["CLOTHING", "COSMETICS", "FOOD", "GADGETS", "HANDMADE", "OTHER"] as const;
 
 /** What GET/PATCH /api/v1/onboarding return (the parts this flow reads). */
@@ -38,9 +48,10 @@ const toNumber = (value: string): number | null => {
 };
 
 /**
- * Shop setup for a newly registered workspace (OnboardingService). One question per step on the sign-in stage, a phone
- * on the left showing the shop's chat as the answers come in, and a real test chat with the shop's assistant at the
- * end. Every step saves (PATCH /api/v1/onboarding), so the owner can leave and come back where they stopped.
+ * Shop setup for a newly registered workspace (OnboardingService), in three columns: the step rail (StepRail: every
+ * step, the answers given so far, finished steps open again), one question at a time, and a phone on the story card
+ * showing the shop's chat as the answers come in, with a real test chat with the shop's assistant at the end. Every
+ * step saves (PATCH /api/v1/onboarding), so the owner can leave and come back where they stopped.
  */
 export function OnboardingFlow() {
   const [loaded, setLoaded] = useState(false);
@@ -57,6 +68,21 @@ export function OnboardingFlow() {
   const [asking, setAsking] = useState(false);
   const [question, setQuestion] = useState("");
   const firstField = useRef<HTMLInputElement>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const sheetRef = useRef<HTMLDialogElement>(null);
+
+  // The preview sheet is a modal <dialog>: open and close it to match the state.
+  useEffect(() => {
+    const sheet = sheetRef.current;
+    if (!sheet) return;
+    if (previewOpen && !sheet.open) sheet.showModal();
+    if (!previewOpen && sheet.open) sheet.close();
+  }, [previewOpen]);
+
+  // Moving to another step (or to the plan step, which has no preview) closes the sheet.
+  useEffect(() => {
+    setPreviewOpen(false);
+  }, [step]);
 
   const apply = (status: OnboardingStatus) => {
     setLanguage(status.profile.language === "en" ? "en" : "bn");
@@ -163,24 +189,40 @@ export function OnboardingFlow() {
     window.location.href = choice === "paid" ? "/activate" : "/";
   };
 
+  const openStep = (target: string) => {
+    const next = STEPS.find((s) => s === target);
+    if (next && !saving) void save({}, next);
+  };
+
   if (loadError) {
     return (
-      <main className={stage.page}>
-        <div className={stage.stage} style={{ gridTemplateColumns: "1fr" }}>
+      <main className={setup.page}>
+        <section className={setup.question} style={{ gridColumn: "1 / -1" }}>
           <ErrorState message={loadError} onRetry={() => void load()} />
-        </div>
+        </section>
       </main>
     );
   }
 
   const name = shopName.trim();
+  const inside = toNumber(feeIn);
   const outside = toNumber(feeOut);
-  const preview = (() => {
-    if (step === "welcome") return <PhonePreview shopName="" category={null} lines={[]} waiting tag="Waiting to learn your shop" />;
+  const taka = (n: number | null) => (n === null ? "—" : `৳${n.toLocaleString("en-US")}`);
+  const summaries: Record<Step, string> = {
+    welcome: language === "bn" ? "বাংলা" : "English",
+    shop: name ? `${name}${category ? ` · ${category === "OTHER" ? "Other" : CATEGORY_LABELS[category]}` : ""}` : "Skipped",
+    delivery: inside === null && outside === null ? "Skipped" : `${taka(inside)} / ${taka(outside)}`,
+    try: chat.length ? `${Math.ceil(chat.length / 2)} test question${chat.length > 2 ? "s" : ""}` : "Done",
+    plan: "",
+  };
+  const railSteps = STEPS.map((s) => ({ id: s, name: STEP_NAMES[s], summary: summaries[s], prompt: STEP_PROMPTS[s] }));
+
+  const renderPreview = (compact = false) => {
+    if (step === "welcome") return <PhonePreview compact={compact} shopName="" category={null} lines={[]} waiting tag="Waiting to learn your shop" />;
     const hello: ChatLine = { from: "shop", text: greeting(name, language) };
     if (step === "shop") {
       return (
-        <PhonePreview
+        <PhonePreview compact={compact}
           shopName={name}
           category={category}
           lines={[hello]}
@@ -198,196 +240,226 @@ export function OnboardingFlow() {
           source: "Example · from your delivery charges",
         });
       }
-      return <PhonePreview shopName={name} category={category} lines={lines} tag="Learning delivery" learned={{ left: outside !== null ? "Learned delivery charges" : undefined }} />;
+      return <PhonePreview compact={compact} shopName={name} category={category} lines={lines} tag="Learning delivery" learned={{ left: outside !== null ? "Learned delivery charges" : undefined }} />;
     }
-    return <PhonePreview shopName={name} category={category} lines={[hello, ...chat]} typing={asking} tag="Ready · test chat" ready />;
-  })();
+    return <PhonePreview compact={compact} shopName={name} category={category} lines={[hello, ...chat]} typing={asking} tag="Ready · test chat" ready />;
+  };
 
   return (
-    <main className={`${stage.page} ${step === "try" ? stage.unlocked : ""}`}>
-      <IsoGrid />
-      <header className={stage.top}>
-        <span className={stage.brandMark}>
-          <BrandLogo size={34} tile /> CommerceOS
-        </span>
-        <Link href="/" className={stage.back}>
-          {step === "plan" ? "Decide later" : "Save & finish later"}
-        </Link>
-      </header>
+    <main className={setup.page}>
+      <StepRail
+        steps={railSteps}
+        current={loaded ? index : 0}
+        onOpen={openStep}
+        disabled={saving || !loaded}
+        laterLabel={step === "plan" ? "Decide later" : "Save & finish later"}
+      />
 
       {!loaded ? (
-        <div className={stage.stage} style={{ gridTemplateColumns: "1fr" }}>
+        <section className={`${setup.question} ${setup.wide}`}>
           <LoadingSkeleton lines={6} />
-        </div>
+        </section>
       ) : step === "plan" ? (
-        <PlanStep onDone={finish} onBack={() => go(-1)} />
+        <section className={`${setup.question} ${setup.wide}`}>
+          <PlanStep onDone={finish} onBack={() => go(-1)} />
+        </section>
       ) : (
-        <div className={stage.stage}>
-          {preview}
-          <div className={stage.cardWrap}>
-            <form className={stage.card} onSubmit={(e) => void submit(e)} noValidate>
-              <div className={styles.head}>
-                <div className={styles.progress} aria-hidden="true">
-                  {STEPS.map((s, i) => (
-                    <span key={s} className={`${styles.bar} ${i < index ? styles.barDone : ""} ${i === index ? styles.barNow : ""}`} />
-                  ))}
+        <>
+          <section className={setup.question}>
+            {/* narrow screens only (CSS): the phone column is hidden there, so it opens in a sheet instead */}
+            <button type="button" className={setup.peek} onClick={() => setPreviewOpen(true)} aria-haspopup="dialog">
+              <Smartphone size={18} aria-hidden="true" />
+              See what customers see
+            </button>
+            <form className={setup.form} onSubmit={(e) => void submit(e)} noValidate>
+              <div className={setup.body}>
+                <div key={step} className={setup.inner}>
+                  {step === "welcome" && (
+                    <>
+                      <h2 className={setup.heading}>
+                        Let&apos;s open your <span className={setup.hl}>shop</span>.
+                      </h2>
+                      <p className={setup.lead}>Five quick steps. Your AI assistant learns each answer, and the phone shows the chat your customers will get.</p>
+                      <fieldset className={setup.choices}>
+                        <legend>Which language should your assistant start in?</legend>
+                        {LANGUAGES.map((option) => (
+                          <button
+                            key={option.value}
+                            type="button"
+                            aria-pressed={language === option.value}
+                            className={`${setup.option} ${language === option.value ? setup.optionOn : ""}`}
+                            onClick={() => setLanguage(option.value)}
+                          >
+                            <span className={setup.dot} aria-hidden="true" />
+                            <span className={setup.optionText}>
+                              <strong>{option.label}</strong>
+                              <small>{option.note}</small>
+                            </span>
+                          </button>
+                        ))}
+                      </fieldset>
+                    </>
+                  )}
+
+                  {step === "shop" && (
+                    <>
+                      <h2 className={setup.heading}>
+                        What&apos;s your <span className={setup.hl}>shop</span> called?
+                      </h2>
+                      <p className={setup.lead}>Customers see this name in every chat.</p>
+                      <div className={stage.field}>
+                        <label htmlFor="ob-shop-name">Shop name</label>
+                        <input
+                          id="ob-shop-name"
+                          ref={firstField}
+                          value={shopName}
+                          onChange={(e) => setShopName(e.target.value)}
+                          maxLength={120}
+                          autoComplete="organization"
+                          placeholder="e.g. Dhaka Artisan Silk"
+                          required
+                        />
+                      </div>
+                      <fieldset className={styles.fieldset}>
+                        <legend>What do you sell?</legend>
+                        <div className={styles.chips}>
+                          {CATEGORIES.map((c) => (
+                            <button
+                              key={c}
+                              type="button"
+                              aria-pressed={category === c}
+                              className={`${styles.chip} ${category === c ? styles.chipOn : ""}`}
+                              onClick={() => setCategory(c)}
+                            >
+                              {c === "OTHER" ? "Something else" : CATEGORY_LABELS[c]}
+                            </button>
+                          ))}
+                        </div>
+                      </fieldset>
+                    </>
+                  )}
+
+                  {step === "delivery" && (
+                    <>
+                      <h2 className={setup.heading}>
+                        What do you charge for <span className={setup.hl}>delivery</span>?
+                      </h2>
+                      <p className={setup.lead}>Added to every order and quoted by your assistant. The customer&apos;s district decides which one applies.</p>
+                      <div className={styles.feeRow}>
+                        <div className={styles.fee}>
+                          <label htmlFor="ob-fee-in">Inside Dhaka</label>
+                          <div className={styles.feeBox}>
+                            <span className={styles.taka} aria-hidden="true">
+                              ৳
+                            </span>
+                            <input id="ob-fee-in" ref={firstField} inputMode="numeric" value={feeIn} onChange={(e) => setFeeIn(e.target.value)} />
+                          </div>
+                          <span className={styles.feeHint}>Dhaka city</span>
+                        </div>
+                        <div className={styles.fee}>
+                          <label htmlFor="ob-fee-out">Outside Dhaka</label>
+                          <div className={styles.feeBox}>
+                            <span className={styles.taka} aria-hidden="true">
+                              ৳
+                            </span>
+                            <input id="ob-fee-out" inputMode="numeric" value={feeOut} onChange={(e) => setFeeOut(e.target.value)} />
+                          </div>
+                          <span className={styles.feeHint}>The other 62 districts</span>
+                        </div>
+                      </div>
+                    </>
+                  )}
+
+                  {step === "try" && (
+                    <>
+                      <h2 className={setup.heading}>
+                        Your assistant is <span className={setup.hl}>ready</span>.
+                      </h2>
+                      <p className={setup.lead}>Ask what your buyers ask. These are real answers from your assistant, as a test: nothing is sent to anyone.</p>
+                      <div className={styles.prompts}>
+                        {PROMPTS.map((p) => (
+                          <button key={p} type="button" className={styles.prompt} disabled={asking} onClick={() => void ask(p)}>
+                            {p}
+                          </button>
+                        ))}
+                      </div>
+                      <div className={styles.askRow}>
+                        <input
+                          ref={firstField}
+                          value={question}
+                          onChange={(e) => setQuestion(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              void ask(question);
+                            }
+                          }}
+                          placeholder="Or type your own question"
+                          aria-label="Ask your assistant"
+                        />
+                        <button type="button" onClick={() => void ask(question)} disabled={asking || !question.trim()} aria-label="Send">
+                          <SendHorizontal size={18} />
+                        </button>
+                      </div>
+                    </>
+                  )}
+
+                  {error && (
+                    <p className={stage.alert} role="alert">
+                      {error}
+                    </p>
+                  )}
                 </div>
-                <span className={styles.stepLabel}>
-                  Step {index + 1} of {STEPS.length} · {STEP_NAMES[step]}
-                </span>
               </div>
 
-              {step === "welcome" && (
-                <>
-                  <h1>Let&apos;s open your shop</h1>
-                  <p className={styles.lead}>Five quick steps. Your AI assistant learns each answer, and you&apos;ll see the chat your customers get.</p>
-                  <fieldset className={styles.fieldset}>
-                    <legend>Which language should your assistant reply in?</legend>
-                    <div className={styles.chips}>
-                      {[
-                        { value: "bn", label: "বাংলা" },
-                        { value: "en", label: "English" },
-                      ].map((option) => (
-                        <button
-                          key={option.value}
-                          type="button"
-                          aria-pressed={language === option.value}
-                          className={`${styles.chip} ${language === option.value ? styles.chipOn : ""}`}
-                          onClick={() => setLanguage(option.value)}
-                        >
-                          {option.label}
-                        </button>
-                      ))}
-                    </div>
-                  </fieldset>
-                </>
-              )}
-
-              {step === "shop" && (
-                <>
-                  <h1>What&apos;s your shop called?</h1>
-                  <div className={stage.field}>
-                    <label htmlFor="ob-shop-name">Shop name</label>
-                    <input
-                      id="ob-shop-name"
-                      ref={firstField}
-                      value={shopName}
-                      onChange={(e) => setShopName(e.target.value)}
-                      maxLength={120}
-                      autoComplete="organization"
-                      required
-                    />
-                  </div>
-                  <fieldset className={styles.fieldset}>
-                    <legend>What do you sell?</legend>
-                    <div className={styles.chips}>
-                      {CATEGORIES.map((c) => (
-                        <button
-                          key={c}
-                          type="button"
-                          aria-pressed={category === c}
-                          className={`${styles.chip} ${category === c ? styles.chipOn : ""}`}
-                          onClick={() => setCategory(c)}
-                        >
-                          {c === "OTHER" ? "Something else" : CATEGORY_LABELS[c]}
-                        </button>
-                      ))}
-                    </div>
-                  </fieldset>
-                </>
-              )}
-
-              {step === "delivery" && (
-                <>
-                  <h1>What do you charge for delivery?</h1>
-                  <p className={styles.lead}>Added to every order and quoted by your assistant. The customer&apos;s district decides which one applies.</p>
-                  <div className={styles.feeRow}>
-                    <div className={styles.fee}>
-                      <label htmlFor="ob-fee-in">Inside Dhaka</label>
-                      <div className={styles.feeBox}>
-                        <span className={styles.taka} aria-hidden="true">
-                          ৳
-                        </span>
-                        <input id="ob-fee-in" ref={firstField} inputMode="numeric" value={feeIn} onChange={(e) => setFeeIn(e.target.value)} />
-                      </div>
-                      <span className={styles.feeHint}>Dhaka city</span>
-                    </div>
-                    <div className={styles.fee}>
-                      <label htmlFor="ob-fee-out">Outside Dhaka</label>
-                      <div className={styles.feeBox}>
-                        <span className={styles.taka} aria-hidden="true">
-                          ৳
-                        </span>
-                        <input id="ob-fee-out" inputMode="numeric" value={feeOut} onChange={(e) => setFeeOut(e.target.value)} />
-                      </div>
-                      <span className={styles.feeHint}>The other 62 districts</span>
-                    </div>
-                  </div>
-                </>
-              )}
-
-              {step === "try" && (
-                <>
-                  <h1>Your assistant is ready. Try it as a customer.</h1>
-                  <p className={styles.lead}>Ask what your buyers ask. These are real answers from your assistant, as a test: nothing is sent to anyone.</p>
-                  <div className={styles.prompts}>
-                    {PROMPTS.map((p) => (
-                      <button key={p} type="button" className={styles.prompt} disabled={asking} onClick={() => void ask(p)}>
-                        {p}
-                      </button>
-                    ))}
-                  </div>
-                  <div className={styles.askRow}>
-                    <input
-                      ref={firstField}
-                      value={question}
-                      onChange={(e) => setQuestion(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          void ask(question);
-                        }
-                      }}
-                      placeholder="Or type your own question"
-                      aria-label="Ask your assistant"
-                    />
-                    <button type="button" onClick={() => void ask(question)} disabled={asking || !question.trim()} aria-label="Send">
-                      <SendHorizontal size={18} />
+              <div className={setup.actions}>
+                <div className={setup.actionsLeft}>
+                  {index > 0 && (
+                    <button type="button" className={setup.round} onClick={() => go(-1)} disabled={saving} aria-label="Previous step">
+                      <ArrowLeft size={20} />
                     </button>
-                  </div>
-                </>
-              )}
-
-              {error && (
-                <p className={stage.alert} role="alert">
-                  {error}
-                </p>
-              )}
-
-              <button type="submit" className={stage.submit} disabled={saving}>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
+                  )}
+                  {step !== "welcome" && (
+                    <button type="button" className={setup.skip} onClick={() => go(1)} disabled={saving}>
+                      Skip this step
+                    </button>
+                  )}
+                </div>
+                <button type="submit" className={setup.continue} disabled={saving}>
                   {saving ? "Saving…" : step === "welcome" ? "Start setting up" : step === "try" ? "Continue to your plan" : "Continue"}
                   {!saving && <ArrowRight size={18} />}
-                </span>
-              </button>
-
-              <div className={styles.links}>
-                {index > 0 ? (
-                  <button type="button" className={styles.linkButton} onClick={() => go(-1)} disabled={saving}>
-                    Back
-                  </button>
-                ) : (
-                  <span />
-                )}
-                {step !== "welcome" && (
-                  <button type="button" className={styles.linkButton} onClick={() => go(1)} disabled={saving}>
-                    Skip this step
-                  </button>
-                )}
+                </button>
               </div>
             </form>
-          </div>
-        </div>
+          </section>
+
+          <aside className={setup.story}>
+            <i className={`${setup.glow} ${setup.glowA} ${step === "try" ? setup.glowReady : ""}`} aria-hidden="true" />
+            <i className={`${setup.glow} ${setup.glowB}`} aria-hidden="true" />
+            {renderPreview()}
+          </aside>
+
+          {/* The native dialog keeps focus inside, closes on Escape and returns focus to the button */}
+          <dialog
+            ref={sheetRef}
+            className={setup.sheet}
+            aria-labelledby="ob-sheet-title"
+            onClose={() => setPreviewOpen(false)}
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setPreviewOpen(false);
+            }}
+          >
+            <div className={setup.sheetBody}>
+              <div className={setup.sheetHead}>
+                <h2 id="ob-sheet-title">What customers see</h2>
+                <button type="button" className={setup.sheetClose} onClick={() => setPreviewOpen(false)} aria-label="Close preview">
+                  <X size={20} aria-hidden="true" />
+                </button>
+              </div>
+              {previewOpen && renderPreview(true)}
+            </div>
+          </dialog>
+        </>
       )}
     </main>
   );

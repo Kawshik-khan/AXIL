@@ -218,6 +218,28 @@
   --mk-white-a800: rgba(255, 255, 255, 0.8);
   --mk-white-a820: rgba(255, 255, 255, 0.82);
   --mk-white-a850: rgba(255, 255, 255, 0.85);
+
+  /* Sign-in page (src/app/(auth)): the form panel and the story panel with its isometric illustration. Fixed values,
+     not the semantic tokens, so the illustration looks the same whatever theme the dashboard last set. */
+  --auth-page: #F5F6F3;
+  --auth-panel: #F0F0F0;
+  --auth-panel-edge: #FFFFFF;
+  --auth-story: #70736F;
+  --auth-glass: rgba(22, 23, 26, 0.72);
+  --auth-glass-edge: rgba(255, 255, 255, 0.16);
+  --auth-on-story: #FFFFFF;
+  --auth-dot: rgba(255, 255, 255, 0.3);
+  --auth-lime-ring: rgba(199, 249, 0, 0.28);
+  --auth-art-lime-soft: #EFFFAD;
+  --auth-art-lime: #C7F900;
+  --auth-art-lime-deep: #4A5E00;
+  --auth-art-gray-100: #F1F3F5;
+  --auth-art-gray-200: #D9DCE0;
+  --auth-art-gray-400: #9A9D98;
+  --auth-art-gray-600: #70736F;
+  --auth-art-ink-700: #2A2C30;
+  --auth-art-ink-800: #16171A;
+  --auth-art-ink-900: #0B0C0E;
 }
 
 /* Platform console dark theme. Set on <html> by the console only while it is open (data-console-theme="dark"), so
