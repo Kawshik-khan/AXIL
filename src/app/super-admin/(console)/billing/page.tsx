@@ -24,9 +24,10 @@ import { Tabs, useTab, type TabDef } from "../../_components/Tabs";
 import { PrivilegedActionDialog } from "../../_components/PrivilegedActionDialog";
 import { PlanEditor } from "./PlanEditor";
 import { InvoiceQueue } from "./InvoiceQueue";
+import { PaymentMethods, type PaymentReadiness } from "./PaymentMethods";
 import styles from "../../super-admin.module.css";
 
-type TabId = "plans" | "catalog" | "addons" | "subscriptions" | "invoices" | "migrate";
+type TabId = "plans" | "catalog" | "addons" | "subscriptions" | "invoices" | "payments" | "migrate";
 
 interface CatalogRow {
   id: string;
@@ -71,6 +72,7 @@ export default function BillingPage() {
     { id: "addons", label: "Add-ons" },
     { id: "subscriptions", label: "Subscriptions", visible: can(PLATFORM_PERMISSIONS.SUBSCRIPTION_READ) },
     { id: "invoices", label: "Invoices", visible: can(PLATFORM_PERMISSIONS.BILLING_READ) },
+    { id: "payments", label: "Payment methods", visible: can(PLATFORM_PERMISSIONS.BILLING_READ) },
     { id: "migrate", label: "Move tenants", visible: can(PLATFORM_PERMISSIONS.SUBSCRIPTION_READ) },
   ];
   const [tab, setTab] = useTab(tabs, "plans");
@@ -81,7 +83,7 @@ export default function BillingPage() {
   const plans = usePlatformResource<PlanView[]>("/api/v1/platform/plans", { isEmpty: (p) => p.length === 0 });
   const overview = usePlatformResource<PlatformOverviewMetrics>(can(PLATFORM_PERMISSIONS.PLATFORM_READ) ? "/api/v1/platform/overview" : null);
   // Can workspaces pay at all? Without a gateway or a manual account every new shop is stuck on the paywall.
-  const payMethods = usePlatformResource<{ configured: boolean; gateways: string[] }>(
+  const payMethods = usePlatformResource<PaymentReadiness>(
     can(PLATFORM_PERMISSIONS.BILLING_READ) ? "/api/v1/platform/billing/payment-methods" : null
   );
   const catalog = usePlatformResource<CatalogRow[]>(tab === "catalog" ? "/api/v1/platform/entitlements" : null);
@@ -145,13 +147,14 @@ export default function BillingPage() {
         }
       />
 
-      {payMethods.state.kind === "ready" && !payMethods.state.data.configured && (
+      {payMethods.state.kind === "ready" && !payMethods.state.data.configured && tab !== "payments" && (
         <div className={`${styles.banner} ${styles.bannerDanger}`} role="alert">
           <span>
-            <strong>Workspaces can&apos;t pay for a plan.</strong> No subscription payment method is set up, so new shops stay locked on the
-            activation page. Set the bKash, Nagad or bank details under <Link href={`${CONSOLE_ROOT}/settings`}>Settings → Billing</Link>, or the
-            platform SSLCommerz / bKash gateway account in the server environment.
+            <strong>Workspaces can&apos;t pay for a plan.</strong> No subscription payment method is set up yet.
           </span>
+          <Button size="sm" onClick={() => setTab("payments")}>
+            Set up payment methods
+          </Button>
         </div>
       )}
 
@@ -458,6 +461,8 @@ export default function BillingPage() {
       )}
 
       {tab === "invoices" && <InvoiceQueue canManage={can(PLATFORM_PERMISSIONS.BILLING_MANAGE)} />}
+
+      {tab === "payments" && <PaymentMethods readiness={payMethods} onChanged={payMethods.reload} />}
 
       {tab === "migrate" && (
         <BentoCard span={12} title="Move tenants between plan versions" subtitle="Preview counts current usage against the new limits before anything moves">

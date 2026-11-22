@@ -7,6 +7,8 @@
  *      `tran_id` (our attempt id) and, for a payment, `val_id`.
  *   3. confirm asks the Order Validation API about that val_id with the store's own credentials. Only its answer
  *      (VALID / VALIDATED for our tran_id) counts; the POSTed fields are never trusted.
+ *   4. With no val_id (lost IPN, payer never came back, a reconcile run: ADR-129) confirm asks the Transaction Query API
+ *      by our tran_id for a val_id, then validates that val_id exactly as in step 3.
  *
  * The hosts are constants chosen by the account's mode: no URL here comes from a request or a stored record.
  */
@@ -41,6 +43,36 @@ const TIMEOUT_MS = 20_000;
 
 function credentials(account: GatewayAccount): SslcommerzCredentials {
   return account.credentials as SslcommerzCredentials;
+}
+
+/**
+ * Asks the Transaction Query API (merchantTransIDvalidationAPI) which payments SSLCommerz holds for our tran_id and
+ * returns the val_id of a VALID / VALIDATED one. The answer is only a pointer: confirm then checks that val_id with the
+ * Order Validation API exactly as it checks one from a callback.
+ */
+async function findValidatedValId(account: GatewayAccount, attemptId: string): Promise<string | undefined> {
+  const { store_id, store_password } = credentials(account);
+  const query = new URLSearchParams({ tran_id: attemptId, store_id, store_passwd: store_password, format: "json" });
+  const response = await outboundRequest(`${HOSTS[account.mode]}/validator/api/merchantTransIDvalidationAPI.php?${query.toString()}`, {
+    method: "GET",
+    timeoutMs: TIMEOUT_MS,
+  });
+  const body = parseJsonObject(response.body);
+  if (response.status !== 200 || !body) {
+    throw new PaymentGatewayError("SSLCOMMERZ", "could not be asked about this payment", "If it went through, it is confirmed when SSLCommerz is asked again.");
+  }
+  const elements = Array.isArray(body.element) ? body.element : [];
+  const valIds: string[] = [];
+  for (const element of elements) {
+    if (!element || typeof element !== "object") continue;
+    const record = element as Record<string, unknown>;
+    const status = pick(record, "status");
+    const valId = pick(record, "val_id");
+    if ((status === "VALID" || status === "VALIDATED") && pick(record, "tran_id") === attemptId && valId) valIds.push(valId);
+  }
+  // One tran_id should be paid once; more than one validated payment is money to refund, so say so loudly.
+  if (valIds.length > 1) logger.error("payments.sslcommerz.multiple_valid", { attempt_id: attemptId, count: valIds.length });
+  return valIds[0];
 }
 
 export const sslcommerzAdapter: PaymentGatewayAdapter = {
@@ -101,7 +133,10 @@ export const sslcommerzAdapter: PaymentGatewayAdapter = {
       const claimed = (returned.claimedStatus || "").toUpperCase();
       if (claimed === "CANCELLED") return { status: "CANCELLED", reason: "The payment was cancelled at SSLCommerz." };
       if (claimed === "FAILED") return { status: "FAILED", reason: "SSLCommerz reported a failed payment." };
-      return { status: "PENDING", reason: "SSLCommerz sent no validation id." };
+      // No val_id (the payer never came back and the IPN was lost, or a reconcile run): ask SSLCommerz by our tran_id.
+      const valId = await findValidatedValId(account, attempt.id);
+      if (!valId) return { status: "PENDING", reason: "SSLCommerz has no validated payment for this attempt yet." };
+      return sslcommerzAdapter.confirm(account, attempt, { reference: valId });
     }
     const { store_id, store_password } = credentials(account);
     const query = new URLSearchParams({ val_id: returned.reference, store_id, store_passwd: store_password, format: "json" });

@@ -10,7 +10,9 @@ import { db } from "@/infrastructure/db";
 import { AuthService } from "@/domains/auth/service";
 import { PricingService } from "@/domains/pricing/pricing.service";
 import { WorkspaceAccessService } from "@/domains/billing/workspace-access.service";
-import { BillingService, SELF_SERVE_TRIAL_FLAG, SELF_SERVE_TRIAL_PLAN_ID } from "@/domains/billing/billing.service";
+import { BillingService, SELF_SERVE_TRIAL_FLAG, SELF_SERVE_TRIAL_PLAN_ID, SUPPORT_CONTACT_SETTING, TRIAL_WHEN_UNPAYABLE_SETTING } from "@/domains/billing/billing.service";
+import { platformBillingReadiness } from "@/domains/payments/gateways/gateway-accounts";
+import { validateSettingValue } from "@/domains/platform/settings-registry";
 import { activationInvoices } from "@/components/billing/activation-invoice";
 import { hashPassword, signSessionToken } from "@/lib/security";
 import { resetRateLimitsForTesting } from "@/lib/rate-limit";
@@ -415,6 +417,113 @@ async function main() {
     assert.ok(next.open && next.open.id !== old.id && next.expired === undefined);
     await expect402(S.auth, "WORKSPACE_PAYMENT_REQUIRED", "/activate");
   });
+
+  console.log(`${BOLD}[9] No way to pay yet: trial safety net and support contact${RESET}`);
+
+  const BILLING_ENV = [
+    "PLATFORM_SSLCOMMERZ_STORE_ID", "PLATFORM_SSLCOMMERZ_STORE_PASSWORD", "PLATFORM_SSLCOMMERZ_MODE",
+    "PLATFORM_BKASH_APP_KEY", "PLATFORM_BKASH_APP_SECRET", "PLATFORM_BKASH_USERNAME", "PLATFORM_BKASH_PASSWORD", "PLATFORM_BKASH_MODE",
+    "PLATFORM_BILLING_BKASH_NUMBER", "PLATFORM_BILLING_NAGAD_NUMBER", "PLATFORM_BILLING_BANK_DETAILS",
+  ];
+  const savedEnv = Object.fromEntries(BILLING_ENV.map((k) => [k, process.env[k]]));
+  const setSetting = (key: string, value: unknown) =>
+    db.savePlatformSetting({ key, value, category: "BILLING", description: "test", is_sensitive: false, updated_at: new Date().toISOString() });
+  const setTrialFlag = (on: boolean) => {
+    const at = new Date().toISOString();
+    const existing = db.findPlatformFeatureFlag(SELF_SERVE_TRIAL_FLAG);
+    db.savePlatformFeatureFlag({
+      id: existing?.id ?? `ff_${crypto.randomUUID().slice(0, 8)}`, key: SELF_SERVE_TRIAL_FLAG, description: "test", is_enabled_globally: on,
+      percentage_rollout: 100, scope: "GLOBAL", tenant_allowlist: [], rules: {}, created_at: existing?.created_at ?? at, updated_at: at,
+    });
+  };
+  const savedFlag = db.findPlatformFeatureFlag(SELF_SERVE_TRIAL_FLAG);
+  try {
+    for (const k of BILLING_ENV) delete process.env[k];
+    setSetting("billing.manual_bkash_number", "");
+    setSetting("billing.manual_nagad_number", "");
+    setSetting("billing.manual_bank_details", "");
+
+    await runTest("readiness reports each gateway's mode, never its credentials", () => {
+      process.env.PLATFORM_SSLCOMMERZ_STORE_ID = "store_test";
+      process.env.PLATFORM_SSLCOMMERZ_STORE_PASSWORD = "secret_value_never_shown";
+      process.env.PLATFORM_SSLCOMMERZ_MODE = "live";
+      const r = platformBillingReadiness();
+      assert.deepStrictEqual(r.gateway_modes, { SSLCOMMERZ: "LIVE", BKASH: null });
+      assert.deepStrictEqual(r.gateways, ["SSLCOMMERZ"]);
+      assert.ok(r.configured);
+      assert.ok(!JSON.stringify(r).includes("secret_value_never_shown") && !JSON.stringify(r).includes("store_test"));
+      for (const k of BILLING_ENV) delete process.env[k];
+      assert.strictEqual(platformBillingReadiness().configured, false);
+    });
+
+    await runTest("with no way to pay, the trial is offered even when self-serve trials are off", async () => {
+      setTrialFlag(false);
+      setSetting(TRIAL_WHEN_UNPAYABLE_SETTING, true);
+      const N = await register("N");
+      const offer = (await call("billing", "GET", N.auth)).body.data!.trial_offer;
+      assert.ok(offer, "safety-net trial offered");
+      assert.strictEqual(offer.plan_id, SELF_SERVE_TRIAL_PLAN_ID);
+      const started = await call("billing/trial", "POST", N.auth);
+      assert.strictEqual(started.status, 201, JSON.stringify(started.body));
+    });
+
+    await runTest("the safety net is off by default: an operator's 'trials off' flag holds until they turn it on", async () => {
+      setTrialFlag(false);
+      db.savePlatformSetting({ key: TRIAL_WHEN_UNPAYABLE_SETTING, value: false, category: "BILLING", description: "test", is_sensitive: false, updated_at: new Date().toISOString() });
+      assert.strictEqual(validateSettingValue(TRIAL_WHEN_UNPAYABLE_SETTING, false), false);
+      const D = await register("D");
+      assert.strictEqual((await call("billing", "GET", D.auth)).body.data!.trial_offer, null);
+      assert.strictEqual((await call("billing/trial", "POST", D.auth)).status, 409);
+    });
+
+    await runTest("the safety net stops once a way to pay exists, or when it is switched off", async () => {
+      setTrialFlag(false);
+      setSetting(TRIAL_WHEN_UNPAYABLE_SETTING, true);
+      setSetting("billing.manual_bkash_number", "01700000009");
+      const M = await register("M");
+      assert.strictEqual((await call("billing", "GET", M.auth)).body.data!.trial_offer, null, "payable install: flag off means no trial");
+      assert.strictEqual((await call("billing/trial", "POST", M.auth)).status, 409);
+      setSetting("billing.manual_bkash_number", "");
+      setSetting(TRIAL_WHEN_UNPAYABLE_SETTING, false);
+      assert.strictEqual((await call("billing", "GET", M.auth)).body.data!.trial_offer, null, "safety net off");
+    });
+
+    await runTest("the billing support contact is typed for the activation page, and only valid values are accepted", async () => {
+      const W = await register("W");
+      setSetting(SUPPORT_CONTACT_SETTING, "");
+      assert.strictEqual((await call("billing", "GET", W.auth)).body.data!.support_contact, null);
+      setSetting(SUPPORT_CONTACT_SETTING, "01712345678");
+      assert.deepStrictEqual((await call("billing", "GET", W.auth)).body.data!.support_contact, { kind: "WHATSAPP", value: "01712345678" });
+      setSetting(SUPPORT_CONTACT_SETTING, "billing@commerceos.example");
+      assert.deepStrictEqual((await call("billing", "GET", W.auth)).body.data!.support_contact, { kind: "EMAIL", value: "billing@commerceos.example" });
+      assert.throws(() => validateSettingValue(SUPPORT_CONTACT_SETTING, "https://evil.example/pay"));
+      assert.throws(() => validateSettingValue(SUPPORT_CONTACT_SETTING, "0171234"));
+      assert.strictEqual(validateSettingValue(SUPPORT_CONTACT_SETTING, ""), "");
+      assert.throws(() => validateSettingValue(TRIAL_WHEN_UNPAYABLE_SETTING, "yes"));
+      assert.throws(() => validateSettingValue(SUPPORT_CONTACT_SETTING, "a@b.co?cc=evil.example"), "no mailto parameters");
+      assert.throws(() => validateSettingValue(SUPPORT_CONTACT_SETTING, "a@b.co&body=x"));
+    });
+
+    await runTest("the checkout shows who is billed: this workspace and the signed-in payer, from the session only", async () => {
+      const P = await register("P");
+      const billedTo = (await call("billing", "GET", P.auth)).body.data!.billed_to as { workspace_name: string; payer_name: string; payer_email: string };
+      assert.strictEqual(billedTo.workspace_name, "Onboarding Shop P");
+      assert.strictEqual(billedTo.payer_name, "P Owner");
+      assert.match(billedTo.payer_email, /^owner_p_[0-9a-f]{8}@onboarding\.test$/);
+      const other = (await call("billing", "GET", A.auth)).body.data!.billed_to as { workspace_name: string };
+      assert.strictEqual(other.workspace_name, db.findTenantById(A.tenantId)?.name, "each workspace sees only its own name");
+      assert.notStrictEqual(other.workspace_name, billedTo.workspace_name);
+    });
+  } finally {
+    for (const k of BILLING_ENV) {
+      if (savedEnv[k] === undefined) delete process.env[k];
+      else process.env[k] = savedEnv[k];
+    }
+    setSetting(TRIAL_WHEN_UNPAYABLE_SETTING, false);
+    setSetting(SUPPORT_CONTACT_SETTING, "");
+    if (savedFlag) db.savePlatformFeatureFlag(savedFlag);
+    else setTrialFlag(true);
+  }
 
   console.log(`\n${BOLD}====================================================${RESET}`);
   console.log(`  Tests Passed: ${passed} | Tests Failed: ${failed}`);

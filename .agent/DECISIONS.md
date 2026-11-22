@@ -2324,3 +2324,43 @@ workspace's customer bot, so owner questions could land in the customer flow.
 - Owners using the platform bot see no change. Owners with their own bot are moved over the next time they press Send
   test or Connect, or save the bot again; until then the old secret still works for their own workspace only.
 - Not verified against a live Telegram bot: `setWebhook` / `deleteWebhook` are exercised only against a fake transport.
+
+---
+
+## ADR-129: Recovering Subscription Payments Whose Confirmation Never Arrived
+
+**Date:** 2026-11-22 · **Status:** Accepted
+
+### Context
+A workspace that pays its subscription through the platform's SSLCommerz account is confirmed only when the payer's
+browser comes back or SSLCommerz's IPN reaches us, and both carry the `val_id` our adapter validates. If the payer
+closes the tab and the IPN is lost, the money is taken but the invoice stays unpaid (and a paywalled workspace stays on
+`/activate`, ADR-125). An unmerged alternative (Antigravity worktree `commerceos_payment_access_billing`, its own
+"ADR-125") had a reconcile job for this, inside a larger redesign main had already replaced: a second provider layer,
+a generic webhook route, a `payment_events` table and gateway credentials stored in the database. Only the reconcile
+idea was ported; main's `PaymentGatewayAdapter`, IPN route and attempt records already cover the rest, and ADR-125 keeps
+gateway secrets in the server environment.
+
+### Decision
+- **Lookup by our own id:** with no `val_id` and no cancelled/failed claim, the SSLCommerz adapter asks the Transaction
+  Query API (`merchantTransIDvalidationAPI`) for our `tran_id`. A VALID / VALIDATED element for the same `tran_id` only
+  gives a `val_id`; that `val_id` then goes through the unchanged Order Validation path (tran_id, store, risk level,
+  then amount and currency in `GatewayPaymentService.apply`). The public return and IPN routes get the same lookup when
+  they arrive without a `val_id` (they are already rate-limited per attempt).
+- **Operator-run reconcile:** `POST /api/v1/platform/billing/reconcile` (`billing.manage`, strict body
+  `{ older_than_minutes: 5…2880, default 15 }`) runs `GatewayPaymentService.reconcilePlatformAttempts`: platform-scope
+  attempts not PAID (cancelled and failed included, since a cancel claim with no val_id is unverified and anyone with
+  the tran_id can send one), older than the cutoff and inside the 48 h confirm window, oldest first, at most 50 a run and
+  no new gateway call after 60 s (the rest are reported `deferred`), each through `complete()`. An unpaid answer
+  reopens nothing. It is a declared privileged action, `billing.reconcile_gateway_payments`, risk LOW (no reason, no
+  approval): it decides nothing, and a payment settles only on the gateway's own confirmation, as from an IPN. Limited
+  to 3 runs a minute platform-wide (checked after the permission). Audited as one run row (counts and settled invoices)
+  plus one row per settled invoice with its `target_tenant_id`. Super Admin → Billing → Invoices has a "Check
+  unconfirmed gateway payments" button.
+- A failed Transaction Query does not say "No payment was taken" (it may have been); more than one validated payment
+  for one tran_id is logged as `payments.sslcommerz.multiple_valid`.
+- Shop (STORE) attempts are not swept here; bKash attempts in the sweep use bKash's existing Query Payment path.
+
+### Consequences
+- A lost IPN no longer means a paid workspace stays locked, once an operator runs the check. No schedule runs it yet.
+- Stub-tested only, like the rest of ADR-123: the Transaction Query API has not been called against SSLCommerz.

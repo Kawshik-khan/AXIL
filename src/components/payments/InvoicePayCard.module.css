@@ -1,0 +1,656 @@
+/* Plan invoice checkout (InvoicePayCard): the form on the left, the invoice summary with the cube art on the right. */
+
+.checkout {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-12);
+  padding: var(--space-12);
+  background: var(--color-surface-pure);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--glass-shadow);
+}
+
+/* ---- Left: the form -------------------------------------------------------------------------------------------- */
+
+.form {
+  flex: 999 1 480px;
+  min-width: 0;
+  padding: var(--space-24) var(--space-24) var(--space-20);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-24);
+}
+
+.head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+.eyebrow {
+  font-size: var(--font-size-meta);
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  margin: 0;
+}
+
+.title {
+  margin: 0;
+  font-size: var(--font-size-display);
+  line-height: var(--line-height-display);
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  color: var(--color-text-primary);
+}
+
+.lead {
+  margin: 0;
+  font-size: var(--font-size-body);
+  line-height: var(--line-height-body);
+  color: var(--color-text-secondary);
+  max-width: 60ch;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+}
+
+.label {
+  margin: 0;
+  font-size: var(--font-size-meta);
+  font-weight: 500;
+  color: var(--color-text-secondary);
+}
+
+.sectionHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-8);
+  flex-wrap: wrap;
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: var(--font-size-section);
+  line-height: var(--line-height-section);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.count {
+  font-size: var(--font-size-meta);
+  color: var(--color-text-secondary);
+}
+
+/* Billed to: the workspace and where the receipt goes */
+.billedTo {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  flex-wrap: wrap;
+  min-height: 48px;
+  padding: var(--space-8) var(--space-12);
+  border: 1px solid var(--color-border-medium);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-soft);
+}
+
+.badge {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--color-lime-soft);
+  color: var(--color-lime-ink);
+  font-size: var(--font-size-meta);
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.billedName {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--font-size-body);
+  font-weight: 500;
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.billedMeta {
+  font-size: var(--font-size-meta);
+  color: var(--color-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+/* Method tabs: Mobile banking / Card / Bank transfer */
+.methods {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: var(--space-8);
+}
+
+.method {
+  min-height: 88px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-8);
+  padding: var(--space-12) var(--space-16);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 16px;
+  background: var(--color-surface-pure);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: var(--font-size-body);
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.method:hover {
+  border-color: var(--color-border-medium);
+}
+
+.methodOn,
+.methodOn:hover {
+  background: var(--color-select-bg);
+  border: 1.5px solid var(--color-select-border);
+  color: var(--color-select-text);
+  box-shadow: var(--shadow-lg);
+}
+
+.methodOn svg {
+  color: var(--color-select-indicator);
+}
+
+/* Wallet tiles: bKash / Nagad / Rocket */
+.wallets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-8);
+}
+
+.wallet {
+  position: relative;
+  width: 112px;
+  min-height: 88px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-8);
+  padding: var(--space-12) var(--space-8);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 16px;
+  background: var(--color-surface-pure);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: var(--font-size-meta);
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.wallet:hover {
+  border-color: var(--color-border-medium);
+}
+
+.walletOn,
+.walletOn:hover {
+  border: 2px solid var(--color-select-border);
+  box-shadow: var(--shadow-md);
+}
+
+.check {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-pill);
+  background: var(--color-select-bg);
+  color: var(--color-select-indicator);
+  border: 2px solid var(--color-surface-pure);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* The "what happens next" row under the choice */
+.info {
+  display: flex;
+  gap: var(--space-12);
+  align-items: flex-start;
+  padding: var(--space-16);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 16px;
+  background: var(--color-surface-soft);
+}
+
+.infoBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.infoTitle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  flex-wrap: wrap;
+  font-size: var(--font-size-body);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.infoText {
+  margin: 0;
+  font-size: 13px;
+  line-height: 19px;
+  color: var(--color-text-secondary);
+}
+
+.lockMark {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background: var(--color-select-bg);
+  color: var(--color-select-indicator);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.chip,
+.chipInstant,
+.chipReview {
+  font-size: var(--font-size-meta);
+  line-height: var(--line-height-meta);
+  font-weight: 500;
+  border-radius: var(--radius-pill);
+  padding: 2px var(--space-8);
+  white-space: nowrap;
+}
+
+.chip {
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border-medium);
+  font-weight: 600;
+  padding: var(--space-4) var(--space-12);
+}
+
+.chipInstant {
+  color: var(--color-success-ink);
+  background: var(--color-success-bg);
+}
+
+.chipReview {
+  color: var(--color-warning-ink);
+  background: var(--color-warning-bg);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-8);
+}
+
+/* Where to send the money: a definition list with the reference highlighted */
+.details {
+  margin: 0;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.detailRow,
+.detailRef {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-12);
+  padding: var(--space-12) var(--space-16);
+  border-bottom: 1px solid var(--color-border-subtle);
+  font-size: 13px;
+}
+
+.detailRef {
+  border-bottom: 0;
+  background: var(--color-lime-soft);
+}
+
+.detailRow dt,
+.detailRef dt {
+  color: var(--color-text-secondary);
+}
+
+.detailRef dt {
+  color: var(--color-lime-ink);
+  font-weight: 500;
+}
+
+.detailRow dd,
+.detailRef dd {
+  margin: 0;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  text-align: right;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.mono {
+  font-family: var(--font-family-mono);
+}
+
+/* Inputs */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+.phoneBox {
+  display: flex;
+  align-items: stretch;
+  height: 48px;
+  border: 1px solid var(--color-border-medium);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-pure);
+  overflow: hidden;
+}
+
+.phoneBox:focus-within,
+.input:focus {
+  border-color: var(--color-select-bg);
+  box-shadow: 0 0 0 3px var(--color-lime-glow);
+}
+
+.prefix {
+  display: flex;
+  align-items: center;
+  padding: 0 var(--space-12);
+  font-size: var(--font-size-body);
+  color: var(--color-text-secondary);
+  background: var(--color-surface-soft);
+  border-right: 1px solid var(--color-border-subtle);
+}
+
+.phoneInput,
+.input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 15px;
+  color: var(--color-text-primary);
+  background: transparent;
+  outline: none;
+}
+
+.phoneInput {
+  border: 0;
+  padding: 0 var(--space-12);
+  letter-spacing: 0.04em;
+}
+
+.input {
+  height: 48px;
+  padding: 0 var(--space-12);
+  border: 1px solid var(--color-border-medium);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-pure);
+}
+
+.hint {
+  font-size: var(--font-size-meta);
+  line-height: var(--line-height-meta);
+  color: var(--color-text-secondary);
+}
+
+/* The one action */
+.pay {
+  width: 100%;
+  height: 52px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--color-select-bg);
+  color: var(--color-select-text);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-8);
+  cursor: pointer;
+  transition: opacity var(--transition-fast), transform var(--transition-fast);
+}
+
+.pay svg {
+  color: var(--color-select-indicator);
+}
+
+.pay:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.pay:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.method:focus-visible,
+.wallet:focus-visible,
+.pay:focus-visible,
+.supportLink:focus-visible {
+  outline: 3px solid var(--color-lime-glow);
+  outline-offset: 2px;
+}
+
+.fine {
+  margin: calc(var(--space-12) * -1) 0 0;
+  font-size: var(--font-size-meta);
+  line-height: 18px;
+  color: var(--color-text-secondary);
+}
+
+.supportLink {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-12);
+  padding: var(--space-12) var(--space-16);
+  border: 1px solid var(--color-border-medium);
+  border-radius: 16px;
+  color: var(--color-text-primary);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.supportLink:hover {
+  border-color: var(--color-select-bg);
+}
+
+/* ---- Right: the invoice summary ---------------------------------------------------------------------------------- */
+
+.summary {
+  flex: 1 1 340px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-20);
+  background: var(--checkout-art-bg);
+  border: 1px solid var(--color-surface-pure);
+  border-radius: 22px;
+  overflow: hidden;
+}
+
+.summaryCard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+  padding: var(--space-24) var(--space-20);
+  border-radius: var(--radius-card);
+  background: var(--color-surface-pure);
+  box-shadow: var(--glass-shadow);
+}
+
+.summaryHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-8);
+}
+
+.summaryTitle {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--color-text-primary);
+}
+
+.period {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  padding: var(--space-16);
+  border: 1.5px solid var(--color-select-border);
+  border-radius: 16px;
+  background: var(--color-surface-pure);
+  box-shadow: var(--shadow-md);
+}
+
+.radio {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-pill);
+  background: var(--color-select-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.radio::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: var(--color-select-indicator);
+}
+
+.periodText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.periodText strong {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.lines {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  font-size: 13px;
+}
+
+.lines > div {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-12);
+}
+
+.lines dt {
+  color: var(--color-text-secondary);
+}
+
+.lines dd {
+  margin: 0;
+  font-weight: 500;
+  color: var(--color-text-primary);
+  text-align: right;
+}
+
+.rule {
+  height: 1px;
+  border: 0;
+  margin: 0;
+  background: var(--color-border-medium);
+}
+
+.total {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-12);
+  color: var(--color-text-primary);
+}
+
+.totalLabel {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.totalAmount {
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.secure {
+  margin: 0;
+  display: flex;
+  gap: var(--space-8);
+  font-size: var(--font-size-meta);
+  line-height: 18px;
+  color: var(--color-text-secondary);
+}
+
+.secure svg {
+  flex: none;
+  margin-top: 1px;
+}
+
+/* The cube illustration fills the column below the summary card */
+.art {
+  flex: 1 1 auto;
+  min-height: 280px;
+  margin: var(--space-20) calc(var(--space-20) * -1) calc(var(--space-20) * -1);
+  background-color: var(--checkout-art-bg);
+  background-image: url("/images/billing/checkout-cubes.webp");
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-position: center 70%;
+}
+
+@media (max-width: 860px) {
+  .form {
+    padding: var(--space-16) var(--space-12);
+  }
+
+  .art {
+    min-height: 200px;
+  }
+}

@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowRight, Check } from "lucide-react";
 import { BrandLogo } from "@/components/brand/BrandLogo";
-import { InvoicePayCard, type BillingInvoice, type BillingPaymentOptions } from "@/components/payments/InvoicePayCard";
+import { InvoicePayCard, type BillingInvoice, type BillingPaymentOptions, type BillingSupportContact, type BilledTo } from "@/components/payments/InvoicePayCard";
 import { api, formatBdt, formatDate } from "@/components/payments/api";
 import { limitText, type PlanOption } from "@/components/billing/PlanCards";
 import { activationInvoices } from "@/components/billing/activation-invoice";
@@ -26,6 +26,8 @@ interface Overview {
   plans: PlanOption[];
   invoices: BillingInvoice[];
   payment_options: BillingPaymentOptions;
+  support_contact: BillingSupportContact | null;
+  billed_to?: BilledTo;
   trial_offer: { plan_id: string; plan_name: string; days: number } | null;
   access: Access;
 }
@@ -201,9 +203,18 @@ export default function ActivatePage() {
       )}
 
       {open ? (
-        <InvoicePayCard invoice={open} planName={planName(open.plan_id)} options={options} canPay={canPay} onChanged={async () => {
-          await load();
-        }} />
+        <InvoicePayCard
+          invoice={open}
+          planName={planName(open.plan_id)}
+          options={options}
+          canPay={canPay}
+          trialOffer={offer}
+          supportContact={overview.support_contact}
+          billedTo={overview.billed_to}
+          onChanged={async () => {
+            await load();
+          }}
+        />
       ) : !canPay ? (
         <div className={styles.notice} role="status">
           Only the shop owner or an admin can choose and pay for a plan. Ask them to sign in and finish this step.

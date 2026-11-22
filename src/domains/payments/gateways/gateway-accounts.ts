@@ -115,8 +115,22 @@ export function platformManualAccounts(env: NodeJS.ProcessEnv = process.env): Pl
 }
 
 /** Whether workspaces have any way to pay a subscription on this install (for the operator readiness warning). */
-export function platformBillingReadiness(env: NodeJS.ProcessEnv = process.env): { configured: boolean; gateways: GatewayProvider[]; manual: PlatformManualAccounts } {
-  const gateways = platformGateways(env);
+export interface PlatformBillingReadiness {
+  configured: boolean;
+  gateways: GatewayProvider[];
+  /** Each gateway's mode (LIVE / SANDBOX), or null when the platform has no account for it. Never the credentials. */
+  gateway_modes: Record<GatewayProvider, GatewayMode | null>;
+  manual: PlatformManualAccounts;
+}
+
+export function platformBillingReadiness(env: NodeJS.ProcessEnv = process.env): PlatformBillingReadiness {
+  const gateway_modes = Object.fromEntries(GATEWAY_PROVIDERS.map((p) => [p, platformCredentials(p, env)?.mode ?? null])) as Record<GatewayProvider, GatewayMode | null>;
+  const gateways = GATEWAY_PROVIDERS.filter((p) => gateway_modes[p] !== null);
   const manual = platformManualAccounts(env);
-  return { configured: gateways.length > 0 || Object.values(manual).some(Boolean), gateways, manual };
+  return { configured: gateways.length > 0 || Object.values(manual).some(Boolean), gateways, gateway_modes, manual };
+}
+
+/** Whether a workspace has any way to pay a subscription on this install. */
+export function platformBillingConfigured(env: NodeJS.ProcessEnv = process.env): boolean {
+  return platformGateways(env).length > 0 || Object.values(platformManualAccounts(env)).some(Boolean);
 }

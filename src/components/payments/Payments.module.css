@@ -342,6 +342,7 @@
   font: inherit;
   font-weight: 600;
   text-align: left;
+  text-decoration: none;
   cursor: pointer;
   transition: border-color var(--transition-fast), background var(--transition-fast);
 }

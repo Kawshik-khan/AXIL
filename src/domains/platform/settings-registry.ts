@@ -96,6 +96,38 @@ export const SETTINGS_REGISTRY: readonly SettingSpec[] = [
     sensitive: false,
     readBy: "platformManualAccounts",
   },
+  // The safety net for an install with no way to pay yet (no gateway account, no manual account): instead of a locked
+  // activation page, a new workspace is offered its one free trial even where self-serve trials are switched off.
+  {
+    key: "billing.trial_when_unpayable",
+    label: "Offer a trial when no payment method is set up",
+    description:
+      "When workspaces have no way to pay a subscription, offer them the free trial even if self-serve trials are switched off, instead of a locked page. Off (default): the trial flag decides.",
+    category: "BILLING",
+    schema: z.boolean(),
+    // Off by default: turning it on overrides an operator's "trials off" flag, so that must be a governed decision
+    default: false,
+    risk: "HIGH",
+    sensitive: false,
+    readBy: "BillingService.trialOffer",
+  },
+  // Where a workspace that can't pay is sent for help. Changing it redirects customers, so it is governed.
+  {
+    key: "billing.support_contact",
+    label: "Billing support contact",
+    description:
+      "A WhatsApp number (01XXXXXXXXX) or an email address shown on the activation page when a workspace can't pay. Empty: no contact is shown.",
+    category: "BILLING",
+    schema: z
+      .string()
+      .trim()
+      .max(120)
+      .regex(/^((01[3-9]\d{8})|([A-Za-z0-9._+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}))?$/, "Enter an 11-digit mobile number (01XXXXXXXXX), an email address, or leave it empty."),
+    default: "",
+    risk: "HIGH",
+    sensitive: false,
+    readBy: "BillingService.getOverview",
+  },
   {
     key: "billing.trial_default_days",
     label: "Default trial length",
