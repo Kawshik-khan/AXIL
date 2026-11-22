@@ -97,9 +97,9 @@ const TAB_ICONS: Record<MethodTab, React.ReactNode> = {
 };
 
 function headingFor(invoice: BillingInvoice, planName: string): string {
-  if (invoice.kind === "RENEWAL") return `Renew ${planName}`;
-  if (invoice.kind === "PLAN_CHANGE") return `Switch to ${planName}`;
-  return `Start ${planName}`;
+  if (invoice.kind === "RENEWAL") return `Renew your ${planName} plan`;
+  if (invoice.kind === "PLAN_CHANGE") return `Switch to the ${planName} plan`;
+  return `Start your ${planName} plan`;
 }
 
 /**
