@@ -247,7 +247,7 @@ export const PrivilegedActionDialog: React.FC<PrivilegedActionDialogProps> = ({
       {approved && (
         <div className={`${styles.banner} ${styles.bannerInfo}`}>
           <span>
-            Approved by a second operator · expires in {formatCountdown(approved.expires_at, now)}. Run it with the same
+            Approved · expires in {formatCountdown(approved.expires_at, now)}. Run it with the same
             inputs you requested.
           </span>
         </div>
@@ -255,8 +255,8 @@ export const PrivilegedActionDialog: React.FC<PrivilegedActionDialogProps> = ({
       {!approved && pending && (
         <div className={`${styles.banner} ${styles.bannerWarning}`}>
           <span>
-            Waiting for a second operator to approve (requested {formatDateTime(pending.requested_at)}, expires in{" "}
-            {formatCountdown(pending.expires_at, now)}).
+            Waiting for approval in Security → Approval requests (requested {formatDateTime(pending.requested_at)}, expires
+            in {formatCountdown(pending.expires_at, now)}). A super admin can approve their own request there.
           </span>
           <Button size="sm" variant="ghost" onClick={() => cancelRequest(pending.id)} disabled={busy}>
             Withdraw
@@ -275,8 +275,9 @@ export const PrivilegedActionDialog: React.FC<PrivilegedActionDialogProps> = ({
       ) : phase === "needs-approval" ? (
         <div className={styles.sectionGap}>
           <p className={styles.hint}>
-            This action needs a second operator with approval rights. Request it with the reason and ticket below; when it
-            is approved, open this action again and run it.
+            This action needs approval. Request it with the reason and ticket below, approve it in Security → Approval
+            requests (a super admin can approve their own; other roles need a second operator), then open this action
+            again and run it.
           </p>
           <div className={styles.inlineActions}>
             <Button size="sm" onClick={requestApproval} isLoading={busy}>

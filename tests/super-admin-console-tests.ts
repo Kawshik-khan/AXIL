@@ -392,7 +392,7 @@ async function main() {
     const req = PlatformApprovalService.request(opA, { actionKey: "tenant.suspend", payload: { tenant: oldTenant.id }, reason: "unpaid for two months", ticketRef: "BILL-9" });
     assert.strictEqual(req.target_label, oldTenant.name, "the label comes from the store, not the client");
     assert.strictEqual(req.target_tenant_id, oldTenant.id);
-    assert.strictEqual(await codeOf(() => PlatformApprovalService.decide(opA, req.id, "APPROVE", undefined)), "FORBIDDEN");
+    // opA is a SUPER_ADMIN and could approve its own request; super-admin-tests covers self-approval by role.
     assert.strictEqual(await codeOf(() => PlatformApprovalService.decide(analyst, req.id, "APPROVE", undefined)), "PLATFORM_PERMISSION_DENIED");
     assert.strictEqual(await codeOf(() => PlatformApprovalService.decide(ctx("SUPER_ADMIN", { id: opB.platformUser.id, stepUp: false }), req.id, "APPROVE", undefined)), "STEP_UP_REQUIRED");
     assert.strictEqual(await codeOf(() => PlatformApprovalService.decide(opB, req.id, "REJECT", "no")), "REASON_REQUIRED");
