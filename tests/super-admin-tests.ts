@@ -317,13 +317,40 @@ async function runSuperAdminTests() {
     reason: globalInput.reason,
     ticketRef: globalInput.ticketRef,
   });
+  // A SUPER_ADMIN may approve their own request (audited as a self-approval)...
+  const ownRequest = PlatformApprovalService.request(superAdminContext, {
+    actionKey: "kill_switch.activate_global",
+    payload: { switch_id: "KILL_SWITCH_GLOBAL", scope: "GLOBAL", target_id: "self-approval-check" },
+    reason: globalInput.reason,
+    ticketRef: globalInput.ticketRef,
+  });
+  assert(PlatformApprovalService.get(superAdminContext, ownRequest.id).can_decide, "A SUPER_ADMIN sees Approve on their own request");
+  const selfApproved = PlatformApprovalService.decide(superAdminContext, ownRequest.id, "APPROVE", undefined);
+  assert(selfApproved.status === "APPROVED" && selfApproved.decided_by === superAdminContext.platformUser.id, "A SUPER_ADMIN can approve their own request");
+  PlatformApprovalService.cancel(superAdminContext, ownRequest.id);
+  // ...but every other role still needs a second operator.
+  const securityOperator: PlatformContext = {
+    ...superAdminContext,
+    requestId: "req_test_sa_03",
+    platformUser: { id: "usr_security_03", email: "security@commerceos.io", name: "Security Operator", status: "ACTIVE" },
+    platformRole: "PLATFORM_SECURITY",
+    permissions: [...PLATFORM_ROLE_PERMISSIONS.PLATFORM_SECURITY],
+  };
+  const securityRequest = PlatformApprovalService.request(securityOperator, {
+    actionKey: "kill_switch.activate_global",
+    payload: { switch_id: "KILL_SWITCH_GLOBAL", scope: "GLOBAL", target_id: "security-self-check" },
+    reason: globalInput.reason,
+    ticketRef: globalInput.ticketRef,
+  });
+  assert(!PlatformApprovalService.get(securityOperator, securityRequest.id).can_decide, "A non-super-admin requester gets no Approve button");
   let selfApproval: unknown = null;
   try {
-    PlatformApprovalService.decide(superAdminContext, approvalRequest.id, "APPROVE", undefined);
+    PlatformApprovalService.decide(securityOperator, securityRequest.id, "APPROVE", undefined);
   } catch (e) {
     selfApproval = e;
   }
-  assert((selfApproval as { code?: string })?.code === "FORBIDDEN", "The requester cannot approve their own request");
+  assert((selfApproval as { code?: string })?.code === "FORBIDDEN", "A non-super-admin requester cannot approve their own request");
+  PlatformApprovalService.cancel(securityOperator, securityRequest.id);
   PlatformApprovalService.decide(secondOperator, approvalRequest.id, "APPROVE", "Confirmed with the incident commander");
 
   const killSwitch = PlatformSafetyService.activateKillSwitch({ ...globalInput, approvalId: approvalRequest.id }, superAdminContext);

@@ -57,6 +57,15 @@ function effectiveStatus(record: PlatformApprovalRequestRecord, now: number): Ap
   return record.status;
 }
 
+/**
+ * A SUPER_ADMIN may decide their own request (single-owner workspaces have no second operator). Every other role
+ * still needs a second operator. Step-up, the action permission and the exact-input binding still apply, and the
+ * decision is audited as a self-approval.
+ */
+function maySelfDecide(context: PlatformContext): boolean {
+  return context.platformRole === "SUPER_ADMIN";
+}
+
 function specOrThrow(actionKey: string): PrivilegedActionSpec {
   const spec = findPrivilegedAction(actionKey);
   if (!spec) throw new AppError("UNKNOWN_ACTION", `"${actionKey}" is not a privileged platform action.`, 400);
@@ -243,12 +252,12 @@ export class PlatformApprovalService {
       effective_status: status,
       action_label: spec?.label ?? r.action_key,
       risk: spec?.risk ?? "CRITICAL",
-      can_decide: status === "PENDING" && !isRequester && holds("approval.decide") && Boolean(spec && holds(spec.permission)),
+      can_decide: status === "PENDING" && (!isRequester || maySelfDecide(context)) && holds("approval.decide") && Boolean(spec && holds(spec.permission)),
       can_execute: status === "APPROVED" && isRequester,
     };
   }
 
-  /** Approves or rejects (step-up). The approver is never the requester and must also hold the action's permission. */
+  /** Approves or rejects (step-up). The approver must hold the action's permission and, unless SUPER_ADMIN, isn't the requester. */
   public static decide(
     context: PlatformContext,
     id: string,
@@ -267,7 +276,8 @@ export class PlatformApprovalService {
     if (status !== "PENDING") {
       throw new AppError("APPROVAL_NOT_PENDING", `This request is ${status.toLowerCase()} and can't be decided.`, 409);
     }
-    if (record.requested_by === context.platformUser.id) {
+    const selfDecided = record.requested_by === context.platformUser.id;
+    if (selfDecided && !maySelfDecide(context)) {
       this.recordRefusal(context, record, "Requester tried to decide their own request");
       throw new ForbiddenError("You can't approve or reject your own request; a second operator must decide it.");
     }
@@ -300,7 +310,7 @@ export class PlatformApprovalService {
         target_tenant_id: record.target_tenant_id,
         reason: note?.trim() || `${spec.label} ${decision === "APPROVE" ? "approved" : "rejected"}`,
         before_state: { status: record.status },
-        after_state: { status: updated.status, requested_by: record.requested_by },
+        after_state: { status: updated.status, requested_by: record.requested_by, self_approved: selfDecided },
         result: "SUCCESS",
       },
       context

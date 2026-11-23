@@ -137,7 +137,7 @@ export default function SecurityPage() {
       <Tabs tabs={tabs} active={tab} onChange={setTab} />
 
       {tab === "approvals" && (
-        <BentoCard span={12} title="Approval requests" subtitle="CRITICAL actions run only after a second operator approves the exact input"
+        <BentoCard span={12} title="Approval requests" subtitle="CRITICAL actions run only after an approver approves the exact input; a super admin can approve their own"
           action={
             <select className={styles.select} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} aria-label="Status">
               <option value="PENDING">Pending</option>
