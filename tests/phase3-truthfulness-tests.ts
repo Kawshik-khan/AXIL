@@ -101,7 +101,7 @@ async function call(method: "GET" | "POST", route: string, token: string, opts: 
   return { status: res.status, json };
 }
 
-function order(tenantId: string, grandTotal: number): Order {
+function order(tenantId: string, grandTotal: number, overrides: Partial<Order> = {}): Order {
   return db.createOrder(
     {
       id: uid("ord_p3"),
@@ -122,6 +122,7 @@ function order(tenantId: string, grandTotal: number): Order {
       source: "WEBSITE",
       created_at: nowIso(),
       updated_at: nowIso(),
+      ...overrides,
     } as Order,
     []
   );
@@ -433,6 +434,20 @@ async function main() {
     assert.strictEqual(m.periodComparison.orders_change_pct, null);
     assert.ok(m.channelData.every((c) => c.conversion === null && c.orders === 0));
     assert.strictEqual(m.recentOrders.length, 0);
+  });
+
+  await runTest("the unpaid count leaves out cancelled orders (cancelling doesn't change the payment status)", async () => {
+    const shop = await AuthService.registerTenantWithOwner({
+      email: `${uid("unpaid")}@phase3.test`, password: "Phase3-Unpaid-Pass-8812!", name: "Unpaid", workspaceName: `Unpaid ${Date.now()}`,
+    });
+    const add = (status: Order["status"], payment_status: Order["payment_status"]) =>
+      order(shop.tenant.id, 1000, { status, payment_status });
+    add("CONFIRMED", "PENDING");
+    add("SHIPPED", "UNPAID");
+    add("CANCELLED", "PENDING");
+    add("CANCELLED", "UNPAID");
+    add("CONFIRMED", "PAID");
+    assert.strictEqual(db.getDashboardMetrics(shop.tenant.id).pendingPaymentsCount, 2);
   });
 
   // ---------------------------------------------------------------------------
