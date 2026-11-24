@@ -25,6 +25,8 @@ const nextConfig = {
   // src/instrumentation.ts loads the Postgres-backed store at server start (ADR-108); no flag needed since Next 15.
   reactStrictMode: true,
   poweredByHeader: false,
+  // Development only: the account avatar sits bottom-left (and bottom-right on a phone), so not the default corner.
+  devIndicators: { position: "top-left" },
   experimental: {
     // Next 16.4 defaults this to "security": `next dev` exits to show an upgrade notice whenever it thinks an AI agent
     // started it, which includes terminals opened from the Claude desktop app. Upgrades are done on purpose instead.
