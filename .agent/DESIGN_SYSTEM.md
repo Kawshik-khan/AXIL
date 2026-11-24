@@ -24,6 +24,8 @@ Do not copy values into docs or components; reference the variables. Key groups:
 | Group | Variables |
 |---|---|
 | Brand | `--color-lime-primary` (#C7F900), `--color-lime-bright`, `--color-lime-soft`, `--color-lime-glow`, `--color-lime-hover` |
+| Lilac (shop dashboard) | `--color-lilac-panel`, `-panel-text`, `-panel-row`, `-soft`, `-ink`, `-mark`; text on a solid lime fill: `--color-on-lime`, `--color-on-lime-soft`; `--color-lime-wash` |
+| Charts | `--chart-cat-1..4` in that order; on the shop dashboard, `--color-lilac-mark` for one series, `--chart-best` for its highest value, `--chart-ch-*` per sales channel, `--chart-queue-*` on the lilac panel |
 | Surfaces (light) | `--color-bg-base` (off-white), `--color-surface-pure`, `--color-surface-soft` |
 | Surfaces (dark / control plane) | `--color-surface-dark` (charcoal #242529), `--color-dark-elevated`, `--color-dark-card` |
 | Text | `--color-text-primary`, `--color-text-secondary`, `--color-text-muted`, `--color-text-inverse`, `--color-text-dark-muted` |
@@ -33,6 +35,8 @@ Do not copy values into docs or components; reference the variables. Key groups:
 | Type | `--font-family-base`, `--font-size-{display,title,section,card,body,meta}` + matching `--line-height-*` |
 | Radii | `--radius-sm` (chips), `--radius-control` (inputs/buttons), `--radius-card`, `--radius-lg`, `--radius-dock` (dock/modals), `--radius-pill` |
 | Spacing | `--space-*` |
+
+**Lime and lilac.** Lime is one signal per screen. The shop dashboard (`src/components/dashboard/`) is the exception: lime marks the lead tile, the best value in a chart, one channel and one queue, and an agent run that needs a person; lilac carries the needs-attention panel, selected controls and ordinary chart marks. Lime and the light channel colours are low-contrast on white, so every one of them has its name and value written as text beside it. Never use lime or a channel colour as text.
 
 Light theme is the merchant dashboard; the dark variant (charcoal surfaces) is used for the super-admin control plane and AI/overlay panels. Both use the same tokens.
 
