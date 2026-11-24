@@ -91,6 +91,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         permissions={session.permissions}
         tenantName={session.tenant?.name}
         userName={session.user?.name}
+        userEmail={session.user?.email}
         onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
       />
 
@@ -129,8 +130,6 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         )}
         <TopBar
           tenantName={session.tenant?.name}
-          userName={session.user?.name}
-          userRole={session.role}
           onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
         />
         <main className={styles.mainContent}>

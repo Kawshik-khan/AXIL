@@ -32,6 +32,8 @@ export interface DockProps {
   /** Short labels under each icon. Off by default, so docks that don't ask for them look the same as before. */
   showLabels?: boolean;
   onLogout: () => void;
+  /** Stays at the foot of the dock, outside its scrolling column, in place of the log-out button (the account capsule). */
+  footer?: React.ReactNode;
 }
 
 function isActive(pathname: string, item: { href: string; match?: "exact" | "prefix" }): boolean {
@@ -113,11 +115,12 @@ export const Dock: React.FC<DockProps> = ({
   trailingItems,
   showLabels = false,
   onLogout,
+  footer,
 }) => {
   const pathname = usePathname() ?? "";
 
   return (
-    <nav className={`${styles.dockWrapper} ${showLabels ? styles.withLabels : ""}`} aria-label={ariaLabel}>
+    <nav className={`${styles.dockWrapper} ${showLabels ? styles.withLabels : ""} ${footer ? styles.withFooter : ""}`} aria-label={ariaLabel}>
       <div className={styles.dockPill}>
         {items.map((item) => (
           <DockEntry key={item.href} item={item} pathname={pathname} showLabels={showLabels} />
@@ -167,26 +170,30 @@ export const Dock: React.FC<DockProps> = ({
           </Link>
         )}
 
-        <div className={styles.dockEntry}>
-          <button
-            type="button"
-            onClick={onLogout}
-            className={`${styles.dockCircle} ${styles.inactiveCircle} ${styles.logoutCircle}`}
-            aria-label="Log Out"
-            title={showLabels ? undefined : "Log Out"}
-          >
-            <div className={styles.iconContainer}>
-              <LogOut size={18} strokeWidth={2} />
-            </div>
-            <span className={styles.dockTooltip}>Log Out</span>
-          </button>
-          {showLabels && (
-            <span className={styles.dockLabel} aria-hidden="true">
-              Log out
-            </span>
-          )}
-        </div>
+        {!footer && (
+          <div className={styles.dockEntry}>
+            <button
+              type="button"
+              onClick={onLogout}
+              className={`${styles.dockCircle} ${styles.inactiveCircle} ${styles.logoutCircle}`}
+              aria-label="Log Out"
+              title={showLabels ? undefined : "Log Out"}
+            >
+              <div className={styles.iconContainer}>
+                <LogOut size={18} strokeWidth={2} />
+              </div>
+              <span className={styles.dockTooltip}>Log Out</span>
+            </button>
+            {showLabels && (
+              <span className={styles.dockLabel} aria-hidden="true">
+                Log out
+              </span>
+            )}
+          </div>
+        )}
       </div>
+
+      {footer}
     </nav>
   );
 };

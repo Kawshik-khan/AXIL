@@ -303,6 +303,16 @@
   outline-offset: 2px;
 }
 
+/* A footer (the account capsule) stays at the foot of the dock: the icons keep the space above it, and scroll there */
+.withFooter {
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+.withFooter .dockPill {
+  min-height: 0;
+}
+
 /* On smaller screen heights (e.g., small laptops), ensure comfortable breathing room */
 @media (max-height: 700px) {
   .dockCircle {
@@ -354,6 +364,16 @@
     border-radius: 9999px !important;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12) !important;
     overflow-x: auto !important;
+  }
+
+  /* the capsule ends the bottom bar; the hubs scroll beside it */
+  .withFooter {
+    flex-direction: row;
+  }
+  .withFooter .dockPill {
+    width: auto;
+    flex: 1;
+    min-width: 0;
   }
 
   .dockDivider {
