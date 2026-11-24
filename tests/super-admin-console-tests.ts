@@ -30,6 +30,19 @@ import { SETTINGS_REGISTRY } from "@/domains/platform/settings-registry";
 import { mrrContribution } from "@/domains/platform/plan-pricing";
 import { CONSOLE_MODULES, SETTINGS_PATH, visibleModules } from "@/app/super-admin/_lib/console-modules";
 import { requiredPlatformPermission } from "@/app/super-admin/_lib/platform-module-access";
+import {
+  SETTING_CATEGORIES,
+  isChanged,
+  isGoverned,
+  isLongText,
+  matchesFilter,
+  matchesQuery,
+  parseInput,
+  rangeText,
+  showValue,
+  toInput,
+  valueError,
+} from "@/app/super-admin/(console)/settings/setting-view";
 import type { PlanVersionRecord } from "@/types/platform";
 
 const GREEN = "\x1b[32m";
@@ -225,6 +238,49 @@ async function main() {
       await codeOf(() => PlatformSettingsService.updateSetting("plans.migration_approval_threshold", 100000, "raise the threshold alone", opA, { ticketRef: "SEC-1" })),
       "APPROVAL_REQUIRED"
     );
+  });
+
+  await runTest("settings page: ranges, refusals and filters agree with the registry and the server's governed rule", () => {
+    assert.strictEqual(rangeText("billing.past_due_grace_days"), "From 0 to 60.");
+    assert.strictEqual(rangeText("finance.usd_to_bdt_rate"), "More than 0, up to 10,000.");
+    assert.strictEqual(rangeText("billing.manual_bkash_number"), null);
+    assert.strictEqual(valueError("billing.past_due_grace_days", parseInput("61", 7)), "Enter a whole number. From 0 to 60.");
+    assert.ok(valueError("billing.past_due_grace_days", parseInput("", 7)), "an empty number is refused");
+    assert.ok(valueError("billing.past_due_grace_days", parseInput("7.5", 7)), "a fraction is refused");
+    assert.ok(valueError("billing.manual_bkash_number", parseInput("12345", ""))?.includes("01XXXXXXXXX"));
+    for (const s of SETTINGS_REGISTRY) {
+      assert.strictEqual(valueError(s.key, parseInput(toInput(s.default), s.default)), null, `${s.key} default survives the form`);
+    }
+    assert.strictEqual(showValue(90, "%"), "90%");
+    assert.strictEqual(showValue(1200, "requests/min"), "1,200 requests/min");
+    assert.strictEqual(showValue(""), "Not set");
+    assert.strictEqual(showValue(false), "Off");
+
+    const listed = PlatformSettingsService.listEffectiveSettings(opA);
+    const shown = SETTING_CATEGORIES.flatMap((c) => listed.filter((s) => s.category === c));
+    assert.strictEqual(shown.length, listed.length, "every setting belongs to a tab");
+    assert.ok(listed.filter((s) => matchesFilter(s, "LOCKED")).every((s) => !s.editable && !isGoverned(s)));
+    // the page's governed rule is the server's: without an approval the server refuses exactly the governed changes
+    for (const s of listed.filter((x) => x.editable)) {
+      const other = typeof s.default_value === "boolean" ? !s.value : typeof s.default_value === "number" ? Number(s.value) : s.key === "billing.manual_bank_details" ? "Bank" : "01712345678";
+      let code: string | null = null;
+      try {
+        PlatformSettingsService.updateSetting(s.key, other, "console suite: governed rule check", opA, { ticketRef: "SEC-2" });
+      } catch (err) {
+        code = (err as { code?: string }).code ?? String(err);
+      }
+      assert.strictEqual(code, isGoverned(s) ? "APPROVAL_REQUIRED" : null, s.key);
+    }
+    assert.ok(listed.some((s) => matchesFilter(s, "GOVERNED")) && listed.some((s) => matchesFilter(s, "LOCKED")));
+    assert.ok(listed.every((s) => matchesFilter(s, "GOVERNED") === isGoverned(s)));
+    assert.ok(isLongText("billing.manual_bank_details") && !isLongText("billing.support_contact"));
+    const grace = listed.find((s) => s.key === "billing.past_due_grace_days");
+    assert.ok(grace && matchesQuery(grace, "GRACE_days") && !matchesQuery(grace, "zzz"));
+    // a stored value equal to the default is not "changed"
+    const at = { ...grace, source: "STORED" as const };
+    assert.strictEqual(isChanged({ ...at, value: grace.default_value }), false);
+    assert.strictEqual(isChanged({ ...at, value: 10 }), true);
+    assert.ok(matchesFilter({ ...at, value: 10 }, "CHANGED") && !matchesFilter({ ...at, value: grace.default_value }, "CHANGED"));
   });
 
   await runTest("feature flags: a key no code reads can't be saved", async () => {

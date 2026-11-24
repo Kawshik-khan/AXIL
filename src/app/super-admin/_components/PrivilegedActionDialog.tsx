@@ -35,6 +35,10 @@ export interface PrivilegedActionDialogProps {
   /** False while the extra inputs are incomplete. */
   canSubmit?: boolean;
   submitLabel?: string;
+  /** Dialog title; the action's own label when absent. */
+  title?: string;
+  /** Opt-in guided layout: a Value / Verify / Approval progress line, and this one-line summary on the later steps. */
+  guided?: { summary: string };
   execute: (args: ExecuteArgs) => Promise<unknown>;
   onDone: (result: unknown) => void;
 }
@@ -55,6 +59,8 @@ export const PrivilegedActionDialog: React.FC<PrivilegedActionDialogProps> = ({
   children,
   canSubmit = true,
   submitLabel,
+  title,
+  guided,
   execute,
   onDone,
 }) => {
@@ -158,10 +164,9 @@ export const PrivilegedActionDialog: React.FC<PrivilegedActionDialogProps> = ({
         const payload = err.details?.payload;
         setApprovalPayload(payload && typeof payload === "object" ? (payload as Record<string, unknown>) : null);
         setPhase("needs-approval");
-      } else if (err instanceof PlatformApiError) {
-        setError(`${err.message}${err.requestId ? ` (request ${err.requestId})` : ""}`);
       } else {
-        setError("The platform API could not be reached.");
+        if (guided) setPhase("form"); // back to the inputs, with the error under them
+        setError(err instanceof PlatformApiError ? `${err.message}${err.requestId ? ` (request ${err.requestId})` : ""}` : "The platform API could not be reached.");
       }
     } finally {
       setBusy(false);
@@ -214,12 +219,28 @@ export const PrivilegedActionDialog: React.FC<PrivilegedActionDialogProps> = ({
     }
   };
 
+  const guidedSteps = ["Value", ...(spec.stepUp ? ["Verify"] : []), ...(spec.approval !== "never" && !approved ? ["Approval"] : [])];
+  const guidedAt = guidedSteps.indexOf(phase === "form" ? "Value" : phase === "step-up" ? "Verify" : "Approval");
+
   return (
-    <Modal isOpen={open} onClose={onClose} title={spec.label}>
-      <div className={styles.inlineActions}>
-        <StatusPill status={spec.risk} tone={spec.risk === "CRITICAL" || spec.risk === "HIGH" ? "bad" : spec.risk === "MEDIUM" ? "warn" : "neutral"} label={`${spec.risk} risk`} />
-        <span className={styles.hint}>Target: {target.label}</span>
-      </div>
+    <Modal isOpen={open} onClose={onClose} title={title ?? spec.label}>
+      {guided ? (
+        <>
+          <ol className={styles.steps} aria-label="Progress">
+            {guidedSteps.map((label, i) => (
+              <li key={label} className={i <= guidedAt ? styles.stepOn : undefined} aria-current={i === guidedAt ? "step" : undefined}>
+                {label}
+              </li>
+            ))}
+          </ol>
+          {phase !== "form" && <p className={styles.guidedSummary}>{guided.summary}</p>}
+        </>
+      ) : (
+        <div className={styles.inlineActions}>
+          <StatusPill status={spec.risk} tone={spec.risk === "CRITICAL" || spec.risk === "HIGH" ? "bad" : spec.risk === "MEDIUM" ? "warn" : "neutral"} label={`${spec.risk} risk`} />
+          <span className={styles.hint}>Target: {target.label}</span>
+        </div>
+      )}
 
       {impact && (
         <div className={dangerous ? styles.dangerZone : styles.sectionGap}>
@@ -266,8 +287,9 @@ export const PrivilegedActionDialog: React.FC<PrivilegedActionDialogProps> = ({
 
       {phase === "step-up" ? (
         <StepUpPrompt
+          ink={Boolean(guided)}
           onGranted={(token) => {
-            setPhase("form");
+            if (!guided) setPhase("form"); // guided: stay on Verify while it runs
             void run(token);
           }}
           onCancel={() => setPhase("form")}
@@ -280,7 +302,7 @@ export const PrivilegedActionDialog: React.FC<PrivilegedActionDialogProps> = ({
             again and run it.
           </p>
           <div className={styles.inlineActions}>
-            <Button size="sm" onClick={requestApproval} isLoading={busy}>
+            <Button size="sm" variant={guided ? "outline" : "primary"} className={guided ? styles.inkButton : ""} onClick={requestApproval} isLoading={busy}>
               Request approval
             </Button>
             <Button size="sm" variant="ghost" onClick={() => setPhase("form")}>
@@ -313,7 +335,7 @@ export const PrivilegedActionDialog: React.FC<PrivilegedActionDialogProps> = ({
             </label>
           )}
           <div className={styles.inlineActions}>
-            <Button variant={dangerous ? "danger" : "primary"} onClick={submit} isLoading={busy} disabled={!ready}>
+            <Button variant={guided ? "outline" : dangerous ? "danger" : "primary"} className={guided ? styles.inkButton : ""} onClick={submit} isLoading={busy} disabled={!ready}>
               {submitLabel ?? spec.label}
             </Button>
             <Button variant="ghost" onClick={onClose}>
