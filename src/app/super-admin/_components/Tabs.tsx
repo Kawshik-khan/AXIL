@@ -6,6 +6,8 @@ import styles from "../super-admin.module.css";
 export interface TabDef<T extends string> {
   id: T;
   label: string;
+  /** Shown after the label, e.g. how many rows the tab holds. */
+  count?: number;
   /** Hidden when false (e.g. the role can't open it). */
   visible?: boolean;
 }
@@ -48,6 +50,7 @@ export function Tabs<T extends string>({ tabs, active, onChange }: { tabs: reado
             onClick={() => onChange(t.id)}
           >
             {t.label}
+            {t.count !== undefined && <span className={styles.tabCount}>{t.count}</span>}
           </button>
         ))}
     </div>

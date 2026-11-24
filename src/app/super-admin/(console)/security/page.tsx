@@ -48,6 +48,8 @@ function runPath(a: ApprovalView): string {
       return `${CONSOLE_ROOT}/security?tab=operators`;
     case "plan_version":
       return `${CONSOLE_ROOT}/billing?tab=migrate`;
+    case "platform": // only governed settings are requested for the platform (resolveApprovalTarget)
+      return `${CONSOLE_ROOT}/settings`;
     default:
       return CONSOLE_ROOT;
   }

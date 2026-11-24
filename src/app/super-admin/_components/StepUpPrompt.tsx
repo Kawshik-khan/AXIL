@@ -12,7 +12,12 @@ type Stage = "code" | "enroll-password" | "enroll-confirm";
  * Step-up for HIGH/CRITICAL actions: a fresh authenticator code → a 5-minute token held in memory. An operator
  * without an authenticator enrolls here first (password again, then the secret, then a code).
  */
-export const StepUpPrompt: React.FC<{ onGranted: (token: string) => void; onCancel?: () => void }> = ({ onGranted, onCancel }) => {
+export const StepUpPrompt: React.FC<{
+  onGranted: (token: string) => void;
+  onCancel?: () => void;
+  /** Ink instead of lime for the Verify button (the guided dialog). */
+  ink?: boolean;
+}> = ({ onGranted, onCancel, ink = false }) => {
   const { grantStepUp } = usePlatformSession();
   const [stage, setStage] = useState<Stage>("code");
   const [code, setCode] = useState("");
@@ -100,7 +105,7 @@ export const StepUpPrompt: React.FC<{ onGranted: (token: string) => void; onCanc
             />
           </label>
           <div className={styles.inlineActions}>
-            <Button size="sm" onClick={verify} isLoading={busy} disabled={code.length !== 6}>
+            <Button size="sm" variant={ink ? "outline" : "primary"} className={ink ? styles.inkButton : ""} onClick={verify} isLoading={busy} disabled={code.length !== 6}>
               Verify
             </Button>
             {onCancel && (

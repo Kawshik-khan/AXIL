@@ -1,71 +1,122 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { BentoGrid } from "@/components/bento/BentoGrid";
 import { BentoCard } from "@/components/bento/BentoCard";
 import { Button } from "@/components/ui/Button/Button";
 import { PLATFORM_PERMISSIONS } from "@/lib/permissions";
 import type { EffectiveSetting } from "@/domains/platform/services/platform-settings.service";
-import type { PlatformSettingVersionRecord } from "@/types/platform";
+import type { ApprovalView } from "@/domains/platform/services/platform-approval.service";
+import type { SettingCategory } from "@/domains/platform/settings-registry";
+import { humanize } from "../../_lib/format";
 import { usePlatformResource } from "../../_lib/use-platform-resource";
 import { usePlatformSession } from "../../_lib/platform-session";
-import { platformRequest } from "../../_lib/platform-client";
-import { formatDateTime, humanize } from "../../_lib/format";
 import { PageHeader } from "../../_components/PageHeader";
 import { ResourceView } from "../../_components/ResourceView";
-import { StatusPill } from "../../_components/StatusPill";
-import { PrivilegedActionDialog } from "../../_components/PrivilegedActionDialog";
-import styles from "../../super-admin.module.css";
+import { Tabs, useTab, type TabDef } from "../../_components/Tabs";
+import { ChangeSettingDialog } from "./ChangeSettingDialog";
+import { SettingInspector } from "./SettingInspector";
+import { SettingsList } from "./SettingsList";
+import { matchesFilter, matchesQuery, SETTING_CATEGORIES, type SettingFilter } from "./setting-view";
+import consoleStyles from "../../super-admin.module.css";
+import styles from "./settings.module.css";
 
-function show(value: unknown, unit?: string): string {
-  if (typeof value === "boolean") return value ? "On" : "Off";
-  if (value === null || value === undefined) return "—";
-  return `${String(value)}${unit ? ` ${unit}` : ""}`;
-}
+type TabId = "ALL" | SettingCategory;
 
-/** Parses the form text into the type of the setting's default (number or boolean); strings pass through. */
-function parseInput(text: string, like: unknown): unknown {
-  if (typeof like === "boolean") return text === "true";
-  if (typeof like === "number") return text.trim() === "" ? NaN : Number(text);
-  return text;
-}
+const TABS: readonly TabDef<TabId>[] = [{ id: "ALL", label: "All" }, ...SETTING_CATEGORIES.map((c) => ({ id: c, label: humanize(c) }))];
 
 export default function SettingsPage() {
-  const { can } = usePlatformSession();
+  const { can, session } = usePlatformSession();
+  const canManage = can(PLATFORM_PERMISSIONS.PLATFORM_CONFIG_MANAGE);
   const settings = usePlatformResource<EffectiveSetting[]>("/api/v1/platform/settings", { isEmpty: (s) => s.length === 0 });
-  const [editing, setEditing] = useState<EffectiveSetting | null>(null);
-  const [value, setValue] = useState("");
-  const [historyKey, setHistoryKey] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const history = usePlatformResource<PlatformSettingVersionRecord[]>(historyKey ? `/api/v1/platform/settings?key=${encodeURIComponent(historyKey)}` : null, {
-    isEmpty: (v) => v.length === 0,
+  // Only marks rows that are waiting; a failure here must not hide the settings
+  const requests = usePlatformResource<ApprovalView[]>(canManage && can(PLATFORM_PERMISSIONS.PLATFORM_READ) ? "/api/v1/platform/approvals?limit=200" : null, {
+    refreshMs: 30_000, // a request can be decided or expire while this page is open
   });
 
-  const grouped = useMemo(() => {
-    if (settings.state.kind !== "ready") return [];
-    const map = new Map<string, EffectiveSetting[]>();
-    for (const s of settings.state.data) map.set(s.category, [...(map.get(s.category) ?? []), s]);
-    return [...map.entries()];
-  }, [settings.state]);
+  const [tab, setTab] = useTab<TabId>(TABS, "ALL");
+  const [filter, setFilter] = useState<SettingFilter>("ALL");
+  const [query, setQuery] = useState("");
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [editing, setEditing] = useState<{ key: string; value: unknown } | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [historyNonce, setHistoryNonce] = useState(0);
 
-  const parsed = editing ? parseInput(value, editing.default_value) : null;
-  const valid = editing ? !(typeof parsed === "number" && Number.isNaN(parsed)) && JSON.stringify(parsed) !== JSON.stringify(editing.value) : false;
+  const all = useMemo(() => (settings.state.kind === "ready" ? settings.state.data : []), [settings.state]);
+
+  // The caller's own open requests: the ones they can run or withdraw
+  const approvals = useMemo(() => {
+    const map = new Map<string, ApprovalView>();
+    if (requests.state.kind !== "ready") return map;
+    for (const r of requests.state.data) {
+      const open = r.effective_status === "PENDING" || r.effective_status === "APPROVED";
+      if (!open || r.action_key !== "platform_config.update_governed" || r.requested_by !== session.user.id) continue;
+      const known = map.get(r.target_id);
+      if (!known || (known.effective_status === "PENDING" && r.effective_status === "APPROVED")) map.set(r.target_id, r);
+    }
+    return map;
+  }, [requests.state, session.user.id]);
+
+  const inTab = useMemo(() => all.filter((s) => tab === "ALL" || s.category === tab), [all, tab]);
+  const counts = useMemo(() => {
+    const count = (f: SettingFilter) => inTab.filter((s) => matchesFilter(s, f)).length;
+    return { ALL: inTab.length, CHANGED: count("CHANGED"), GOVERNED: count("GOVERNED"), LOCKED: count("LOCKED") };
+  }, [inTab]);
+  const groups = useMemo(() => {
+    const visible = inTab.filter((s) => matchesFilter(s, filter) && matchesQuery(s, query));
+    return SETTING_CATEGORIES.map((c) => [c, visible.filter((s) => s.category === c)] as const).filter(([, rows]) => rows.length > 0);
+  }, [inTab, filter, query]);
+  const tabs = useMemo(
+    () => (all.length === 0 ? TABS : TABS.map((t) => ({ ...t, count: t.id === "ALL" ? all.length : all.filter((s) => s.category === t.id).length }))),
+    [all]
+  );
+
+  const selected = all.find((s) => s.key === selectedKey) ?? groups[0]?.[1][0] ?? all[0];
+  const editingSetting = editing ? all.find((s) => s.key === editing.key) : undefined;
+
+  const { reload: reloadSettings } = settings;
+  const { reload: reloadRequests } = requests;
+  const refresh = useCallback(() => {
+    reloadSettings();
+    reloadRequests();
+    setHistoryNonce((n) => n + 1);
+  }, [reloadSettings, reloadRequests]);
+
+  const select = (key: string) => {
+    setSelectedKey(key);
+    if (!window.matchMedia("(max-width: 1024px)").matches) return;
+    setDetailOpen(true);
+    window.scrollTo({ top: 0 });
+  };
+  const back = () => {
+    setDetailOpen(false);
+    const key = selected?.key;
+    if (key) window.requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-setting="${CSS.escape(key)}"]`)?.focus());
+  };
+  const showDetail = detailOpen && settings.state.kind === "ready"; // never hide the header of an error state
 
   return (
     <>
-      <PageHeader
-        title="Settings"
-        description="Every platform setting the code reads, with the value in force and where it comes from. Settings nothing reads are listed but locked."
-        fetchedAt={settings.state.kind === "ready" ? settings.state.fetchedAt : undefined}
-        actions={
-          <Button variant="outline" size="sm" icon={<RefreshCw size={14} />} onClick={settings.reload}>
-            Refresh
-          </Button>
-        }
-      />
+      <div className={showDetail ? styles.hiddenWithDetail : undefined}>
+        <PageHeader
+          title="Settings"
+          description="Every platform setting the code reads, with the value in force and where it comes from. Settings nothing reads are listed but locked."
+          fetchedAt={settings.state.kind === "ready" ? settings.state.fetchedAt : undefined}
+          actions={
+            <Button variant="outline" size="sm" icon={<RefreshCw size={14} />} onClick={refresh}>
+              Refresh
+            </Button>
+          }
+        />
+      </div>
+      <div className={showDetail ? styles.hiddenWithDetail : undefined}>
+        <Tabs tabs={tabs} active={tab} onChange={setTab} />
+      </div>
+
       {notice && (
-        <div className={`${styles.banner} ${styles.bannerInfo}`} role="status">
+        <div className={`${consoleStyles.banner} ${consoleStyles.bannerInfo}`} role="status">
           <span>{notice}</span>
           <Button size="sm" variant="ghost" onClick={() => setNotice(null)}>
             Dismiss
@@ -80,146 +131,62 @@ export default function SettingsPage() {
         emptyFigure="empty-list"
         emptyTitle="No settings registered"
         emptyDescription="Settings are declared in src/domains/platform/settings-registry.ts."
+        skeletonLines={8}
         renderReady={() => (
-          <BentoGrid>
-            {grouped.map(([category, rows]) => (
-              <BentoCard key={category} span={12} title={humanize(category)}>
-                <div className={styles.tableWrap}>
-                  <table className={styles.table}>
-                    <thead>
-                      <tr>
-                        <th>Setting</th>
-                        <th>In force</th>
-                        <th>From</th>
-                        <th>Risk</th>
-                        <th />
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {rows.map((s) => (
-                        <tr key={s.key}>
-                          <td>
-                            <span className={styles.rowMain}>
-                              <span className={styles.rowTitle}>{s.label}</span>
-                              <span className={styles.rowMeta}>
-                                <code>{s.key}</code> · {s.description}
-                              </span>
-                              <span className={styles.rowMeta}>{s.read_by ? `Read by ${s.read_by}` : "Not read by any code yet"}</span>
-                            </span>
-                          </td>
-                          <td>{show(s.value, s.unit)}</td>
-                          <td>{s.source === "STORED" ? `Changed ${formatDateTime(s.updated_at)}` : `Code default (${show(s.default_value, s.unit)})`}</td>
-                          <td>
-                            <StatusPill status={s.risk} tone={s.risk === "CRITICAL" || s.risk === "HIGH" ? "bad" : s.risk === "MEDIUM" ? "warn" : "neutral"} />
-                          </td>
-                          <td>
-                            <div className={styles.inlineActions}>
-                              {s.editable ? (
-                                can(PLATFORM_PERMISSIONS.PLATFORM_CONFIG_MANAGE) && (
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => {
-                                      setValue(typeof s.value === "boolean" ? String(s.value) : String(s.value ?? ""));
-                                      setEditing(s);
-                                    }}
-                                  >
-                                    Change
-                                  </Button>
-                                )
-                              ) : (
-                                <StatusPill status="SIMULATED" label="Locked" />
-                              )}
-                              <Button size="sm" variant="ghost" onClick={() => setHistoryKey(historyKey === s.key ? null : s.key)}>
-                                History
-                              </Button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                {historyKey && rows.some((r) => r.key === historyKey) && (
-                  <ResourceView
-                    state={history.state}
-                    onRetry={history.reload}
-                    resource="setting history"
-                    emptyFigure="log-empty"
-                    emptyTitle="Never changed"
-                    emptyDescription="The code default has always applied."
-                    renderReady={(versions) => (
-                      <ul className={styles.list}>
-                        {versions
-                          .slice()
-                          .reverse()
-                          .map((v) => (
-                            <li key={v.id} className={styles.listRow}>
-                              <span className={styles.rowMain}>
-                                <span>
-                                  {show(v.value)} · {formatDateTime(v.created_at)}
-                                </span>
-                                <span className={styles.rowMeta}>
-                                  {v.changed_by_user_id}: {v.reason}
-                                </span>
-                              </span>
-                              {can(PLATFORM_PERMISSIONS.PLATFORM_CONFIG_MANAGE) && rows.find((r) => r.key === historyKey)?.editable && (
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  onClick={() => {
-                                    const s = rows.find((r) => r.key === historyKey)!;
-                                    setValue(typeof v.value === "boolean" ? String(v.value) : String(v.value ?? ""));
-                                    setEditing(s);
-                                  }}
-                                >
-                                  Restore this value
-                                </Button>
-                              )}
-                            </li>
-                          ))}
-                      </ul>
-                    )}
-                  />
-                )}
-              </BentoCard>
-            ))}
+          <BentoGrid className={`${styles.layout} ${showDetail ? styles.showDetail : ""}`}>
+            <BentoCard span={8} className={styles.listCard}>
+              <SettingsList
+                groups={groups}
+                approvals={approvals}
+                selectedKey={selected?.key ?? null}
+                onSelect={select}
+                query={query}
+                onQuery={setQuery}
+                filter={filter}
+                onFilter={setFilter}
+                counts={counts}
+                approvalsUnavailable={requests.state.kind === "error"}
+                onReset={() => {
+                  setQuery("");
+                  setFilter("ALL");
+                  setTab("ALL");
+                }}
+              />
+            </BentoCard>
+            <BentoCard span={4} className={styles.inspectorCard}>
+              {selected && (
+                <SettingInspector
+                  setting={selected}
+                  approval={approvals.get(selected.key)}
+                  canManage={canManage}
+                  historyNonce={historyNonce}
+                  onChange={(value) => setEditing({ key: selected.key, value })}
+                  onApprovalsChanged={(text) => {
+                    setNotice(text);
+                    reloadRequests();
+                  }}
+                  onBack={back}
+                  focusOnOpen={showDetail}
+                />
+              )}
+            </BentoCard>
           </BentoGrid>
         )}
       />
 
-      {editing && (
-        <PrivilegedActionDialog
-          open
-          onClose={() => setEditing(null)}
-          actionKey={editing.risk === "HIGH" || editing.risk === "CRITICAL" ? "platform_config.update_governed" : "platform_config.update"}
-          target={{ type: "platform", id: editing.key, label: editing.label }}
-          canSubmit={valid}
-          execute={async (a) =>
-            (await platformRequest("/api/v1/platform/settings", { method: "POST", json: { key: editing.key, value: parsed, reason: a.reason, ...(a.ticketRef ? { ticket_ref: a.ticketRef } : {}), ...(a.approvalId ? { approval_id: a.approvalId } : {}) } }, a.stepUpToken)).data
-          }
-          onDone={() => {
-            setNotice(`${editing.label} updated. It takes effect on the next request that reads it.`);
-            settings.reload();
-            history.reload();
+      {editing && editingSetting && (
+        <ChangeSettingDialog
+          setting={editingSetting}
+          initialValue={editing.value}
+          onClose={() => {
+            setEditing(null);
+            reloadRequests(); // the dialog may have requested or withdrawn an approval
           }}
-        >
-          <span className={styles.hint}>
-            {editing.description} In force: {show(editing.value, editing.unit)}. Code default: {show(editing.default_value, editing.unit)}.
-          </span>
-          <label className={styles.field}>
-            New value {editing.unit ? `(${editing.unit})` : ""}
-            {typeof editing.default_value === "boolean" ? (
-              <select className={styles.select} value={value} onChange={(e) => setValue(e.target.value)}>
-                <option value="true">On</option>
-                <option value="false">Off</option>
-              </select>
-            ) : (
-              <input className={styles.input} inputMode={typeof editing.default_value === "number" ? "decimal" : undefined} value={value} onChange={(e) => setValue(e.target.value)} />
-            )}
-            <span className={styles.hint}>The server checks the value against the setting&apos;s allowed range.</span>
-          </label>
-        </PrivilegedActionDialog>
+          onDone={() => {
+            setNotice(`${editingSetting.label} updated. It takes effect on the next request that reads it.`);
+            refresh();
+          }}
+        />
       )}
     </>
   );
