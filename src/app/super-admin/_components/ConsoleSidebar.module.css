@@ -1,0 +1,626 @@
+/* Platform console sidebar (ConsoleSidebar.tsx). Tokens only; the console palette is in tokens.css (--console-*). */
+
+.sidebar {
+  position: sticky;
+  top: var(--space-12);
+  z-index: 60;
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  width: 264px;
+  height: calc(100vh - 24px);
+  margin: var(--space-12) 0 var(--space-12) var(--space-12);
+  border-radius: 16px;
+  background: var(--console-card);
+  color: var(--color-text-primary);
+  transition: width var(--transition-smooth);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-height: 64px;
+  padding: var(--space-12) var(--space-12) var(--space-8) var(--space-16);
+}
+
+.brand {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: inherit;
+  text-decoration: none;
+  border-radius: var(--radius-sm);
+}
+
+.brandText {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.brandText strong {
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.brandText span {
+  font-size: var(--font-size-meta);
+  line-height: var(--line-height-meta);
+  color: var(--console-text-secondary);
+  white-space: nowrap;
+}
+
+.iconButton {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 9px;
+  background: none;
+  color: var(--console-text-secondary);
+  cursor: pointer;
+}
+
+.iconButton:hover {
+  background: var(--console-inset);
+  color: var(--color-text-primary);
+}
+
+.closeButton {
+  display: none;
+}
+
+.scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  padding: var(--space-4) var(--space-12) var(--space-8);
+}
+
+.section + .section {
+  margin-top: var(--space-12);
+}
+
+.sectionTitle {
+  margin: 0;
+  padding: 0 10px 6px;
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--console-text-secondary);
+}
+
+.list,
+.children {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.row {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.item {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  min-height: 38px;
+  padding: 0 10px;
+  border-radius: 10px;
+  font-size: var(--font-size-body);
+  font-weight: 500;
+  color: var(--console-text-secondary);
+  text-decoration: none;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.item:hover {
+  background: var(--console-inset);
+  color: var(--color-text-primary);
+}
+
+/* the page in view: a lavender pill with dark ink in both themes */
+.active,
+.active:hover {
+  background: var(--console-lavender);
+  color: var(--console-on-accent);
+  font-weight: 600;
+}
+
+/* room for the group's chevron */
+.row:has(.toggle) .item {
+  padding-right: 40px;
+}
+
+.icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+}
+
+.icon svg {
+  width: 19px;
+  height: 19px;
+  stroke-width: 1.8;
+}
+
+.label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.count {
+  flex: none;
+  min-width: 22px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 6px;
+  background: var(--console-inset);
+  color: var(--color-text-primary);
+  font-size: 11px;
+  line-height: 20px;
+  font-weight: 600;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.item:hover .count:not(.countUrgent) {
+  background: var(--console-card);
+}
+
+.active .count:not(.countUrgent) {
+  background: var(--console-on-accent-chip);
+  color: var(--console-on-accent);
+}
+
+.countUrgent {
+  background: var(--color-danger-bg);
+  color: var(--color-danger-ink);
+}
+
+/* on the lavender pill the chip stays white, in both themes */
+.active .countUrgent {
+  background: var(--console-on-accent-chip);
+  color: var(--console-ring-danger);
+}
+
+.toggle {
+  position: absolute;
+  right: 4px;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--console-text-secondary);
+  cursor: pointer;
+}
+
+.toggle:hover {
+  background: var(--console-card);
+  color: var(--color-text-primary);
+}
+
+.active + .toggle {
+  color: var(--console-on-accent);
+}
+
+.toggle svg {
+  transition: transform var(--transition-fast);
+}
+
+.toggle[aria-expanded="true"] svg {
+  transform: rotate(90deg);
+}
+
+.children {
+  margin: 2px 0 6px 19px;
+  padding-left: 12px;
+  border-left: 1px solid var(--console-line-strong);
+}
+
+.child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-8);
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--console-text-secondary);
+  text-decoration: none;
+}
+
+.child:hover {
+  background: var(--console-inset);
+  color: var(--color-text-primary);
+}
+
+.childActive,
+.childActive:hover {
+  color: var(--color-text-primary);
+  font-weight: 600;
+  background: var(--console-lavender-soft);
+}
+
+.tooltip {
+  display: none;
+}
+
+/* ---------- waiting work: lime, this screen's one signal ---------- */
+.waiting {
+  margin: var(--space-8) var(--space-12) 0;
+  padding: 10px var(--space-12);
+  border-radius: var(--space-12);
+  background: var(--console-lime);
+  color: var(--console-on-accent);
+}
+
+.waitingTitle {
+  display: block;
+  margin-bottom: 6px;
+  font-size: var(--font-size-meta);
+  line-height: var(--line-height-meta);
+  font-weight: 600;
+  color: var(--console-lime-ink);
+}
+
+.waitingLinks {
+  display: flex;
+  gap: 6px;
+}
+
+.waitingLinks a {
+  flex: 1;
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  min-height: 36px;
+  padding: 6px var(--space-8);
+  border-radius: var(--space-8);
+  background: color-mix(in srgb, var(--console-on-accent-chip) 55%, transparent);
+  color: var(--console-on-accent);
+  font-size: var(--font-size-meta);
+  line-height: var(--line-height-meta);
+  text-decoration: none;
+}
+
+.waitingLinks a:hover {
+  background: var(--console-on-accent-chip);
+}
+
+.waitingLinks strong {
+  font-size: var(--font-size-section);
+  line-height: 20px;
+  font-weight: 700;
+}
+
+/* ---------- foot: account and theme ---------- */
+.foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin-top: 10px;
+  padding: 10px var(--space-12) var(--space-12);
+  border-top: 1px solid var(--console-line);
+}
+
+.account {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.me {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: 10px;
+  padding: 6px;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.me:hover,
+.me[aria-expanded="true"] {
+  background: var(--console-inset);
+}
+
+.avatar {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: var(--console-lime);
+  color: var(--console-on-accent);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.who {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  font-size: var(--font-size-meta);
+  line-height: var(--line-height-meta);
+  color: var(--console-text-secondary);
+}
+
+.who strong {
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.warn {
+  color: var(--color-warning-ink);
+}
+
+.more {
+  color: var(--console-text-secondary);
+}
+
+.menu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  z-index: 70;
+  width: 260px;
+  padding: 6px;
+  border-radius: 14px;
+  background: var(--console-card);
+  border: 1px solid var(--console-line);
+  box-shadow: var(--glass-shadow-floating);
+  display: flex;
+  flex-direction: column;
+}
+
+.menuHead {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-8) 10px 10px;
+  border-bottom: 1px solid var(--console-line);
+  margin-bottom: 4px;
+  font-size: var(--font-size-meta);
+  color: var(--console-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.menuHead strong {
+  font-size: 13px;
+  color: var(--color-text-primary);
+}
+
+.menuNote,
+.menuItem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--console-text-secondary);
+}
+
+.menuItem {
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  color: var(--color-text-primary);
+}
+
+.menuItem:hover {
+  background: var(--console-inset);
+}
+
+.item:focus-visible,
+.child:focus-visible,
+.toggle:focus-visible,
+.iconButton:focus-visible,
+.me:focus-visible,
+.menuItem:focus-visible,
+.brand:focus-visible {
+  outline: 2px solid var(--color-text-primary);
+  outline-offset: 2px;
+}
+
+.waitingLinks a:focus-visible {
+  outline: 2px solid var(--console-on-accent);
+  outline-offset: 2px;
+}
+
+.scrim {
+  display: none;
+}
+
+/* ---------- collapsed: an icon rail ---------- */
+.collapsed {
+  width: 72px;
+}
+
+.collapsed .head {
+  flex-direction: column;
+  padding: var(--space-12) 0 var(--space-8);
+}
+
+.collapsed :is(.brandText, .sectionTitle, .label, .toggle, .children, .waitingTitle, .who, .more) {
+  display: none;
+}
+
+.collapsed .brand {
+  flex: none;
+}
+
+.collapsed .section + .section {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--console-line);
+}
+
+.collapsed .item,
+.collapsed .row:has(.toggle) .item {
+  justify-content: center;
+  padding: 0;
+}
+
+.collapsed .count {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  font-size: 10px;
+  line-height: 16px;
+}
+
+.collapsed .tooltip {
+  display: block;
+  position: absolute;
+  left: calc(100% + 12px);
+  top: 50%;
+  z-index: 70;
+  transform: translateY(-50%);
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: var(--color-ink-action);
+  color: var(--color-ink-action-text);
+  font-size: var(--font-size-meta);
+  font-weight: 500;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition-fast);
+}
+
+.collapsed .item:hover .tooltip,
+.collapsed .item:focus-visible .tooltip {
+  opacity: 1;
+}
+
+.collapsed .waiting {
+  padding: 6px;
+}
+
+.collapsed .waitingLinks {
+  flex-direction: column;
+  gap: 4px;
+}
+
+.collapsed .waitingLinks a {
+  justify-content: center;
+  padding: 4px 0;
+  min-height: 32px;
+}
+
+.collapsed .waitingLinks span {
+  display: none;
+}
+
+.collapsed .foot {
+  flex-direction: column;
+  padding: 10px 0 var(--space-12);
+}
+
+.collapsed .account {
+  flex: none;
+}
+
+.collapsed .me {
+  grid-template-columns: 36px;
+  justify-content: center;
+  padding: 4px;
+}
+
+/* ---------- below 768px: a drawer over the page ---------- */
+@media (max-width: 768px) {
+  .sidebar {
+    position: fixed;
+    align-self: stretch;
+    top: var(--space-8);
+    left: var(--space-8);
+    bottom: var(--space-8);
+    width: min(300px, calc(100vw - 56px));
+    height: auto;
+    margin: 0;
+    box-shadow: var(--glass-shadow-floating);
+    transform: translateX(calc(-100% - 16px));
+    visibility: hidden;
+    transition: transform var(--transition-smooth), visibility var(--transition-smooth);
+  }
+
+  /* visible at once, so focus can move into it on open; hidden only after it has slid out */
+  .drawerOpen {
+    transform: none;
+    visibility: visible;
+    transition: transform var(--transition-smooth), visibility 0s;
+  }
+
+  .collapseButton {
+    display: none;
+  }
+
+  .closeButton {
+    display: grid;
+  }
+
+  .scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 55;
+    border: 0;
+    background: var(--console-scrim);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar,
+  .item,
+  .toggle svg,
+  .tooltip {
+    transition: none;
+  }
+}

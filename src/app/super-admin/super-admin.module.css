@@ -52,6 +52,215 @@
   color: var(--color-text-muted);
 }
 
+/* The number of waiting approvals on the top-bar button */
+.topCount {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--radius-pill);
+  background: var(--color-ink-action);
+  color: var(--color-ink-action-text);
+  font-size: 11px;
+  line-height: 18px;
+  font-weight: 600;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Console shell (layout.tsx): sidebar, top bar and content on a flat grey page ---------- */
+/* The console palette re-points the shared semantic tokens inside the console only, so every console page follows
+   and merchant pages never see it. Values: --console-* in tokens.css (with their dark steps). */
+.consoleShell {
+  --color-bg-base: var(--console-page);
+  --color-surface-pure: var(--console-card);
+  --color-surface: var(--console-card);
+  --color-surface-soft: var(--console-inset);
+  --color-surface-hover: var(--console-inset);
+  --color-border-subtle: var(--console-line);
+  --color-border: var(--console-line);
+  --color-border-medium: var(--console-line-strong);
+  --color-text-secondary: var(--console-text-secondary);
+  --color-track: var(--console-inset);
+  --radius-card: 12px;
+  --glass-shadow: none;
+  --card-sheen: none;
+  --page-backdrop: none;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  min-height: 100vh;
+  background: var(--console-page);
+  color: var(--color-text-primary);
+  font-family: var(--font-family-base);
+}
+
+.consoleMain {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+  padding: 0 var(--space-24) var(--space-40) var(--space-12);
+}
+
+.consoleContent {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-24);
+}
+
+.topBar {
+  position: sticky;
+  top: var(--space-12);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  min-height: 64px;
+  margin-top: var(--space-12);
+  padding: 10px var(--space-12) 10px var(--space-16);
+  border-radius: var(--space-12);
+  background: var(--console-card);
+  /* covers the strip above the bar, so content never shows through while it scrolls */
+  box-shadow: 0 calc(-1 * var(--space-12)) 0 var(--console-page);
+}
+
+.topSearch {
+  flex: 1;
+  max-width: 440px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-height: 44px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--console-inset);
+  font: inherit;
+  font-size: 13px;
+  color: var(--console-text-secondary);
+  cursor: pointer;
+}
+
+.topSearch:hover {
+  background: var(--console-line);
+}
+
+.topSearchText {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topKbd {
+  font: 600 11px/1 var(--font-family-base);
+  color: var(--console-text-secondary);
+}
+
+.topRight {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+
+.topIcon {
+  position: relative;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  color: var(--color-text-primary);
+  cursor: pointer;
+}
+
+.topIcon:hover {
+  background: var(--console-inset);
+}
+
+.topMenu {
+  display: none;
+}
+
+.topClock {
+  padding: 0 var(--space-8);
+  font-size: var(--font-size-meta);
+  color: var(--console-text-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.topSearch:focus-visible,
+.topIcon:focus-visible {
+  outline: 2px solid var(--color-text-primary);
+  outline-offset: 2px;
+}
+
+.topCount {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--radius-pill);
+  background: var(--color-ink-action);
+  color: var(--color-ink-action-text);
+  font-size: 11px;
+  line-height: 18px;
+  font-weight: 600;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 768px) {
+  .consoleShell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .consoleMain {
+    padding: 0 var(--space-12) var(--space-24);
+  }
+
+  .topBar {
+    top: var(--space-8);
+    margin-top: var(--space-8);
+    padding: 8px;
+    gap: var(--space-4);
+  }
+
+  .topMenu {
+    display: grid;
+  }
+
+  .topSearch {
+    flex: 0 0 44px;
+    justify-content: center;
+    padding: 0;
+    background: none;
+  }
+
+  .topSearchText,
+  .topKbd,
+  .topClock {
+    display: none;
+  }
+
+  .pageActions :is(button, a) {
+    min-height: 44px;
+  }
+}
+
 /* ---------- Dark command cards (apply to BentoCard className) ---------- */
 /* Doubled class: beats the Bento .card surface regardless of stylesheet order */
 .darkCard.darkCard {
@@ -106,34 +315,6 @@
   display: flex;
   gap: var(--space-8);
   flex-wrap: wrap;
-}
-
-/* ---------- Status strip ---------- */
-.strip {
-  display: flex;
-  align-items: center;
-  gap: var(--space-24);
-  flex-wrap: wrap;
-}
-
-.stripItem {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-}
-
-.stripLabel {
-  font-size: var(--font-size-meta);
-  color: var(--color-text-dark-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.stripValue {
-  font-size: var(--font-size-card);
-  font-weight: 600;
-  color: var(--color-text-inverse);
-  font-variant-numeric: tabular-nums;
 }
 
 /* ---------- Lists ---------- */
@@ -457,22 +638,6 @@
   cursor: pointer;
 }
 
-/* ---------- console background (TopoGrid.tsx): a contour map that answers the pointer ---------- */
-/* the frame isolates its stacking so the map (z-index -1) sits above the page colour but under everything else */
-.consoleShell { isolation: isolate; }
-.topoGrid { position: fixed; inset: 0; z-index: -1; pointer-events: none;
-  --topo-line: var(--mk-black-a130); --topo-grid: var(--mk-black-a070); --topo-lit: var(--color-lime-primary);
-  --topo-glow: var(--mk-lime-a300); --topo-mark: var(--mk-ink);
-  /* faint in the middle, where the cards and numbers are; clearer towards the edges */
-  -webkit-mask-image: radial-gradient(ellipse at 55% 45%, var(--mk-black-a350) 20%, var(--mk-hex-000000) 90%);
-  mask-image: radial-gradient(ellipse at 55% 45%, var(--mk-black-a350) 20%, var(--mk-hex-000000) 90%); }
-/* the blurred copy across the whole screen */
-.topoBlur { filter: blur(1.4px); }
-/* the sharp map, seen only through a round lens around the pointer (position and fade set from the component) */
-.topoLens { opacity: 0;
-  -webkit-mask-image: radial-gradient(circle 170px at var(--lx, -999px) var(--ly, -999px), var(--mk-hex-000000) 45%, transparent 100%);
-  mask-image: radial-gradient(circle 170px at var(--lx, -999px) var(--ly, -999px), var(--mk-hex-000000) 45%, transparent 100%); }
-
 /* ---------- console dark theme (console-theme.tsx) ---------- */
 /* frosted-glass page buttons in dark glass */
 :global(html[data-console-theme="dark"]) .pageActions :is(button, a):not([class*="primary"]):not([class*="danger"]) {
@@ -483,7 +648,6 @@
 }
 :global(html[data-console-theme="dark"]) .pageActions :is(button, a):not([class*="primary"]):not([class*="danger"]):hover { background: var(--mk-white-a120); }
 /* the contour map in light lines on the dark page */
-:global(html[data-console-theme="dark"]) .topoGrid { --topo-line: var(--mk-white-a100); --topo-grid: var(--mk-white-a080); --topo-mark: var(--color-text-primary); }
 /* emphasis cards: a step lighter than the page, with a clearer edge */
 :global(html[data-console-theme="dark"]) .darkCard.darkCard { background: var(--color-dark-card); border-color: var(--color-border-medium); }
 
@@ -547,4 +711,69 @@
 
 @media (max-width: 900px) {
   .readiness { grid-template-columns: 1fr; }
+}
+
+.tabCount {
+  margin-left: var(--space-8);
+  font-size: var(--font-size-meta);
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Ink action and the guided privileged dialog (PrivilegedActionDialog `guided`) ---------- */
+/* Doubled class: beats the Button variant regardless of stylesheet order */
+.inkButton.inkButton {
+  background: var(--color-ink-action);
+  border-color: var(--color-ink-action);
+  color: var(--color-ink-action-text);
+  font-weight: 600;
+}
+
+.inkButton.inkButton:hover:not(:disabled) {
+  background: var(--color-ink-action-hover);
+  border-color: var(--color-ink-action-hover);
+}
+
+.steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  gap: var(--space-8);
+}
+
+.steps li {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  font-size: var(--font-size-meta);
+  line-height: var(--line-height-meta);
+  color: var(--color-text-secondary);
+}
+
+.steps li::before {
+  content: "";
+  height: 3px;
+  border-radius: var(--radius-pill);
+  background: var(--color-track-strong);
+}
+
+.steps .stepOn {
+  color: var(--color-text-primary);
+  font-weight: 500;
+}
+
+.steps .stepOn::before {
+  background: var(--color-text-primary);
+}
+
+.guidedSummary {
+  margin: 0;
+  padding: var(--space-12) var(--space-16);
+  border-radius: var(--radius-control);
+  background: var(--color-track);
+  color: var(--color-text-primary);
+  font-weight: 500;
+  overflow-wrap: anywhere;
 }

@@ -28,8 +28,40 @@ import { PRIVILEGED_ACTIONS } from "@/domains/platform/privileged-actions";
 import { ENTITLEMENT_CATALOG } from "@/domains/platform/entitlement-catalog";
 import { SETTINGS_REGISTRY } from "@/domains/platform/settings-registry";
 import { mrrContribution } from "@/domains/platform/plan-pricing";
-import { CONSOLE_MODULES, SETTINGS_PATH, visibleModules } from "@/app/super-admin/_lib/console-modules";
+import { CONSOLE_MODULES, SETTINGS_PATH, sidebarModules, visibleModules } from "@/app/super-admin/_lib/console-modules";
+import { isTabActive, moduleCount, tabCount, waitingWork } from "@/app/super-admin/_lib/sidebar-view";
 import { requiredPlatformPermission } from "@/app/super-admin/_lib/platform-module-access";
+import {
+  SETTING_CATEGORIES,
+  isChanged,
+  isGoverned,
+  isLongText,
+  matchesFilter,
+  matchesQuery,
+  parseInput,
+  rangeText,
+  showValue,
+  toInput,
+  valueError,
+} from "@/app/super-admin/(console)/settings/setting-view";
+import {
+  actionsFor,
+  ageLabel,
+  axisTicks,
+  countBySeverity,
+  formatLatency,
+  headline,
+  mrrByPlan,
+  oldestStart,
+  postureGates,
+  recordsUrl,
+  requirementsOf,
+  tenantMix,
+  toRecords,
+  weekLabel,
+} from "@/app/super-admin/_components/control-tower/control-tower-view";
+import type { AttentionItem } from "@/domains/platform/services/platform-attention.service";
+import type { PlatformOverviewMetrics } from "@/domains/platform/services/platform-analytics.service";
 import type { PlanVersionRecord } from "@/types/platform";
 
 const GREEN = "\x1b[32m";
@@ -225,6 +257,203 @@ async function main() {
       await codeOf(() => PlatformSettingsService.updateSetting("plans.migration_approval_threshold", 100000, "raise the threshold alone", opA, { ticketRef: "SEC-1" })),
       "APPROVAL_REQUIRED"
     );
+  });
+
+  await runTest("sidebar: counts come from the attention list, and each tab shows only for roles the page shows it to", () => {
+    const item = (id: string, severity: AttentionItem["severity"], category: AttentionItem["category"], href: string, count?: number): AttentionItem => ({
+      id,
+      severity,
+      category,
+      title: "t",
+      detail: "d",
+      href,
+      count,
+      observed_at: "2026-11-24T08:00:00.000Z",
+    });
+    const items = [
+      item("approvals:pending", "HIGH", "APPROVAL", "/super-admin/security?tab=approvals", 2),
+      item("support_sessions:active", "LOW", "SUPPORT", "/super-admin/security?tab=support", 1),
+      item("hitl:sla_breached", "HIGH", "HITL", "/super-admin/ai?tab=hitl", 3),
+      item("limit:t1:orders", "MEDIUM", "LIMIT", "/super-admin/tenants/t1?tab=usage"),
+      item("security_events:recent", "CRITICAL", "SECURITY", "/super-admin/audit"),
+    ];
+    assert.deepStrictEqual(moduleCount(items, "/super-admin"), { count: 5, urgent: true }, "the Control Tower counts every item");
+    assert.deepStrictEqual(moduleCount(items, "/super-admin/security"), { count: 3, urgent: true });
+    assert.deepStrictEqual(moduleCount(items, "/super-admin/tenants"), { count: 1, urgent: false }, "a tenant's usage page counts under Tenants");
+    assert.strictEqual(moduleCount(items, "/super-admin/billing"), null, "nothing points at Billing, so no badge");
+    assert.deepStrictEqual(tabCount(items, "/super-admin/security", "approvals"), { count: 2, urgent: true });
+    assert.strictEqual(tabCount(items, "/super-admin/security", "operators"), null);
+    assert.deepStrictEqual(waitingWork(items), { approvals: 2, handovers: 3 });
+    assert.deepStrictEqual(moduleCount([], "/super-admin"), { count: 0, urgent: false });
+    assert.ok(isTabActive("/super-admin/security", null, "/super-admin/security", "approvals", "approvals"), "no ?tab= means the first tab");
+    assert.ok(!isTabActive("/super-admin/security", "support", "/super-admin/security", "approvals", "approvals"));
+
+    // The sidebar's tab ids exist on their pages, with the same permission checks
+    for (const m of CONSOLE_MODULES.filter((x) => x.tabs)) {
+      const page = fs.readFileSync(path.join(ROOT, "src/app/super-admin/(console)", m.href.replace("/super-admin/", ""), "page.tsx"), "utf8");
+      for (const t of m.tabs!) {
+        assert.ok(page.includes(`id: "${t.id}"`), `${m.href} has no tab ${t.id}`);
+        if (t.permission) {
+          const key = Object.entries(PLATFORM_PERMISSIONS).find(([, v]) => v === t.permission)?.[0];
+          assert.ok(key && new RegExp(`id: "${t.id}"[^\\n]*PLATFORM_PERMISSIONS\\.${key}`).test(page), `${m.href} tab ${t.id} is not gated by ${t.permission}`);
+        }
+      }
+    }
+    const analyst = sidebarModules(PLATFORM_ROLE_PERMISSIONS.PLATFORM_ANALYST);
+    assert.ok(!analyst.some((m) => m.label === "Security"), "an analyst can't open Security, so it isn't listed");
+    for (const m of analyst) for (const t of m.tabs ?? []) assert.ok(!t.permission || PLATFORM_ROLE_PERMISSIONS.PLATFORM_ANALYST.includes(t.permission as never), `${m.label}: ${t.id}`);
+  });
+
+  await runTest("control tower: what an item asks for comes from the privileged-action registry", () => {
+    const item = (category: AttentionItem["category"], severity: AttentionItem["severity"] = "HIGH", id = "x"): AttentionItem => ({
+      id,
+      severity,
+      category,
+      title: "t",
+      detail: "d",
+      href: "/super-admin",
+      observed_at: "2026-11-24T08:00:00.000Z",
+    });
+    // Every key the view names must exist, or the panel would silently show nothing
+    const expected: Array<[AttentionItem, string[]]> = [
+      [item("INCIDENT"), ["incident.update"]],
+      [item("KILL_SWITCH"), ["kill_switch.deactivate"]],
+      [item("KILL_SWITCH", "CRITICAL"), ["kill_switch.deactivate_global"]],
+      [item("LIMIT"), ["addon.grant", "subscription.change_plan", "entitlement.override"]],
+      [item("DEAD_LETTER"), ["dlq.retry", "dlq.resolve"]],
+      [item("HITL"), ["ai.hitl.takeover"]],
+      [item("APPROVAL"), ["approval.decide"]],
+      [item("SECURITY"), []],
+      [item("SUPPORT"), ["support.revoke"]],
+    ];
+    for (const [i, keys] of expected) assert.deepStrictEqual(actionsFor(i).map((a) => a.key), keys, i.category);
+    const global = actionsFor(item("KILL_SWITCH", "CRITICAL"))[0];
+    assert.deepStrictEqual(requirementsOf(global), ["authenticator code", "reason", "ticket", "approval"]);
+    assert.deepStrictEqual(requirementsOf(actionsFor(item("SUPPORT"))[0]), []);
+
+    // Records: only this item's rows, filtered the way the attention service counts them
+    const now = Date.parse("2026-11-24T08:00:00.000Z");
+    const past = "2026-11-24T07:00:00.000Z";
+    const future = "2026-11-24T09:00:00.000Z";
+    const handover = (id: string, status: string, sla_due_at: string) => ({ id, status, sla_due_at, tenant_name: "T", priority: "HIGH", trigger_reason: "Monthly AI budget hard cap reached (1.500)" });
+    const queue = { escalations: [handover("a", "PENDING_REVIEW", past), handover("b", "PENDING_REVIEW", future), handover("c", "CLAIMED", past)] };
+    assert.deepStrictEqual(toRecords(item("HITL"), queue, now).map((r) => r.id), ["a"]);
+    assert.ok(toRecords(item("HITL"), queue, now)[0].note.endsWith("Monthly AI budget hard cap reached (1.500)"), "free text is shown as written");
+    const approval = (id: string, expires_at: string, can_decide: boolean) => ({
+      id,
+      expires_at,
+      can_decide,
+      action_label: "L",
+      target_label: "T",
+      requested_by_role: "SUPER_ADMIN",
+      requested_at: past,
+    });
+    const requests = toRecords(item("APPROVAL"), [approval("a", future, false), approval("b", past, true)], now);
+    assert.deepStrictEqual(requests.map((r) => r.id), ["a"]);
+    assert.ok(requests[0].note.endsWith("not yours to decide"));
+    const support = (id: string, expires_at: string, revoked_at?: string) => ({ id, expires_at, revoked_at, target_tenant_id: "T", mode: "READ_ONLY", reason: "R" });
+    assert.deepStrictEqual(toRecords(item("SUPPORT"), [support("a", future), support("b", past), support("c", future, past)], now).map((r) => r.id), ["a"]);
+    const incident = (id: string) => ({ id, started_at: past });
+    assert.deepStrictEqual(toRecords(item("INCIDENT", "HIGH", "incident:a"), [incident("a"), incident("b")], now).map((r) => r.id), ["a"]);
+
+    // A condition worked out on read has no start: it must never be called the oldest, or given an age
+    const limit = { ...item("LIMIT"), observed_at: past };
+    const noMfa = { ...item("SECURITY", "HIGH", "operators:no_mfa"), observed_at: past };
+    const outage = { ...item("INCIDENT"), observed_at: "2026-11-24T06:00:00.000Z" };
+    assert.strictEqual(oldestStart([limit, noMfa]), null);
+    assert.strictEqual(oldestStart([limit, outage]), outage.observed_at);
+    assert.deepStrictEqual([ageLabel(limit, now), ageLabel(noMfa, now), ageLabel(outage, now)], ["Right now", "Right now", "2 h ago"]);
+    const operators = [
+      { id: "1", name: "A", email: "a@x", role: "SUPER_ADMIN", mfa_enabled: true, is_active: true },
+      { id: "2", name: "B", email: "b@x", role: "PLATFORM_SUPPORT", mfa_enabled: false, is_active: true },
+      { id: "3", name: "C", email: "c@x", role: "PLATFORM_SUPPORT", mfa_enabled: false, is_active: false },
+    ];
+    assert.deepStrictEqual(toRecords(item("SECURITY", "HIGH", "operators:no_mfa"), operators, now).map((r) => r.id), ["2"]);
+    assert.strictEqual(recordsUrl(item("SECURITY", "HIGH", "security_events:recent")), null, "no route lists security events");
+    const routeOf = (url: string) => path.join(ROOT, "src/app", url.split("?")[0], "route.ts");
+    for (const [i] of expected) {
+      const url = recordsUrl(i);
+      if (url) assert.ok(fs.existsSync(routeOf(url)), `${url} has no route`);
+    }
+  });
+
+  await runTest("control tower: an unknown figure stays unknown, and a figure is split only into what the API returned", () => {
+    const overview = {
+      infrastructure: { open_incidents_count: 0, kill_switch_active: true },
+      security: { platform_operators_count: 0, active_impersonation_sessions: 0, recent_security_events: 0, mfa_enforced_percent: null },
+    } as PlatformOverviewMetrics;
+    const gate = (label: string, items: AttentionItem[] | null) => postureGates(overview, items).find((g) => g.label === label);
+    // The attention list failed or is still loading: no approval count is claimed, and the switch is only "On"
+    assert.deepStrictEqual([gate("Approvals", null)?.state, gate("Approvals", null)?.tone], ["Not loaded", "none"]);
+    assert.strictEqual(gate("Kill switches", null)?.value, "On");
+    assert.deepStrictEqual([gate("Approvals", [])?.value, gate("Approvals", [])?.tone], ["0", "ok"]);
+    assert.strictEqual(gate("Operators with MFA", [])?.tone, "none", "no active operators is not a healthy state");
+
+    const plans = mrrByPlan([
+      { plan_id: "PRO", plan_name: "Pro", mrr_bdt: 9999 },
+      { plan_id: "STARTER", plan_name: "Starter", mrr_bdt: 1999 },
+      { plan_id: "STARTER", plan_name: "Starter", mrr_bdt: 1999 },
+      { plan_id: "FREE", plan_name: "Free", mrr_bdt: 0 },
+      { plan_id: "plan_custom", plan_name: "Deal", mrr_bdt: 500 },
+    ]);
+    assert.deepStrictEqual(plans.map((p) => [p.key, p.value]), [["STARTER", 3998], ["PRO", 9999], ["OTHER", 500]]);
+    assert.deepStrictEqual(mrrByPlan([]), []);
+    const mix = tenantMix({ total: 6, active: 3, trial: 1, suspended: 0, archived: 1 });
+    assert.deepStrictEqual(mix.map((p) => [p.key, p.value]), [["active", 3], ["trial", 1], ["archived", 1], ["other", 1]]);
+
+    assert.strictEqual(headline(0), "Nothing needs attention");
+    assert.strictEqual(headline(1), "1 item needs attention");
+    assert.deepStrictEqual(countBySeverity([]), { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 });
+    assert.strictEqual(formatLatency(null), "No data yet");
+    assert.strictEqual(formatLatency(1843), "1.8 s");
+    assert.strictEqual(weekLabel("2026-11-23"), "23 Nov");
+    for (const max of [1, 3, 6, 9, 41, 100, 987]) {
+      const { top, ticks } = axisTicks(max);
+      assert.ok(top >= max && ticks.length <= 5 && ticks[ticks.length - 1] === top && ticks.every(Number.isInteger), `axis for ${max}`);
+    }
+  });
+
+  await runTest("settings page: ranges, refusals and filters agree with the registry and the server's governed rule", () => {
+    assert.strictEqual(rangeText("billing.past_due_grace_days"), "From 0 to 60.");
+    assert.strictEqual(rangeText("finance.usd_to_bdt_rate"), "More than 0, up to 10,000.");
+    assert.strictEqual(rangeText("billing.manual_bkash_number"), null);
+    assert.strictEqual(valueError("billing.past_due_grace_days", parseInput("61", 7)), "Enter a whole number. From 0 to 60.");
+    assert.ok(valueError("billing.past_due_grace_days", parseInput("", 7)), "an empty number is refused");
+    assert.ok(valueError("billing.past_due_grace_days", parseInput("7.5", 7)), "a fraction is refused");
+    assert.ok(valueError("billing.manual_bkash_number", parseInput("12345", ""))?.includes("01XXXXXXXXX"));
+    for (const s of SETTINGS_REGISTRY) {
+      assert.strictEqual(valueError(s.key, parseInput(toInput(s.default), s.default)), null, `${s.key} default survives the form`);
+    }
+    assert.strictEqual(showValue(90, "%"), "90%");
+    assert.strictEqual(showValue(1200, "requests/min"), "1,200 requests/min");
+    assert.strictEqual(showValue(""), "Not set");
+    assert.strictEqual(showValue(false), "Off");
+
+    const listed = PlatformSettingsService.listEffectiveSettings(opA);
+    const shown = SETTING_CATEGORIES.flatMap((c) => listed.filter((s) => s.category === c));
+    assert.strictEqual(shown.length, listed.length, "every setting belongs to a tab");
+    assert.ok(listed.filter((s) => matchesFilter(s, "LOCKED")).every((s) => !s.editable && !isGoverned(s)));
+    // the page's governed rule is the server's: without an approval the server refuses exactly the governed changes
+    for (const s of listed.filter((x) => x.editable)) {
+      const other = typeof s.default_value === "boolean" ? !s.value : typeof s.default_value === "number" ? Number(s.value) : s.key === "billing.manual_bank_details" ? "Bank" : "01712345678";
+      let code: string | null = null;
+      try {
+        PlatformSettingsService.updateSetting(s.key, other, "console suite: governed rule check", opA, { ticketRef: "SEC-2" });
+      } catch (err) {
+        code = (err as { code?: string }).code ?? String(err);
+      }
+      assert.strictEqual(code, isGoverned(s) ? "APPROVAL_REQUIRED" : null, s.key);
+    }
+    assert.ok(listed.some((s) => matchesFilter(s, "GOVERNED")) && listed.some((s) => matchesFilter(s, "LOCKED")));
+    assert.ok(listed.every((s) => matchesFilter(s, "GOVERNED") === isGoverned(s)));
+    assert.ok(isLongText("billing.manual_bank_details") && !isLongText("billing.support_contact"));
+    const grace = listed.find((s) => s.key === "billing.past_due_grace_days");
+    assert.ok(grace && matchesQuery(grace, "GRACE_days") && !matchesQuery(grace, "zzz"));
+    // a stored value equal to the default is not "changed"
+    const at = { ...grace, source: "STORED" as const };
+    assert.strictEqual(isChanged({ ...at, value: grace.default_value }), false);
+    assert.strictEqual(isChanged({ ...at, value: 10 }), true);
+    assert.ok(matchesFilter({ ...at, value: 10 }, "CHANGED") && !matchesFilter({ ...at, value: grace.default_value }, "CHANGED"));
   });
 
   await runTest("feature flags: a key no code reads can't be saved", async () => {

@@ -1,49 +1,31 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
-import { Search, LogOut, ShieldCheck, ShieldAlert, KeyRound, LogOut as SignOutAll, ClipboardCheck, Sun, Moon } from "lucide-react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import styles from "@/components/navigation/TopBar.module.css";
+import { ClipboardCheck, Menu, Search } from "lucide-react";
 import { usePlatformSession } from "../_lib/platform-session";
-import { formatCountdown, formatDhakaTime, humanize } from "../_lib/format";
+import { formatCountdown, formatDhakaTime } from "../_lib/format";
 import { CONSOLE_ROOT } from "../_lib/platform-module-access";
+import { PENDING_APPROVALS_PAGE } from "../_lib/use-pending-approvals";
 import { StatusPill } from "./StatusPill";
-import { BrandLogo } from "@/components/brand/BrandLogo";
-import { useConsoleTheme } from "../_lib/console-theme";
+import styles from "../super-admin.module.css";
 
 export interface PlatformTopBarProps {
   onOpenCommandPalette: () => void;
-  onSignOut: () => void;
-  onSignOutEverywhere: () => void;
+  /** Opens the sidebar drawer (below 768px, where the sidebar is hidden). */
+  onOpenNavigation: () => void;
+  navigationOpen: boolean;
   /** Pending approval requests from the approvals API; null while unknown or not permitted. */
   pendingApprovals: number | null;
-  /** The operator has an authenticator set up; when false the menu offers setup. */
-  mfaEnrolled: boolean;
-  onSetUpAuthenticator: () => void;
 }
 
-function initialsOf(text: string): string {
-  const parts = text.split(/[\s@._-]+/).filter(Boolean);
-  return parts
-    .slice(0, 2)
-    .map((p) => p[0])
-    .join("")
-    .toUpperCase();
-}
-
-export const PlatformTopBar: React.FC<PlatformTopBarProps> = ({
-  onOpenCommandPalette,
-  onSignOut,
-  onSignOutEverywhere,
-  pendingApprovals,
-  mfaEnrolled,
-  onSetUpAuthenticator,
-}) => {
-  const { session, stepUp } = usePlatformSession();
-  const { theme, toggle: toggleTheme } = useConsoleTheme();
-  const [open, setOpen] = useState(false);
+/**
+ * The console's top bar: search (⌘K), the step-up countdown, waiting approvals and the time in Dhaka. The account
+ * menu and the theme switch live at the foot of the sidebar.
+ */
+export const PlatformTopBar: React.FC<PlatformTopBarProps> = ({ onOpenCommandPalette, onOpenNavigation, navigationOpen, pendingApprovals }) => {
+  const { stepUp } = usePlatformSession();
   const [now, setNow] = useState(() => Date.now());
-  const menuRef = useRef<HTMLDivElement>(null);
 
   // One clock tick a second drives the Dhaka time and the step-up countdown
   useEffect(() => {
@@ -51,126 +33,50 @@ export const PlatformTopBar: React.FC<PlatformTopBarProps> = ({
     return () => window.clearInterval(id);
   }, []);
 
-  useEffect(() => {
-    const onDown = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, []);
-
-  const displayName = session.user.name || session.user.email;
+  // The hook reads one page of requests, so a full page means "this many or more"
+  const approvalCount =
+    pendingApprovals !== null && pendingApprovals >= PENDING_APPROVALS_PAGE ? `${PENDING_APPROVALS_PAGE}+` : pendingApprovals;
 
   return (
     <header className={styles.topBar}>
-      <div className={styles.leftSection}>
-        <Link href={CONSOLE_ROOT} className={styles.brandLink} aria-label="CommerceOS platform console home">
-          <BrandLogo size={30} label="CommerceOS" />
-        </Link>
-        <div className={styles.tenantBadge} title="Bangladesh time (Asia/Dhaka)">
-          <span>Platform console</span>
-          <span suppressHydrationWarning>· {formatDhakaTime(new Date(now))} Dhaka</span>
-        </div>
-      </div>
+      <button
+        type="button"
+        className={`${styles.topIcon} ${styles.topMenu}`}
+        onClick={onOpenNavigation}
+        aria-label="Open navigation"
+        aria-expanded={navigationOpen}
+      >
+        <Menu size={19} aria-hidden="true" />
+      </button>
 
-      <div className={styles.centerSection}>
-        <button className={styles.searchTrigger} onClick={onOpenCommandPalette} aria-label="Open command palette">
-          <span className={styles.searchPlaceholder}>
-            <Search size={16} />
-            <span>Search tenants or jump to a module…</span>
-          </span>
-          <span className={styles.kbdShortcut}>⌘K</span>
-        </button>
-      </div>
+      <button type="button" className={styles.topSearch} onClick={onOpenCommandPalette} aria-label="Open command palette">
+        <Search size={16} aria-hidden="true" />
+        <span className={styles.topSearchText}>Search tenants or jump to a module</span>
+        <kbd className={styles.topKbd}>⌘K</kbd>
+      </button>
 
-      <div className={styles.rightSection}>
+      <div className={styles.topRight}>
         {stepUp && (
           <span title="Step-up verification is active for privileged actions">
             <StatusPill status="ACTIVE" tone="info" label={`Step-up ${formatCountdown(new Date(stepUp.expiresAt).toISOString(), now)}`} />
           </span>
         )}
-
         {pendingApprovals !== null && pendingApprovals > 0 && (
           <Link
             href={`${CONSOLE_ROOT}/security?tab=approvals`}
-            className={styles.iconButton}
-            aria-label={`${pendingApprovals} approval requests waiting`}
-            title={`${pendingApprovals} approval requests waiting`}
+            className={styles.topIcon}
+            aria-label={`${approvalCount} approval requests waiting`}
+            title={`${approvalCount} approval requests waiting`}
           >
-            <ClipboardCheck size={18} />
-            <span className={styles.notificationBadge} />
+            <ClipboardCheck size={19} aria-hidden="true" />
+            <span className={styles.topCount} aria-hidden="true">
+              {approvalCount}
+            </span>
           </Link>
         )}
-
-        <button
-          type="button"
-          className={styles.iconButton}
-          onClick={toggleTheme}
-          aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-          title={theme === "dark" ? "Light theme" : "Dark theme"}
-        >
-          {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
-        </button>
-
-        <div className={styles.profileMenuWrapper} ref={menuRef}>
-          <button
-            className={styles.profileButton}
-            onClick={() => setOpen((v) => !v)}
-            aria-expanded={open}
-            aria-haspopup="true"
-          >
-            <div className={styles.avatar}>{initialsOf(displayName)}</div>
-            <span className={styles.userName}>{displayName}</span>
-            <StatusPill status={session.role} tone="neutral" label={humanize(session.role)} />
-          </button>
-
-          {open && (
-            <div className={styles.dropdown} role="menu">
-              <div className={styles.dropdownItem} role="presentation">
-                <span>
-                  <strong>{displayName}</strong>
-                  <br />
-                  <span>{session.user.email}</span>
-                </span>
-              </div>
-              <div className={styles.dropdownItem} role="presentation">
-                {session.mfaVerified ? <ShieldCheck size={16} /> : <ShieldAlert size={16} />}
-                <span>{session.mfaVerified ? "Signed in with MFA" : "Signed in without MFA"}</span>
-              </div>
-              {mfaEnrolled ? (
-                <div className={styles.dropdownItem} role="presentation">
-                  <ShieldCheck size={16} />
-                  <span>Authenticator is set up</span>
-                </div>
-              ) : (
-                <button
-                  className={styles.dropdownItem}
-                  onClick={() => {
-                    setOpen(false);
-                    onSetUpAuthenticator();
-                  }}
-                  role="menuitem"
-                >
-                  <ShieldAlert size={16} />
-                  <span>Set up authenticator</span>
-                </button>
-              )}
-              <div className={styles.dropdownItem} role="presentation">
-                <KeyRound size={16} />
-                <span>Role: {humanize(session.role)}</span>
-              </div>
-              <div className={styles.dropdownDivider} />
-              <button className={styles.dropdownItem} onClick={onSignOutEverywhere} role="menuitem">
-                <SignOutAll size={16} />
-                <span>Sign out everywhere</span>
-              </button>
-              <button className={styles.dropdownItem} onClick={onSignOut} role="menuitem">
-                <LogOut size={16} />
-                <span>Sign out</span>
-              </button>
-            </div>
-          )}
-        </div>
+        <span className={styles.topClock} title="Bangladesh time (Asia/Dhaka)" suppressHydrationWarning>
+          {formatDhakaTime(new Date(now))} Dhaka
+        </span>
       </div>
     </header>
   );

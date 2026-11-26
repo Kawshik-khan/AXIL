@@ -132,6 +132,28 @@
   --chart-grid:  rgba(30, 32, 30, 0.08);
   --chart-seq-0: rgba(47, 111, 208, 0.06);
 
+  /* Platform console (super admin): a flat grey page, white cards, lime and lavender surfaces. Surfaces use the
+     light steps with dark ink in both themes; data marks use the deeper steps; text never uses either. */
+  --console-page:           #F3F3F5;
+  --console-card:           #FFFFFF;
+  --console-inset:          #F5F5F7;
+  --console-line:           #E9E9ED;
+  --console-line-strong:    #DADBE1;
+  --console-text-secondary: #62656C;
+  --console-lime:           #CDF24F;
+  --console-lime-ink:       #3E4420;
+  --console-lime-mark:      #A6CF00;
+  --console-lavender:       #C9CEFF;
+  --console-lavender-ink:   #474B6B;
+  --console-lavender-soft:  #E9EBFF;
+  --console-lavender-mark:  #8B93F0;
+  --console-lavender-pale:  #C9CEFF;
+  --console-on-accent:      #16171A;
+  --console-on-accent-chip: #FFFFFF;
+  --console-ring-danger:    #C0392B;
+  --console-ring-muted:     #6A70A8;
+  --console-scrim:          rgba(15, 16, 19, 0.42);
+
   /* Glassmorphism Specs */
   --glass-bg:             rgba(255, 255, 255, 0.78);
   --glass-bg-dark:        rgba(36, 37, 41, 0.85);
@@ -345,6 +367,16 @@ html[data-console-theme="dark"] {
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.35);
   --shadow-lg: 0 10px 25px -3px rgba(0, 0, 0, 0.45);
+
+  --console-page:           #0F1013;
+  --console-card:           #191A1E;
+  --console-inset:          #212328;
+  --console-line:           #2A2C32;
+  --console-line-strong:    #383B43;
+  --console-text-secondary: #A9ACB5;
+  --console-lime-mark:      #B9E400;
+  --console-lavender-soft:  #26283D;
+  --console-lavender-pale:  #4A4F86;
 
   /* aliases, restated so they follow the dark values */
   --color-surface:       var(--color-surface-pure);
