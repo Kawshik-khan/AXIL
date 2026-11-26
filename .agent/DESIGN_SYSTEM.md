@@ -36,6 +36,8 @@ Do not copy values into docs or components; reference the variables. Key groups:
 | Radii | `--radius-sm` (chips), `--radius-control` (inputs/buttons), `--radius-card`, `--radius-lg`, `--radius-dock` (dock/modals), `--radius-pill` |
 | Spacing | `--space-*` |
 
+**Inbox** (`src/components/social/Inbox.module.css`): colour says who acts next. Lime = a person has to (the queue tile, the control strip, the time left), lilac = the AI agent (tile, bubbles, drafts, handoff brief), ink = the team's own replies and primary buttons. There AI elements are lilac instead of the lime glow below. On a phone the open chat is full screen: it covers the dock and the top bar so the reply box keeps its space.
+
 **Lime and lilac.** Lime is one signal per screen. The shop dashboard (`src/components/dashboard/`) is the exception: lime marks the lead tile, the best value in a chart, one channel and one queue, and an agent run that needs a person; lilac carries the needs-attention panel, selected controls and ordinary chart marks. Lime and the light channel colours are low-contrast on white, so every one of them has its name and value written as text beside it. Never use lime or a channel colour as text.
 
 Light theme is the merchant dashboard; the dark variant (charcoal surfaces) is used for the super-admin control plane and AI/overlay panels. Both use the same tokens.

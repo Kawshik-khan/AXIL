@@ -46,7 +46,7 @@ export interface CreateEscalationInput {
 
 export interface ResolveEscalationInput {
   escalationId: string;
-  resolutionType: "HUMAN_REPLIED" | "DRAFT_APPROVED" | "DRAFT_REJECTED" | "BOT_RESUMED";
+  resolutionType: NonNullable<AgentHitlEscalationRecord["resolution_type"]>;
   resumeBot?: boolean;
   notes?: string;
   userId?: string;
@@ -191,6 +191,17 @@ export class HitlEscalationService {
     }
 
     return db.saveAgentHitlEscalation(updated);
+  }
+
+  /**
+   * Whether the order the agent prepared on this ticket can still be confirmed: the ticket is open, and the agent hasn't
+   * placed (or isn't placing) the quote itself since.
+   */
+  public static draftIsOpen(tenantId: string, ticket: AgentHitlEscalationRecord): boolean {
+    if (ticket.status === "RESOLVED" || !ticket.order_draft) return false;
+    return !db
+      .getConversationQuotes(tenantId, ticket.conversation_id)
+      .some((q) => (q.status === "PLACED" || q.status === "PLACING") && q.updated_at >= ticket.created_at);
   }
 
   /**

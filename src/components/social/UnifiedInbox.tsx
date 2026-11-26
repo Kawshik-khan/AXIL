@@ -1,285 +1,211 @@
 "use client";
 
-import React, { useMemo } from "react";
-import { Search, MessageSquare, Phone, Globe, RefreshCw } from "lucide-react";
-import { Conversation, ChannelType } from "@/types/social";
-import styles from "./SocialInbox.module.css";
+import React from "react";
+import { Globe, MessageSquare, RefreshCw, Search } from "lucide-react";
 import { BrandIcon, brandFor } from "@/components/brand/BrandIcon";
-import { agentPaused } from "@/domains/social/conversations/conversation-control.state";
+import type { InboxConversation, InboxQueue } from "@/domains/social/conversations/inbox-queue";
+import { LoadingSkeleton } from "@/components/ui/States/States";
+import { QUEUE_LABELS, answeringOf, channelName, customerName, initialsOf, listTime, replyClock, sentenceCase } from "./inbox-view";
+import type { Inbox } from "./useInbox";
+import styles from "./Inbox.module.css";
 
-interface UnifiedInboxProps {
-  conversations: any[];
-  selectedConversationId?: string;
-  onSelectConversation: (id: string) => void;
-  filterChannel?: string;
-  onFilterChannelChange: (ch?: string) => void;
-  searchQuery: string;
-  onSearchChange: (q: string) => void;
-  filterUnreadOnly: boolean;
-  onToggleUnreadOnly: () => void;
-  filterTag?: string;
-  onSelectTag: (tag?: string) => void;
-  onRefresh?: () => void;
-  isRefreshing?: boolean;
+const CHANNELS = ["WHATSAPP", "FACEBOOK_MESSENGER", "INSTAGRAM", "TELEGRAM", "WEBSITE_CHAT"] as const;
+const RING = 2 * Math.PI * 20;
+
+export const ChannelMark: React.FC<{ type: string; size: number; label?: boolean }> = ({ type, size, label = false }) => {
+  const brand = brandFor(type);
+  if (brand) return <BrandIcon brand={brand} size={size} label={label ? true : undefined} />;
+  const Icon = type === "WEBSITE_CHAT" ? Globe : MessageSquare;
+  return <Icon size={size} aria-hidden={label ? undefined : true} aria-label={label ? channelName(type) : undefined} role={label ? "img" : undefined} />;
+};
+
+function previewOf(c: InboxConversation): string {
+  const m = c.last_message;
+  if (!m) return c.subject || "No messages yet";
+  const text = m.text.trim() || sentenceCase(m.message_type);
+  if (m.direction === "INBOUND") return text;
+  return m.is_ai ? `✦ ${text}` : `Team: ${text}`;
 }
 
-export const UnifiedInbox: React.FC<UnifiedInboxProps> = ({
-  conversations,
-  selectedConversationId,
-  onSelectConversation,
-  filterChannel,
-  onFilterChannelChange,
-  searchQuery,
-  onSearchChange,
-  filterUnreadOnly,
-  onToggleUnreadOnly,
-  filterTag,
-  onSelectTag,
-  onRefresh,
-  isRefreshing,
-}) => {
-  const getBadgeClass = (type: ChannelType) => {
-    switch (type) {
-      case "FACEBOOK_MESSENGER":
-        return styles.badgeFB;
-      case "INSTAGRAM":
-        return styles.badgeIG;
-      case "WHATSAPP":
-        return styles.badgeWA;
-      case "WEBSITE_CHAT":
-      default:
-        return styles.badgeWEB;
+function OwnerChip({ c, viewerId, now }: { c: InboxConversation; viewerId: string; now: number }) {
+  switch (answeringOf(c, viewerId)) {
+    case "NEEDS": {
+      const reply = replyClock(c, now);
+      if (reply?.overdue) return <span className={`${styles.chip} ${styles.chipOver}`}>Overdue {reply.amount}</span>;
+      return <span className={`${styles.chip} ${styles.chipNeeds}`}>{reply ? `${reply.amount} left` : "Needs a person"}</span>;
     }
-  };
+    case "AGENT":
+      return <span className={`${styles.chip} ${styles.chipAgent}`}>✦ AI agent</span>;
+    case "ME":
+      return <span className={`${styles.chip} ${styles.chipMe}`}>You</span>;
+    case "OTHER":
+      return <span className={styles.chip}>{c.owner?.name ?? "Your team"}</span>;
+    default:
+      return <span className={styles.chip}>{sentenceCase(c.status)}</span>;
+  }
+}
 
-  const getChannelLabel = (type: ChannelType) => {
-    switch (type) {
-      case "FACEBOOK_MESSENGER":
-        return "FB";
-      case "INSTAGRAM":
-        return "IG";
-      case "WHATSAPP":
-        return "WA";
-      case "WEBSITE_CHAT":
-        return "WEB";
-      default:
-        return String(type).slice(0, 3);
-    }
-  };
+function Row({ c, inbox, selected, onOpen }: { c: InboxConversation; inbox: Inbox; selected: boolean; onOpen: (c: InboxConversation) => void }) {
+  const viewerId = inbox.meta?.viewer_id ?? "";
+  const name = customerName(c);
+  const reply = c.queue === "NEEDS_PERSON" ? replyClock(c, inbox.now) : undefined;
+  const waiting = c.queue === "TEAM" ? c.awaiting_count ?? 0 : 0;
+  return (
+    <button type="button" className={`${styles.row} ${c.unread_count > 0 ? styles.rowUnread : ""}`} aria-current={selected ? "true" : undefined} onClick={() => onOpen(c)}>
+      <span className={styles.avatarBox}>
+        {reply && (
+          <svg className={styles.avatarRing} width={44} height={44} viewBox="0 0 44 44" aria-hidden="true">
+            <circle cx={22} cy={22} r={20} strokeWidth={3} className={styles.ringTrack} />
+            <circle
+              cx={22}
+              cy={22}
+              r={20}
+              strokeWidth={3}
+              className={reply.overdue ? styles.ringOver : styles.ringLeft}
+              strokeDasharray={reply.overdue ? undefined : `${reply.left * RING} ${RING}`}
+            />
+          </svg>
+        )}
+        <span className={`${styles.avatar} ${c.queue === "AGENT" ? styles.avatarAgent : ""}`}>{initialsOf(name)}</span>
+        <span className={styles.avatarChannel}>
+          <ChannelMark type={c.channel_type} size={15} label />
+        </span>
+      </span>
+      <span className={styles.rowBody}>
+        <span className={styles.rowTop}>
+          <span className={styles.rowName}>{name}</span>
+          <span className={styles.rowTime}>{listTime(c.last_message_at, inbox.now)}</span>
+        </span>
+        <span className={styles.rowPreview}>{previewOf(c)}</span>
+        <span className={styles.rowMeta}>
+          <span className={styles.chips}>
+            <OwnerChip c={c} viewerId={viewerId} now={inbox.now} />
+            {waiting > 0 && <span className={`${styles.chip} ${styles.chipNeeds}`}>{waiting} waiting</span>}
+            {c.tags[0] && <span className={styles.chip}>{sentenceCase(c.tags[0])}</span>}
+          </span>
+          {c.unread_count > 0 && (
+            <span className={styles.unread} aria-label={`${c.unread_count} unread`}>
+              {c.unread_count}
+            </span>
+          )}
+        </span>
+      </span>
+    </button>
+  );
+}
 
-  const formatRelativeTime = (dateStr: string) => {
-    try {
-      const d = new Date(dateStr);
-      const diffSec = Math.floor((Date.now() - d.getTime()) / 1000);
-      if (diffSec < 60) return "Just now";
-      if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
-      if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
-      if (diffSec < 172800) return "Yesterday";
-      return d.toLocaleDateString([], { month: "short", day: "numeric" });
-    } catch {
-      return "";
-    }
-  };
+const DOT: Partial<Record<InboxQueue, string>> = { NEEDS_PERSON: styles.dotNeeds, AGENT: styles.dotAgent, TEAM: styles.dotTeam };
 
-  // Counts for pills optimized with a single pass
-  const totalCount = conversations.length;
-  const { unreadCount, waCount, fbCount, igCount, webCount } = useMemo(() => {
-    return conversations.reduce(
-      (acc, c) => {
-        if (c.unread_count > 0) acc.unreadCount++;
-        if (c.channel_type === "WHATSAPP") acc.waCount++;
-        else if (c.channel_type === "FACEBOOK_MESSENGER") acc.fbCount++;
-        else if (c.channel_type === "INSTAGRAM") acc.igCount++;
-        else if (c.channel_type === "WEBSITE_CHAT") acc.webCount++;
-        return acc;
-      },
-      { unreadCount: 0, waCount: 0, fbCount: 0, igCount: 0, webCount: 0 }
-    );
-  }, [conversations]);
+/** The conversation list: search, channel filter, and chats grouped by who has to act next. */
+export const UnifiedInbox: React.FC<{ inbox: Inbox; onOpen: (c: InboxConversation) => void }> = ({ inbox, onOpen }) => {
+  const { meta, conversations } = inbox;
+  const counts = meta?.channels ?? {};
+  const allCount = Object.values(counts).reduce((sum, n) => sum + n, 0);
+  const groups = (["NEEDS_PERSON", "AGENT", "TEAM", "DONE"] as const)
+    .map((queue) => ({ queue, rows: conversations.filter((c) => c.queue === queue) }))
+    .filter((g) => g.rows.length > 0);
+  // With a search or a channel filter the tiles' totals don't describe what is listed
+  const isNarrowed = Boolean(inbox.channel || inbox.query.trim());
 
   return (
-    <div className={styles.conversationsPanel}>
-      {/* Search Header */}
-      <div className={styles.panelHeader}>
-        <div className={styles.searchBox}>
-          <Search size={15} color="#9CA3AF" />
-          <input
-            type="text"
-            className={styles.searchInput}
-            placeholder="Search conversations, customers, phone..."
-            value={searchQuery}
-            onChange={(e) => onSearchChange(e.target.value)}
-          />
-          {onRefresh && (
-            <button
-              type="button"
-              onClick={onRefresh}
-              title="Refresh conversations"
-              style={{
-                background: "none",
-                border: "none",
-                color: "var(--color-text-secondary)",
-                cursor: "pointer",
-                padding: "2px",
-                display: "flex",
-                alignItems: "center",
-                transition: "color 0.15s ease",
-              }}
-              onMouseEnter={(e) => (e.currentTarget.style.color = "#1F2937")}
-              onMouseLeave={(e) => (e.currentTarget.style.color = "#6B7280")}
-            >
-              <RefreshCw size={14} className={isRefreshing ? "spin" : ""} />
-            </button>
-          )}
+    <section className={`${styles.card} ${styles.list}`} aria-label="Conversations">
+      <div className={styles.listHead}>
+        <div className={styles.search}>
+          <Search size={16} aria-hidden="true" />
+          <label className={styles.srOnly} htmlFor="inbox-search">
+            Search conversations
+          </label>
+          <input id="inbox-search" type="search" placeholder="Name or phone" value={inbox.query} onChange={(e) => inbox.setQuery(e.target.value)} />
+          <button type="button" className={styles.iconButton} onClick={inbox.refresh} aria-label="Refresh conversations" title="Refresh" disabled={inbox.isRefreshing}>
+            <RefreshCw size={15} className={inbox.isRefreshing ? styles.spinning : undefined} aria-hidden="true" />
+          </button>
         </div>
-
-        {/* Channel Filter Pills across all platforms */}
-        <div className={styles.filterPillsRow}>
-          <button
-            className={`${styles.filterBadge} ${!filterChannel && !filterUnreadOnly ? styles.filterBadgeActive : ""}`}
-            onClick={() => {
-              onFilterChannelChange(undefined);
-              onSelectTag(undefined);
-            }}
-          >
-            All <span className={styles.pillCount}>{totalCount}</span>
+        <div className={styles.channels} role="group" aria-label="Filter by channel">
+          <button type="button" aria-pressed={!inbox.channel} onClick={() => inbox.setChannel(null)} title="All channels">
+            All <span>{meta ? allCount : "–"}</span>
           </button>
-          {unreadCount > 0 && (
+          {/* A channel without chats is left out, unless it is the selected one */}
+          {CHANNELS.filter((type) => (counts[type] ?? 0) > 0 || inbox.channel === type).map((type) => (
             <button
-              className={`${styles.filterBadge} ${filterUnreadOnly ? styles.filterBadgeActive : ""}`}
-              onClick={onToggleUnreadOnly}
+              key={type}
+              type="button"
+              aria-pressed={inbox.channel === type}
+              aria-label={`${channelName(type)}, ${counts[type] ?? 0}`}
+              title={channelName(type)}
+              onClick={() => inbox.setChannel(inbox.channel === type ? null : type)}
             >
-              Unread <span className={styles.pillCount}>{unreadCount}</span>
+              <ChannelMark type={type} size={17} />
+              <span>{counts[type] ?? 0}</span>
             </button>
-          )}
-          <button
-            className={`${styles.filterBadge} ${filterChannel === "WHATSAPP" ? styles.filterBadgeActive : ""}`}
-            onClick={() => onFilterChannelChange("WHATSAPP")}
-          >
-            <BrandIcon brand="whatsapp" size={14} />
-            WhatsApp <span className={styles.pillCount}>{waCount}</span>
-          </button>
-          <button
-            className={`${styles.filterBadge} ${filterChannel === "FACEBOOK_MESSENGER" ? styles.filterBadgeActive : ""}`}
-            onClick={() => onFilterChannelChange("FACEBOOK_MESSENGER")}
-          >
-            <BrandIcon brand="facebook" size={14} />
-            Facebook <span className={styles.pillCount}>{fbCount}</span>
-          </button>
-          <button
-            className={`${styles.filterBadge} ${filterChannel === "INSTAGRAM" ? styles.filterBadgeActive : ""}`}
-            onClick={() => onFilterChannelChange("INSTAGRAM")}
-          >
-            <BrandIcon brand="instagram" size={14} />
-            Instagram <span className={styles.pillCount}>{igCount}</span>
-          </button>
-          <button
-            className={`${styles.filterBadge} ${filterChannel === "WEBSITE_CHAT" ? styles.filterBadgeActive : ""}`}
-            onClick={() => onFilterChannelChange("WEBSITE_CHAT")}
-          >
-            Website <span className={styles.pillCount}>{webCount}</span>
-          </button>
+          ))}
         </div>
       </div>
 
-      {/* Conversation Thread List */}
-      <div className={styles.conversationList}>
-        {conversations.length === 0 ? (
-          <div style={{ padding: "40px 16px", textAlign: "center", color: "var(--color-text-secondary)" }}>
-            <MessageSquare size={32} style={{ margin: "0 auto 10px", opacity: 0.4 }} />
-            <p style={{ fontSize: "0.875rem", fontWeight: 600 }}>No conversations found</p>
-            <p style={{ fontSize: "0.75rem", marginTop: "4px" }}>
-              Try clearing filters or search term
-            </p>
+      <div className={`${styles.scroll} ${styles.rows}`}>
+        {inbox.isLoading ? (
+          <LoadingSkeleton lines={6} inline />
+        ) : inbox.listError && conversations.length === 0 ? (
+          <div className={styles.message} role="alert">
+            <strong>The inbox could not be loaded</strong>
+            <span>{inbox.listError.message}</span>
+            {inbox.listError.request_id && <code>{inbox.listError.request_id}</code>}
+            {inbox.listError.status === 401 && <a href="/login">Sign in again</a>}
+            <button type="button" className={styles.soft} onClick={inbox.refresh}>
+              Retry
+            </button>
+          </div>
+        ) : groups.length === 0 && !inbox.queue && !isNarrowed ? (
+          <div className={styles.message}>
+            <strong>Nothing is open</strong>
+            <span>Every conversation is resolved.</span>
+            <button type="button" className={styles.soft} onClick={() => inbox.setQueue("DONE")}>
+              Show resolved
+            </button>
+          </div>
+        ) : groups.length === 0 ? (
+          <div className={styles.message}>
+            <strong>No conversations match</strong>
+            <span>Clear the queue, channel or search to see the rest.</span>
+            <button type="button" className={styles.soft} onClick={inbox.clearFilters}>
+              Clear filters
+            </button>
           </div>
         ) : (
-          conversations.map((convo) => {
-            const isSelected = convo.id === selectedConversationId;
-            const customerName = convo.customer
-              ? `${convo.customer.first_name} ${convo.customer.last_name}`
-              : `Customer (${String(convo.external_conversation_id || convo.id).slice(-6)})`;
-
-            const initials = convo.customer?.first_name
-              ? convo.customer.first_name.charAt(0).toUpperCase()
-              : "C";
-
-            return (
-              <div
-                key={convo.id}
-                className={`${styles.conversationItem} ${isSelected ? styles.conversationItemActive : ""}`}
-                onClick={() => onSelectConversation(convo.id)}
-              >
-                {/* Left User Avatar */}
-                <div className={styles.userAvatar}>
-                  {initials}
-                  {brandFor(convo.channel_type) ? (
-                    <BrandIcon
-                      brand={brandFor(convo.channel_type)!}
-                      size={16}
-                      label
-                      className={styles.avatarPlatformLogo}
-                    />
-                  ) : (
-                    <span className={`${styles.avatarPlatformBadge} ${getBadgeClass(convo.channel_type)}`}>
-                      {getChannelLabel(convo.channel_type)}
-                    </span>
-                  )}
-                </div>
-
-                {/* Right Conversation Details */}
-                <div className={styles.convoBody}>
-                  <div className={styles.convoTopRow}>
-                    <span className={styles.customerNameText}>{customerName}</span>
-                    <span className={styles.timestampText}>
-                      {formatRelativeTime(convo.last_message_at)}
-                    </span>
-                  </div>
-
-                  <div className={styles.convoSnippet}>
-                    {convo.subject ||
-                      (convo.tags && convo.tags.length > 0
-                        ? `#${convo.tags[0]} inquiry`
-                        : "Active customer thread")}
-                  </div>
-
-                  <div className={styles.convoMetaRow}>
-                    <div style={{ display: "flex", gap: "5px", alignItems: "center", flexWrap: "wrap" }}>
-                      <span
-                        className={`${styles.statusBadge} ${
-                          convo.status === "OPEN" ? styles.statusOpen : styles.statusOther
-                        }`}
-                      >
-                        {convo.status}
-                      </span>
-
-                      {convo.priority === "URGENT" && (
-                        <span className={styles.priorityUrgent}>Urgent</span>
-                      )}
-                      {convo.priority === "HIGH" && (
-                        <span className={styles.priorityHigh}>High</span>
-                      )}
-
-                      {convo.tags && convo.tags.length > 0 && (
-                        <span className={styles.tagBadge}>#{convo.tags[0]}</span>
-                      )}
-
-                      {agentPaused(convo) && Boolean(convo.awaiting_count) && (
-                        <span className={styles.awaitingBadge} title="AI paused: these customer messages wait for a person">
-                          {convo.awaiting_count} waiting
-                        </span>
-                      )}
-                    </div>
-
-                    {convo.unread_count > 0 && (
-                      <span className={styles.unreadPill}>{convo.unread_count}</span>
-                    )}
-                  </div>
-                </div>
+          <>
+            {inbox.listError && (
+              <div className={styles.message} role="alert">
+                <span>Could not refresh: {inbox.listError.message}</span>
               </div>
-            );
-          })
+            )}
+            {groups.map(({ queue, rows }) => (
+              <div key={queue}>
+                <h2 className={styles.groupHead}>
+                  <i className={DOT[queue]} aria-hidden="true" />
+                  {QUEUE_LABELS[queue]}
+                  {meta && !isNarrowed && <span>{meta.queues[queue]}</span>}
+                </h2>
+                {rows.map((c) => (
+                  <Row key={c.id} c={c} inbox={inbox} selected={c.id === inbox.active?.id} onOpen={onOpen} />
+                ))}
+              </div>
+            ))}
+            {inbox.canLoadMore && (
+              <div className={styles.message}>
+                <button type="button" className={styles.soft} onClick={inbox.loadMore}>
+                  Show more
+                </button>
+              </div>
+            )}
+            {inbox.isCutOff && (
+              <div className={styles.message}>
+                <span>
+                  Showing the first {conversations.length} of {meta?.total}. Search or pick a queue or channel to find the others.
+                </span>
+              </div>
+            )}
+          </>
         )}
       </div>
-    </div>
+    </section>
   );
 };

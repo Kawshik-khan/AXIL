@@ -7035,9 +7035,17 @@ export class CommerceDatabase {
       search?: string;
       limit?: number;
       offset?: number;
+      /** A condition the stored fields can't express (the inbox queues); runs with the other filters, before paging. */
+      where?: (conversation: Conversation) => boolean;
+      /** Order of the result; newest message first without it. */
+      compare?: (a: Conversation, b: Conversation) => number;
     }
   ): { conversations: (Conversation & { customer?: Customer; channel_name?: string })[]; total: number } {
     let list = this.data.conversations.filter((c) => c.tenant_id === tenantId);
+
+    if (options?.where) {
+      list = list.filter(options.where);
+    }
 
     if (options?.channel_id) {
       list = list.filter((c) => c.channel_id === options.channel_id);
@@ -7080,7 +7088,7 @@ export class CommerceDatabase {
     }
 
     // Sort by last_message_at desc
-    list.sort((a, b) => new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime());
+    list.sort(options?.compare ?? ((a, b) => new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime()));
 
     const total = list.length;
     const offset = options?.offset || 0;
@@ -7146,6 +7154,19 @@ export class CommerceDatabase {
     );
     if (conversationIds.size === 0) return [];
     return this.data.messages.filter((m) => m.tenant_id === tenantId && conversationIds.has(m.conversation_id));
+  }
+
+  /** The newest message of each conversation (notes left out), in one pass: the inbox list's previews. */
+  public getLatestMessages(tenantId: string, conversationIds: readonly string[]): Map<string, Message> {
+    const wanted = new Set(conversationIds);
+    const latest = new Map<string, Message>();
+    for (const m of this.data.messages) {
+      if (m.tenant_id !== tenantId || !wanted.has(m.conversation_id) || m.message_type === "INTERNAL_NOTE") continue;
+      const current = latest.get(m.conversation_id);
+      // Equal timestamps: the later stored one is newer
+      if (!current || Date.parse(m.created_at) >= Date.parse(current.created_at)) latest.set(m.conversation_id, m);
+    }
+    return latest;
   }
 
   public getMessages(

@@ -901,12 +901,14 @@ export interface AgentHitlEscalationRecord {
     delivery_fee: number;
     grand_total: number;
     payment_method: "COD" | "BKASH" | "NAGAD";
+    /** The quote's coupon: the order is priced with it again. */
+    coupon_code?: string;
   };
 
   assigned_to_user_id?: string;               // Merchant staff who claimed ticket
   assigned_at?: string;
   resolved_at?: string;
-  resolution_type?: "HUMAN_REPLIED" | "DRAFT_APPROVED" | "DRAFT_REJECTED" | "BOT_RESUMED";
+  resolution_type?: "HUMAN_REPLIED" | "DRAFT_APPROVED" | "DRAFT_REJECTED" | "BOT_RESUMED" | "CHAT_RESOLVED"; // CHAT_RESOLVED: closed by resolving the chat
   resolution_notes?: string;
 
   sla_due_at: string;                         // ISO timestamp based on priority

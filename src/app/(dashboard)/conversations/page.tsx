@@ -1,421 +1,180 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useRef } from "react";
-import {
-  MessageSquare,
-  BarChart3,
-  Globe,
-  RefreshCw,
-  PlusCircle,
-  Filter,
-} from "lucide-react";
-import styles from "@/components/social/SocialInbox.module.css";
+import React, { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { MessageSquare } from "lucide-react";
+import { EMPTY_DRAFT, type Draft } from "@/components/social/Composer";
 import { UnifiedInbox } from "@/components/social/UnifiedInbox";
 import { ConversationThread } from "@/components/social/ConversationThread";
 import { CustomerContextPanel } from "@/components/social/CustomerContextPanel";
+import { draftOrderOf } from "@/components/social/HandoffContextCard";
+import { QueueTiles } from "@/components/social/QueueTiles";
 import { SocialDashboard } from "@/components/social/SocialDashboard";
 import { WebsiteChatWidget } from "@/components/social/WebsiteChatWidget";
 import { ProductSearchModal } from "@/components/social/ProductSearchModal";
 import { SocialOrderModal } from "@/components/social/SocialOrderModal";
-import { LoadingState, EmptyState, ErrorState, PermissionDenied } from "@/components/ui/States/States";
-import {
-  Conversation,
-  ConversationStatus,
-  Message,
-  CustomerIdentity,
-  ConversationTag,
-  Lead,
-  QuickReply,
-  ChannelType,
-} from "@/types/social";
-import { Order, Product } from "@/types/commerce";
-import { useDebounce } from "@/hooks/useDebounce";
+import { useInbox } from "@/components/social/useInbox";
+import { EmptyState, PermissionDenied } from "@/components/ui/States/States";
+import type { InboxConversation, InboxOrderDraft } from "@/domains/social/conversations/inbox-queue";
+import styles from "@/components/social/Inbox.module.css";
+
+type View = "conversations" | "performance" | "test";
+
+const VIEWS: ReadonlyArray<{ value: View; label: string }> = [
+  { value: "conversations", label: "Conversations" },
+  { value: "performance", label: "Performance" },
+  { value: "test", label: "Test chat" },
+];
+
+const PHONE = "(max-width: 768px)";
+/** Above this width the customer rail has its own column and is open until closed. */
+const WIDE = "(min-width: 1241px)";
 
 export default function ConversationsPage() {
-  const [activeTab, setActiveTab] = useState<"inbox" | "dashboard" | "simulator">("inbox");
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [leads, setLeads] = useState<Lead[]>([]);
-  const [orders, setOrders] = useState<Order[]>([]);
-  const [quickReplies, setQuickReplies] = useState<QuickReply[]>([]);
-  
-  // UI states
-  const [isLoading, setIsLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [permissionError, setPermissionError] = useState(false);
-  const [isContextPanelOpen, setIsContextPanelOpen] = useState(false); // Default minimized per user requirement
-
-  // Filters & Search
-  const [selectedChannel, setSelectedChannel] = useState<ChannelType | "ALL">("ALL");
-  const [searchQuery, setSearchQuery] = useState("");
-  // ⚡ Bolt: Debounce search query to reduce API calls while typing
-  const debouncedSearchQuery = useDebounce(searchQuery, 300);
-  const [unreadOnly, setUnreadOnly] = useState(false);
-  const [selectedTag, setSelectedTag] = useState<string | null>(null);
-
-  // Modals
+  const router = useRouter();
+  const inbox = useInbox();
+  const [view, setView] = useState<View>("conversations");
+  /** On a phone the list and the chat are separate screens; wider screens show both. */
+  const [chatOpen, setChatOpen] = useState(false);
+  const [rail, setRail] = useState<"auto" | "open" | "closed">("auto");
+  const [isWide, setIsWide] = useState(false);
+  const [isPhone, setIsPhone] = useState(false);
+  const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
-  const [isOrderModalOpen, setIsOrderModalOpen] = useState(false);
+  /** What was opened is what is confirmed: a refresh of the list never changes an open form. */
+  const [orderModal, setOrderModal] = useState<{ conversation: InboxConversation; draft?: InboxOrderDraft; ticketId?: string } | null>(null);
 
-  // Keep conversations in ref to prevent infinite effect re-triggering loops
-  const conversationsRef = useRef<Conversation[]>([]);
-  conversationsRef.current = conversations;
-  const loadedConvIdRef = useRef<string | null>(null);
-  const isFetchingThreadRef = useRef<boolean>(false);
-
-  // Fetch conversations list
-  const loadConversations = useCallback(async () => {
-    try {
-      setError(null);
-      let url = "/api/v1/social/conversations?";
-      if (selectedChannel !== "ALL") url += `channel_type=${selectedChannel}&`;
-      if (unreadOnly) url += "unread_only=true&";
-      if (debouncedSearchQuery.trim()) url += `search=${encodeURIComponent(debouncedSearchQuery.trim())}&`;
-      if (selectedTag) url += `tag=${encodeURIComponent(selectedTag)}&`;
-
-      const res = await fetch(url);
-      if (res.status === 403) {
-        setPermissionError(true);
-        setIsLoading(false);
-        return;
-      }
-      if (!res.ok) {
-        const data = await res.json();
-        // The API's error is { code, message }: show the message, not "[object Object]"
-        throw new Error(data.error?.message || "Failed to fetch conversations");
-      }
-
-      const data = await res.json();
-      const list: Conversation[] = data.data || data.conversations || [];
-      setConversations(list);
-      conversationsRef.current = list;
-
-      // Auto-select first conversation if none selected (using functional update to decouple from selectedConversationId)
-      setSelectedConversationId((prevId) => {
-        if (!prevId && list.length > 0) return list[0].id;
-        if (prevId && !list.some((c) => c.id === prevId)) {
-          return list.length > 0 ? list[0].id : null;
-        }
-        return prevId;
-      });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load conversations");
-    } finally {
-      setIsLoading(false);
-      setIsRefreshing(false);
-    }
-  }, [selectedChannel, unreadOnly, debouncedSearchQuery, selectedTag]);
-
-  // Initial load
   useEffect(() => {
-    loadConversations();
-  }, [loadConversations]);
-
-  // Load quick replies
-  useEffect(() => {
-    async function loadTemplates() {
-      try {
-        const res = await fetch("/api/v1/social/quick-replies");
-        if (res.ok) {
-          const data = await res.json();
-          setQuickReplies(data.data || data.quick_replies || []);
-        }
-      } catch {
-        // Non-blocking
-      }
-    }
-    loadTemplates();
+    const wide = window.matchMedia(WIDE);
+    const phone = window.matchMedia(PHONE);
+    const read = () => {
+      setIsWide(wide.matches);
+      setIsPhone(phone.matches);
+    };
+    read();
+    wide.addEventListener("change", read);
+    phone.addEventListener("change", read);
+    return () => {
+      wide.removeEventListener("change", read);
+      phone.removeEventListener("change", read);
+    };
   }, []);
 
-  // Lock window scroll to top so fixed progressive blur does not activate over inbox
+  // A chat that is on screen is read, also when a message arrives while it is open. On a phone the list comes first.
+  const { active, markRead } = inbox;
+  const activeId = active?.id;
+  const unread = active?.unread_count ?? 0;
+  const isOnScreen = view === "conversations" && (isPhone ? chatOpen : true);
   useEffect(() => {
-    window.scrollTo(0, 0);
-  }, [selectedConversationId]);
+    if (activeId && unread > 0 && isOnScreen) void markRead(activeId);
+  }, [activeId, unread, isOnScreen, markRead]);
 
-  // Fetch messages and customer context ONLY when selectedConversationId changes
+  // The page under a full-screen chat doesn't scroll
+  const isFullScreen = isPhone && chatOpen && view === "conversations" && Boolean(active);
   useEffect(() => {
-    if (!selectedConversationId) {
-      loadedConvIdRef.current = null;
-      setMessages([]);
-      return;
-    }
+    if (!isFullScreen) return;
+    const { overflow } = document.body.style;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = overflow;
+    };
+  }, [isFullScreen]);
 
-    // Strictly skip if this conversation is already loaded or in-flight
-    if (loadedConvIdRef.current === selectedConversationId || isFetchingThreadRef.current) {
-      return;
-    }
-    loadedConvIdRef.current = selectedConversationId;
-    isFetchingThreadRef.current = true;
-
-    async function loadThreadDetails() {
-      try {
-        // Fetch messages
-        const msgRes = await fetch(`/api/v1/social/conversations/${selectedConversationId}/messages`);
-        if (msgRes.ok) {
-          const data = await msgRes.json();
-          setMessages(data.data || data.messages || []);
-        }
-
-        // Mark as read
-        await fetch(`/api/v1/social/conversations/${selectedConversationId}/read`, { method: "POST" });
-
-        // Update local unread badge ONLY if unread_count is greater than 0
-        setConversations((prev) => {
-          const target = prev.find((c) => c.id === selectedConversationId);
-          if (!target || target.unread_count === 0) return prev;
-          return prev.map((c) => (c.id === selectedConversationId ? { ...c, unread_count: 0 } : c));
-        });
-      } catch (err) {
-        console.error("Error loading conversation context:", err);
-      } finally {
-        isFetchingThreadRef.current = false;
-      }
-    }
-
-    loadThreadDetails();
-  }, [selectedConversationId]);
-
-  // Selected conversation object
-  const activeConversation = conversations.find((c) => c.id === selectedConversationId) || null;
-
-  // Handlers
-  const handleSendMessage = async (text: string, isInternalNote: boolean) => {
-    if (!selectedConversationId) return;
-
-    if (isInternalNote) {
-      const res = await fetch(`/api/v1/social/conversations/${selectedConversationId}/notes`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ note: text }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setMessages((prev) => [...prev, data.data?.note || data.note]);
-      }
-    } else {
-      const res = await fetch(`/api/v1/social/conversations/${selectedConversationId}/messages`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setMessages((prev) => [...prev, data.data?.message || data.message]);
-        // Refresh conversations to update preview snippet
-        loadConversations();
-      }
-    }
-  };
-
-  const handleResolveConversation = async () => {
-    if (!selectedConversationId) return;
-    const res = await fetch(`/api/v1/social/conversations/${selectedConversationId}/resolve`, {
-      method: "POST",
-    });
-    if (res.ok) {
-      setConversations((prev) =>
-        prev.map((c) => (c.id === selectedConversationId ? { ...c, status: "RESOLVED" } : c))
-      );
-    }
-  };
-
-  const handleReopenConversation = async () => {
-    if (!selectedConversationId) return;
-    const res = await fetch(`/api/v1/social/conversations/${selectedConversationId}/reopen`, {
-      method: "POST",
-    });
-    if (res.ok) {
-      setConversations((prev) =>
-        prev.map((c) => (c.id === selectedConversationId ? { ...c, status: "OPEN" } : c))
-      );
-    }
-  };
-
-  const handleStatusChange = async (status: string) => {
-    if (!selectedConversationId) return;
-    try {
-      const res = await fetch(`/api/v1/social/conversations/${selectedConversationId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status }),
-      });
-      if (res.ok) {
-        setConversations((prev) =>
-          prev.map((c) =>
-            c.id === selectedConversationId ? { ...c, status: status as ConversationStatus } : c
-          )
-        );
-      }
-    } catch (err) {
-      console.error("Failed to update status", err);
-    }
-  };
-
-  const handleAssignTeam = async (team: string) => {
-    if (!selectedConversationId) return;
-    const res = await fetch(`/api/v1/social/conversations/${selectedConversationId}/assign`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ assigned_team: team }),
-    });
-    if (res.ok) {
-      setConversations((prev) =>
-        prev.map((c) => (c.id === selectedConversationId ? { ...c, assigned_team: team } : c))
-      );
-    }
-  };
-
-  const handleAddTag = async (tag: string) => {
-    if (!selectedConversationId) return;
-    const res = await fetch(`/api/v1/social/conversations/${selectedConversationId}/tags`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tag }),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      setConversations((prev) =>
-        prev.map((c) => (c.id === selectedConversationId ? { ...c, tags: data.data?.tags || data.tags } : c))
-      );
-    }
-  };
-
-  const handleConvertLead = async () => {
-    if (!selectedConversationId || !activeConversation) return;
-    const res = await fetch("/api/v1/social/leads", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        conversation_id: selectedConversationId,
-        lead_score: 85,
-        status: "QUALIFIED",
-        buying_intent: "HIGH",
-      }),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      setLeads((prev) => [data.data?.lead || data.lead, ...prev]);
-    }
-  };
-
-  const handleOrderCreated = (newOrder: Order) => {
-    setOrders((prev) => [newOrder, ...prev]);
-    setIsOrderModalOpen(false);
-  };
-
-  if (permissionError) {
-    return (
-      <div className={styles.inboxContainer} style={{ paddingTop: "60px" }}>
-        <PermissionDenied resource="Unified Social Inbox" requiredPermission="SOCIAL_CONVERSATION_READ" />
-      </div>
-    );
+  if (inbox.listError?.status === 403) {
+    return <PermissionDenied resource="the inbox" requiredPermission="social.conversation.read" />;
   }
 
+  const open = (c: InboxConversation) => {
+    inbox.open(c);
+    setChatOpen(true);
+    if (!isWide) setRail("auto");
+  };
+  const railOpen = rail === "open" || (rail === "auto" && isWide);
+  const draft = (activeId && drafts[activeId]) || EMPTY_DRAFT;
+  const setDraft = (conversationId: string, next: Draft) => setDrafts((prev) => ({ ...prev, [conversationId]: next }));
+
+  const queues = inbox.meta?.queues;
+  const hasNoChats = Boolean(queues && queues.NEEDS_PERSON + queues.AGENT + queues.TEAM + queues.DONE === 0);
+
   return (
-    <div className={styles.inboxContainer}>
-      {/* Main Tab Views */}
-      {activeTab === "dashboard" && <SocialDashboard />}
+    <div className={`${styles.inbox} ${view === "conversations" ? "" : styles.inboxPage}`}>
+      <div className={styles.head}>
+        <div className={styles.titleBox}>
+          <h1 className={styles.title}>Inbox</h1>
+          <div className={styles.views} role="group" aria-label="Inbox views">
+            {VIEWS.map((v) => (
+              <button key={v.value} type="button" aria-pressed={view === v.value} onClick={() => setView(v.value)}>
+                {v.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        {view === "conversations" && <QueueTiles meta={inbox.meta} selected={inbox.queue} now={inbox.now} onSelect={inbox.setQueue} />}
+      </div>
 
-      {activeTab === "simulator" && (
-        <WebsiteChatWidget
-          onNewMessageSent={() => {
-            loadConversations();
-          }}
-        />
-      )}
+      {view === "performance" && <SocialDashboard />}
+      {view === "test" && <WebsiteChatWidget onNewMessageSent={inbox.refresh} />}
 
-      {activeTab === "inbox" && (
-        <>
-          {isLoading ? (
-            <LoadingState message="Loading omnichannel conversations..." />
-          ) : error ? (
-            <ErrorState
-              title="Failed to Load Inbox"
-              message={error}
-              onRetry={loadConversations}
-            />
-          ) : conversations.length === 0 ? (
+      {view === "conversations" &&
+        (hasNoChats ? (
+          <div className={`${styles.card} ${styles.fill}`}>
             <EmptyState
-              title="No Conversations Yet"
-              description="Your omnichannel inbox is currently empty. Simulate a message or connect your channels to begin receiving customer chats."
-              actionText="Open Chat Simulator"
-              onAction={() => setActiveTab("simulator")}
-              icon={<MessageSquare size={32} color="var(--color-primary)" />}
+              inline
+              title="No conversations yet"
+              description="Connect a channel and customer chats arrive here, or send yourself a message with Test chat."
+              actionText="Connect a channel"
+              onAction={() => router.push("/connector")}
+              icon={<MessageSquare size={28} />}
             />
-          ) : (
-            <div
-              className={`${styles.threeColumnLayout} ${
-                isContextPanelOpen ? styles.threeColumnLayoutExpanded : styles.threeColumnLayoutMinimized
-              }`}
-            >
-              {/* Left Column: Conversation List across all platforms */}
-              <UnifiedInbox
-                conversations={conversations}
-                selectedConversationId={selectedConversationId || undefined}
-                onSelectConversation={(id) => setSelectedConversationId(id)}
-                filterChannel={selectedChannel}
-                onFilterChannelChange={(ch) => setSelectedChannel((ch as ChannelType | "ALL") || "ALL")}
-                searchQuery={searchQuery}
-                onSearchChange={(q) => setSearchQuery(q)}
-                filterUnreadOnly={unreadOnly}
-                onToggleUnreadOnly={() => setUnreadOnly(!unreadOnly)}
-                filterTag={selectedTag || undefined}
-                onSelectTag={(t) => setSelectedTag(t || null)}
-                onRefresh={() => {
-                  setIsRefreshing(true);
-                  loadConversations();
-                }}
-                isRefreshing={isRefreshing}
+          </div>
+        ) : (
+          <div className={styles.workspace} data-rail={active ? rail : "closed"}>
+            <UnifiedInbox inbox={inbox} onOpen={open} />
+            <ConversationThread
+              inbox={inbox}
+              isOpen={chatOpen && Boolean(active)}
+              onBack={() => {
+                setChatOpen(false);
+                setRail("auto");
+              }}
+              onToggleRail={() => setRail(railOpen ? "closed" : "open")}
+              railOpen={railOpen}
+              draft={draft}
+              onDraft={setDraft}
+              onOpenProducts={() => setIsProductModalOpen(true)}
+            />
+            {railOpen && active && (
+              <CustomerContextPanel
+                inbox={inbox}
+                onClose={() => setRail("closed")}
+                onCreateOrder={() => setOrderModal({ conversation: active })}
+                onReviewDraft={() => setOrderModal({ conversation: active, ...draftOrderOf(active) })}
               />
+            )}
+          </div>
+        ))}
 
-              {/* Middle Column: Chat Box & Composer */}
-              <ConversationThread
-                conversation={activeConversation}
-                messages={messages}
-                quickReplies={quickReplies}
-                onSendMessage={handleSendMessage}
-                onResolveConversation={handleResolveConversation}
-                onReopenConversation={handleReopenConversation}
-                onStatusChange={handleStatusChange}
-                onAssignTeam={handleAssignTeam}
-                isContextPanelExpanded={isContextPanelOpen}
-                onToggleContextPanel={() => setIsContextPanelOpen(!isContextPanelOpen)}
-              />
-
-              {/* Right Column: Customer Profile & Commerce Context (collapsible, default minimized) */}
-              {isContextPanelOpen && (
-                <CustomerContextPanel
-                  conversation={activeConversation}
-                  onOpenOrderModal={() => setIsOrderModalOpen(true)}
-                  onOpenProductModal={() => setIsProductModalOpen(true)}
-                  onConvertLead={handleConvertLead}
-                  onAddTag={handleAddTag}
-                  onClose={() => setIsContextPanelOpen(false)}
-                />
-              )}
-            </div>
-          )}
-        </>
-      )}
-
-      {/* Product Catalog Modal */}
       <ProductSearchModal
         isOpen={isProductModalOpen}
         onClose={() => setIsProductModalOpen(false)}
-        onSelectProduct={(snippet: string) => {
+        onSelectProduct={(snippet) => {
+          // Into the reply box, for staff to read before it is sent
+          if (activeId) setDraft(activeId, { ...draft, text: draft.text.trim() ? `${draft.text}\n${snippet}` : snippet });
           setIsProductModalOpen(false);
-          handleSendMessage(snippet, false);
         }}
       />
 
-      {/* Social Order Draft Creation Modal */}
       <SocialOrderModal
-        isOpen={isOrderModalOpen}
-        conversation={activeConversation}
-        onClose={() => setIsOrderModalOpen(false)}
-        onOrderCreated={handleOrderCreated}
+        isOpen={orderModal !== null}
+        conversation={orderModal?.conversation ?? null}
+        draft={orderModal?.draft}
+        draftTicketId={orderModal?.ticketId}
+        onClose={() => setOrderModal(null)}
+        onOrderCreated={(order) => {
+          setOrderModal(null);
+          inbox.showNotice(`Order ${order.order_number} created.`);
+          inbox.refresh();
+        }}
       />
     </div>
   );
