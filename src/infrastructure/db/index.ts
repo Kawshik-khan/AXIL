@@ -6746,8 +6746,9 @@ export class CommerceDatabase {
       (o) => o.status === "PENDING" || o.status === "CONFIRMED" || o.status === "PROCESSING"
     ).length;
 
+    // Cancelling an order leaves its payment status as it was, so a cancelled order is left out here
     const pendingPaymentsCount = orders.filter(
-      (o) => o.payment_status === "PENDING" || o.payment_status === "UNPAID"
+      (o) => o.status !== "CANCELLED" && (o.payment_status === "PENDING" || o.payment_status === "UNPAID")
     ).length;
 
     const ordersPerCustomer = new Map<string, number>();

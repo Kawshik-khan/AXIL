@@ -51,6 +51,15 @@ const STATUS: Record<Subscription["status"], { label: string; className: string 
   EXPIRED: { label: "Expired", className: ws.statusDanger },
 };
 
+/** Plain status words, shared with the dock's account panel. */
+export const SUBSCRIPTION_STATUS_LABEL: Record<Subscription["status"], string> = {
+  ACTIVE: STATUS.ACTIVE.label,
+  TRIAL: STATUS.TRIAL.label,
+  PAST_DUE: STATUS.PAST_DUE.label,
+  CANCELLED: STATUS.CANCELLED.label,
+  EXPIRED: STATUS.EXPIRED.label,
+};
+
 const fmt = (n: number) => n.toLocaleString("en-US");
 
 /** "Up to 5 staff users", "Unlimited catalog products", or the feature's name. */

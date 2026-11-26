@@ -1,0 +1,524 @@
+/* The foot of the merchant dock: a capsule with log out above the avatar, and the account panel it opens. */
+
+.account {
+  flex: none;
+  pointer-events: auto;
+}
+
+.capsule {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 54px;
+  padding: 3px;
+  border-radius: var(--radius-pill);
+  background: var(--color-surface-pure);
+  border: 1px solid var(--color-border-subtle);
+  box-shadow: var(--shadow-md);
+}
+
+.logout {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.logout:hover {
+  background: var(--color-danger-bg);
+  color: var(--color-danger-ink);
+}
+
+.hoverZone {
+  position: relative;
+}
+
+.trigger {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 46px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+}
+
+.logout:focus-visible,
+.trigger:focus-visible,
+.planAction:focus-visible,
+.link:focus-visible,
+.retry:focus-visible,
+.panelLogout:focus-visible {
+  outline: 2px solid var(--color-text-primary);
+  outline-offset: 2px;
+}
+
+/* ---- The ring: how full the plan limit closest to its end is --------------------------------------------------------- */
+
+.ring {
+  position: absolute;
+  inset: 0;
+  transform: rotate(-90deg);
+}
+
+.ringTrack,
+.ringFill {
+  fill: none;
+  stroke-width: 2.5;
+}
+
+.ringTrack {
+  stroke: var(--color-track);
+}
+
+.ringFill {
+  stroke-linecap: round;
+  transition: stroke-dasharray var(--transition-smooth);
+}
+
+.ring_ok {
+  stroke: var(--color-lime-primary);
+}
+
+.ring_warn {
+  stroke: var(--color-warning);
+}
+
+.ring_full {
+  stroke: var(--color-danger);
+}
+
+.avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  color: var(--color-text-inverse);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  flex: none;
+  transition: transform var(--transition-smooth);
+}
+
+.trigger:hover .avatar,
+.trigger[aria-expanded="true"] .avatar {
+  transform: scale(0.94);
+}
+
+.avatarLarge {
+  width: 44px;
+  height: 44px;
+  font-size: 15px;
+}
+
+/* ---- Panel ------------------------------------------------------------------------------------------------------------ */
+
+.panel {
+  position: absolute;
+  left: calc(100% + 16px);
+  bottom: -4px;
+  z-index: 106;
+  width: 312px;
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+  padding: var(--space-12);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-pure);
+  border: 1px solid var(--color-border-subtle);
+  box-shadow: var(--glass-shadow-floating);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateX(-6px) scale(0.985);
+  transform-origin: left bottom;
+  transition: opacity 0.18s cubic-bezier(0.16, 1, 0.3, 1), transform 0.18s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.18s;
+}
+
+.panelOpen {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+}
+
+.person {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  padding: var(--space-4) var(--space-4) var(--space-16);
+}
+
+.personText {
+  display: grid;
+  min-width: 0;
+}
+
+.personName {
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--color-text-primary);
+}
+
+.personMeta {
+  font-size: var(--font-size-meta);
+  line-height: 17px;
+  color: var(--color-text-secondary);
+}
+
+.personName,
+.personMeta {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Always-dark surface: status inks use their dark-theme values here in both themes */
+.plan {
+  --color-lime-ink: var(--ink-on-dark-lime);
+  --color-info-ink: var(--ink-on-dark-info);
+  --color-success-ink: var(--ink-on-dark-success);
+  --color-warning-ink: var(--ink-on-dark-warning);
+  --color-danger-ink: var(--ink-on-dark-danger);
+  display: grid;
+  gap: var(--space-20);
+  padding: var(--space-16);
+  border-radius: var(--radius-card);
+  background: var(--color-dark-card);
+  border: 1px solid var(--color-border-dark);
+  color: var(--color-text-inverse);
+}
+
+.planHead,
+.planFoot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+}
+
+.planName {
+  min-width: 0;
+  font-size: 22px;
+  line-height: 28px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  overflow-wrap: anywhere;
+}
+
+.planStatus {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  font-size: var(--font-size-meta);
+  font-weight: 500;
+}
+
+.planStatus::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.status_ACTIVE {
+  color: var(--color-lime-ink);
+}
+
+.status_TRIAL {
+  color: var(--color-warning-ink);
+}
+
+.status_PAST_DUE,
+.status_EXPIRED {
+  color: var(--color-danger-ink);
+}
+
+.status_CANCELLED {
+  color: var(--color-text-dark-muted);
+}
+
+.planMeta {
+  min-width: 0;
+  font-size: var(--font-size-meta);
+  line-height: 17px;
+  color: var(--color-text-dark-muted);
+}
+
+.planAction {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  min-height: 32px;
+  padding: 0 10px 0 14px;
+  border-radius: var(--radius-pill);
+  background: var(--color-text-inverse);
+  color: var(--color-dark-card);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background var(--transition-fast);
+}
+
+.planAction:hover {
+  background: var(--color-lime-primary);
+}
+
+.planAction:focus-visible {
+  outline-color: var(--color-lime-primary);
+}
+
+.usage {
+  display: grid;
+  gap: var(--space-16);
+  padding: var(--space-16) var(--space-4) var(--space-4);
+}
+
+.meter {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  column-gap: var(--space-12);
+  row-gap: 6px;
+}
+
+.meterLabel {
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+
+.meterValue {
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-primary);
+}
+
+.meterCap {
+  font-weight: 400;
+  color: var(--color-text-secondary);
+}
+
+.track {
+  grid-column: 1 / -1;
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--color-track-strong);
+  overflow: hidden;
+}
+
+.fill {
+  height: 100%;
+  border-radius: inherit;
+  transition: width var(--transition-smooth);
+}
+
+.fill_ok {
+  background: var(--color-text-primary);
+}
+
+.fill_warn {
+  background: var(--color-warning);
+}
+
+.fill_full {
+  background: var(--color-danger);
+}
+
+.meterNote {
+  grid-column: 1 / -1;
+  font-size: var(--font-size-meta);
+  line-height: var(--line-height-meta);
+}
+
+.note_ok {
+  color: var(--color-text-secondary);
+}
+
+.note_warn {
+  color: var(--color-warning-ink);
+}
+
+.note_full {
+  color: var(--color-danger-ink);
+}
+
+.note {
+  margin: 0;
+  padding: var(--space-12) var(--space-16);
+  border-radius: var(--radius-card);
+  background: var(--color-surface-soft);
+  border: 1px solid var(--color-border-subtle);
+  font-size: 13px;
+  line-height: 19px;
+  color: var(--color-text-secondary);
+}
+
+.note p {
+  margin: 0;
+}
+
+.note code,
+.requestId {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-meta);
+}
+
+.requestId {
+  overflow-wrap: anywhere;
+}
+
+.retry {
+  min-height: 32px;
+  margin-top: var(--space-8);
+  padding: 0 14px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--color-ink-action);
+  color: var(--color-ink-action-text);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.retry:hover {
+  background: var(--color-ink-action-hover);
+}
+
+.skeleton {
+  display: grid;
+  gap: var(--space-16);
+}
+
+.skeletonCard,
+.skeletonLine {
+  border-radius: var(--radius-card);
+  background: var(--color-track);
+}
+
+.skeletonCard {
+  height: 112px;
+}
+
+.skeletonLine {
+  height: 22px;
+  border-radius: var(--radius-sm);
+}
+
+.links {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-4);
+  margin-top: var(--space-12);
+  padding-top: var(--space-8);
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  text-decoration: none;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.link:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text-primary);
+}
+
+/* Log out sits in the capsule on a wide screen; on a phone the capsule is only the avatar, so it moves in here */
+.panelLogout {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel,
+  .avatar,
+  .fill,
+  .ringFill {
+    transition: none;
+  }
+}
+
+@media (max-height: 700px) {
+  .logout {
+    height: 34px;
+  }
+}
+
+/* Phone: the avatar ends the bottom bar, and the panel is a sheet above it */
+@media (max-width: 768px) {
+  .capsule {
+    width: auto;
+  }
+
+  .logout {
+    display: none;
+  }
+
+  .hoverZone {
+    position: static;
+  }
+
+  .panel {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    bottom: 80px;
+    width: auto;
+    max-height: calc(100dvh - 96px);
+    transform: translateY(8px);
+  }
+
+  .panelOpen {
+    transform: none;
+  }
+
+  .link {
+    min-height: 44px;
+  }
+
+  .panelLogout {
+    display: flex;
+    align-items: center;
+    gap: var(--space-8);
+    width: 100%;
+    min-height: 44px;
+    margin-top: var(--space-8);
+    padding: 0 var(--space-12);
+    border: none;
+    border-top: 1px solid var(--color-border-subtle);
+    background: transparent;
+    color: var(--color-danger-ink);
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+}

@@ -15,6 +15,7 @@ import {
 import { useSetupGuide } from "@/components/onboarding/useSetupGuide";
 import { SETUP_GUIDE_HREF } from "@/components/onboarding/LaunchChecklist";
 import { Dock, type DockItem } from "./Dock";
+import { DockAccount } from "./DockAccount";
 import { canAccessPath } from "./module-access";
 
 type HubPage = Pick<DockItem, "label" | "href" | "badge" | "match">;
@@ -77,13 +78,21 @@ function toDockItem(hub: Hub, permissions: string[] | undefined): DockItem | nul
 export interface FloatingNavProps {
   tenantName?: string;
   userName?: string;
+  userEmail?: string;
   userRole?: string;
   /** Tenant permissions of the signed-in user (from /api/v1/auth/session). */
   permissions?: string[];
   onOpenCommandPalette?: () => void;
 }
 
-export const FloatingNav: React.FC<FloatingNavProps> = ({ permissions, onOpenCommandPalette }) => {
+export const FloatingNav: React.FC<FloatingNavProps> = ({
+  tenantName,
+  userName,
+  userEmail,
+  userRole,
+  permissions,
+  onOpenCommandPalette,
+}) => {
   const router = useRouter();
   // The setup guide stays reachable here until every required item is done, even after "Hide" on the dashboard
   const { status: guide } = useSetupGuide();
@@ -118,6 +127,18 @@ export const FloatingNav: React.FC<FloatingNavProps> = ({ permissions, onOpenCom
       onSearch={onOpenCommandPalette}
       trailingItems={settings ? [settings] : []}
       onLogout={handleLogout}
+      footer={
+        userName ? (
+          <DockAccount
+            userName={userName}
+            userEmail={userEmail}
+            userRole={userRole}
+            tenantName={tenantName}
+            permissions={permissions}
+            onLogout={handleLogout}
+          />
+        ) : undefined
+      }
     />
   );
 };

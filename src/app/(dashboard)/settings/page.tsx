@@ -49,12 +49,16 @@ export default function SettingsPage() {
   const [resetError, setResetError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (typeof window !== "undefined" && window.location.hash) {
+    const openTabFromHash = () => {
       const hash = window.location.hash.replace("#", "");
       if (hash === "users" || hash === "security" || hash === "workspace" || hash === "notifications" || hash === "product-cards") {
-        setActiveTab(hash as any);
+        setActiveTab(hash);
       }
-    }
+    };
+    openTabFromHash();
+    // The dock's account panel links to these tabs while this page may already be open
+    window.addEventListener("hashchange", openTabFromHash);
+    return () => window.removeEventListener("hashchange", openTabFromHash);
   }, []);
 
   const loadAllData = async () => {

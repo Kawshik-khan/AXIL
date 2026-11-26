@@ -211,19 +211,6 @@
   box-shadow: inset 0 0 0 1px var(--mk-white-a220), 0 1px 2px var(--mk-black-a130);
 }
 
-.avatarLarge {
-  width: 40px;
-  height: 40px;
-  font-size: 14px;
-}
-
-.profileText {
-  display: grid;
-  min-width: 0;
-  text-align: left;
-  line-height: 1.2;
-}
-
 .userName {
   font-weight: 600;
   font-size: 13px;
@@ -232,36 +219,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 160px;
-}
-
-.userRole {
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--color-text-secondary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.chevron {
-  color: var(--color-text-secondary);
-  transition: transform var(--transition-fast);
-  flex-shrink: 0;
-}
-
-.chevronOpen {
-  transform: rotate(180deg);
-}
-
-.dropdownHeader {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 10px 12px;
-}
-
-.dropdownHeader .userName {
-  max-width: 180px;
 }
 
 .dropdown {
@@ -338,10 +295,6 @@
     height: 52px;
   }
   .centerSection {
-    display: none;
-  }
-  .profileButton .profileText,
-  .profileButton .chevron {
     display: none;
   }
   .profileButton {
