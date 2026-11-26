@@ -6,7 +6,7 @@ globs: src/app/**/*.tsx, src/components/**/*, src/styles/**/*
 
 # Frontend Development Rules
 
-1. **Navigation**: no full-height fixed left sidebar. Use the floating dock (`src/components/navigation/FloatingNav.tsx`), top bar, and `Cmd/Ctrl + K` command palette that already exist — extend them, don't fork them.
+1. **Navigation**: merchant pages use the floating dock (`src/components/navigation/FloatingNav.tsx`), top bar, and `Cmd/Ctrl + K` command palette that already exist; extend them, don't fork them, and add no full-height sidebar there. The platform console is the one exception: it has its own sidebar (`src/app/super-admin/_components/ConsoleSidebar.tsx`, chosen by the owner on 2026-11-26; see `rules/platform-ui.md` §2).
 
 2. **Styling**:
    - Vanilla CSS / CSS Modules only (no Tailwind unless the user asks).
