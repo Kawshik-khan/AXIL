@@ -38,6 +38,18 @@
   --color-info:    #6C9EFF;
   --color-info-bg: rgba(108, 158, 255, 0.12);
 
+  /* Lilac: the shop dashboard's second colour beside lime (panels, selected controls, chart marks) */
+  --color-lilac-panel:      #CFD0FD;
+  --color-lilac-panel-text: #3C3D5C;
+  --color-lilac-panel-row:  rgba(255, 255, 255, 0.55);
+  --color-lilac-soft:       #E9E9FE;
+  --color-lilac-ink:        #3F3CA8;
+  --color-lilac-mark:       #7B78EE;
+  /* Text on a solid lime fill: the fill is the same in both themes, so these are too */
+  --color-on-lime:          #202124;
+  --color-on-lime-soft:     #3B4700;
+  --color-lime-wash:        #EFFFAD;
+
   /* Text on tinted chips, KPI icon accents, progress tracks: each has a dark-theme value below */
   --color-lime-ink:       #4A5E00;
   --color-info-ink:       #1D4ED8;
@@ -52,6 +64,7 @@
   --ink-on-dark-success:   #5FD79A;
   --ink-on-dark-warning:   #FFC15C;
   --ink-on-dark-danger:    #FF9EA1;
+  --ink-on-dark-critical:  #FF6B70;
   --color-accent-blue:    #2563EB;
   --color-accent-violet:  #9333EA;
   --color-accent-amber:   #D97706;
@@ -61,7 +74,7 @@
   --card-sheen:           none;
   --page-backdrop:        none;
 
-  /* Ink action: the high-contrast primary for work screens (lime stays for one signal per screen) */
+  /* Ink action: the high-contrast primary for work screens (lime stays for one signal per screen; the shop dashboard is the exception, see .agent/DESIGN_SYSTEM.md) */
   --color-ink-action:       #16171A;
   --color-ink-action-hover: #2A2C30;
   --color-ink-action-text:  #FFFFFF;
@@ -104,6 +117,18 @@
   --chart-cat-2: #E07B22;
   --chart-cat-3: #1E9C8A;
   --chart-cat-4: #9B4FC0;
+  /* Shop dashboard charts: single-series marks are lilac and the best value is lime. A sales channel always has the same
+     colour, and its name and value are always written beside it (several of these are light on white). */
+  --chart-best:            #A6CC00;
+  --chart-ch-facebook:     #5B57D6;
+  --chart-ch-whatsapp:     #A6CC00;
+  --chart-ch-instagram:    #A5A3F5;
+  --chart-ch-website:      #2E3038;
+  --chart-ch-manual:       #DDF57E;
+  --chart-ch-unattributed: #A9ACB4;
+  --chart-queue-1:         #FFFFFF;
+  --chart-queue-2:         #4B48C4;
+  --chart-queue-3:         #C7F900;
   --chart-grid:  rgba(30, 32, 30, 0.08);
   --chart-seq-0: rgba(47, 111, 208, 0.06);
 
@@ -271,6 +296,14 @@ html[data-console-theme="dark"] {
   --color-border-subtle:  rgba(255, 255, 255, 0.07);
   --color-border-medium:  rgba(255, 255, 255, 0.14);
 
+  --color-lilac-panel:      #2C2B57;
+  --color-lilac-panel-text: #CFCFF2;
+  --color-lilac-panel-row:  rgba(255, 255, 255, 0.07);
+  --color-lilac-soft:       rgba(143, 140, 245, 0.18);
+  --color-lilac-ink:        #C3C4FA;
+  --color-lilac-mark:       #8F8CF5;
+  --color-lime-wash:        rgba(199, 249, 0, 0.14);
+
   --color-lime-ink:       #D8FF38;
   --color-info-ink:       #93B8FF;
   --color-success-ink:    #5FD79A;
@@ -292,6 +325,15 @@ html[data-console-theme="dark"] {
                           radial-gradient(900px 600px at 100% 0%, rgba(108, 158, 255, 0.07), transparent 60%),
                           radial-gradient(800px 700px at 60% 110%, rgba(192, 139, 255, 0.05), transparent 65%);
 
+  --chart-best:            #C7F900;
+  --chart-ch-facebook:     #8F8CF5;
+  --chart-ch-whatsapp:     #C7F900;
+  --chart-ch-instagram:    #5D59D0;
+  --chart-ch-website:      #E4E5E0;
+  --chart-ch-manual:       #7E9E00;
+  --chart-ch-unattributed: #6A6D75;
+  --chart-queue-1:         #F3F4EF;
+  --chart-queue-2:         #8F8CF5;
   --chart-grid:  rgba(255, 255, 255, 0.08);
   --chart-seq-0: rgba(108, 158, 255, 0.10);
 

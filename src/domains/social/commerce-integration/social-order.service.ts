@@ -6,7 +6,8 @@ import { PERMISSIONS } from "@/lib/permissions";
 import { OrderService } from "@/domains/orders/order.service";
 import { ProductService } from "@/domains/catalog/product.service";
 import { MessageService } from "../messages/message.service";
-import { BadRequestError, NotFoundError } from "@/lib/errors";
+import { BadRequestError, ConflictError, NotFoundError } from "@/lib/errors";
+import { HitlEscalationService } from "@/domains/ai/hitl/hitl-escalation.service";
 import { loadCustomerRows } from "@/infrastructure/db/tenant-rows";
 
 export interface CreateSocialOrderPayload {
@@ -27,6 +28,8 @@ export interface CreateSocialOrderPayload {
   notes?: string;
   /** Used when the conversation's customer has no phone on record. */
   customer_phone?: string;
+  /** The open ticket whose draft this order confirms. */
+  escalation_id?: string;
 }
 
 export class SocialOrderService {
@@ -43,6 +46,14 @@ export class SocialOrderService {
     const conversation = db.findConversationById(context.tenant.id, payload.conversation_id);
     if (!conversation) {
       throw new NotFoundError(`Conversation '${payload.conversation_id}' not found.`);
+    }
+
+    if (payload.escalation_id) {
+      // Confirming the agent's draft resolves its ticket, so it needs the same permission as resolving one
+      RbacService.assertCan(context, PERMISSIONS.SUPPORT_WRITE);
+      const ticket = db.findAgentHitlEscalation(context.tenant.id, payload.escalation_id);
+      if (!ticket || ticket.conversation_id !== conversation.id) throw new NotFoundError("Order draft", payload.escalation_id);
+      if (!HitlEscalationService.draftIsOpen(context.tenant.id, ticket)) throw new ConflictError("This order draft was already handled. Check the customer's recent orders.");
     }
 
     await loadCustomerRows(context.tenant.id, [conversation.customer_id]); // zero-hydration: the customer and identities read here
@@ -81,6 +92,17 @@ export class SocialOrderService {
         last_order_number: order.order_number,
       },
     });
+
+    if (payload.escalation_id) {
+      // Every open ticket of this chat that carries a draft is done, and the quote behind it can't be confirmed again
+      for (const ticket of db.getAgentHitlEscalations(context.tenant.id)) {
+        if (ticket.conversation_id !== conversation.id || ticket.status === "RESOLVED" || !ticket.order_draft) continue;
+        HitlEscalationService.resolveEscalation(context.tenant.id, { escalationId: ticket.id, resolutionType: "DRAFT_APPROVED", userId: context.user.id });
+      }
+      for (const quote of db.getConversationQuotes(context.tenant.id, conversation.id)) {
+        if (quote.status === "QUOTED") db.updateQuote(context.tenant.id, quote.id, { status: "STALE" });
+      }
+    }
 
     // 3. Insert system event / internal note in thread recording order creation
     await MessageService.createInternalNote(

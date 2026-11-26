@@ -83,6 +83,7 @@ Stack traces are never exposed to clients.
 - `POST /api/v1/social/channels`: Connect a new channel (Facebook, Instagram, WhatsApp, Website Chat).
 - `POST /api/v1/social/channels/:id/test`: Verify provider credential handshake and health status.
 - `GET /api/v1/social/conversations`: Unified inbox list across all channels with status, unread, tag, and search filtering.
+- `GET /api/v1/social/conversations?view=inbox[&queue=NEEDS_PERSON|AGENT|TEAM|DONE|OPEN][&limit=1..200]`: the inbox page's list. Each row adds `queue`, `agent_answers`, `owner`, `last_message` (notes left out) and `escalation` (the open ticket, with the agent's order draft). `meta` has `queues` (counts of every queue, `mine`, `oldest_waiting_since`), `channels`, `agent_mode`, `viewer_id` and `total`, counted over every conversation. `last_message` needs `social.message.read`, `escalation` needs `support.read`; `id=` returns one chat. Ordered by queue, then reply due, then newest message. Reads only.
 - `GET /api/v1/social/conversations/:id/messages`: Paginated message thread history (cursor-based).
 - `POST /api/v1/social/conversations/:id/messages`: Send outbound customer message with token-bucket rate limiting and idempotency.
 - `POST /api/v1/social/conversations/:id/notes`: Add internal operator note (strictly isolated from customer delivery).
@@ -96,7 +97,7 @@ Stack traces are never exposed to clients.
 - `GET /api/v1/social/quick-replies`: List quick-reply canned templates.
 - `GET /api/v1/social/business-hours`: Retrieve tenant operational business hours.
 - `GET /api/v1/social/analytics`: Real-time aggregated social commerce KPIs and channel health telemetry.
-- `POST /api/v1/social/orders/draft`: Controlled social order creation delegating to Commerce Core `OrderService.createOrder`.
+- `POST /api/v1/social/orders/draft`: Controlled social order creation delegating to Commerce Core `OrderService.createOrder`. Optional `escalation_id` confirms the agent's draft on that open ticket (`support.write`): the chat's draft tickets and open quote are closed with the order, and a draft already handled is a 409.
 - `GET /api/v1/social/customers/:id/identities`: List linked customer social profiles and identities.
 - `GET|POST /api/v1/social/webhooks/:channel`: Inbound webhook ingress with HMAC signature verification (`X-Hub-Signature-256`, Meta `hub.challenge`).
 - `GET|POST /api/v1/social/widget/*`: First-party website live chat widget session, config, and messaging. A product-card

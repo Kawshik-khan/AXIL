@@ -400,8 +400,13 @@ async function main() {
     const { renderToStaticMarkup } = await import("react-dom/server");
     const { HandoffContextCard, isHandoffCard } = await import("@/components/social/HandoffContextCard");
     assert.ok(isHandoffCard(card));
-    const html = renderToStaticMarkup(React.createElement(HandoffContextCard, { card: card as never }));
-    assert.ok(html.includes("payment issue") && html.includes("Charged twice") && html.includes("HIGH") && html.includes("unverified"), html);
+    const inboxRow = { ...db.findConversationById(tenantId, cid)!, queue: "NEEDS_PERSON" as const, agent_answers: true };
+    const html = renderToStaticMarkup(React.createElement(HandoffContextCard, { conversation: inboxRow, now: Date.parse(card.created_at) }));
+    assert.ok(html.includes("Payment issue") && html.includes("Charged twice") && html.includes("High priority") && html.includes("not verified"), html);
+    assert.ok(html.includes("district: Dhaka") && html.includes("Open quote") && html.includes("Bangla script") && html.includes("15 min"), html);
+    // Once the agent has the chat again, the old card says nothing
+    const returned = { ...inboxRow, queue: "AGENT" as const, control: { ...inboxRow.control!, state: "BOT" as const } };
+    assert.strictEqual(renderToStaticMarkup(React.createElement(HandoffContextCard, { conversation: returned, now: Date.now() })), "");
   });
 
   // ================================================================ FX-85

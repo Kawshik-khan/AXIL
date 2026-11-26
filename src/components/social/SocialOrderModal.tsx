@@ -5,18 +5,26 @@ import { ShoppingBag, X, Check, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/Button/Button";
 import styles from "./SocialInbox.module.css";
 import { DistrictPicker, useDeliveryFees } from "@/components/orders/DistrictPicker";
+import type { InboxConversation, InboxOrderDraft } from "@/domains/social/conversations/inbox-queue";
+import { takaOf } from "./inbox-view";
 
 interface SocialOrderModalProps {
   isOpen: boolean;
   onClose: () => void;
-  conversation: any;
-  onOrderCreated: (order: any) => void;
+  conversation: InboxConversation | null;
+  /** The order the agent prepared: its items are fixed here, and the server prices them again. */
+  draft?: InboxOrderDraft;
+  /** The ticket the draft is on: the server resolves it with the order, and refuses a draft already handled. */
+  draftTicketId?: string;
+  onOrderCreated: (order: { order_number: string }) => void;
 }
 
 export const SocialOrderModal: React.FC<SocialOrderModalProps> = ({
   isOpen,
   onClose,
   conversation,
+  draft,
+  draftTicketId,
   onOrderCreated,
 }) => {
   const [products, setProducts] = useState<any[]>([]);
@@ -30,10 +38,25 @@ export const SocialOrderModal: React.FC<SocialOrderModalProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
 
+  const conversationId = conversation?.id;
+  useEffect(() => {
+    if (!isOpen) return;
+    setErrorMsg("");
+    setAddressLine("");
+    setCustomerPhone("");
+    setQuantity(1);
+    setDistrict(draft?.delivery_district ?? "");
+    setPaymentMethod(draft?.payment_method ?? "COD");
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the form starts over for each opening, not for each refresh of the chat
+  }, [isOpen, conversationId]);
+
   useEffect(() => {
     if (!isOpen) return;
     fetch("/api/v1/products?limit=20")
-      .then((res) => res.json())
+      .then((res) => {
+        if (!res.ok) throw new Error("The product list could not be loaded.");
+        return res.json();
+      })
       .then((data) => {
         if (data.data) {
           setProducts(data.data);
@@ -42,7 +65,7 @@ export const SocialOrderModal: React.FC<SocialOrderModalProps> = ({
           if (firstVariant) setSelectedVariantId(firstVariant.id);
         }
       })
-      .catch(() => {});
+      .catch(() => setErrorMsg("The product list could not be loaded. Close this form and try again."));
   }, [isOpen]);
 
   if (!isOpen || !conversation) return null;
@@ -53,7 +76,7 @@ export const SocialOrderModal: React.FC<SocialOrderModalProps> = ({
     e.preventDefault();
     setErrorMsg("");
 
-    if (!selectedVariantId) {
+    if (!draft && !selectedVariantId) {
       setErrorMsg("Please select a product variant.");
       return;
     }
@@ -73,12 +96,14 @@ export const SocialOrderModal: React.FC<SocialOrderModalProps> = ({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           conversation_id: conversation.id,
-          items: [{ variant_id: selectedVariantId, quantity }],
+          items: draft ? draft.items.map((i) => ({ variant_id: i.variant_id, quantity: i.quantity })) : [{ variant_id: selectedVariantId, quantity }],
           delivery_address: {
             district,
             address_line_1: addressLine.trim(),
           },
           payment_method: paymentMethod,
+          ...(draft?.coupon_code ? { coupon_code: draft.coupon_code } : {}),
+          ...(draft && draftTicketId ? { escalation_id: draftTicketId } : {}),
           ...(customer?.phone ? {} : { customer_phone: customerPhone.trim() }),
         }),
       });
@@ -104,7 +129,7 @@ export const SocialOrderModal: React.FC<SocialOrderModalProps> = ({
           <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
             <ShoppingBag size={20} color="var(--color-primary)" />
             <h3 style={{ fontSize: "1.125rem", fontWeight: 700, margin: 0, color: "var(--color-text-primary)" }}>
-              Create Social Order
+              {draft ? "Review the order draft" : "Create order"}
             </h3>
           </div>
           <button
@@ -120,9 +145,9 @@ export const SocialOrderModal: React.FC<SocialOrderModalProps> = ({
             style={{
               padding: "10px 14px",
               borderRadius: "6px",
-              background: "rgba(239, 68, 68, 0.15)",
-              border: "1px solid #EF4444",
-              color: "#FCA5A5",
+              background: "var(--color-danger-bg)",
+              border: "1px solid var(--color-danger)",
+              color: "var(--color-danger-ink)",
               fontSize: "0.8125rem",
               display: "flex",
               alignItems: "center",
@@ -147,8 +172,24 @@ export const SocialOrderModal: React.FC<SocialOrderModalProps> = ({
             Customer: <strong style={{ color: "var(--color-text-primary)" }}>{customer?.first_name} {customer?.last_name}</strong> • {customer?.phone}
           </div>
 
+          {draft && (
+            <div style={{ fontSize: "0.8125rem", color: "var(--color-text-primary)" }}>
+              {draft.items.map((item) => (
+                <div key={item.variant_id} style={{ display: "flex", justifyContent: "space-between", gap: "12px" }}>
+                  <span>
+                    {item.quantity} × {item.product_name}
+                  </span>
+                  <span>{takaOf(item.line_total)}</span>
+                </div>
+              ))}
+              <div style={{ marginTop: "4px", color: "var(--color-text-secondary)" }}>
+                The agent&apos;s total was {takaOf(draft.grand_total)}. Prices and the delivery fee are worked out again when you confirm.
+              </div>
+            </div>
+          )}
+
           {/* Product Variant Picker */}
-          <div>
+          {!draft && <div>
             <label style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--color-text-muted)", display: "block", marginBottom: "4px" }}>
               Product & Variant
             </label>
@@ -173,10 +214,10 @@ export const SocialOrderModal: React.FC<SocialOrderModalProps> = ({
                 ))
               )}
             </select>
-          </div>
+          </div>}
 
           {/* Quantity */}
-          <div>
+          {!draft && <div>
             <label style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--color-text-muted)", display: "block", marginBottom: "4px" }}>
               Quantity
             </label>
@@ -195,7 +236,7 @@ export const SocialOrderModal: React.FC<SocialOrderModalProps> = ({
                 fontSize: "0.8125rem",
               }}
             />
-          </div>
+          </div>}
 
           {/* District decides the zone and charge; the fee comes from settings (FX-36, was a literal in this form) */}
           <DistrictPicker

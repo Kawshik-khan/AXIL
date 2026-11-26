@@ -1,263 +1,191 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
-import {
-  User,
-  ShoppingBag,
-  TrendingUp,
-  Tag,
-  Plus,
-  Package,
-  Truck,
-  ExternalLink,
-  Target,
-  PanelRightClose,
-} from "lucide-react";
-import { Button } from "@/components/ui/Button/Button";
-import styles from "./SocialInbox.module.css";
+import React, { useEffect, useState } from "react";
+import { X } from "lucide-react";
+import { api, type ApiFailure } from "@/components/payments/api";
+import type { Order } from "@/types/commerce";
+import { ActionNotices, AnswerSwitch, HandlingSelects } from "./ConversationThread";
+import { HandoffContextCard, draftOrderOf } from "./HandoffContextCard";
+import { customerName, dayLabel, sentenceCase, takaOf } from "./inbox-view";
+import type { Inbox } from "./useInbox";
+import styles from "./Inbox.module.css";
+
+const CLOSED_WELL = new Set(["DELIVERED"]);
+const CLOSED_BADLY = new Set(["CANCELLED", "RETURNED", "REFUNDED"]);
 
 interface CustomerContextPanelProps {
-  conversation: any;
-  onOpenOrderModal: () => void;
-  onOpenProductModal: () => void;
-  onConvertLead: () => void;
-  onAddTag: (tag: string) => void;
-  onClose?: () => void;
+  inbox: Inbox;
+  onClose: () => void;
+  onCreateOrder: () => void;
+  onReviewDraft: () => void;
 }
 
-export const CustomerContextPanel: React.FC<CustomerContextPanelProps> = ({
-  conversation,
-  onOpenOrderModal,
-  onOpenProductModal,
-  onConvertLead,
-  onAddTag,
-  onClose,
-}) => {
-  const [customerOrders, setCustomerOrders] = useState<any[]>([]);
-  const [isLoadingOrders, setIsLoadingOrders] = useState(false);
-  const [newTagInput, setNewTagInput] = useState("");
-
-  const customer = conversation?.customer;
-  const loadedCustomerIdRef = React.useRef<string | null>(null);
+/** The rail: the handoff brief, an order the agent prepared, the customer and their last orders. */
+export const CustomerContextPanel: React.FC<CustomerContextPanelProps> = ({ inbox, onClose, onCreateOrder, onReviewDraft }) => {
+  const c = inbox.active;
+  const customerId = c?.customer?.id;
+  // A new order from this chat raises the count, and the list is read again
+  const orderCount = c?.customer?.total_orders;
+  const [orders, setOrders] = useState<Order[] | null>(null);
+  const [ordersError, setOrdersError] = useState<ApiFailure | null>(null);
+  const [tag, setTag] = useState("");
+  useEffect(() => setTag(""), [customerId]);
 
   useEffect(() => {
-    if (!customer?.id) {
-      loadedCustomerIdRef.current = null;
-      setCustomerOrders([]);
-      return;
-    }
-    if (loadedCustomerIdRef.current === customer.id) {
-      return;
-    }
-    loadedCustomerIdRef.current = customer.id;
+    setOrders(null);
+    setOrdersError(null);
+    if (!customerId) return;
+    let cancelled = false;
+    void api<Order[]>(`/api/v1/orders?customer_id=${encodeURIComponent(customerId)}&limit=5`).then((result) => {
+      if (cancelled) return;
+      if (result.ok) setOrders(result.data ?? []);
+      else setOrdersError(result.error);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [customerId, orderCount]);
 
-    setIsLoadingOrders(true);
-    fetch(`/api/v1/orders?customer_id=${customer.id}&limit=5`)
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.data) {
-          setCustomerOrders(data.data);
-        }
-      })
-      .catch(() => {})
-      .finally(() => setIsLoadingOrders(false));
-  }, [customer?.id]);
+  if (!c) return null;
 
-  if (!conversation || !customer) {
-    return (
-      <div className={styles.contextPanel}>
-        <div className={styles.contextPanelHeader}>
-          <div className={styles.contextHeaderTitle}>
-            <User size={16} />
-            <span>Customer Context</span>
-          </div>
-          {onClose && (
-            <button
-              type="button"
-              className={styles.minimizeBtn}
-              onClick={onClose}
-              title="Minimize customer drawer"
-            >
-              <PanelRightClose size={15} />
-              <span>Minimize</span>
-            </button>
-          )}
-        </div>
-        <div className={styles.contextCard}>
-          <p style={{ fontSize: "0.8125rem", color: "var(--color-text-secondary)" }}>
-            Select a conversation to view customer identity and order history.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  const handleAddTagSubmit = (e: React.FormEvent) => {
+  const draft = draftOrderOf(c)?.draft;
+  const address = c.customer?.addresses?.find((a) => a.is_default) ?? c.customer?.addresses?.[0];
+  const submitTag = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (newTagInput.trim()) {
-      onAddTag(newTagInput.trim());
-      setNewTagInput("");
-    }
+    const value = tag.trim();
+    if (value && (await inbox.addTag(value))) setTag("");
   };
 
   return (
-    <div className={styles.contextPanel}>
-      {/* Top Drawer Header with Minimize Button */}
-      <div className={styles.contextPanelHeader}>
-        <div className={styles.contextHeaderTitle}>
-          <User size={16} />
-          <span>Customer & Commerce</span>
-        </div>
-        {onClose && (
-          <button
-            type="button"
-            className={styles.minimizeBtn}
-            onClick={onClose}
-            title="Minimize customer drawer"
-          >
-            <PanelRightClose size={15} />
-            <span>Minimize</span>
-          </button>
-        )}
+    <aside
+      className={`${styles.rail} ${styles.scroll}`}
+      aria-label="Customer details"
+      onKeyDown={(e) => {
+        if (e.key === "Escape") onClose();
+      }}
+    >
+      <div className={styles.railHead}>
+        <h2>{customerName(c)}</h2>
+        <button type="button" className={`${styles.iconButton} ${styles.iconButtonLarge}`} onClick={onClose} aria-label="Close details">
+          <X size={20} aria-hidden="true" />
+        </button>
       </div>
 
-      {/* Customer Profile Card */}
-      <div className={styles.contextCard}>
-        <div className={styles.cardTitle}>
-          <User size={16} /> Customer Profile
-        </div>
-        <div>
-          <div style={{ fontSize: "1rem", fontWeight: 700, color: "var(--color-text-primary)" }}>
-            {customer.first_name} {customer.last_name}
-          </div>
-          <div style={{ fontSize: "0.8125rem", color: "var(--color-text-secondary)", marginTop: "2px" }}>
-            📞 {customer.phone}
-          </div>
-          {customer.email && (
-            <div style={{ fontSize: "0.8125rem", color: "var(--color-text-secondary)", marginTop: "2px" }}>
-              ✉️ {customer.email}
-            </div>
-          )}
-        </div>
-
-        {/* Commerce Core Metrics */}
-        <div className={styles.metricGrid}>
-          <div className={styles.metricBox}>
-            <div className={styles.metricLabel}>Total Orders</div>
-            <div className={styles.metricValue}>{customer.total_orders || 0}</div>
-          </div>
-          <div className={styles.metricBox}>
-            <div className={styles.metricLabel}>Total Spent</div>
-            <div className={styles.metricValue}>৳{customer.total_spent || 0}</div>
-          </div>
-        </div>
-
-        {/* Quick Actions */}
-        <div style={{ display: "flex", gap: "8px", marginTop: "4px" }}>
-          <Button size="sm" variant="primary" onClick={onOpenOrderModal} style={{ flex: 1 }}>
-            <ShoppingBag size={14} style={{ marginRight: "4px" }} /> Create Order
-          </Button>
-          <Button size="sm" variant="outline" onClick={onOpenProductModal} style={{ flex: 1 }}>
-            <Package size={14} style={{ marginRight: "4px" }} /> Catalog
-          </Button>
-        </div>
+      {/* Over the chat, the rail covers the chat's own notices */}
+      <div className={styles.railNotices}>
+        <ActionNotices inbox={inbox} />
       </div>
 
-      {/* Tags Section */}
-      <div className={styles.contextCard}>
-        <div className={styles.cardTitle}>
-          <Tag size={16} /> Conversation Tags
+      {/* On a phone the chat's header has no room for these */}
+      <section className={`${styles.railCard} ${styles.railPhone}`} aria-label="Handling">
+        <h3>Handling</h3>
+        <AnswerSwitch inbox={inbox} />
+        <div className={`${styles.pair} ${styles.railSelects}`}>
+          <HandlingSelects inbox={inbox} idPrefix="rail" labels />
         </div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
-          {(conversation.tags || []).map((t: string) => (
-            <span
-              key={t}
-              style={{
-                fontSize: "0.6875rem",
-                padding: "3px 8px",
-                borderRadius: "6px",
-                background: "rgba(199, 249, 0, 0.22)",
-                color: "var(--color-text-primary)",
-                fontWeight: 700,
-                border: "1px solid rgba(199, 249, 0, 0.5)",
-              }}
-            >
-              #{t}
-            </span>
-          ))}
-        </div>
-        <form onSubmit={handleAddTagSubmit} style={{ display: "flex", gap: "6px" }}>
-          <input
-            type="text"
-            placeholder="Add tag (e.g. VIP, WHOLESALE)..."
-            value={newTagInput}
-            onChange={(e) => setNewTagInput(e.target.value)}
-            style={{
-              flex: 1,
-              background: "var(--color-surface-pure)",
-              border: "1px solid var(--color-border-subtle)",
-              borderRadius: "8px",
-              padding: "6px 10px",
-              fontSize: "0.75rem",
-              color: "var(--color-text-primary)",
-              outline: "none",
-            }}
-          />
-          <Button size="sm" variant="outline" type="submit">
-            Add
-          </Button>
-        </form>
-      </div>
+      </section>
 
-      {/* Lead Capture Action */}
-      <div className={styles.contextCard}>
-        <div className={styles.cardTitle}>
-          <Target size={16} /> Sales Lead
-        </div>
-        <p style={{ fontSize: "0.75rem", color: "var(--color-text-secondary)" }}>
-          Capture high-intent inquiries directly into the sales pipeline.
-        </p>
-        <Button size="sm" variant="outline" onClick={onConvertLead}>
-          <Target size={14} style={{ marginRight: "4px" }} /> Convert to Lead
-        </Button>
-      </div>
+      <HandoffContextCard conversation={c} now={inbox.now} />
 
-      {/* Canonical Order History */}
-      <div className={styles.contextCard}>
-        <div className={styles.cardTitle}>
-          <ShoppingBag size={16} /> Recent Orders
-        </div>
-        {isLoadingOrders ? (
-          <div style={{ fontSize: "0.75rem", color: "var(--color-text-secondary)" }}>Loading orders...</div>
-        ) : customerOrders.length === 0 ? (
-          <div style={{ fontSize: "0.75rem", color: "var(--color-text-secondary)" }}>No past orders found.</div>
-        ) : (
-          customerOrders.map((ord) => (
-            <div key={ord.id} className={styles.orderItemSnippet}>
-              <div>
-                <div style={{ fontWeight: 700, color: "var(--color-text-primary)" }}>
-                  {ord.order_number}
-                </div>
-                <div style={{ fontSize: "0.6875rem", color: "var(--color-text-secondary)", marginTop: "2px" }}>
-                  ৳{ord.grand_total} • {ord.status}
-                </div>
+      {draft && (
+        <section className={styles.railCard} aria-label="Order draft">
+          <div className={styles.cardTop}>
+            <h3>Order draft</h3>
+            <span className={`${styles.chip} ${styles.chipAgent}`}>✦ Prepared</span>
+          </div>
+          <div className={styles.sums}>
+            {draft.items.map((item) => (
+              <div key={item.variant_id} className={styles.sumRow}>
+                <span>
+                  {item.quantity} × {item.product_name}
+                </span>
+                <span>{takaOf(item.line_total)}</span>
               </div>
-              <span
-                style={{
-                  fontSize: "0.625rem",
-                  fontWeight: 700,
-                  padding: "2px 8px",
-                  borderRadius: "6px",
-                  background: ord.delivery_status === "DELIVERED" ? "rgba(16, 185, 129, 0.12)" : "rgba(30, 32, 30, 0.06)",
-                  color: ord.delivery_status === "DELIVERED" ? "#059669" : "#4B5563",
-                }}
-              >
-                {ord.delivery_status || ord.status}
+            ))}
+            <div className={`${styles.sumRow} ${styles.sumMuted}`}>
+              <span>Delivery, {draft.delivery_district}</span>
+              <span>{takaOf(draft.delivery_fee)}</span>
+            </div>
+            <div className={`${styles.sumRow} ${styles.sumTotal}`}>
+              <span>Total, {draft.payment_method === "COD" ? "cash on delivery" : sentenceCase(draft.payment_method)}</span>
+              <span>{takaOf(draft.grand_total)}</span>
+            </div>
+          </div>
+          <button type="button" className={styles.ink} onClick={onReviewDraft}>
+            Review and confirm
+          </button>
+        </section>
+      )}
+
+      <section className={styles.railCard} aria-label="Customer">
+        <h3>Customer</h3>
+        <div className={styles.facts}>
+          <span>{c.customer?.phone || "No phone on record"}</span>
+          {c.customer?.email && <span>{c.customer.email}</span>}
+          {address && <span>{[address.area, address.district].filter(Boolean).join(", ")}</span>}
+        </div>
+        {c.customer && (
+          <div className={styles.pair}>
+            <div className={styles.metric}>
+              <b>{c.customer.total_orders ?? 0}</b>
+              <span>Orders</span>
+            </div>
+            <div className={styles.metric}>
+              <b>{takaOf(c.customer.total_spent ?? 0)}</b>
+              <span>Spent</span>
+            </div>
+          </div>
+        )}
+        {c.tags.length > 0 && (
+          <div className={styles.tags}>
+            {c.tags.map((t) => (
+              <span key={t}>{sentenceCase(t)}</span>
+            ))}
+          </div>
+        )}
+        <form className={styles.tagForm} onSubmit={(e) => void submitTag(e)}>
+          <label className={styles.srOnly} htmlFor="inbox-tag">
+            New tag
+          </label>
+          <input id="inbox-tag" placeholder="Add a tag" value={tag} maxLength={40} onChange={(e) => setTag(e.target.value)} />
+          <button type="submit" className={styles.soft} disabled={!tag.trim() || inbox.busy === "tag"}>
+            Add
+          </button>
+        </form>
+        <div className={styles.pair}>
+          <button type="button" className={styles.soft} onClick={onCreateOrder}>
+            Create order
+          </button>
+          <button type="button" className={styles.soft} onClick={() => void inbox.saveLead()} disabled={!c.customer || inbox.busy === "lead"}>
+            Save as lead
+          </button>
+        </div>
+      </section>
+
+      <section className={styles.railCard} aria-label="Recent orders">
+        <h3>Recent orders</h3>
+        {ordersError ? (
+          <p role="alert">
+            Orders could not be loaded: {ordersError.message} {ordersError.request_id && <code>{ordersError.request_id}</code>}
+          </p>
+        ) : !customerId || orders?.length === 0 ? (
+          <p>No orders found.</p>
+        ) : !orders ? (
+          <p>Loading orders.</p>
+        ) : (
+          orders.map((order) => (
+            <div key={order.id} className={styles.order}>
+              <span>
+                <b>{order.order_number}</b>
+                {takaOf(order.grand_total)}, {dayLabel(order.created_at, inbox.now)}
+              </span>
+              <span className={CLOSED_WELL.has(order.status) ? styles.orderDone : CLOSED_BADLY.has(order.status) ? undefined : styles.orderOpen}>
+                {sentenceCase(order.status)}
               </span>
             </div>
           ))
         )}
-      </div>
-    </div>
+      </section>
+    </aside>
   );
 };

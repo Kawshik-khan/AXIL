@@ -1,6 +1,6 @@
 import { randomSuffix } from "@/lib/ids";
 import { db } from "@/infrastructure/db";
-import { Conversation, ConversationStatus, ChannelType, ConversationSource } from "@/types/social";
+import { Conversation, ConversationStatus, ChannelType, ConversationSource, Message } from "@/types/social";
 import { RequestContext } from "@/lib/context";
 import { RbacService } from "@/domains/rbac/service";
 import { PERMISSIONS } from "@/lib/permissions";
@@ -8,7 +8,14 @@ import { AuditService } from "@/domains/audit/service";
 import { NotFoundError, BadRequestError } from "@/lib/errors";
 import { ConversationStateMachine } from "./state-machine";
 import { loadCustomerRows } from "@/infrastructure/db/tenant-rows";
-import { ConversationControlService, initialControlFields } from "./conversation-control.service";
+import { ConversationControlService, controlOf, initialControlFields } from "./conversation-control.service";
+import { agentMode, channelAllowed } from "@/domains/ai/customer-agent/jobs";
+import { HitlEscalationService } from "@/domains/ai/hitl/hitl-escalation.service";
+import { isCurrentHandoff, queueOf, replyDue, waitingSince, type InboxConversation, type InboxMeta, type InboxQueue, type InboxQueueFilter } from "./inbox-queue";
+
+/** The order the inbox groups its chats in. */
+const QUEUE_ORDER: Record<InboxQueue, number> = { NEEDS_PERSON: 0, AGENT: 1, TEAM: 2, DONE: 3 };
+const PREVIEW_CHARS = 160;
 
 export class ConversationService {
   public static async listConversations(
@@ -32,6 +39,124 @@ export class ConversationService {
     const customerIds = [...new Set(db.getAllConversations(context.tenant.id).map((c) => c.customer_id).filter(Boolean))];
     await loadCustomerRows(context.tenant.id, customerIds);
     return db.getConversations(context.tenant.id, options);
+  }
+
+  /**
+   * The inbox: a page of conversations with their queue, owner and last message, plus the counts of every queue and
+   * channel (from all conversations, not the page). Reads only. Message text needs `social.message.read` and tickets
+   * `support.read`, as on their own routes: without them those fields are left out.
+   */
+  public static async listInbox(
+    context: RequestContext,
+    options: { id?: string; queue?: InboxQueueFilter; channel_type?: string; search?: string; unread_only?: boolean; tag?: string; limit?: number; offset?: number }
+  ): Promise<{ conversations: InboxConversation[]; meta: InboxMeta }> {
+    RbacService.assertCan(context, PERMISSIONS.SOCIAL_CONVERSATION_READ);
+    const tenantId = context.tenant.id;
+    const all = db.getAllConversations(tenantId);
+    const canReadMessages = RbacService.can(context, PERMISSIONS.SOCIAL_MESSAGE_READ);
+    const canReadTickets = RbacService.can(context, PERMISSIONS.SUPPORT_READ);
+
+    const mode = agentMode(tenantId);
+    const answersByChannel = new Map<string, boolean>();
+    const agentAnswers = (c: Conversation): boolean => {
+      const key = `${c.channel_type}|${c.channel_id}`;
+      let answers = answersByChannel.get(key);
+      if (answers === undefined) {
+        answers = mode === "AUTONOMOUS" && channelAllowed(tenantId, c.channel_type, c.channel_id);
+        answersByChannel.set(key, answers);
+      }
+      return answers;
+    };
+
+    // Several tickets can be open for one chat: the oldest sets when a person should have answered, the newest draft counts
+    const chats = new Map(all.map((c) => [c.id, c]));
+    const tickets = (canReadTickets ? db.getAgentHitlEscalations(tenantId) : [])
+      .filter((e) => {
+        const chat = chats.get(e.conversation_id);
+        return e.status !== "RESOLVED" && chat && isCurrentHandoff(chat, e.created_at);
+      })
+      .sort((a, b) => b.created_at.localeCompare(a.created_at));
+    const escalations = new Map(tickets.map((e) => [e.conversation_id, e]));
+    const drafts = new Map([...tickets].reverse().filter((e) => HitlEscalationService.draftIsOpen(tenantId, e)).map((e) => [e.conversation_id, e]));
+    const ownerIdOf = (c: Conversation): string | undefined => c.assigned_user_id ?? controlOf(c).owner_user_id;
+
+    const queues: InboxMeta["queues"] = { NEEDS_PERSON: 0, AGENT: 0, TEAM: 0, DONE: 0, mine: 0, oldest_waiting_since: null };
+    const queueById = new Map<string, InboxQueue>();
+    const dueById = new Map<string, number>();
+    for (const c of all) {
+      const queue = queueOf(c, agentAnswers(c));
+      queueById.set(c.id, queue);
+      queues[queue]++;
+      if (queue === "TEAM" && ownerIdOf(c) === context.user.id) queues.mine++;
+      if (queue !== "NEEDS_PERSON") continue;
+      const since = waitingSince(c);
+      if (!queues.oldest_waiting_since || Date.parse(since) < Date.parse(queues.oldest_waiting_since)) queues.oldest_waiting_since = since;
+      const due = replyDue({ ...c, escalation: escalations.get(c.id) })?.due;
+      if (due) dueById.set(c.id, Date.parse(due));
+    }
+
+    const { queue, id, ...filters } = options;
+    const inQueue = (c: Conversation): boolean => {
+      if (id && c.id !== id) return false;
+      const own = queueById.get(c.id);
+      return !queue || (queue === "OPEN" ? own !== "DONE" : own === queue);
+    };
+    const channels: Record<string, number> = {};
+    for (const c of all) if (inQueue(c)) channels[c.channel_type] = (channels[c.channel_type] ?? 0) + 1;
+
+    // By group, then (for chats that need a person) the reply due first, then the newest message
+    const groupOf = (c: Conversation): number => QUEUE_ORDER[queueById.get(c.id) ?? "DONE"];
+    const dueOf = (c: Conversation): number => dueById.get(c.id) ?? Number.MAX_SAFE_INTEGER;
+    const compare = (a: Conversation, b: Conversation): number =>
+      groupOf(a) - groupOf(b) || dueOf(a) - dueOf(b) || Date.parse(b.last_message_at) - Date.parse(a.last_message_at);
+
+    // Searching matches every customer's name and phone; otherwise only the page's customers are read
+    if (options.search) await loadCustomerRows(tenantId, [...new Set(all.map((c) => c.customer_id).filter(Boolean))]);
+    const page = db.getConversations(tenantId, { ...filters, where: inQueue, compare });
+    if (!options.search) await loadCustomerRows(tenantId, [...new Set(page.conversations.map((c) => c.customer_id).filter(Boolean))]);
+    const latest = canReadMessages ? db.getLatestMessages(tenantId, page.conversations.map((c) => c.id)) : new Map<string, Message>();
+
+    const conversations = page.conversations.map((c): InboxConversation => {
+      const ownerId = ownerIdOf(c);
+      // Only a member of this workspace is named
+      const owner = ownerId && db.findMembership(tenantId, ownerId) ? db.findUserById(ownerId) : undefined;
+      const message = latest.get(c.id);
+      const ticket = escalations.get(c.id);
+      const draft = drafts.get(c.id);
+      return {
+        ...c,
+        customer: db.findCustomerById(tenantId, c.customer_id),
+        queue: queueById.get(c.id) ?? "DONE",
+        agent_answers: agentAnswers(c),
+        ...(owner ? { owner: { id: owner.id, name: owner.name } } : {}),
+        ...(message
+          ? {
+              last_message: {
+                text: message.text.slice(0, PREVIEW_CHARS),
+                direction: message.direction,
+                sender_type: message.sender_type,
+                message_type: message.message_type,
+                is_ai: message.sender_type === "BOT" || Boolean(message.metadata?.is_ai),
+                created_at: message.created_at,
+              },
+            }
+          : {}),
+        ...(ticket
+          ? {
+              escalation: {
+                id: ticket.id,
+                trigger_reason: ticket.trigger_reason,
+                priority: ticket.priority,
+                sla_due_at: ticket.sla_due_at,
+                created_at: ticket.created_at,
+                ...(draft?.order_draft ? { order_draft: draft.order_draft, draft_ticket_id: draft.id } : {}),
+              },
+            }
+          : {}),
+      };
+    });
+
+    return { conversations, meta: { total: page.total, agent_mode: mode, viewer_id: context.user.id, queues, channels } };
   }
 
   public static async getConversationById(
@@ -154,6 +279,9 @@ export class ConversationService {
   ): Promise<Conversation> {
     RbacService.assertCan(context, PERMISSIONS.SOCIAL_CONVERSATION_ASSIGN);
     const existing = await this.getConversationById(context, conversationId);
+    if (assignedUserId && !db.findMembership(context.tenant.id, assignedUserId)) {
+      throw new BadRequestError("A chat can only be assigned to a member of this workspace.");
+    }
 
     // Record assignment audit record
     db.createAssignment({
@@ -189,7 +317,18 @@ export class ConversationService {
     conversationId: string
   ): Promise<Conversation> {
     RbacService.assertCan(context, PERMISSIONS.SOCIAL_CONVERSATION_RESOLVE);
-    return this.updateStatus(context, conversationId, "RESOLVED");
+    const updated = await this.updateStatus(context, conversationId, "RESOLVED");
+    // A resolved chat no longer needs a person: close its open escalation tickets in this same unit, so they leave the
+    // HITL queue and stop counting against the SLA. Who controls the chat (bot or human) is left as it is.
+    for (const ticket of db.getAgentHitlEscalations(context.tenant.id)) {
+      if (ticket.conversation_id !== conversationId || ticket.status === "RESOLVED") continue;
+      HitlEscalationService.resolveEscalation(context.tenant.id, {
+        escalationId: ticket.id,
+        resolutionType: "CHAT_RESOLVED",
+        userId: context.user.id,
+      });
+    }
+    return updated;
   }
 
   public static async reopenConversation(

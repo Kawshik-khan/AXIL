@@ -23,6 +23,8 @@ const DraftBody = z
     notes: z.string().max(2000).optional(),
     /** Needed when the social customer has no phone yet (identity resolution no longer invents one). */
     customer_phone: z.string().trim().min(6).optional(),
+    /** The order confirms the agent's draft on this open ticket; the chat's draft tickets are resolved with it. */
+    escalation_id: z.string().min(1).max(200).optional(),
   })
   .strict();
 

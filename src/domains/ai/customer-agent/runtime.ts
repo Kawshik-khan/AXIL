@@ -385,8 +385,9 @@ export async function runCustomerTurn(pr: CustomerAgentPrincipal, opts: { budget
         priority: confEval.sentiment === "HOSTILE" || guardrailTriggers.includes("PROMPT_INJECTION_DETECTED") ? "URGENT" : "HIGH",
         orderDraft: openDraftQuote
           ? {
-              items: openDraftQuote.lines.map((l) => ({
-                variant_id: l.sku,
+              // The quote's lines are priced from its items, one line per item in the same order
+              items: openDraftQuote.lines.map((l, i) => ({
+                variant_id: openDraftQuote.items[i]?.variant_id ?? l.sku,
                 product_name: l.name,
                 quantity: l.quantity,
                 unit_price: l.unit_price,
@@ -397,6 +398,7 @@ export async function runCustomerTurn(pr: CustomerAgentPrincipal, opts: { budget
               delivery_fee: openDraftQuote.delivery_charge,
               grand_total: openDraftQuote.grand_total,
               payment_method: "COD",
+              ...(openDraftQuote.coupon_code ? { coupon_code: openDraftQuote.coupon_code } : {}),
             }
           : undefined,
       });

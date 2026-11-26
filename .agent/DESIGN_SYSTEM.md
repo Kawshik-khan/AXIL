@@ -24,6 +24,7 @@ Do not copy values into docs or components; reference the variables. Key groups:
 | Group | Variables |
 |---|---|
 | Brand | `--color-lime-primary` (#C7F900), `--color-lime-bright`, `--color-lime-soft`, `--color-lime-glow`, `--color-lime-hover` |
+| Lilac (shop dashboard) | `--color-lilac-panel`, `-panel-text`, `-panel-row`, `-soft`, `-ink`, `-mark`; text on a solid lime fill: `--color-on-lime`, `--color-on-lime-soft`; `--color-lime-wash` |
 | Surfaces (light) | `--color-bg-base` (off-white), `--color-surface-pure`, `--color-surface-soft` |
 | Surfaces (dark / control plane) | `--color-surface-dark` (charcoal #242529), `--color-dark-elevated`, `--color-dark-card` |
 | Text | `--color-text-primary`, `--color-text-secondary`, `--color-text-muted`, `--color-text-inverse`, `--color-text-dark-muted` |
@@ -33,6 +34,8 @@ Do not copy values into docs or components; reference the variables. Key groups:
 | Type | `--font-family-base`, `--font-size-{display,title,section,card,body,meta}` + matching `--line-height-*` |
 | Radii | `--radius-sm` (chips), `--radius-control` (inputs/buttons), `--radius-card`, `--radius-lg`, `--radius-dock` (dock/modals), `--radius-pill` |
 | Spacing | `--space-*` |
+
+**Inbox** (`src/components/social/Inbox.module.css`): colour says who acts next. Lime = a person has to (the queue tile, the control strip, the time left), lilac = the AI agent (tile, bubbles, drafts, handoff brief), ink = the team's own replies and primary buttons. There AI elements are lilac instead of the lime glow below. On a phone the open chat is full screen: it covers the dock and the top bar so the reply box keeps its space.
 
 Light theme is the merchant dashboard; the dark variant (charcoal surfaces) is used for the super-admin control plane and AI/overlay panels. Both use the same tokens.
 
