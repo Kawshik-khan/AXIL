@@ -112,7 +112,8 @@ export class ConversationService {
 
     // Searching matches every customer's name and phone; otherwise only the page's customers are read
     if (options.search) await loadCustomerRows(tenantId, [...new Set(all.map((c) => c.customer_id).filter(Boolean))]);
-    const page = db.getConversations(tenantId, { ...filters, where: inQueue, compare });
+    // The page's customers are attached below, once loaded: without a search none are in the working set yet
+    const page = db.getConversations(tenantId, { ...filters, where: inQueue, compare, with_customers: false });
     if (!options.search) await loadCustomerRows(tenantId, [...new Set(page.conversations.map((c) => c.customer_id).filter(Boolean))]);
     const latest = canReadMessages ? db.getLatestMessages(tenantId, page.conversations.map((c) => c.id)) : new Map<string, Message>();
 
