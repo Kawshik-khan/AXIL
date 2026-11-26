@@ -7039,6 +7039,11 @@ export class CommerceDatabase {
       where?: (conversation: Conversation) => boolean;
       /** Order of the result; newest message first without it. */
       compare?: (a: Conversation, b: Conversation) => number;
+      /**
+       * false: leave `customer` off the page. For a caller that loads the page's customers after paging (the inbox),
+       * since under zero-hydration they are not in the request's working set yet.
+       */
+      with_customers?: boolean;
     }
   ): { conversations: (Conversation & { customer?: Customer; channel_name?: string })[]; total: number } {
     let list = this.data.conversations.filter((c) => c.tenant_id === tenantId);
@@ -7096,9 +7101,9 @@ export class CommerceDatabase {
     const paged = list.slice(offset, offset + limit);
 
     // Bolt Optimization: Reuse customer map if already built, otherwise fetch now for pagination mapping.
-    const _customersById = customersById || this.customersById(tenantId);
+    const _customersById = options?.with_customers === false ? undefined : customersById || this.customersById(tenantId);
     const enriched = paged.map((c) => {
-      const customer = _customersById.get(c.customer_id);
+      const customer = _customersById?.get(c.customer_id);
       const channel = this.findConnectedChannelById(tenantId, c.channel_id);
       return {
         ...c,
