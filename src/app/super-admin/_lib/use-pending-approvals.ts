@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { platformRequest } from "./platform-client";
 
 const REFRESH_MS = 60_000;
+/** The most requests one read returns; a count this high means this many or more. */
+export const PENDING_APPROVALS_PAGE = 100;
 
 /** The number of PENDING approval requests, for the top-bar indicator; null while unknown or not permitted. */
 export function usePendingApprovals(enabled: boolean): number | null {
@@ -14,7 +16,7 @@ export function usePendingApprovals(enabled: boolean): number | null {
     let cancelled = false;
     const load = () => {
       if (document.visibilityState !== "visible") return;
-      platformRequest<unknown[]>("/api/v1/platform/approvals?status=PENDING&limit=100")
+      platformRequest<unknown[]>(`/api/v1/platform/approvals?status=PENDING&limit=${PENDING_APPROVALS_PAGE}`)
         .then((res) => {
           if (!cancelled) setCount(Array.isArray(res.data) ? res.data.length : null);
         })

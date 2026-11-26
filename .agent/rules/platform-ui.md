@@ -30,8 +30,9 @@ The control plane is the **dark variant** of the one design system. Values come 
    - Core operational signals (fleet status, MRR, queue health) placed in hero cards at the top.
    - Modular widgets designed with clean borders, micro-charts, and status indicators.
 
-2. **Floating Navigation & Command Dock** (ADR-116):
-   - The console uses the merchant dock component (`src/components/navigation/Dock.tsx`) with the console modules in `src/app/super-admin/_lib/console-modules.tsx`; access per module comes from `_lib/platform-module-access.ts`. Same left column on desktop and bottom bar on mobile as the merchant app.
+2. **Console sidebar & Command palette** (replaces the dock for the console, 2026-11-26):
+   - `src/app/super-admin/_components/ConsoleSidebar.tsx`: the modules in `_lib/console-modules.tsx` in three sections (Operate, Govern, Analyse), each module's `?tab=` pages under it, counts from the attention list (`_lib/sidebar-view.ts`, never invented: no count when the list is unknown), the approvals and handovers waiting, the account menu and the theme switch. Access per module and tab comes from `_lib/platform-module-access.ts` and the tab's own permission (the same check the page makes). It collapses to an icon rail (remembered per browser) and is a drawer below 768px, opened from the top bar.
+   - Palette: `--console-*` in `tokens.css` (grey page, white cards, lime and lavender surfaces with dark ink in both themes; deeper steps for chart marks). `.consoleShell` re-points the shared semantic tokens inside the console only. Lime marks what needs action (the lead tile, the waiting card, filters); the light fills never carry text or stand alone as data.
    - Global Command Palette (`Cmd + K` / `Ctrl + K`) jumps to modules and searches tenants through the tenants API.
 
 3. **6 Canonical UX States Mandatory**:

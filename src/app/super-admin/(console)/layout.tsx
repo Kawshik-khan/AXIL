@@ -1,8 +1,6 @@
 "use client";
 
 import React, { useCallback, useEffect, useState } from "react";
-import { Dock } from "@/components/navigation/Dock";
-import { ProgressiveBlur } from "@/components/navigation/ProgressiveBlur";
 import shell from "@/components/navigation/Shell.module.css";
 import { ErrorState, LoadingSkeleton } from "@/components/ui/States/States";
 import { PLATFORM_PERMISSIONS } from "@/lib/permissions";
@@ -14,10 +12,8 @@ import {
   platformRequest,
 } from "../_lib/platform-client";
 import { PlatformSessionProvider, parsePlatformSession, type PlatformSession } from "../_lib/platform-session";
-import { visibleModules, SETTINGS_PATH } from "../_lib/console-modules";
-import { canAccessPlatformPath } from "../_lib/platform-module-access";
 import { PlatformTopBar } from "../_components/PlatformTopBar";
-import { TopoGrid } from "../_components/TopoGrid";
+import { ConsoleSidebarBoundary } from "../_components/ConsoleSidebar";
 import consoleStyles from "../super-admin.module.css";
 import { ConsoleThemeProvider } from "../_lib/console-theme";
 import { PlatformCommandPalette } from "../_components/PlatformCommandPalette";
@@ -25,14 +21,15 @@ import { ConsoleBanners } from "../_components/ConsoleBanners";
 import { AuthenticatorSetupDialog } from "../_components/AuthenticatorSetupDialog";
 import { Button } from "@/components/ui/Button/Button";
 import { usePendingApprovals } from "../_lib/use-pending-approvals";
+import { useAttentionSummary } from "../_lib/use-attention-summary";
 
 type LoadState =
   | { kind: "loading" }
   | { kind: "ready"; session: PlatformSession }
   | { kind: "error"; message: string; requestId?: string };
 
-/** The platform console shell: same dock, blur and layout as the merchant dashboard (plan §3.3), in the console's
- *  own light / dark theme (console-theme.tsx). */
+/** The platform console shell: a sidebar, a top bar and the page on a flat grey canvas, in the console's own palette and
+ *  light / dark theme (console-theme.tsx, tokens.css --console-*). */
 export default function ConsoleLayout({ children }: { children: React.ReactNode }) {
   return (
     <ConsoleThemeProvider>
@@ -109,7 +106,11 @@ function ConsoleFrame({ session, children }: { session: PlatformSession; childre
   const [authenticatorOpen, setAuthenticatorOpen] = useState(false);
   // From the session; turned on locally once setup succeeds in this tab
   const [mfaEnrolled, setMfaEnrolled] = useState(session.mfaEnrolled);
-  const pendingApprovals = usePendingApprovals(session.permissions.includes(PLATFORM_PERMISSIONS.PLATFORM_READ));
+  const canReadPlatform = session.permissions.includes(PLATFORM_PERMISSIONS.PLATFORM_READ);
+  const pendingApprovals = usePendingApprovals(canReadPlatform);
+  const attention = useAttentionSummary(canReadPlatform);
+  const [navOpen, setNavOpen] = useState(false);
+  const closeNav = useCallback(() => setNavOpen(false), []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -133,26 +134,24 @@ function ConsoleFrame({ session, children }: { session: PlatformSession; childre
   }, []);
 
   return (
-    <div className={`${shell.shell} ${consoleStyles.consoleShell}`}>
-      <TopoGrid />
-      <ProgressiveBlur />
-      <Dock
-        ariaLabel="Platform console navigation"
-        items={visibleModules(session.permissions)}
-        onSearch={() => setPaletteOpen(true)}
-        settingsHref={canAccessPlatformPath(SETTINGS_PATH, session.permissions) ? SETTINGS_PATH : undefined}
-        onLogout={signOut}
+    <div className={consoleStyles.consoleShell}>
+      <ConsoleSidebarBoundary
+        items={attention}
+        drawerOpen={navOpen}
+        onCloseDrawer={closeNav}
+        mfaEnrolled={mfaEnrolled}
+        onSetUpAuthenticator={() => setAuthenticatorOpen(true)}
+        onSignOut={signOut}
+        onSignOutEverywhere={signOutEverywhere}
       />
-      <div className={shell.mainWrapper}>
+      <div className={consoleStyles.consoleMain}>
         <PlatformTopBar
           onOpenCommandPalette={() => setPaletteOpen(true)}
-          onSignOut={signOut}
-          onSignOutEverywhere={signOutEverywhere}
+          onOpenNavigation={() => setNavOpen(true)}
+          navigationOpen={navOpen}
           pendingApprovals={pendingApprovals}
-          mfaEnrolled={mfaEnrolled}
-          onSetUpAuthenticator={() => setAuthenticatorOpen(true)}
         />
-        <main className={shell.mainContent}>
+        <main className={consoleStyles.consoleContent}>
           {!mfaEnrolled && (
             <div className={`${consoleStyles.banner} ${consoleStyles.bannerWarning}`} role="status">
               <span>
