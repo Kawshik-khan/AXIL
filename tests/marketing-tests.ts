@@ -4,7 +4,6 @@ declare const process: { exit(code?: number): void };
 
 import { db } from "@/infrastructure/db";
 import { marketingService } from "@/domains/marketing/marketing.service";
-import { campaignService } from "@/domains/growth/services/campaign.service";
 import { audienceService } from "@/domains/growth/services/audience.service";
 import { consentService } from "@/domains/growth/services/consent.service";
 import { ActionRiskLevel } from "@/types/orchestration";
@@ -310,7 +309,7 @@ export async function runMarketingTests() {
     expectRecoverError("ord_rec_cancelled", 409);
   });
 
-  await runTest("Mark cart as recovered: revenue and attribution come from the real order", async () => {
+  await runTest("Mark cart as recovered: revenue comes from the real order and nothing is attributed", async () => {
     recoveryOrder("ord_recovered_101");
     const recovered = marketingService.markCartRecovered({
       tenantId,
@@ -322,13 +321,11 @@ export async function runMarketingTests() {
     assert.strictEqual(recovered.recovered_order_id, "ord_recovered_101");
     assert.strictEqual(recovered.recovered_revenue_bdt, 1910, "order grand_total, not the cart total (1850)");
 
-    const attributions = db.getCampaignAttributions(tenantId).filter((a) => a.order_id === "ord_recovered_101");
-    assert.strictEqual(attributions.length, 1);
-    assert.strictEqual(attributions[0].order_total_bdt, 1910);
+    assert.strictEqual(db.getCampaignAttributions(tenantId).filter((a) => a.order_id === "ord_recovered_101").length, 0);
 
-    // Repeating the same credit is a no-op, not a second attribution
-    marketingService.markCartRecovered({ tenantId, cartId: recordedCartId, orderId: "ord_recovered_101" });
-    assert.strictEqual(db.getCampaignAttributions(tenantId).filter((a) => a.order_id === "ord_recovered_101").length, 1);
+    // Repeating the same credit is a no-op
+    const again = marketingService.markCartRecovered({ tenantId, cartId: recordedCartId, orderId: "ord_recovered_101" });
+    assert.strictEqual(again.recovered_revenue_bdt, 1910);
   });
 
   await runTest("Recovery rejects an order already credited to another cart, and re-crediting a recovered cart", async () => {
@@ -405,109 +402,32 @@ export async function runMarketingTests() {
     assert.ok(members.some((m) => m.id === custDormant.id));
   });
 
-  // ----------------------------------------------------------------------
-  // SUITE 3: RATE-LIMITED BROADCAST MESSAGING & HUMAN APPROVAL GATES
-  // ----------------------------------------------------------------------
-  console.log(`\n${ANSI_BOLD}[3] Rate-Limited Broadcasts & Approval Safeguards${ANSI_RESET}`);
-
-  let highRiskCampaignId = "";
-  let lowRiskCampaignId = "";
-
-  await runTest("Small audience (<50 recipients) auto-approves as LOW/MEDIUM risk", async () => {
-    const cmp = marketingService.createBroadcastCampaign({
+  await runTest("Churn-risk and abandoned-cart audiences have members, and list sizes match them (one evaluator)", async () => {
+    const churn = marketingService.createAudienceCohort({
       tenantId,
-      name: "Small VIP Nudge",
-      objective: "ENGAGEMENT",
-      audienceId: vipCohortId, // 1 recipient
-      channel: "WHATSAPP",
-      contentBody: "Special VIP update for {customer_name}. Reply STOP to unsubscribe",
-      callToAction: "View Perks",
-      budgetBdt: 500,
+      name: "At-risk (churn HIGH)",
+      description: "",
+      type: "DYNAMIC",
+      ruleGroups: [{ conjunction: "AND", conditions: [{ field: "churn_risk_level", operator: "EQUALS", value: "HIGH" }] }],
     });
+    const churnMembers = marketingService.getAudienceMembers(tenantId, churn.id);
+    assert.ok(churnMembers.some((m) => m.id === custDormant.id), "a customer quiet for 60+ days is high churn risk");
 
-    lowRiskCampaignId = cmp.id;
-    assert.strictEqual(cmp.required_approval, false);
-    assert.strictEqual(cmp.status, "DRAFT");
-  });
-
-  await runTest("High budget or large audience trigger Human Approval Gate (>50 or >৳5,000)", async () => {
-    const highRiskCmp = marketingService.createBroadcastCampaign({
+    const openCart = db.getAbandonedCarts(tenantId).find((c) => c.recovery_stage !== "RECOVERED");
+    assert.ok(openCart, "fixture has an open cart");
+    const carts = marketingService.createAudienceCohort({
       tenantId,
-      name: "Large Eid Flash Sale",
-      objective: "CONVERSION",
-      audienceId: vipCohortId,
-      channel: "WHATSAPP",
-      contentBody: "Massive Flash Sale for {customer_name}. Reply STOP to unsubscribe",
-      callToAction: "Shop Now",
-      budgetBdt: 25000, // Exceeds 5k threshold -> triggers approval gate
+      name: "Open carts",
+      description: "",
+      type: "DYNAMIC",
+      ruleGroups: [{ conjunction: "AND", conditions: [{ field: "has_abandoned_cart", operator: "EQUALS", value: true }] }],
     });
+    assert.ok(carts.estimated_size > 0, "creation counts open carts (it used to count none)");
+    assert.ok(marketingService.getAudienceMembers(tenantId, carts.id).some((m) => m.id === openCart.customer_id));
 
-    highRiskCampaignId = highRiskCmp.id;
-    assert.strictEqual(highRiskCmp.required_approval, true);
-    assert.strictEqual(highRiskCmp.status, "REVIEW");
-  });
-
-  await runTest("Executing unapproved high-risk campaign throws policy violation", async () => {
-    let thrown = false;
-    try {
-      await marketingService.dispatchBroadcast(tenantId, highRiskCampaignId);
-    } catch (err: any) {
-      thrown = true;
-      assert.ok(err.message.includes("Policy violation") || err.message.includes("approval"));
-    }
-    assert.strictEqual(thrown, true, "Unapproved high-risk campaign must be blocked by policy engine");
-  });
-
-  await runTest("Human Approval Gate approves campaign for rate-limited execution", async () => {
-    const approved = marketingService.approveCampaign(
-      tenantId,
-      highRiskCampaignId,
-      "Rafiqul Islam (Store Owner)"
-    );
-
-    assert.strictEqual(approved.status, "APPROVED");
-  });
-
-  await runTest("Dispatch broadcast enforces rate limit (20 msg/sec) and completes", async () => {
-    const result = await marketingService.dispatchBroadcast(tenantId, highRiskCampaignId);
-
-    assert.strictEqual(result.planned_audience, 1);
-    assert.strictEqual(result.messages_sent, 1);
-    assert.strictEqual(result.messages_delivered, 0, "nothing is delivered until a channel is integrated (FX-31)");
-    assert.strictEqual(result.messages_failed, 1);
-    assert.strictEqual(result.attributed_revenue_bdt, null, "no assumed conversions (FX-30)");
-    assert.strictEqual(result.roas, null);
-
-    const updatedCmp = db.getCampaignById(tenantId, highRiskCampaignId);
-    assert.strictEqual(updatedCmp?.status, "COMPLETED");
-  });
-
-  await runTest("Emergency Kill Switch immediately halts outbound broadcasts", async () => {
-    marketingService.toggleKillSwitch(tenantId, true);
-
-    const killState = marketingService.toggleKillSwitch(tenantId, true);
-    assert.strictEqual(killState.kill_switch_active, true);
-
-    // Reset kill switch
-    marketingService.toggleKillSwitch(tenantId, false);
-    const killStateOff = marketingService.toggleKillSwitch(tenantId, false);
-    assert.strictEqual(killStateOff.kill_switch_active, false);
-  });
-
-  // ----------------------------------------------------------------------
-  // SUITE 4: MULTI-TOUCH ATTRIBUTION MODELING
-  // ----------------------------------------------------------------------
-  console.log(`\n${ANSI_BOLD}[4] Multi-Touch Revenue Attribution Tests${ANSI_RESET}`);
-
-  await runTest("Attribution report returns metrics across LAST_TOUCH and LINEAR models", async () => {
-    const lastTouch = marketingService.getAttributionReport(tenantId, "LAST_TOUCH");
-    assert.strictEqual(lastTouch.active_model, "LAST_TOUCH");
-    assert.ok(typeof lastTouch.total_attributed_revenue_bdt === "number");
-    assert.strictEqual(lastTouch.total_incremental_lift_bdt, null, "needs a control group; not assumed (FX-30)");
-    assert.ok(Array.isArray(lastTouch.campaigns_breakdown));
-
-    const linear = marketingService.getAttributionReport(tenantId, "LINEAR");
-    assert.strictEqual(linear.active_model, "LINEAR");
+    const sizes = new Map(marketingService.getAudienceCohorts(tenantId).map((a) => [a.id, a.estimated_size]));
+    assert.strictEqual(sizes.get(churn.id), churnMembers.length);
+    assert.strictEqual(sizes.get(carts.id), carts.estimated_size);
   });
 
   // ----------------------------------------------------------------------
@@ -515,11 +435,11 @@ export async function runMarketingTests() {
   // ----------------------------------------------------------------------
   console.log(`\n${ANSI_BOLD}[5] Marketing Overview KPIs & AI Copilot Tests${ANSI_RESET}`);
 
-  await runTest("Marketing overview aggregates cart recovery and attribution KPIs", async () => {
+  await runTest("Marketing overview aggregates cart recovery KPIs", async () => {
     const overview = marketingService.getOverviewMetrics(tenantId);
 
     assert.ok(overview.total_recovered_revenue_bdt >= 0);
-    assert.ok(overview.total_attributed_revenue_bdt >= 0);
+    assert.ok(!("total_attributed_revenue_bdt" in overview), "attribution was removed");
     assert.ok(Array.isArray(overview.insights));
     // Insights are built from the tenant's data, never literal text (FX-30)
     const carts = db.getAbandonedCarts(tenantId);

@@ -1,23 +1,23 @@
 import { PERMISSIONS } from "@/lib/permissions";
 import { RbacService } from "@/domains/rbac/service";
 import { extractRequestContext, apiSuccess, apiError } from "@/lib/api-response";
-import { campaignService } from "@/domains/growth/services/campaign.service";
+import { marketingService } from "@/domains/marketing/marketing.service";
 import { withStore } from "@/lib/store-unit";
 import { COMMERCE_ANALYTICS_COLLECTIONS } from "@/infrastructure/db/tenant-rows";
 
-async function handlePOST(
+async function handleGET(
   request: Request,
-  { params }: { params: Promise<{ id: string }> }
+  { params: rawParams }: { params: Promise<{ id: string }> }
 ) {
+  const params = await rawParams;
   try {
     const context = await extractRequestContext(request);
     RbacService.assertCan(context, PERMISSIONS.MARKETING_READ);
-    const { id } = await params;
-    const snapshot = campaignService.simulateCampaign(context.tenant.id, id);
-    return apiSuccess({ simulation: snapshot });
+    const members = marketingService.getAudienceMembers(context.tenant.id, params.id);
+    return apiSuccess({ members, total: members.length });
   } catch (err) {
     return apiError(err);
   }
 }
 
-export const POST = withStore("POST", handlePOST, { tenantRows: { collections: COMMERCE_ANALYTICS_COLLECTIONS, permission: PERMISSIONS.MARKETING_READ } });
+export const GET = withStore("GET", handleGET, { tenantRows: { collections: COMMERCE_ANALYTICS_COLLECTIONS, permission: PERMISSIONS.MARKETING_READ } });

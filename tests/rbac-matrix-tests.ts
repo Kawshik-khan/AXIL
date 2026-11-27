@@ -3,7 +3,7 @@
  * Every handler from Appendix A is called through its real route module:
  *   - a SUPPORT member (no access to these modules) must get 403;
  *   - an ADMIN member must never get 401/403 (a 2xx or a domain error such as 400/404 is fine).
- * Plus: approver identity comes from the session, and high-risk campaigns need a second person.
+ * Plus: client-reported provider health is refused. (The campaign four-eyes checks went with campaigns, 2026-11-26.)
  * Run: node tests/ts-runner.cjs ./tests/rbac-matrix-tests.ts
  */
 import assert from "assert";
@@ -11,7 +11,6 @@ import crypto from "crypto";
 import { db } from "@/infrastructure/db";
 import { signSessionToken } from "@/lib/security";
 import { PERMISSIONS, ROLE_PERMISSIONS, RoleName } from "@/lib/permissions";
-import type { GrowthCampaign } from "@/types/growth";
 
 const ANSI_GREEN = "\x1b[32m";
 const ANSI_RED = "\x1b[31m";
@@ -85,35 +84,15 @@ const MATRIX: Array<[string, Method, PermissionKey]> = [
   ["enterprise/webhooks/[id]/deliveries", "GET", "DEVELOPER_READ"],
   ["enterprise/webhooks/[id]/resume", "POST", "DEVELOPER_MANAGE"],
   ["enterprise/webhooks/deliveries/[id]/retry", "POST", "DEVELOPER_MANAGE"],
-  ["growth/attribution", "GET", "MARKETING_READ"],
   ["growth/audiences", "GET", "MARKETING_READ"],
   ["growth/audiences", "POST", "MARKETING_WRITE"],
   ["growth/audiences/[id]", "GET", "MARKETING_READ"],
   ["growth/audiences/[id]", "PUT", "MARKETING_WRITE"],
   ["growth/audiences/[id]/refresh", "POST", "MARKETING_WRITE"],
-  ["growth/campaigns", "GET", "MARKETING_READ"],
-  ["growth/campaigns", "POST", "MARKETING_WRITE"],
-  ["growth/campaigns/[id]", "GET", "MARKETING_READ"],
-  ["growth/campaigns/[id]", "PUT", "MARKETING_WRITE"],
-  ["growth/campaigns/[id]/approve", "POST", "MARKETING_APPROVE"],
-  ["growth/campaigns/[id]/execute", "POST", "MARKETING_WRITE"],
-  ["growth/campaigns/[id]/pause", "POST", "MARKETING_WRITE"],
-  ["growth/campaigns/[id]/reject", "POST", "MARKETING_APPROVE"],
-  ["growth/campaigns/[id]/resume", "POST", "MARKETING_WRITE"],
-  ["growth/campaigns/[id]/schedule", "POST", "MARKETING_WRITE"],
-  ["growth/campaigns/[id]/simulate", "POST", "MARKETING_READ"],
+  ["growth/audiences/[id]/members", "GET", "MARKETING_READ"],
   ["growth/content/generate", "POST", "MARKETING_WRITE"],
   ["growth/content/verify", "POST", "MARKETING_WRITE"],
-  ["growth/experiments", "GET", "MARKETING_READ"],
-  ["growth/experiments", "POST", "MARKETING_WRITE"],
-  ["growth/experiments/[id]/evaluate", "POST", "MARKETING_WRITE"],
   ["growth/insights", "GET", "MARKETING_READ"],
-  ["growth/journeys", "GET", "MARKETING_READ"],
-  ["growth/journeys", "POST", "MARKETING_WRITE"],
-  ["growth/journeys/[id]", "GET", "MARKETING_READ"],
-  ["growth/journeys/[id]", "PUT", "MARKETING_WRITE"],
-  ["growth/journeys/[id]/pause", "POST", "MARKETING_WRITE"],
-  ["growth/journeys/[id]/resume", "POST", "MARKETING_WRITE"],
   ["growth/lifecycle", "GET", "MARKETING_READ"],
   ["growth/lifecycle/[customerId]", "GET", "MARKETING_READ"],
   ["growth/offers", "GET", "MARKETING_READ"],
@@ -141,17 +120,6 @@ const MATRIX: Array<[string, Method, PermissionKey]> = [
   ["marketing/abandoned-carts", "POST", "MARKETING_WRITE"],
   ["marketing/abandoned-carts/[id]/nudge", "POST", "MARKETING_WRITE"],
   ["marketing/abandoned-carts/[id]/recover", "POST", "MARKETING_WRITE"],
-  ["marketing/attribution", "GET", "MARKETING_READ"],
-  ["marketing/audiences", "GET", "MARKETING_READ"],
-  ["marketing/audiences", "POST", "MARKETING_WRITE"],
-  ["marketing/audiences/[id]/members", "GET", "MARKETING_READ"],
-  ["marketing/broadcasts", "GET", "MARKETING_READ"],
-  ["marketing/broadcasts", "POST", "MARKETING_WRITE"],
-  ["marketing/broadcasts/[id]/approve", "POST", "MARKETING_APPROVE"],
-  ["marketing/broadcasts/[id]/dispatch", "POST", "MARKETING_WRITE"],
-  ["marketing/broadcasts/[id]/reject", "POST", "MARKETING_APPROVE"],
-  ["marketing/broadcasts/[id]/simulate", "POST", "MARKETING_READ"],
-  ["marketing/broadcasts/kill-switch", "POST", "MARKETING_APPROVE"],
   ["marketing/overview", "GET", "MARKETING_READ"],
   ["operations/actions", "GET", "OPERATIONS_READ"],
   ["operations/actions/[id]/approve", "POST", "OPERATIONS_APPROVE"],
@@ -210,21 +178,6 @@ async function callRoute(route: string, method: Method, token: string, body: unk
   return res.status;
 }
 
-async function callById(route: string, id: string, method: Method, token: string, body: unknown = {}): Promise<number> {
-  const mod = (await import(`@/app/api/v1/${route}/route`)) as Partial<Record<Method, Handler>>;
-  const handler = mod[method];
-  if (!handler) throw new Error(`${method} ${route} is not exported`);
-  const res = await handler(
-    new Request(`${BASE}/${route.replace("[id]", id)}`, {
-      method,
-      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-      body: JSON.stringify(body),
-    }),
-    { params: { id } }
-  );
-  return res.status;
-}
-
 async function main() {
   console.log(`\n${ANSI_BOLD}====================================================${ANSI_RESET}`);
   console.log(`${ANSI_BOLD}   COMMERCEOS PHASE 1: RBAC MATRIX (FX-10 / FX-61)   ${ANSI_RESET}`);
@@ -234,9 +187,10 @@ async function main() {
   const support = await member("SUPPORT");
   const admin = await member("ADMIN");
 
-  // 140 from Appendix A, plus the Phase 5 webhook delivery routes (FX-54)
-  await runTest(`the matrix covers all 143 guarded handlers`, () => {
-    assert.strictEqual(MATRIX.length, 143);
+  // 140 from Appendix A, plus the Phase 5 webhook delivery routes (FX-54), minus the 32 campaign / broadcast / journey /
+  // experiment / attribution / duplicate-audience handlers removed on 2026-11-26, plus the moved audience members route
+  await runTest(`the matrix covers all 112 guarded handlers`, () => {
+    assert.strictEqual(MATRIX.length, 112);
   });
 
   await runTest("ADMIN holds every permission the matrix requires; SUPPORT holds none of them", () => {
@@ -262,58 +216,11 @@ async function main() {
     });
   }
 
-  console.log(`\n${ANSI_BOLD}[Approvals and forged health]${ANSI_RESET}`);
+  console.log(`\n${ANSI_BOLD}[Forged health]${ANSI_RESET}`);
 
   await runTest("operations/providers no longer accepts client-reported health (no POST export)", async () => {
     const mod = (await import("@/app/api/v1/operations/providers/route")) as Record<string, unknown>;
     assert.strictEqual(mod.POST, undefined);
-  });
-
-  const now = new Date().toISOString();
-  const campaign = (createdBy: string, riskClass: GrowthCampaign["risk_class"]): string => {
-    const id = `camp_rbac_${crypto.randomUUID().slice(0, 8)}`;
-    db.insertCampaign({
-      id,
-      tenant_id: TENANT_ID,
-      name: `RBAC ${id}`,
-      objective: "ENGAGEMENT",
-      status: "PENDING_APPROVAL",
-      audience_id: "aud_none",
-      channel: "WHATSAPP",
-      variants: [],
-      action_risk_level: "HIGH",
-      required_approval: true,
-      risk_class: riskClass,
-      created_by: createdBy,
-      created_at: now,
-      updated_at: now,
-    } as unknown as GrowthCampaign);
-    return id;
-  };
-  const approveRoute = "growth/campaigns/[id]/approve";
-
-  await runTest("a high-risk campaign cannot be approved by its own creator (four-eyes)", async () => {
-    const id = campaign(admin.id, "HIGH");
-    assert.strictEqual(await callById(approveRoute, id, "POST", admin.token), 403);
-    assert.notStrictEqual(db.getCampaignById(TENANT_ID, id)?.status, "APPROVED");
-  });
-
-  await runTest("a body-supplied approved_by is ignored: the approver is the signed-in user", async () => {
-    const id = campaign(admin.id, "CRITICAL");
-    assert.strictEqual(await callById(approveRoute, id, "POST", admin.token, { approved_by: "usr_someone_else" }), 403);
-  });
-
-  await runTest("another ADMIN can approve a high-risk campaign", async () => {
-    const creator = await member("MARKETING");
-    const id = campaign(creator.id, "HIGH");
-    assert.strictEqual(await callById(approveRoute, id, "POST", admin.token), 200);
-    assert.strictEqual(db.getCampaignById(TENANT_ID, id)?.status, "APPROVED");
-  });
-
-  await runTest("MARKETING can create campaigns but cannot approve them", async () => {
-    const creator = await member("MARKETING");
-    const id = campaign(admin.id, "LOW");
-    assert.strictEqual(await callById(approveRoute, id, "POST", creator.token), 403);
   });
 
   console.log(`\n${ANSI_BOLD}====================================================${ANSI_RESET}`);

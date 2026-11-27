@@ -273,47 +273,6 @@ async function main() {
     assert.strictEqual(db.getBusinessHours(other.tenant.id), undefined);
   });
 
-  await runTest("campaign PUT cannot set status APPROVED (would skip approval and four-eyes) → 400", async () => {
-    const id = uid("camp_p1");
-    db.insertCampaign({
-      id, tenant_id: tenantId, name: "Draft", objective: "ENGAGEMENT", status: "DRAFT", audience_id: "aud_x", channel: "WHATSAPP",
-      variants: [], action_risk_level: "LOW", required_approval: false, risk_class: "LOW", created_by: shop.user.id,
-      created_at: nowIso(), updated_at: nowIso(),
-    } as never);
-    const res = await sendJson(`growth/campaigns/[id]`, id, "PUT", ownerToken, { status: "APPROVED" });
-    assert.strictEqual(res.status, 400);
-    assert.strictEqual(db.getCampaignById(tenantId, id)?.status, "DRAFT");
-  });
-
-  await runTest("editing a draft campaign re-classifies its risk from the new budget", async () => {
-    const audienceId = uid("aud_p1");
-    db.insertAudience({
-      id: audienceId, tenant_id: tenantId, name: "Small", description: "", type: "STATIC", status: "ACTIVE", rule_groups: [],
-      estimated_size: 10, last_evaluated_at: nowIso(), created_by: shop.user.id, created_at: nowIso(), updated_at: nowIso(),
-    } as never);
-    const id = uid("camp_p1");
-    db.insertCampaign({
-      id, tenant_id: tenantId, name: "Draft", objective: "ENGAGEMENT", status: "DRAFT", audience_id: audienceId, channel: "WHATSAPP",
-      variants: [], action_risk_level: "LOW", required_approval: false, risk_class: "LOW", created_by: shop.user.id,
-      created_at: nowIso(), updated_at: nowIso(),
-    } as never);
-    const res = await sendJson(`growth/campaigns/[id]`, id, "PUT", ownerToken, { budget_bdt: 50000 });
-    assert.strictEqual(res.status, 200);
-    const stored = db.getCampaignById(tenantId, id);
-    assert.strictEqual(stored?.risk_class, "HIGH");
-    assert.strictEqual(stored?.required_approval, true);
-  });
-
-  await runTest("a campaign that left DRAFT can't be edited → 409", async () => {
-    const id = uid("camp_p1");
-    db.insertCampaign({
-      id, tenant_id: tenantId, name: "Live", objective: "ENGAGEMENT", status: "RUNNING", audience_id: "aud_x", channel: "WHATSAPP",
-      variants: [], action_risk_level: "LOW", required_approval: false, risk_class: "LOW", created_by: shop.user.id,
-      created_at: nowIso(), updated_at: nowIso(),
-    } as never);
-    assert.strictEqual((await sendJson(`growth/campaigns/[id]`, id, "PUT", ownerToken, { budget_bdt: 1 })).status, 409);
-  });
-
   await runTest("N5: suspending a member affects only this workspace, never their account", async () => {
     // other's owner is also a member (SALES) of this shop.
     db.createMembership({ id: uid("mem_p1"), tenant_id: tenantId, user_id: other.user.id, role: "SALES", created_at: nowIso(), updated_at: nowIso() });
@@ -665,7 +624,7 @@ async function main() {
 
   await runTest("a missing record is a 404, not a 500", async () => {
     const fresh = (await AuthService.login(shop.user.email, "Phase1-Owner-Pass-4471!")).token; // earlier test revoked sessions
-    const res = await sendJson(`growth/campaigns/[id]`, "camp_does_not_exist", "PUT", fresh, { name: "x" });
+    const res = await sendJson(`growth/audiences/[id]`, "aud_does_not_exist", "PUT", fresh, { name: "x" });
     assert.strictEqual(res.status, 404);
   });
 

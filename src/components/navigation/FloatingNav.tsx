@@ -47,12 +47,12 @@ const HUBS: Hub[] = [
   {
     label: "Customers",
     icon: <Users size={20} strokeWidth={2} />,
-    pages: [page("Customers", "/customers"), page("Engagement", "/engagement")],
+    pages: [page("Customers", "/customers"), page("Lifecycle", "/customers/lifecycle"), page("Engagement", "/engagement")],
   },
   {
     label: "Growth",
     icon: <Megaphone size={20} strokeWidth={2} />,
-    pages: [page("Growth", "/growth"), page("Marketing", "/marketing"), page("Ad Manager", "/ads")],
+    pages: [page("Growth", "/growth"), page("Cart recovery", "/growth/cart-recovery"), page("Ad Manager", "/ads")],
   },
   {
     label: "Insights",

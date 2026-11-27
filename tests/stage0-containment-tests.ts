@@ -254,8 +254,9 @@ async function main() {
   });
 
   await runTest("sending or scheduling a campaign through a tool needs marketing.write, not analytics.read", () => {
-    assert.strictEqual(toolRegistry.getTool("send_campaign")?.requiredPermission, PERMISSIONS.MARKETING_WRITE);
-    assert.strictEqual(toolRegistry.getTool("schedule_campaign")?.requiredPermission, PERMISSIONS.MARKETING_WRITE);
+    // Campaign send/schedule tools were removed with campaigns (2026-11-26): nothing can be called by those names
+    assert.strictEqual(toolRegistry.getTool("send_campaign"), undefined);
+    assert.strictEqual(toolRegistry.getTool("schedule_campaign"), undefined);
   });
 
   // ------------------------------------------------------------------ FX-69

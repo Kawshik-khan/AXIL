@@ -53,9 +53,6 @@ export async function fetchWithStepUp(input: string, init: RequestInit = {}): Pr
 
 /** What each action does, in the words shown in the dialog ("Confirm to …"). */
 export const STEP_UP_ACTION_LABELS: Record<string, string> = {
-  APPROVE_BROADCAST: "approve this broadcast",
-  RESUME_BROADCASTS: "turn broadcasts back on",
-  APPROVE_CAMPAIGN: "approve this campaign",
   APPROVE_DECISION: "approve this decision",
   APPROVE_PRICE_CHANGE: "approve this price change",
   APPROVE_PURCHASE_ORDER: "approve this purchase order",
