@@ -1,0 +1,509 @@
+/*
+ * Engagement page: the Growth look (one lime tile per view, one lilac panel, ink actions). The shared insight charts
+ * read --chart-cat-* and --chart-seq-0; inside this page they are re-pointed at the lilac tokens (lightness-ordered).
+ */
+
+.root {
+  --chart-cat-1: var(--color-lilac-mark);
+  --chart-cat-2: var(--color-lilac-ink);
+  --chart-cat-3: var(--chart-ch-instagram);
+  --chart-cat-4: var(--color-track-strong);
+  --chart-seq-0: var(--color-lilac-soft);
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+  color: var(--color-text-primary);
+}
+
+.root a:focus-visible,
+.root button:focus-visible,
+.root select:focus-visible {
+  outline: 2px solid var(--color-lilac-mark);
+  outline-offset: 2px;
+}
+
+/* ---------- header ---------- */
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-16);
+  padding-top: var(--space-4);
+}
+
+.title {
+  margin: 0;
+  font-size: 30px;
+  line-height: 38px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+
+.subtitle {
+  margin: var(--space-4) 0 0;
+  font-size: var(--font-size-body);
+  color: var(--color-text-secondary);
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+/* ---------- segmented controls (range, views) ---------- */
+.segmented {
+  display: inline-flex;
+  gap: var(--space-2);
+  padding: 3px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-pure);
+}
+
+.segment {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  min-width: 44px;
+  padding: 0 var(--space-12);
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.segment:hover {
+  color: var(--color-text-primary);
+}
+
+.segment[aria-pressed="true"],
+.segment[aria-selected="true"] {
+  background: var(--color-lilac-panel);
+  color: var(--color-text-primary);
+}
+
+.badge {
+  min-width: 18px;
+  padding: 0 6px;
+  border-radius: var(--radius-pill);
+  background: var(--color-track);
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.segment[aria-selected="true"] .badge {
+  background: var(--color-lilac-panel-row);
+}
+
+.ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-height: 42px;
+  padding: 0 var(--space-16);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-pure);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.ghost:hover:not(:disabled) {
+  border-color: var(--color-border-medium);
+}
+
+.ghost:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ---------- view tabs + connected accounts ---------- */
+.bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+}
+
+.sources {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-8);
+}
+
+.source {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-height: 32px;
+  padding: 0 var(--space-12) 0 10px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-pill);
+  background: var(--color-surface-pure);
+  font-size: 13px;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-text-muted);
+}
+
+.dotLive {
+  background: var(--color-success);
+}
+
+.dotError {
+  background: var(--color-danger);
+}
+
+.muted {
+  font-size: var(--font-size-meta);
+  color: var(--color-text-secondary);
+}
+
+/* ---------- key figures ---------- */
+.kpis {
+  display: grid;
+  grid-template-columns: 1.5fr repeat(4, minmax(0, 1fr));
+  gap: var(--space-16);
+}
+
+.kpi {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: var(--space-12);
+  min-height: 116px;
+  padding: var(--space-16);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-card);
+  background: var(--color-surface-pure);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+button.kpi {
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+button.kpi:hover {
+  border-color: var(--color-border-medium);
+}
+
+button.kpi[aria-pressed="true"] {
+  border-color: transparent;
+  box-shadow: inset 0 0 0 2px var(--color-lilac-mark);
+}
+
+.kpiLead {
+  border-color: transparent;
+  background: var(--color-lime-primary);
+  color: var(--color-on-lime);
+}
+
+button.kpiLead:hover {
+  border-color: transparent;
+  background: var(--color-lime-hover);
+}
+
+button.kpiLead[aria-pressed="true"] {
+  box-shadow: inset 0 0 0 2px var(--color-on-lime);
+}
+
+.kpiLabel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--color-text-secondary);
+}
+
+.kpiLead .kpiLabel {
+  color: var(--color-on-lime);
+  font-weight: 500;
+}
+
+.kpiValue {
+  display: block;
+  font-size: 24px;
+  line-height: 32px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.kpiLead .kpiValue {
+  font-size: 30px;
+  line-height: 36px;
+}
+
+.kpiNote {
+  display: block;
+  font-size: var(--font-size-meta);
+  line-height: 18px;
+  color: var(--color-text-secondary);
+}
+
+.kpiLead .kpiNote {
+  color: var(--color-on-lime-soft);
+}
+
+.kpiTrack {
+  display: block;
+  height: 6px;
+  margin-top: 10px;
+  border-radius: 3px;
+  background: var(--color-track);
+  overflow: hidden;
+}
+
+.kpiFill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--color-lilac-mark);
+}
+
+.minor {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-20);
+  padding: 0 var(--space-4);
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.minor strong {
+  color: var(--color-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- lilac panel (one per view) ---------- */
+.lilac {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+  min-width: 0;
+  padding: var(--space-20);
+  border-radius: var(--radius-card);
+  background: var(--color-lilac-panel);
+  color: var(--color-lilac-panel-text);
+}
+
+.lilacTitle {
+  margin: 0;
+  font-size: var(--font-size-section);
+  line-height: var(--line-height-section);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.lilacNote {
+  font-size: var(--font-size-meta);
+  line-height: 18px;
+}
+
+.lilacBox {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  padding: 14px;
+  border-radius: var(--radius-control);
+  background: var(--color-lilac-panel-row);
+  font-size: var(--font-size-meta);
+  line-height: 18px;
+}
+
+.lilacBox strong {
+  font-size: 13px;
+  color: var(--color-text-primary);
+}
+
+.lilacLink {
+  margin-top: auto;
+  font-size: var(--font-size-meta);
+  font-weight: 600;
+  color: var(--color-lilac-ink);
+  text-decoration: none;
+}
+
+.lilacLink:hover {
+  text-decoration: underline;
+}
+
+/* ---------- posts that sold ---------- */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: var(--space-16);
+}
+
+.span8 {
+  grid-column: span 8;
+}
+
+.span4 {
+  grid-column: span 4;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+  min-width: 0;
+  padding: var(--space-20);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-card);
+  background: var(--color-surface-pure);
+}
+
+.cardTitle {
+  margin: 0;
+  font-size: var(--font-size-section);
+  line-height: var(--line-height-section);
+  font-weight: 600;
+}
+
+.tableScroll {
+  margin: 0 -10px;
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.table th {
+  padding: var(--space-8) 10px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-align: left;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.table td {
+  padding: 10px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  vertical-align: middle;
+}
+
+.table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.strong {
+  font-weight: 600;
+}
+
+.postCell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 240px;
+  max-width: 360px;
+}
+
+.postMeta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-size-meta);
+  color: var(--color-text-secondary);
+}
+
+.caption {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topSeller {
+  min-height: 18px;
+  padding: 0 6px;
+  border-radius: var(--radius-pill);
+  background: var(--color-lime-wash);
+  color: var(--color-lime-ink);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+.extLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--color-lilac-ink);
+  text-decoration: none;
+}
+
+.empty {
+  margin: 0;
+  padding: var(--space-24) var(--space-12);
+  text-align: center;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+@container (max-width: 1100px) {
+  .kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .kpiLead {
+    grid-column: 1 / -1;
+  }
+  .span8,
+  .span4 {
+    grid-column: 1 / -1;
+  }
+}
+
+@container (max-width: 560px) {
+  .kpis {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

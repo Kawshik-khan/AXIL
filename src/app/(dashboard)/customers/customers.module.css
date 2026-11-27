@@ -5,7 +5,6 @@
   justify-content: space-between;
   gap: 16px;
   flex-wrap: wrap;
-  margin-bottom: 24px;
 }
 
 .titleRow {
@@ -47,7 +46,7 @@
 }
 
 .search {
-  width: 260px;
+  width: 300px;
 }
 
 .inkButton {
@@ -90,50 +89,11 @@
   border-bottom: 1px solid var(--color-border-subtle);
 }
 
-.chips,
 .tools {
   display: flex;
   align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.tools {
   gap: 8px;
-}
-
-.chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 32px;
-  padding: 0 12px;
-  border-radius: var(--radius-pill);
-  border: 1px solid var(--color-border-medium);
-  background: var(--color-surface-pure);
-  color: var(--color-text-primary);
-  font: inherit;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background var(--transition-fast), border-color var(--transition-fast);
-}
-
-.chip:hover {
-  background: var(--color-surface-soft);
-}
-
-.chipActive,
-.chipActive:hover {
-  background: var(--color-ink-action);
-  border-color: var(--color-ink-action);
-  color: var(--color-ink-action-text);
-}
-
-.chipCount {
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  opacity: 0.75;
+  flex-wrap: wrap;
 }
 
 .selection {
@@ -547,7 +507,224 @@
   gap: 6px;
 }
 
-/* ---------- small screens: the table scrolls, the quick view gives way to the profile ---------- */
+
+/* ---------- page frame (Growth look: one lime tile, one lilac panel, ink actions) ---------- */
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+  color: var(--color-text-primary);
+}
+
+.page a:focus-visible,
+.page button:focus-visible {
+  outline: 2px solid var(--color-lilac-mark);
+  outline-offset: 2px;
+}
+
+.ghostButton {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+  height: 40px;
+  padding: 0 var(--space-16);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-pure);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.ghostButton:hover:not(:disabled) {
+  border-color: var(--color-border-medium);
+}
+
+.ghostButton:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* ---------- area tabs ---------- */
+.tabs {
+  display: inline-flex;
+  align-self: flex-start;
+  gap: var(--space-2);
+  padding: 3px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-pure);
+}
+
+.tab {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 14px;
+  border-radius: 9px;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.tab:hover {
+  color: var(--color-text-primary);
+}
+
+.tab[aria-current="page"] {
+  background: var(--color-lilac-panel);
+  color: var(--color-text-primary);
+}
+
+/* ---------- segment tiles (they filter the list) ---------- */
+.tiles {
+  display: grid;
+  grid-template-columns: 1.5fr repeat(4, minmax(0, 1fr));
+  gap: var(--space-16);
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: var(--space-12);
+  min-height: 116px;
+  padding: var(--space-16);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-card);
+  background: var(--color-surface-pure);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.tile:hover {
+  border-color: var(--color-border-medium);
+}
+
+.tile[aria-pressed="true"] {
+  border-color: transparent;
+  box-shadow: inset 0 0 0 2px var(--color-lilac-mark);
+}
+
+.tileLead {
+  border-color: transparent;
+  background: var(--color-lime-primary);
+  color: var(--color-on-lime);
+}
+
+.tileLead:hover {
+  border-color: transparent;
+  background: var(--color-lime-hover);
+}
+
+.tileLead[aria-pressed="true"] {
+  box-shadow: inset 0 0 0 2px var(--color-on-lime);
+}
+
+.tileLabel {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--color-text-secondary);
+}
+
+.tileLead .tileLabel {
+  color: var(--color-on-lime);
+  font-weight: 500;
+}
+
+.tileValue {
+  display: block;
+  font-size: 24px;
+  line-height: 32px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.tileLead .tileValue {
+  font-size: 30px;
+  line-height: 36px;
+}
+
+.tileNote {
+  display: block;
+  font-size: var(--font-size-meta);
+  line-height: 18px;
+  color: var(--color-text-secondary);
+}
+
+.tileLead .tileNote {
+  color: var(--color-on-lime-soft);
+}
+
+/* ---------- new customer form ---------- */
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+}
+
+.formRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-12);
+}
+
+.formError {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: 10px;
+  border-radius: var(--radius-control);
+  background: var(--color-danger-bg);
+  color: var(--color-danger-ink);
+  font-size: 13px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.select {
+  padding: 10px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-pure);
+  font: inherit;
+  font-size: 13px;
+}
+
+.formActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: var(--space-12);
+}
+
+/* ---------- small screens ---------- */
+@media (max-width: 1100px) {
+  .tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .tileLead {
+    grid-column: 1 / -1;
+  }
+}
+
+/* the table scrolls and the hover card gives way to the profile page */
 @media (max-width: 960px) {
   .tableScroll {
     overflow-x: auto;
@@ -570,5 +747,9 @@
   .search {
     flex: 1;
     width: auto;
+  }
+  .tiles,
+  .formRow {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

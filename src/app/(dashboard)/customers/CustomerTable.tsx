@@ -18,14 +18,14 @@ import {
 } from "./customer-display";
 import styles from "./customers.module.css";
 
-const SEGMENT_CLASS = {
+export const SEGMENT_CLASS = {
   NEW: styles.segNew,
   ONE_TIME: styles.segOneTime,
   REPEAT: styles.segRepeat,
   HIGH_VALUE: styles.segHighValue,
 } as const;
 
-const TINT_CLASS = [styles.tint0, styles.tint1, styles.tint2, styles.tint3] as const;
+export const TINT_CLASS = [styles.tint0, styles.tint1, styles.tint2, styles.tint3] as const;
 
 const MARK_CLASS: Record<ChannelDisplay["markClass"], string> = {
   facebook: styles.markFacebook,
