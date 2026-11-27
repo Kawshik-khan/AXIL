@@ -409,6 +409,102 @@ export async function run() {
     assert.ok(after.sources.every((s) => s.status === "NOT_CONNECTED"));
   });
 
+  // ---- Posts that sold ----------------------------------------------------------------------------------------------
+
+  function triggerEvent(tenant: string, id: string, extra: Record<string, unknown>) {
+    const now = new Date().toISOString();
+    return {
+      id, tenant_id: tenant, rule_id: "rule_1", rule_name: "Price", channel_id: "ch_fb", channel_type: "FACEBOOK_MESSENGER",
+      comment_id: `cm_${id}`, post_id: "111_1", commenter_id: `u_${id}`, comment_text: "dam koto", matched_keyword: "dam koto",
+      message_text: "Price is in your inbox", status: "SENT", attempts: 1, next_attempt_at: now, created_at: daysAgo(6), updated_at: now,
+      ...extra,
+    };
+  }
+  function chat(tenant: string, psid: string, customer: string, lastInboundDaysAgo: number) {
+    db.data.conversations.push({
+      id: `cnv_${tenant}_${psid}`, tenant_id: tenant, channel_id: "ch_fb", channel_type: "FACEBOOK_MESSENGER", customer_id: customer,
+      external_conversation_id: `fb_conv_${psid}`, status: "OPEN", priority: "NORMAL", mode: "HUMAN", automation_paused: false,
+      last_message_at: daysAgo(lastInboundDaysAgo), last_inbound_at: daysAgo(lastInboundDaysAgo), unread_count: 0, tags: [],
+      source: "FACEBOOK", metadata: {}, created_at: daysAgo(30), updated_at: new Date().toISOString(),
+    });
+  }
+
+  await test("posts that sold: comment → message → reply → order, per post; non-sales and other tenants left out", async () => {
+    const { PostSalesService } = await import("@/domains/social/insights/post-sales.service");
+    const P = "tenant_eng_sales_a";
+    const Q = "tenant_eng_sales_b";
+    const now = new Date().toISOString();
+    db.data.comment_trigger_events = db.data.comment_trigger_events || [];
+    db.data.comment_trigger_events.push(
+      // Replied after the message, then ordered twice (one cancelled) and once outside the 14-day window
+      triggerEvent(P, "e1", { recipient_id: "psid1", sent_at: daysAgo(6) }),
+      // Sent, replied, never ordered
+      triggerEvent(P, "e2", { recipient_id: "psid2", sent_at: daysAgo(6), post_id: "111_2" }),
+      // Sent, but the commenter never wrote back (last inbound before the message)
+      triggerEvent(P, "e3", { recipient_id: "psid3", sent_at: daysAgo(6) }),
+      // Not sent
+      triggerEvent(P, "e4", { status: "FAILED", failure_reason: "window closed" }),
+      // Another tenant on the same post id
+      triggerEvent(Q, "q1", { recipient_id: "psid9", sent_at: daysAgo(6) })
+    );
+    chat(P, "psid1", "cus_s1", 5);
+    chat(P, "psid2", "cus_s2", 5);
+    chat(P, "psid3", "cus_s3", 20);
+    chat(Q, "psid9", "cus_q9", 5);
+    await seedOrder({ id: "ord_s1", tenant_id: P, customer_id: "cus_s1", status: "DELIVERED", payment_status: "PAID", currency: "BDT", grand_total: 3000, created_at: daysAgo(4), updated_at: now });
+    // Placed but not paid yet (COD before delivery): order value, not revenue
+    await seedOrder({ id: "ord_s5", tenant_id: P, customer_id: "cus_s1", status: "CONFIRMED", payment_status: "PENDING", currency: "BDT", grand_total: 1200, created_at: daysAgo(3), updated_at: now });
+    await seedOrder({ id: "ord_s2", tenant_id: P, customer_id: "cus_s1", status: "CANCELLED", currency: "BDT", grand_total: 9000, created_at: daysAgo(4), updated_at: now });
+    await seedOrder({ id: "ord_s3", tenant_id: P, customer_id: "cus_s1", status: "DELIVERED", currency: "BDT", grand_total: 500, created_at: daysAgo(8), updated_at: now });
+    await seedOrder({ id: "ord_s4", tenant_id: P, customer_id: "cus_s3", status: "DELIVERED", currency: "BDT", grand_total: 4000, created_at: daysAgo(2), updated_at: now });
+    await seedOrder({ id: "ord_q1", tenant_id: Q, customer_id: "cus_q9", status: "DELIVERED", payment_status: "PAID", currency: "BDT", grand_total: 99999, created_at: daysAgo(3), updated_at: now });
+    db.markDirty();
+    await db.flush();
+
+    const before = JSON.stringify(db.data.comment_trigger_events.length) + db.data.conversations.length;
+    const r = await PostSalesService.getReport(ctx(P), 30);
+    assert.strictEqual(JSON.stringify(db.data.comment_trigger_events.length) + db.data.conversations.length, before, "read-only");
+    assert.strictEqual(r.window_days, 14);
+    assert.deepStrictEqual(r.totals, { matched_comments: 4, messages_sent: 3, replied: 2, customers: 1, orders: 2, revenue: 3000, order_value: 4200 });
+    const top = r.posts[0];
+    assert.strictEqual(top.post_id, "111_1");
+    assert.strictEqual(top.matched_comments, 3);
+    assert.strictEqual(top.messages_sent, 2);
+    assert.strictEqual(top.replied, 1, "psid3 never wrote back");
+    assert.strictEqual(top.revenue, 3000, "cancelled, pre-message and unpaid orders are not revenue");
+    assert.strictEqual(top.order_value, 4200, "the unpaid order still counts as order value");
+    assert.strictEqual(r.posts[1].post_id, "111_2");
+    assert.strictEqual(r.posts[1].orders, 0);
+
+    const other = await PostSalesService.getReport(ctx(Q), 30);
+    assert.strictEqual(other.totals.revenue, 99999, "tenant B sees only its own sale");
+  });
+
+  await test("posts that sold: another tenant's conversation on the same channel and inbox id is never joined", async () => {
+    const { attributePostSales } = await import("@/domains/social/insights/post-sales.service");
+    const now = Date.now();
+    const foreign = {
+      id: "cnv_x", tenant_id: "tenant_other", channel_id: "ch_fb", channel_type: "FACEBOOK_MESSENGER", customer_id: "cus_other",
+      external_conversation_id: "fb_conv_psidX", last_inbound_at: daysAgo(1), created_at: daysAgo(10),
+    };
+    const r = attributePostSales({
+      events: [triggerEvent("tenant_mine", "m1", { recipient_id: "psidX", sent_at: daysAgo(6) })],
+      conversations: [foreign],
+      orders: [{ customer_id: "cus_other", status: "DELIVERED", created_at: daysAgo(2), grand_total: 5000, currency: "BDT" }],
+      sinceMs: now - 30 * 86_400_000,
+      untilMs: now,
+      currency: "BDT",
+    });
+    assert.strictEqual(r.totals.replied, 0);
+    assert.strictEqual(r.totals.revenue, 0);
+  });
+
+  await test("posts that sold: needs social.analytics.read and orders.read", async () => {
+    const { PostSalesService } = await import("@/domains/social/insights/post-sales.service");
+    await assert.rejects(() => PostSalesService.getReport(ctx("tenant_eng_sales_a", "X", [PERMISSIONS.SOCIAL_ANALYTICS_READ]), 30), ForbiddenError);
+    await assert.rejects(() => PostSalesService.getReport(ctx("tenant_eng_sales_a", "X", [PERMISSIONS.ORDERS_READ]), 30), ForbiddenError);
+  });
+
   console.log(`\n  ${passed} passed, ${failed} failed\n`);
   if (failed > 0) process.exit(1);
 }
