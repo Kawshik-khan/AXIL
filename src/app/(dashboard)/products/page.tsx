@@ -77,8 +77,14 @@ export default function ProductsPage() {
       }
       const json = await res.json();
       const rows: Product[] = json.data || [];
+      const total = Number(json.meta?.total ?? rows.length);
+      // A page emptied by an archive or a status change: show the last page that still has products
+      if (rows.length === 0 && page > 0 && total > 0) {
+        setPage(Math.ceil(total / PAGE_SIZE) - 1);
+        return;
+      }
       setProducts(rows);
-      setTotalCount(json.meta?.total ?? rows.length);
+      setTotalCount(total);
     } catch {
       setLoadError({ message: "Could not reach the server." });
     } finally {
@@ -90,8 +96,8 @@ export default function ProductsPage() {
   const loadCounts = useCallback(async () => {
     try {
       const totals = await Promise.all(
-        PRODUCT_STATUSES.map(async (s) => {
-          const res = await fetch(`/api/v1/products?status=${s}&limit=1`);
+        [...PRODUCT_STATUSES, "all" as const].map(async (s) => {
+          const res = await fetch(`/api/v1/products?limit=1${s === "all" ? "" : `&status=${s}`}`);
           if (!res.ok) throw new Error();
           const json = await res.json();
           return [s, Number(json.meta?.total ?? 0)] as const;

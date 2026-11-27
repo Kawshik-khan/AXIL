@@ -6,7 +6,8 @@ import { ArrowRight } from "lucide-react";
 import { PRODUCT_STATUSES, STATUS_LABELS, STATUS_NOTES, type ListedStatus, type StockRow } from "./product-display";
 import styles from "./products.module.css";
 
-export type StatusCounts = Record<ListedStatus, number>;
+/** One total per tile status, plus `all`: every product, including ones imported as out of stock or discontinued. */
+export type StatusCounts = Record<ListedStatus, number> & { all: number };
 
 const show = (n: number | null | undefined) => (n === null || n === undefined ? "—" : n.toLocaleString());
 
@@ -20,14 +21,18 @@ export function StatusTiles({
   active: ListedStatus | null;
   onPick: (status: ListedStatus | null) => void;
 }) {
-  const all = counts ? PRODUCT_STATUSES.reduce((sum, s) => sum + counts[s], 0) : null;
+  const all = counts?.all ?? null;
+  const other = counts ? counts.all - PRODUCT_STATUSES.reduce((sum, s) => sum + counts[s], 0) : 0;
+  const note = counts
+    ? `${counts.ACTIVE.toLocaleString()} on sale now${other > 0 ? ` · ${other.toLocaleString()} imported as out of stock or discontinued` : ""}`
+    : "Counting…";
   return (
     <section className={styles.tiles} aria-label="Filter by status">
       <button type="button" className={`${styles.tile} ${styles.tileLead}`} aria-pressed={active === null} onClick={() => onPick(null)}>
         <span className={styles.tileLabel}>All products</span>
         <span>
           <span className={styles.tileValue}>{show(all)}</span>
-          <span className={styles.tileNote}>{counts ? `${counts.ACTIVE.toLocaleString()} on sale now` : "Counting…"}</span>
+          <span className={styles.tileNote}>{note}</span>
         </span>
       </button>
       {PRODUCT_STATUSES.map((status) => (

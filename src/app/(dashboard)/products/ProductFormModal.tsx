@@ -6,8 +6,8 @@ import { Button } from "@/components/ui/Button/Button";
 import { Input } from "@/components/ui/Input/Input";
 import { Modal } from "@/components/ui/Modal/Modal";
 import { ProductImageUploader } from "@/components/catalog/ProductImageUploader";
-import type { Category, Product } from "@/types/commerce";
-import { formatTaka } from "./product-display";
+import type { Category, Product, ProductStatus } from "@/types/commerce";
+import { STATUS_DISPLAY, formatTaka } from "./product-display";
 import styles from "./products.module.css";
 
 interface ProductFormModalProps {
@@ -21,7 +21,8 @@ interface ProductFormModalProps {
   onCategoryCreated: () => Promise<void> | void;
 }
 
-type FormStatus = "ACTIVE" | "DRAFT";
+/** Every status but ARCHIVED; imported OUT_OF_STOCK / DISCONTINUED stay as they are unless the merchant changes them. */
+type FormStatus = Exclude<ProductStatus, "ARCHIVED">;
 
 async function errorMessage(res: Response, fallback: string): Promise<string> {
   const json = await res.json().catch(() => ({}));
@@ -59,7 +60,7 @@ export function ProductFormModal({ isOpen, product, categories, onClose, onSaved
     setInitialStock("10");
     setDescription(product?.description ?? "");
     setCategoryName(categoryNameOf(product?.category_id));
-    setStatus(product?.status === "DRAFT" ? "DRAFT" : "ACTIVE");
+    setStatus(!product || product.status === "ARCHIVED" ? "ACTIVE" : product.status);
     setImages(product?.images ?? []);
     // categories only seed the category name; a later refresh must not wipe what the merchant typed
   }, [isOpen, product]);
@@ -269,6 +270,9 @@ export function ProductFormModal({ isOpen, product, categories, onClose, onSaved
               <select className={styles.select} value={status} onChange={(e) => setStatus(e.target.value as FormStatus)}>
                 <option value="ACTIVE">Active: customers can order it</option>
                 <option value="DRAFT">Draft: hidden from customers</option>
+                {product && (product.status === "OUT_OF_STOCK" || product.status === "DISCONTINUED") && (
+                  <option value={product.status}>{STATUS_DISPLAY[product.status]} (as imported)</option>
+                )}
               </select>
             </label>
           )}

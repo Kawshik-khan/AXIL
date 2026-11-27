@@ -4,13 +4,12 @@ import React from "react";
 import { Archive, ArchiveRestore, Images, Layers, Package, Pencil, Send } from "lucide-react";
 import type { Product } from "@/types/commerce";
 import {
-  STATUS_LABELS,
+  STATUS_DISPLAY,
   discountPercent,
   formatTaka,
   photoOf,
   stockLevel,
   stockOf,
-  type ListedStatus,
   type ProductStock,
   type StockRow,
 } from "./product-display";
@@ -34,18 +33,17 @@ export interface ProductListProps {
   onSetStatus: (product: Product, status: "ACTIVE" | "DRAFT") => void;
 }
 
-const STATUS_CLASS: Record<ListedStatus, string> = {
+const STATUS_CLASS: Record<Product["status"], string> = {
   ACTIVE: styles.statusActive,
   DRAFT: styles.statusDraft,
   ARCHIVED: styles.statusArchived,
+  OUT_OF_STOCK: styles.statusOut,
+  DISCONTINUED: styles.statusArchived,
 };
 
 function StatusPill({ status }: { status: Product["status"] }) {
-  const known = status in STATUS_CLASS ? (status as ListedStatus) : null;
   return (
-    <span className={`${styles.pill} ${known ? STATUS_CLASS[known] : styles.statusArchived}`}>
-      {known ? STATUS_LABELS[known] : status}
-    </span>
+    <span className={`${styles.pill} ${STATUS_CLASS[status] ?? styles.statusArchived}`}>{STATUS_DISPLAY[status] ?? status}</span>
   );
 }
 

@@ -534,6 +534,7 @@
 .statusActive { background: var(--color-success-bg); color: var(--color-success-ink); }
 .statusDraft { background: var(--color-lilac-soft); color: var(--color-lilac-ink); }
 .statusArchived { background: var(--color-track); color: var(--color-text-secondary); }
+.statusOut { background: var(--color-warning-bg); color: var(--color-warning-ink); }
 
 .actionCol {
   width: 1%;

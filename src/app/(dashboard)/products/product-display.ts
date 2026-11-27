@@ -9,6 +9,13 @@ export const STATUS_LABELS: Record<ListedStatus, string> = {
   ARCHIVED: "Archived",
 };
 
+/** Labels for every stored status, including the two that only arrive through bulk import. */
+export const STATUS_DISPLAY: Record<ProductStatus, string> = {
+  ...STATUS_LABELS,
+  OUT_OF_STOCK: "Out of stock",
+  DISCONTINUED: "Discontinued",
+};
+
 export const STATUS_NOTES: Record<ListedStatus, string> = {
   ACTIVE: "Customers can order these",
   DRAFT: "Hidden until published",
