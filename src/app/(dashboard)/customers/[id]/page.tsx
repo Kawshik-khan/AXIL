@@ -112,6 +112,8 @@ export default function CustomerProfilePage() {
   const delivered = orders?.filter((o) => o.status === "DELIVERED").length ?? 0;
   const returned = orders?.filter((o) => o.status === "RETURNED" || o.status === "REFUNDED").length ?? 0;
   const finished = delivered + returned;
+  // The detail route returns at most the latest 100 orders; say so instead of presenting them as the full history
+  const partial = orders !== null && orders.length < orderCount;
 
   return (
     <div className={styles.page}>
@@ -167,7 +169,7 @@ export default function CustomerProfilePage() {
           </span>
         </div>
         <div className={styles.kpi}>
-          <span className={styles.kpiLabel}>Delivered</span>
+          <span className={styles.kpiLabel}>{partial ? `Delivered · latest ${orders?.length ?? 0} orders` : "Delivered"}</span>
           <span>
             <span className={styles.kpiValue}>{orders === null ? "—" : finished > 0 ? `${delivered} of ${finished}` : "—"}</span>
             <span className={styles.note}>
@@ -189,7 +191,9 @@ export default function CustomerProfilePage() {
           <div className={styles.cardHead}>
             <div>
               <h2 className={styles.cardTitle}>Orders</h2>
-              <div className={styles.note}>{orders === null ? "Needs the orders.read permission" : `Newest first · ${orders.length} shown`}</div>
+              <div className={styles.note}>
+                {orders === null ? "Needs the orders.read permission" : partial ? `Newest first · latest ${orders.length} of ${orderCount}` : `Newest first · ${orders.length} shown`}
+              </div>
             </div>
             <Link href="/orders" className={styles.linkPill}>
               All orders →

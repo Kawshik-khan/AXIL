@@ -451,11 +451,13 @@ export async function run() {
     chat(P, "psid2", "cus_s2", 5);
     chat(P, "psid3", "cus_s3", 20);
     chat(Q, "psid9", "cus_q9", 5);
-    await seedOrder({ id: "ord_s1", tenant_id: P, customer_id: "cus_s1", status: "DELIVERED", currency: "BDT", grand_total: 3000, created_at: daysAgo(4), updated_at: now });
+    await seedOrder({ id: "ord_s1", tenant_id: P, customer_id: "cus_s1", status: "DELIVERED", payment_status: "PAID", currency: "BDT", grand_total: 3000, created_at: daysAgo(4), updated_at: now });
+    // Placed but not paid yet (COD before delivery): order value, not revenue
+    await seedOrder({ id: "ord_s5", tenant_id: P, customer_id: "cus_s1", status: "CONFIRMED", payment_status: "PENDING", currency: "BDT", grand_total: 1200, created_at: daysAgo(3), updated_at: now });
     await seedOrder({ id: "ord_s2", tenant_id: P, customer_id: "cus_s1", status: "CANCELLED", currency: "BDT", grand_total: 9000, created_at: daysAgo(4), updated_at: now });
     await seedOrder({ id: "ord_s3", tenant_id: P, customer_id: "cus_s1", status: "DELIVERED", currency: "BDT", grand_total: 500, created_at: daysAgo(8), updated_at: now });
     await seedOrder({ id: "ord_s4", tenant_id: P, customer_id: "cus_s3", status: "DELIVERED", currency: "BDT", grand_total: 4000, created_at: daysAgo(2), updated_at: now });
-    await seedOrder({ id: "ord_q1", tenant_id: Q, customer_id: "cus_q9", status: "DELIVERED", currency: "BDT", grand_total: 99999, created_at: daysAgo(3), updated_at: now });
+    await seedOrder({ id: "ord_q1", tenant_id: Q, customer_id: "cus_q9", status: "DELIVERED", payment_status: "PAID", currency: "BDT", grand_total: 99999, created_at: daysAgo(3), updated_at: now });
     db.markDirty();
     await db.flush();
 
@@ -463,13 +465,14 @@ export async function run() {
     const r = await PostSalesService.getReport(ctx(P), 30);
     assert.strictEqual(JSON.stringify(db.data.comment_trigger_events.length) + db.data.conversations.length, before, "read-only");
     assert.strictEqual(r.window_days, 14);
-    assert.deepStrictEqual(r.totals, { matched_comments: 4, messages_sent: 3, replied: 2, customers: 1, orders: 1, revenue: 3000 });
+    assert.deepStrictEqual(r.totals, { matched_comments: 4, messages_sent: 3, replied: 2, customers: 1, orders: 2, revenue: 3000, order_value: 4200 });
     const top = r.posts[0];
     assert.strictEqual(top.post_id, "111_1");
     assert.strictEqual(top.matched_comments, 3);
     assert.strictEqual(top.messages_sent, 2);
     assert.strictEqual(top.replied, 1, "psid3 never wrote back");
-    assert.strictEqual(top.revenue, 3000, "cancelled and pre-message orders are not counted");
+    assert.strictEqual(top.revenue, 3000, "cancelled, pre-message and unpaid orders are not revenue");
+    assert.strictEqual(top.order_value, 4200, "the unpaid order still counts as order value");
     assert.strictEqual(r.posts[1].post_id, "111_2");
     assert.strictEqual(r.posts[1].orders, 0);
 

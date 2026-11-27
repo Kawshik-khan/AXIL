@@ -67,6 +67,7 @@ export function PostSalesView({ days, posts, onOpenTriggers }: PostSalesViewProp
   if (error || !report) return <ErrorState message={error?.message ?? "Sales from posts could not be loaded."} requestId={error?.requestId} onRetry={load} />;
 
   const t = report.totals;
+  const money = (n: number) => (report.currency === "BDT" ? taka(n) : `${n.toLocaleString()} ${report.currency}`);
   if (t.matched_comments === 0) {
     return (
       <EmptyState
@@ -90,11 +91,12 @@ export function PostSalesView({ days, posts, onOpenTriggers }: PostSalesViewProp
     <>
       <section className={styles.kpis} aria-label="From comment to order">
         <div className={`${styles.kpi} ${styles.kpiLead}`}>
-          <span className={styles.kpiLabel}>Revenue from your posts</span>
+          <span className={styles.kpiLabel}>Paid revenue from your posts</span>
           <span>
-            <span className={styles.kpiValue}>{report.currency === "BDT" ? taka(t.revenue) : `${t.revenue.toLocaleString()} ${report.currency}`}</span>
+            <span className={styles.kpiValue}>{money(t.revenue)}</span>
             <span className={styles.kpiNote}>
               {t.orders} {t.orders === 1 ? "order" : "orders"} from {t.customers} {t.customers === 1 ? "customer" : "customers"}
+              {t.order_value > t.revenue ? ` · ${money(t.order_value - t.revenue)} awaiting payment` : ""}
             </span>
           </span>
         </div>
@@ -128,7 +130,8 @@ export function PostSalesView({ days, posts, onOpenTriggers }: PostSalesViewProp
                   <th className={styles.num}>Replied</th>
                   <th className={styles.num}>Customers</th>
                   <th className={styles.num}>Orders</th>
-                  <th className={styles.num}>Revenue</th>
+                  <th className={styles.num}>Order value</th>
+                  <th className={styles.num}>Paid</th>
                 </tr>
               </thead>
               <tbody>
@@ -157,7 +160,8 @@ export function PostSalesView({ days, posts, onOpenTriggers }: PostSalesViewProp
                       <td className={styles.num}>{compact(row.replied)}</td>
                       <td className={styles.num}>{row.customers}</td>
                       <td className={styles.num}>{row.orders}</td>
-                      <td className={`${styles.num} ${styles.strong}`}>{report.currency === "BDT" ? taka(row.revenue) : row.revenue.toLocaleString()}</td>
+                      <td className={styles.num}>{money(row.order_value)}</td>
+                      <td className={`${styles.num} ${styles.strong}`}>{money(row.revenue)}</td>
                     </tr>
                   );
                 })}
@@ -176,6 +180,7 @@ export function PostSalesView({ days, posts, onOpenTriggers }: PostSalesViewProp
             <span>A comment matched a trigger and the customer got your message in their inbox.</span>
             <span>They wrote to you in the inbox after it (any message counts), and placed an order within {report.window_days} days of your message.</span>
             <span>A customer counts once, for the first post that reached them in this period.</span>
+            <span>Paid counts only orders whose payment is confirmed; a cash-on-delivery order moves there once it is paid.</span>
           </div>
           <div className={styles.lilacBox}>
             <strong>Left out</strong>

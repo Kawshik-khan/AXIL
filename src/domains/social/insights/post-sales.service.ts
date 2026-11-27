@@ -5,7 +5,7 @@
  * id). When the commenter then wrote back, the inbox has a conversation for that inbox id on the same channel. Each such
  * customer is credited to the first post that reached them in the range, and their orders placed from that message up to
  * ATTRIBUTION_WINDOW_DAYS later count for that post. Cancelled, returned and refunded orders are left out, as in the Ad
- * Manager attribution. Comments without a trigger leave no record, so they are not counted.
+ * Manager attribution; revenue counts only orders whose payment is confirmed (order_value counts them all). Comments without a trigger leave no record, so they are not counted.
  *
  * Read-only: it never writes to the store.
  */
@@ -33,7 +33,10 @@ export interface PostSalesRow {
   /** Customers credited to this post who placed at least one counted order. */
   customers: number;
   orders: number;
+  /** Value of the counted orders whose payment is confirmed (payment_status PAID). */
   revenue: number;
+  /** Value of every counted order, paid or still awaiting payment (COD before delivery, unpaid bKash). */
+  order_value: number;
 }
 
 export interface PostSalesReport {
@@ -47,7 +50,7 @@ export interface PostSalesReport {
   posts: PostSalesRow[];
 }
 
-type OrderLike = Pick<Order, "customer_id" | "status" | "created_at" | "grand_total" | "currency">;
+type OrderLike = Pick<Order, "customer_id" | "status" | "created_at" | "grand_total" | "currency"> & Partial<Pick<Order, "payment_status">>;
 
 const PREFIX: Record<CommentTriggerChannel, string> = { FACEBOOK_MESSENGER: "fb_conv_", INSTAGRAM: "ig_conv_" };
 
@@ -80,7 +83,7 @@ export function attributePostSales(input: {
     const key = e.post_id as string;
     let row = rows.get(key);
     if (!row) {
-      row = { post_id: key, channel_type: e.channel_type, matched_comments: 0, messages_sent: 0, replied: 0, customers: 0, orders: 0, revenue: 0, repliedCustomers: new Set(), soldCustomers: new Set() };
+      row = { post_id: key, channel_type: e.channel_type, matched_comments: 0, messages_sent: 0, replied: 0, customers: 0, orders: 0, revenue: 0, order_value: 0, repliedCustomers: new Set(), soldCustomers: new Set() };
       rows.set(key, row);
     }
     return row;
@@ -115,13 +118,16 @@ export function attributePostSales(input: {
     const row = rows.get(touch.post);
     if (!row) continue;
     row.orders++;
-    row.revenue += Number(o.grand_total) || 0;
+    const value = Number(o.grand_total) || 0;
+    row.order_value += value;
+    // Revenue is money received: an order still awaiting payment counts in order_value only
+    if (o.payment_status === "PAID") row.revenue += value;
     row.soldCustomers.add(o.customer_id);
   }
 
   const posts: PostSalesRow[] = [...rows.values()]
-    .map(({ repliedCustomers, soldCustomers, ...row }) => ({ ...row, replied: repliedCustomers.size, customers: soldCustomers.size, revenue: round2(row.revenue) }))
-    .sort((a, b) => b.revenue - a.revenue || b.orders - a.orders || b.matched_comments - a.matched_comments);
+    .map(({ repliedCustomers, soldCustomers, ...row }) => ({ ...row, replied: repliedCustomers.size, customers: soldCustomers.size, revenue: round2(row.revenue), order_value: round2(row.order_value) }))
+    .sort((a, b) => b.revenue - a.revenue || b.order_value - a.order_value || b.orders - a.orders || b.matched_comments - a.matched_comments);
 
   const totals = posts.reduce(
     (t, p) => ({
@@ -131,8 +137,9 @@ export function attributePostSales(input: {
       customers: t.customers + p.customers,
       orders: t.orders + p.orders,
       revenue: round2(t.revenue + p.revenue),
+      order_value: round2(t.order_value + p.order_value),
     }),
-    { matched_comments: 0, messages_sent: 0, replied: 0, customers: 0, orders: 0, revenue: 0 }
+    { matched_comments: 0, messages_sent: 0, replied: 0, customers: 0, orders: 0, revenue: 0, order_value: 0 }
   );
 
   return { currency: input.currency, totals, other_currency_orders: otherCurrency, posts };
