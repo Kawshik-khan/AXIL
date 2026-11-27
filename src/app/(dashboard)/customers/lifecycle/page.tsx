@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { Users, History, Activity, TrendingUp } from "lucide-react";
-import styles from "../growth.module.css";
+import styles from "../../growth/growth.module.css";
 import { LoadingSkeleton } from "@/components/ui/States/States";
 
 export default function LifecyclePage() {
@@ -34,15 +34,10 @@ export default function LifecyclePage() {
         </div>
       </div>
 
-      <div className={styles.navTabs}>
-        <Link href="/growth" className={styles.navTab}>Command Center</Link>
-        <Link href="/growth/audiences" className={styles.navTab}>Audiences</Link>
-        <Link href="/growth/campaigns" className={styles.navTab}>Campaigns</Link>
-        <Link href="/growth/journeys" className={styles.navTab}>Journeys</Link>
-        <Link href="/growth/lifecycle" className={`${styles.navTab} ${styles.navTabActive}`}>Lifecycle</Link>
-        <Link href="/growth/attribution" className={styles.navTab}>Attribution</Link>
-        <Link href="/growth/experiments" className={styles.navTab}>A/B Experiments</Link>
-      </div>
+      <nav className={styles.navTabs} aria-label="Customers">
+        <Link href="/customers" className={styles.navTab}>Customers</Link>
+        <Link href="/customers/lifecycle" className={`${styles.navTab} ${styles.navTabActive}`} aria-current="page">Lifecycle</Link>
+      </nav>
 
       {loading ? (
         <LoadingSkeleton lines={5} />

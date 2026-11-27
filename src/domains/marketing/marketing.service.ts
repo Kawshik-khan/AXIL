@@ -1,26 +1,21 @@
 import { AppError, BadRequestError, ConflictError, NotFoundError } from "@/lib/errors";
 import { randomSuffix } from "@/lib/ids";
 /**
- * CommerceOS Phase 8: Marketing & Campaigns Domain Service
- * Orchestrates WhatsApp cart recovery, audience cohort segmentation, rate-limited broadcasts,
- * human approval gates, and multi-touch revenue attribution.
+ * CommerceOS Phase 8: Marketing Domain Service
+ * WhatsApp cart recovery and audience cohort segmentation. Campaigns, broadcasts and attribution were removed
+ * (2026-11-26); their stored rows and types remain.
  */
 
 import { db } from "@/infrastructure/db";
 import {
   AbandonedCartRecoveryItem,
   Audience,
-  GrowthCampaign,
-  CampaignResult,
-  AttributionModel,
   MarketingChannelType,
 } from "@/types/growth";
 import { audienceService, segmentEngineService } from "@/domains/growth/services/audience.service";
-import { campaignService } from "@/domains/growth/services/campaign.service";
 import { contentService } from "@/domains/growth/services/content.service";
 import { consentService, frequencyCappingService } from "@/domains/growth/services/consent.service";
 import { marketingChannelService } from "@/domains/growth/services/marketing-channel.service";
-import { attributionService } from "@/domains/growth/services/attribution.service";
 import { loadCustomerRows } from "@/infrastructure/db/tenant-rows";
 import { orderRepository } from "@/domains/orders/order.repository";
 
@@ -55,12 +50,6 @@ export interface MarketingOverviewMetrics {
   total_abandoned_revenue_bdt: number;
   cart_recovery_rate_pct: number;
   active_abandoned_carts_count: number;
-  total_attributed_revenue_bdt: number;
-  /** Not measured (needs a control group). */
-  total_incremental_lift_bdt: number | null;
-  active_campaigns_count: number;
-  pending_approvals_count: number;
-  kill_switch_active: boolean;
   insights: Array<{
     id: string;
     title: string;
@@ -279,7 +268,7 @@ export class MarketingService {
   }
 
   /**
-   * Marks an abandoned cart as recovered when an order is completed and credits attribution
+   * Marks an abandoned cart as recovered when an order is completed
    */
   public markCartRecovered(params: {
     tenantId: string;
@@ -325,23 +314,6 @@ export class MarketingService {
       recovery_stage: "RECOVERED",
       recovered_order_id: orderId,
       recovered_revenue_bdt: recoveredRevenue,
-    });
-
-    attributionService.attributeOrder({
-      tenantId,
-      orderId,
-      customerId: cart.customer_id,
-      orderTotalBdt: recoveredRevenue,
-      touchpoints: [
-        {
-          touch_id: `touch_${Date.now()}_${randomSuffix()}`,
-          campaign_id: "cmp_cart_recovery",
-          channel: "WHATSAPP",
-          touched_at: new Date().toISOString(),
-          weight: 1,
-        },
-      ],
-      model: "LAST_TOUCH",
     });
 
     return updated;
@@ -483,204 +455,7 @@ export class MarketingService {
 
   /**
    * ============================================================
-   * 3. RATE-LIMITED BROADCAST MESSAGING & HUMAN APPROVAL GATES
-   * ============================================================
-   */
-
-  /**
-   * Returns all campaigns for a tenant
-   */
-  public getBroadcastCampaigns(tenantId: string): GrowthCampaign[] {
-    return db.getCampaigns(tenantId);
-  }
-
-  /**
-   * Creates a broadcast campaign with automated risk classification & human approval gating
-   */
-  public createBroadcastCampaign(params: {
-    tenantId: string;
-    name: string;
-    objective: GrowthCampaign["objective"];
-    audienceId: string;
-    channel: MarketingChannelType;
-    contentBody: string;
-    callToAction: string;
-    budgetBdt?: number;
-    offerId?: string;
-    targetProducts?: string[];
-    scheduledStartAt?: string;
-    userId?: string;
-  }): GrowthCampaign {
-    const {
-      tenantId,
-      name,
-      objective,
-      audienceId,
-      channel,
-      contentBody,
-      callToAction,
-      budgetBdt,
-      offerId,
-      targetProducts,
-      scheduledStartAt,
-      userId,
-    } = params;
-
-    const audience = db.getAudienceById(tenantId, audienceId);
-    if (!audience || audience.tenant_id !== tenantId) {
-      throw new AppError("NOT_FOUND", `Target audience not found: ${audienceId}`, 404);
-    }
-
-    const campaign = campaignService.createCampaign({
-      tenantId,
-      name,
-      objective,
-      audienceId,
-      channel,
-      variants: [
-        {
-          id: `var_${Date.now()}_${randomSuffix()}`,
-          name: "Variant A (Primary)",
-          subject_or_title: name,
-          content_body: contentBody,
-          call_to_action: callToAction,
-          allocation_pct: 100,
-        },
-      ],
-      offerId,
-      targetProducts,
-      budgetBdt,
-      scheduledStartAt,
-      createdBy: userId || "OPERATOR",
-    });
-
-    // Run automated pre-flight simulation
-    campaignService.simulateCampaign(tenantId, campaign.id);
-
-    // If campaign requires approval (audience > 50 or budget > 5000), submit for review
-    if (campaign.required_approval) {
-      return campaignService.requestCampaignApproval(tenantId, campaign.id, userId || "OPERATOR");
-    }
-
-    return campaign;
-  }
-
-  /**
-   * Human Approval Gate: Approves a campaign
-   */
-  public approveCampaign(tenantId: string, campaignId: string, approvedBy: string): GrowthCampaign {
-    return campaignService.approveCampaign(tenantId, campaignId, approvedBy);
-  }
-
-  /**
-   * Human Approval Gate: Rejects a campaign
-   */
-  public rejectCampaign(tenantId: string, campaignId: string, rejectedBy: string, reason: string): GrowthCampaign {
-    return campaignService.rejectCampaign(tenantId, campaignId, rejectedBy, reason);
-  }
-
-  /**
-   * Executes broadcast with rate-limiting (max 20 messages/second for WhatsApp),
-   * opt-out compliance, frequency capping, and suppression tracking.
-   */
-  public async dispatchBroadcast(tenantId: string, campaignId: string): Promise<CampaignResult> {
-    return campaignService.executeCampaign(tenantId, campaignId);
-  }
-
-  /**
-   * Emergency Kill Switch Toggle
-   */
-  public toggleKillSwitch(tenantId: string, active: boolean): { kill_switch_active: boolean } {
-    campaignService.setKillSwitch(tenantId, active);
-    return { kill_switch_active: campaignService.isKillSwitchActive(tenantId) };
-  }
-
-  /**
-   * ============================================================
-   * 4. MULTI-TOUCH REVENUE ATTRIBUTION CAPABILITY
-   * ============================================================
-   */
-
-  /**
-   * Computes multi-touch attribution metrics across models
-   */
-  public getAttributionReport(tenantId: string, model: AttributionModel = "LAST_TOUCH") {
-    const attributions = db.getCampaignAttributions(tenantId);
-    const campaigns = db.getCampaigns(tenantId);
-    const orders = db.getAllOrders(tenantId, { hydrate: true });
-
-    let totalAttributed = 0;
-
-    const campaignCredits: Record<
-      string,
-      {
-        campaign_name: string;
-        channel: string;
-        orders_attributed: number;
-        revenue_bdt: number;
-        incremental_lift_bdt: number | null;
-        roas: number | null;
-      }
-    > = {};
-
-    for (const cmp of campaigns) {
-      campaignCredits[cmp.id] = {
-        campaign_name: cmp.name,
-        channel: cmp.channel,
-        orders_attributed: 0,
-        revenue_bdt: 0,
-        incremental_lift_bdt: null,
-        roas: cmp.result_metrics?.roas ?? null,
-      };
-    }
-
-    for (const att of attributions) {
-      totalAttributed += att.order_total_bdt;
-
-      for (const [cid, credit] of Object.entries(att.campaign_credits)) {
-        if (!campaignCredits[cid]) {
-          const matchedCmp = campaigns.find((c) => c.id === cid);
-          campaignCredits[cid] = {
-            campaign_name: matchedCmp?.name || (cid === "cmp_cart_recovery" ? "Cart recovery" : cid),
-            channel: matchedCmp?.channel || att.touchpoints.find((t) => t.campaign_id === cid)?.channel || "UNKNOWN",
-            orders_attributed: 0,
-            revenue_bdt: 0,
-            incremental_lift_bdt: null, // needs a control group (FX-30)
-            roas: matchedCmp?.result_metrics?.roas ?? null,
-          };
-        }
-        campaignCredits[cid].revenue_bdt += credit.attributed_revenue_bdt;
-        campaignCredits[cid].orders_attributed += 1;
-      }
-    }
-
-    return {
-      active_model: model,
-      total_attributed_revenue_bdt: totalAttributed,
-      total_incremental_lift_bdt: null, // not measured: needs a control group
-      campaigns_breakdown: Object.entries(campaignCredits).map(([id, data]) => ({
-        id,
-        ...data,
-      })),
-      recent_attributed_orders: attributions.slice(-10).map((att) => {
-        const order = orders.find((o) => o.id === att.order_id);
-        return {
-          order_id: att.order_id,
-          order_number: order?.order_number || att.order_id,
-          order_total_bdt: att.order_total_bdt,
-          attributed_to: Object.keys(att.campaign_credits)
-            .map((cid) => campaignCredits[cid]?.campaign_name || cid)
-            .join(", "),
-          model: att.attribution_model,
-          created_at: att.created_at,
-        };
-      }),
-    };
-  }
-
-  /**
-   * ============================================================
-   * 5. AGGREGATE OVERVIEW & AI COPILOT
+   * 3. AGGREGATE OVERVIEW & AI COPILOT
    * ============================================================
    */
 
@@ -689,8 +464,6 @@ export class MarketingService {
    */
   public getOverviewMetrics(tenantId: string): MarketingOverviewMetrics {
     const carts = db.getAbandonedCarts(tenantId);
-    const campaigns = db.getCampaigns(tenantId);
-    const attributions = db.getCampaignAttributions(tenantId);
 
     const recoveredCarts = carts.filter((c) => c.recovery_stage === "RECOVERED");
     const activeCarts = carts.filter((c) => c.recovery_stage === "PENDING" || c.recovery_stage === "MESSAGED");
@@ -701,9 +474,6 @@ export class MarketingService {
 
     const recoveryRate = totalAbandoned > 0 ? Number(((totalRecovered / totalAbandoned) * 100).toFixed(1)) : 0;
 
-    const totalAttributed = attributions.reduce((sum, a) => sum + a.order_total_bdt, 0);
-
-    const pendingApprovals = campaigns.filter((c) => c.status === "REVIEW" && c.required_approval);
     const dormant = db.getCustomerLifecycles(tenantId).filter((l) => l.stage === "DORMANT").length;
 
     // Built from the numbers above; an insight appears only when its data exists (FX-30). These were literal text
@@ -725,25 +495,11 @@ export class MarketingService {
         severity: "MEDIUM",
       });
     }
-    if (pendingApprovals.length > 0) {
-      insights.push({
-        id: "ins_approvals",
-        title: `${pendingApprovals.length} campaign(s) awaiting approval`,
-        summary: pendingApprovals.map((c) => c.name).slice(0, 3).join(", "),
-        severity: "HIGH",
-      });
-    }
-
     return {
       total_recovered_revenue_bdt: totalRecovered,
       total_abandoned_revenue_bdt: totalAbandoned,
       cart_recovery_rate_pct: recoveryRate,
       active_abandoned_carts_count: activeCarts.length,
-      total_attributed_revenue_bdt: totalAttributed,
-      total_incremental_lift_bdt: null, // not measured: needs a control group
-      active_campaigns_count: campaigns.filter((c) => c.status === "RUNNING" || c.status === "APPROVED").length,
-      pending_approvals_count: pendingApprovals.length,
-      kill_switch_active: campaignService.isKillSwitchActive(tenantId),
       insights,
     };
   }

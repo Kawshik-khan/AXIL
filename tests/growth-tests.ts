@@ -8,14 +8,10 @@ import { db } from "@/infrastructure/db";
 import { AuthService } from "@/domains/auth/service";
 import { audienceService, segmentEngineService } from "@/domains/growth/services/audience.service";
 import { customerLifecycleService } from "@/domains/growth/services/customer-lifecycle.service";
-import { journeyEngineService } from "@/domains/growth/services/journey-engine.service";
-import { campaignService } from "@/domains/growth/services/campaign.service";
 import { consentService, frequencyCappingService } from "@/domains/growth/services/consent.service";
 import { contentService } from "@/domains/growth/services/content.service";
 import { offerService } from "@/domains/growth/services/offer.service";
 import { productRecommendationService } from "@/domains/growth/services/product-recommendation.service";
-import { experimentService } from "@/domains/growth/services/experiment.service";
-import { attributionService } from "@/domains/growth/services/attribution.service";
 import { growthIntelligenceService } from "@/domains/growth/services/growth-intelligence.service";
 import { growthWorkflowService } from "@/domains/growth/services/growth-workflow.service";
 import { growthSupervisorAgent } from "@/domains/growth/agents/growth-supervisor.agent";
@@ -242,142 +238,6 @@ export async function runGrowthTests() {
   });
 
   // ============================================================
-  // Gate 3: Customer Journey Engine & Durable Execution
-  // ============================================================
-  console.log(`\n${ANSI_BOLD}Gate 3: Customer Journey Engine & Multi-Node DAG${ANSI_RESET}`);
-
-  await runTest("Constructs multi-node journey with TRIGGER, WAIT, ACTION, and EXIT", async () => {
-    const journey = journeyEngineService.createJourney({
-      tenantId,
-      name: "Post-Purchase Welcome Journey",
-      description: "Onboards first-time purchasers",
-      triggerEvent: "ORDER_DELIVERED",
-      steps: [
-        {
-          id: "step_1_wait",
-          type: "WAIT",
-          title: "Wait 1 day",
-          config: { wait_duration_minutes: 1440 },
-          next_step_id: "step_2_msg",
-        },
-        {
-          id: "step_2_msg",
-          type: "ACTION",
-          title: "Send WhatsApp Welcome Care Message",
-          config: {
-            action_type: "SEND_MESSAGE",
-            channel: "WHATSAPP",
-          },
-          next_step_id: "step_3_exit",
-        },
-        {
-          id: "step_3_exit",
-          type: "EXIT",
-          title: "Complete Journey",
-          config: { exit_reason: "SUCCESSFULLY_NURTURED" },
-        },
-      ],
-    });
-
-    assert.ok(journey.id, "Journey ID required");
-    assert.strictEqual(journey.steps.length, 3);
-
-    const enrollment = journeyEngineService.enrollCustomer({
-      tenantId,
-      journeyId: journey.id,
-      customerId: cust1.id,
-      contextData: { order_id: "ord_g2" },
-    });
-
-    assert.strictEqual(enrollment.status, "ENROLLED");
-    assert.strictEqual(enrollment.current_step_id, "step_1_wait");
-
-    // Advance step 1: WAIT node holds execution until wait_until
-    const advanced = await journeyEngineService.advanceEnrollment(tenantId, enrollment.id);
-    assert.strictEqual(advanced.status, "WAITING");
-    assert.ok(advanced.wait_until, "wait_until must be set");
-  });
-
-  // ============================================================
-  // Gate 4: Campaign Risk Classification & Approval Gating
-  // ============================================================
-  console.log(`\n${ANSI_BOLD}Gate 4: Campaign Governance, Risk Gating & Execution${ANSI_RESET}`);
-
-  let highRiskCampaignId = "";
-
-  await runTest("Evaluates campaign risk level according to budget and discount boundaries", () => {
-    const lowRisk = campaignService.evaluateRiskTier({
-      audienceSize: 20,
-      budgetBdt: 3000,
-      discountValue: 10,
-      discountType: "PERCENTAGE",
-    });
-    assert.strictEqual(lowRisk.riskClass, "LOW");
-    assert.strictEqual(lowRisk.requiresApproval, false);
-
-    const highRisk = campaignService.evaluateRiskTier({
-      audienceSize: 600,
-      budgetBdt: 15000,
-      discountValue: 20,
-      discountType: "PERCENTAGE",
-    });
-    assert.strictEqual(highRisk.riskClass, "HIGH");
-    assert.strictEqual(highRisk.requiresApproval, true);
-    assert.strictEqual(highRisk.riskLevel, ActionRiskLevel.HIGH);
-  });
-
-  await runTest("Blocks high-risk campaign execution until Phase 5 merchant approval", async () => {
-    const aud = audienceService.listAudiences(tenantId)[0];
-    const campaign = campaignService.createCampaign({
-      tenantId,
-      name: "High-Budget Flash Sale",
-      objective: "CONVERSION",
-      audienceId: aud.id,
-      channel: "WHATSAPP",
-      budgetBdt: 25000,
-      variants: [
-        {
-          id: "var_1",
-          name: "Variant A",
-          subject_or_title: "Flash Sale",
-          content_body: "Huge sale for our VIP customers!",
-          call_to_action: "Shop Now",
-          allocation_pct: 100,
-        },
-      ],
-    });
-
-    highRiskCampaignId = campaign.id;
-    assert.strictEqual(campaign.required_approval, true);
-    assert.strictEqual(campaign.status, "DRAFT");
-
-    // Submit for approval
-    const requested = campaignService.requestCampaignApproval(tenantId, campaign.id, "MERCHANT");
-    assert.strictEqual(requested.status, "REVIEW");
-    assert.ok(requested.approval_request_id, "Approval request ID must be attached");
-
-    // Attempt execution before approval -> MUST THROW
-    await assert.rejects(
-      async () => {
-        await campaignService.executeCampaign(tenantId, campaign.id);
-      },
-      /Policy violation: High-risk campaign requires human merchant approval/,
-      "Must reject execution of unapproved high-risk campaign"
-    );
-
-    // Merchant Approves
-    const approved = campaignService.approveCampaign(tenantId, campaign.id, "merchant_user_1");
-    assert.strictEqual(approved.status, "APPROVED");
-
-    // Execution now succeeds
-    const execResult = await campaignService.executeCampaign(tenantId, campaign.id);
-    assert.ok(execResult.messages_sent >= 1, "Messages should be sent");
-    // Outcomes are measured from attributions later, never assumed at send time (FX-30)
-    assert.strictEqual(execResult.attributed_revenue_bdt, null);
-    assert.strictEqual(execResult.attribution_status, "NOT_MEASURED");
-  });
-
-  // ============================================================
   // Gate 5: Consent Verification & Multi-Channel Frequency Capping
   // ============================================================
   console.log(`\n${ANSI_BOLD}Gate 5: Consent Verification & Multi-Channel Frequency Capping${ANSI_RESET}`);
@@ -542,130 +402,6 @@ export async function runGrowthTests() {
   });
 
   // ============================================================
-  // Gate 9: A/B Testing & Statistical Significance
-  // ============================================================
-  console.log(`\n${ANSI_BOLD}Gate 9: A/B Testing & Statistical Significance Engine${ANSI_RESET}`);
-
-  await runTest("Performs deterministic traffic split and p-value evaluation", () => {
-    const exp = experimentService.createExperiment({
-      tenantId,
-      name: "Subject Line Urgency Test",
-      hypothesis: "Urgency emojis increase open and conversion rates",
-      primaryMetric: "CONVERSION_RATE",
-      audienceId: "aud_test_1",
-      variants: [
-        { variant_id: "control", name: "Control Plain Text", description: "Regular greeting", traffic_allocation_pct: 50 },
-        { variant_id: "variant_a", name: "Urgent Emoji Variant", description: "Urgent copy", traffic_allocation_pct: 50 },
-      ],
-      minSampleSize: 10,
-    });
-
-    // Deterministic assignment
-    const asgn1 = experimentService.assignCustomerToVariant(tenantId, exp.id, "customer_alpha_99");
-    const asgn2 = experimentService.assignCustomerToVariant(tenantId, exp.id, "customer_alpha_99");
-    assert.strictEqual(asgn1.assigned_variant_id, asgn2.assigned_variant_id, "Same customer must deterministically get identical variant");
-
-    // Assign enough customers to satisfy minSampleSize (10 per variant, 2 variants = 20 minimum)
-    for (let i = 0; i < 20; i++) {
-      const cId = `user_ctrl_${i}`;
-      db.insertExperimentAssignment({
-        id: `asg_ctrl_${i}`,
-        tenant_id: tenantId,
-        experiment_id: exp.id,
-        customer_id: cId,
-        assigned_variant_id: "control",
-        assigned_at: new Date().toISOString(),
-        has_converted: false,
-      });
-      if (i < 3) {
-        experimentService.recordConversion({
-          tenantId,
-          experimentId: exp.id,
-          customerId: cId,
-          orderValueBdt: 1500,
-        });
-      }
-
-      const vId = `user_var_${i}`;
-      db.insertExperimentAssignment({
-        id: `asg_var_${i}`,
-        tenant_id: tenantId,
-        experiment_id: exp.id,
-        customer_id: vId,
-        assigned_variant_id: "variant_a",
-        assigned_at: new Date().toISOString(),
-        has_converted: false,
-      });
-      if (i < 10) {
-        experimentService.recordConversion({
-          tenantId,
-          experimentId: exp.id,
-          customerId: vId,
-          orderValueBdt: 1500,
-        });
-      }
-    }
-
-    const evalResult = experimentService.evaluateExperiment(tenantId, exp.id);
-    assert.strictEqual(evalResult.winner_variant_id, "variant_a");
-    assert.strictEqual(evalResult.status, "WINNER_DETERMINED");
-    assert.strictEqual(typeof evalResult.variant_metrics["variant_a"].p_value, "number");
-  });
-
-  // ============================================================
-  // Gate 10: Multi-Touch Attribution Modeling
-  // ============================================================
-  console.log(`\n${ANSI_BOLD}Gate 10: Multi-Touch Attribution & Incremental Revenue${ANSI_RESET}`);
-
-  await runTest("Calculates multi-touch attribution across LAST_TOUCH, FIRST_TOUCH, and LINEAR", () => {
-    const touchpoints = [
-      {
-        campaign_id: "cmp_first",
-        channel: "WHATSAPP" as const,
-        touched_at: new Date(Date.now() - 5 * 86400000).toISOString(),
-      },
-      {
-        campaign_id: "cmp_last",
-        channel: "INSTAGRAM" as const,
-        touched_at: new Date(Date.now() - 1 * 86400000).toISOString(),
-      },
-    ];
-
-    const orderAmount = 5000;
-
-    const lastTouch = attributionService.attributeOrder({
-      tenantId,
-      orderId: "ord_attr_1",
-      customerId: cust1.id,
-      orderTotalBdt: orderAmount,
-      touchpoints,
-      model: "LAST_TOUCH",
-    });
-    assert.strictEqual(lastTouch.campaign_credits["cmp_last"].attributed_revenue_bdt, 5000);
-
-    const firstTouch = attributionService.attributeOrder({
-      tenantId,
-      orderId: "ord_attr_2",
-      customerId: cust1.id,
-      orderTotalBdt: orderAmount,
-      touchpoints,
-      model: "FIRST_TOUCH",
-    });
-    assert.strictEqual(firstTouch.campaign_credits["cmp_first"].attributed_revenue_bdt, 5000);
-
-    const linear = attributionService.attributeOrder({
-      tenantId,
-      orderId: "ord_attr_3",
-      customerId: cust1.id,
-      orderTotalBdt: orderAmount,
-      touchpoints,
-      model: "LINEAR",
-    });
-    assert.strictEqual(linear.campaign_credits["cmp_first"].attributed_revenue_bdt, 2500);
-    assert.strictEqual(linear.campaign_credits["cmp_last"].attributed_revenue_bdt, 2500);
-  });
-
-  // ============================================================
   // Gate 11: 7-Factor Explainable Growth Recommendations
   // ============================================================
   console.log(`\n${ANSI_BOLD}Gate 11: 7-Factor Explainable Growth Recommendations${ANSI_RESET}`);
@@ -728,38 +464,32 @@ export async function runGrowthTests() {
     assert.ok(taskTypes.includes("DRAFT_PERSONALIZED_CAMPAIGN"));
   });
 
-  await runTest("Verifies all 18 Phase 7 marketing tools registered in ToolRegistry", () => {
+  await runTest("Registers the 9 marketing tools; the campaign and attribution tools are gone", () => {
     const tools = toolRegistry.getToolsByCategory("MARKETING");
-    assert.strictEqual(tools.length, 18, `Must have exactly 18 MARKETING tools registered, found ${tools.length}`);
-
-    const toolNames = tools.map((t) => t.name);
-    assert.ok(toolNames.includes("get_audience"));
-    assert.ok(toolNames.includes("create_audience"));
-    assert.ok(toolNames.includes("evaluate_segment"));
-    assert.ok(toolNames.includes("get_customer_lifecycle"));
-    assert.ok(toolNames.includes("get_product_recommendations"));
-    assert.ok(toolNames.includes("get_campaign_metrics"));
-    assert.ok(toolNames.includes("create_campaign_draft"));
-    assert.ok(toolNames.includes("generate_content"));
-    assert.ok(toolNames.includes("validate_content"));
-    assert.ok(toolNames.includes("simulate_campaign"));
-    assert.ok(toolNames.includes("check_consent"));
-    assert.ok(toolNames.includes("check_frequency_cap"));
-    assert.ok(toolNames.includes("schedule_campaign"));
-    assert.ok(toolNames.includes("send_campaign"));
-    assert.ok(toolNames.includes("pause_campaign"));
-    assert.ok(toolNames.includes("resume_campaign"));
-    assert.ok(toolNames.includes("get_campaign_result"));
-    assert.ok(toolNames.includes("get_attribution"));
+    const toolNames = tools.map((t) => t.name).sort();
+    assert.deepStrictEqual(toolNames, [
+      "check_consent",
+      "check_frequency_cap",
+      "create_audience",
+      "evaluate_segment",
+      "generate_content",
+      "get_audience",
+      "get_customer_lifecycle",
+      "get_product_recommendations",
+      "validate_content",
+    ]);
+    for (const removed of ["get_campaign_metrics", "create_campaign_draft", "simulate_campaign", "schedule_campaign", "send_campaign", "pause_campaign", "resume_campaign", "get_campaign_result", "get_attribution"]) {
+      assert.strictEqual(toolRegistry.getTool(removed), undefined, removed);
+    }
   });
 
-  await runTest("A missing audience, campaign or journey id is a 404, not a 500 (GET and PUT)", async () => {
+  await runTest("A missing audience id is a 404, not a 500 (GET and PUT)", async () => {
     const shop = await AuthService.registerTenantWithOwner({
       email: `growth_404_${randomUUID().slice(0, 8)}@growth.test`, password: "Growth-404-Pass-8812!", name: "Growth Owner", workspaceName: "Growth 404 Shop",
     });
     const headers = { authorization: `Bearer ${shop.token}`, "content-type": "application/json" };
     type Handler = (r: Request, ctx: { params: Promise<{ id: string }> }) => Promise<Response>;
-    for (const resource of ["audiences", "campaigns", "journeys"]) {
+    for (const resource of ["audiences"]) {
       const mod = (await import(`@/app/api/v1/growth/${resource}/[id]/route`)) as Record<string, Handler | undefined>;
       for (const method of ["GET", "PUT"] as const) {
         const handler = mod[method];

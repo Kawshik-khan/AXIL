@@ -1,6 +1,6 @@
 /**
  * CommerceOS Phase 7: Growth Supervisor & Multi-Agent Planning Agent
- * Formulates validated multi-agent DAGs for revenue acceleration, customer retention, and campaign execution.
+ * Formulates validated multi-agent DAGs for revenue acceleration and customer retention.
  */
 
 import { AgentType } from "@/types/ai";
@@ -59,28 +59,12 @@ export class GrowthSupervisorAgent {
           required_tools: ["generate_content", "validate_content"],
         },
         {
-          task_type: "SIMULATE_CAMPAIGN_IMPACT",
-          objective: "Simulate campaign reach, order velocity, discount margin impact, and projected ROI",
-          agent_type: "SIMULATION",
-          dependencies: ["DRAFT_PERSONALIZED_CAMPAIGN"],
-          risk_level: "LOW",
-          required_tools: ["simulate_campaign"],
-        },
-        {
           task_type: "VERIFY_COMMERCE_INVARIANTS",
           objective: "Verify product stock availability and price accuracy against Commerce Core",
           agent_type: "VERIFIER",
-          dependencies: ["SIMULATE_CAMPAIGN_IMPACT"],
+          dependencies: ["DRAFT_PERSONALIZED_CAMPAIGN"],
           risk_level: "LOW",
           required_tools: ["validate_content"],
-        },
-        {
-          task_type: "SUBMIT_APPROVAL_GATE",
-          objective: "Submit campaign proposal to Phase 5 Approval Engine if risk exceeds policy limit",
-          agent_type: "SUPERVISOR",
-          dependencies: ["VERIFY_COMMERCE_INVARIANTS"],
-          risk_level: "HIGH",
-          required_tools: ["schedule_campaign"],
         },
       ];
 
@@ -99,14 +83,6 @@ export class GrowthSupervisorAgent {
           required_tools: ["get_audience"],
         },
         {
-          task_type: "EVALUATE_WINBACK_OFFER",
-          objective: "Select and simulate margin safety of 15% win-back comeback offer",
-          agent_type: "OFFER_AGENT",
-          dependencies: ["QUERY_DORMANT_CUSTOMERS"],
-          risk_level: "LOW",
-          required_tools: ["simulate_campaign"],
-        },
-        {
           task_type: "CHECK_CONSENT_AND_CAPS",
           objective: "Filter dormant audience by active WhatsApp marketing consent and frequency caps",
           agent_type: "CUSTOMER_LIFECYCLE",
@@ -118,7 +94,7 @@ export class GrowthSupervisorAgent {
           task_type: "GENERATE_WINBACK_BROADCAST",
           objective: "Draft personalized win-back message variants with valid coupon code",
           agent_type: "CONTENT_AGENT",
-          dependencies: ["EVALUATE_WINBACK_OFFER", "CHECK_CONSENT_AND_CAPS"],
+          dependencies: ["CHECK_CONSENT_AND_CAPS"],
           risk_level: "MEDIUM",
           required_tools: ["generate_content"],
         },
@@ -151,7 +127,7 @@ export class GrowthSupervisorAgent {
         agent_type: "GROWTH_STRATEGIST",
         dependencies: ["AUDIT_LIFECYCLE_FUNNEL"],
         risk_level: "LOW",
-        required_tools: ["get_campaign_metrics"],
+        required_tools: ["generate_growth_recommendations"],
       },
     ];
 

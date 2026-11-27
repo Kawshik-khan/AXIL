@@ -286,7 +286,7 @@ export class AgentRegistryService {
       description: "Structures multi-touch marketing campaigns, predicts conversion/margin impact, and enforces approval safety tiers.",
       version: "1.0.0",
       capabilities: ["CAMPAIGN_PLANNING", "CAMPAIGN_SIMULATION", "RISK_TIERING"],
-      allowed_tools: ["create_campaign_plan", "simulate_campaign", "simulate_offer"],
+      allowed_tools: ["create_campaign_plan", "simulate_offer"],
       max_risk_level: "HIGH",
       timeout_ms: 20000,
       max_iterations: 5,

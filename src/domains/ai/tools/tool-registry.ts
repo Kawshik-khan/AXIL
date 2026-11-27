@@ -32,19 +32,10 @@ import {
   EvaluateSegmentTool,
   GetCustomerLifecycleTool,
   GetProductRecommendationsTool,
-  GetCampaignMetricsTool,
-  CreateCampaignDraftTool,
   GenerateContentTool,
   ValidateContentTool,
-  SimulateCampaignTool,
   CheckConsentTool,
   CheckFrequencyCapTool,
-  ScheduleCampaignTool,
-  SendCampaignTool,
-  PauseCampaignTool,
-  ResumeCampaignTool,
-  GetCampaignResultTool,
-  GetAttributionTool,
 } from "./implementations/growth-tools";
 import {
   GetInventoryLevelsTool,
@@ -152,19 +143,10 @@ export class ToolRegistry {
     this.register(new EvaluateSegmentTool());
     this.register(new GetCustomerLifecycleTool());
     this.register(new GetProductRecommendationsTool());
-    this.register(new GetCampaignMetricsTool());
-    this.register(new CreateCampaignDraftTool());
     this.register(new GenerateContentTool());
     this.register(new ValidateContentTool());
-    this.register(new SimulateCampaignTool());
     this.register(new CheckConsentTool());
     this.register(new CheckFrequencyCapTool());
-    this.register(new ScheduleCampaignTool());
-    this.register(new SendCampaignTool());
-    this.register(new PauseCampaignTool());
-    this.register(new ResumeCampaignTool());
-    this.register(new GetCampaignResultTool());
-    this.register(new GetAttributionTool());
 
     // Phase 8 Operational Tools
     this.register(new GetInventoryLevelsTool());

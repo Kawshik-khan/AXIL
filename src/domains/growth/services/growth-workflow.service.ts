@@ -1,7 +1,7 @@
 import { AppError } from "@/lib/errors";
 /**
  * CommerceOS Phase 7: Canonical Growth Workflows Service
- * Implements the 7 core automated lifecycle, recovery, retention, and executive growth workflows.
+ * Implements the core automated lifecycle, recovery, retention, and executive growth workflows.
  */
 
 import { db } from "@/infrastructure/db";
@@ -9,10 +9,8 @@ import { audienceService } from "./audience.service";
 import { customerLifecycleService } from "./customer-lifecycle.service";
 import { consentService, frequencyCappingService } from "./consent.service";
 import { productRecommendationService } from "./product-recommendation.service";
-import { campaignService } from "./campaign.service";
 import { offerService } from "./offer.service";
 import { growthIntelligenceService } from "./growth-intelligence.service";
-import { experimentService } from "./experiment.service";
 import { COMMERCE_ANALYTICS_COLLECTIONS, loadTenantRows } from "@/infrastructure/db/tenant-rows";
 
 export interface WorkflowExecutionResult {
@@ -152,28 +150,7 @@ export class GrowthWorkflowService {
   }
 
   /**
-   * Workflow 6: Campaign Optimization & A/B Experimentation
-   */
-  public async runCampaignOptimization(tenantId: string, campaignId: string): Promise<WorkflowExecutionResult> {
-    const campaign = db.getCampaignById(tenantId, campaignId);
-    if (!campaign) throw new AppError("NOT_FOUND", `Campaign not found: ${campaignId}`, 404);
-
-    // Check if experiment is active or create experiment recommendation
-    return {
-      workflow_type: "CAMPAIGN_OPTIMIZATION",
-      tenant_id: tenantId,
-      status: "COMPLETED",
-      details: {
-        campaign_id: campaignId,
-        status: campaign.status,
-        optimization_action: "EVALUATED_VARIANT_PERFORMANCE",
-      },
-      executed_at: new Date().toISOString(),
-    };
-  }
-
-  /**
-   * Workflow 7: Daily Growth Brief
+   * Workflow 6: Daily Growth Brief
    */
   public runDailyGrowthBrief(tenantId: string): {
     workflow_type: string;
@@ -183,13 +160,10 @@ export class GrowthWorkflowService {
     metrics: Record<string, number>;
     executed_at: string;
   } {
-    const campaigns = db.getCampaigns(tenantId);
     const lifecycles = db.getCustomerLifecycles(tenantId);
     const insights = growthIntelligenceService.detectGrowthInsights(tenantId);
     const recs = growthIntelligenceService.generateGrowthRecommendations(tenantId);
 
-    const activeCampaigns = campaigns.filter((c) => c.status === "RUNNING" || c.status === "SCHEDULED").length;
-    const totalRev = campaigns.reduce((sum, c) => sum + (c.result_metrics?.attributed_revenue_bdt || 0), 0);
     const atRiskCount = lifecycles.filter((l) => l.stage === "AT_RISK" || l.stage === "DORMANT").length;
 
     const digest = [
@@ -197,8 +171,6 @@ export class GrowthWorkflowService {
       `**Tenant**: ${tenantId}`,
       "",
       `### Executive Growth KPIs`,
-      `- **Active Campaigns**: ${activeCampaigns}`,
-      `- **Attributed Campaign Revenue**: ৳${totalRev.toLocaleString()}`,
       `- **At-Risk & Dormant Customers**: ${atRiskCount}`,
       `- **Open Growth Insights**: ${insights.length}`,
       "",
@@ -212,8 +184,6 @@ export class GrowthWorkflowService {
       status: "COMPLETED",
       digest_markdown: digest,
       metrics: {
-        active_campaigns: activeCampaigns,
-        total_attributed_revenue_bdt: totalRev,
         at_risk_customers_count: atRiskCount,
         open_insights_count: insights.length,
       },

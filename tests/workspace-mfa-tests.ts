@@ -193,38 +193,38 @@ async function main() {
 
   await runTest("a step-up for one action doesn't confirm another, and the refusal names the action to ask for", async () => {
     await withEnforcement("2020-01-01", async () => {
-      assert.strictEqual(await code(() => requireStepUp(ctx(true, userId, "APPROVE_PRICE_CHANGE"), "APPROVE_CAMPAIGN")), "STEP_UP_REQUIRED");
+      assert.strictEqual(await code(() => requireStepUp(ctx(true, userId, "APPROVE_PRICE_CHANGE"), "APPROVE_DECISION")), "STEP_UP_REQUIRED");
       try {
-        await requireStepUp(ctx(false), "APPROVE_CAMPAIGN");
+        await requireStepUp(ctx(false), "APPROVE_DECISION");
         assert.fail("expected a refusal");
       } catch (err) {
         assert.ok(err instanceof AppError);
-        assert.deepStrictEqual(err.details, { action: "APPROVE_CAMPAIGN" });
+        assert.deepStrictEqual(err.details, { action: "APPROVE_DECISION" });
       }
     });
   });
 
   await runTest("a step-up token confirms one action once: a second use is refused and asks for a new code", async () => {
     await withEnforcement("2020-01-01", async () => {
-      const token = await signStepUpToken(userId, `${WORKSPACE_STEP_UP_PREFIX}APPROVE_CAMPAIGN`, db.findUserById(userId)?.session_version ?? 1, tenantId);
-      const mod = (await import("@/app/api/v1/growth/campaigns/[id]/approve/route")) as {
+      const token = await signStepUpToken(userId, `${WORKSPACE_STEP_UP_PREFIX}APPROVE_DECISION`, db.findUserById(userId)?.session_version ?? 1, tenantId);
+      const mod = (await import("@/app/api/v1/autonomous/decisions/[id]/approve/route")) as {
         POST: (r: Request, c: { params: Promise<{ id: string }> }) => Promise<Response>;
       };
       const approve = async (id: string) =>
         mod.POST(
-          new Request(`${BASE}/growth/campaigns/${id}/approve`, { method: "POST", headers: { authorization: `Bearer ${await session()}`, "x-step-up-token": token } }),
+          new Request(`${BASE}/autonomous/decisions/${id}/approve`, { method: "POST", headers: { authorization: `Bearer ${await session()}`, "x-step-up-token": token } }),
           { params: Promise.resolve({ id }) }
         );
-      assert.strictEqual((await approve("cmp_first")).status, 404, "the first use passes step-up (no such campaign)");
-      const second = await approve("cmp_second");
+      assert.strictEqual((await approve("dec_first")).status, 404, "the first use passes step-up (no such decision)");
+      const second = await approve("dec_second");
       assert.strictEqual(second.status, 403, "a second item with the same code is refused");
       const body = (await second.json()) as { error?: { code: string; message: string; details?: { action?: string } } };
       assert.strictEqual(body.error?.code, "STEP_UP_REQUIRED");
-      assert.strictEqual(body.error?.details?.action, "APPROVE_CAMPAIGN");
+      assert.strictEqual(body.error?.details?.action, "APPROVE_DECISION");
       assert.ok(/already used/.test(body.error?.message ?? ""), body.error?.message);
       // A token without an id (issued before this change) is never accepted
-      const ctxNoJti = { ...ctx(true, userId, "APPROVE_CAMPAIGN"), stepUpJti: undefined };
-      assert.strictEqual(await code(() => requireStepUp(ctxNoJti, "APPROVE_CAMPAIGN")), "STEP_UP_REQUIRED");
+      const ctxNoJti = { ...ctx(true, userId, "APPROVE_DECISION"), stepUpJti: undefined };
+      assert.strictEqual(await code(() => requireStepUp(ctxNoJti, "APPROVE_DECISION")), "STEP_UP_REQUIRED");
     });
   });
 
@@ -246,7 +246,7 @@ async function main() {
     });
   });
 
-  await runTest("enforced: campaign, broadcast and decision approvals, resuming sends, clearing the autonomy stop and replenishment need step-up", async () => {
+  await runTest("enforced: decision approvals, clearing the autonomy stop and replenishment need step-up", async () => {
     await withEnforcement("2020-01-01", async () => {
       type IdHandler = (r: Request, c: { params: Promise<{ id: string }> }) => Promise<Response>;
       const post = async (path: string, body: unknown, id?: string, headers: Record<string, string> = {}) => {
@@ -265,9 +265,7 @@ async function main() {
         assert.strictEqual(body.error?.code, "STEP_UP_REQUIRED");
         assert.strictEqual(body.error?.details?.action, action);
       };
-      await refused(await post("growth/campaigns/[id]/approve", {}, "cmp_none"), "APPROVE_CAMPAIGN");
-      await refused(await post("marketing/broadcasts/[id]/approve", {}, "bc_none"), "APPROVE_BROADCAST");
-      await refused(await post("marketing/broadcasts/kill-switch", { active: false }), "RESUME_BROADCASTS");
+      await refused(await post("autonomous/decisions/[id]/approve", {}, "dec_none"), "APPROVE_DECISION");
       await refused(await post("operations/autonomy/kill-switch", { action: "CLEAR" }), "CLEAR_AUTONOMY_KILL_SWITCH");
       await refused(await post("operations/tasks", { workflow_type: "LOW_STOCK_REPLENISHMENT" }), "RUN_REPLENISHMENT");
       await refused(await post("operations/tasks", { workflow_type: "STOCKOUT_REORDER" }), "RUN_REPLENISHMENT");
@@ -275,14 +273,13 @@ async function main() {
       await refused(await post("operations/tasks", { workflow_type: "STOCKOUT_PREVENTION" }), "RUN_REPLENISHMENT");
       await refused(await post("operations/tasks", { workflow_type: "WAREHOUSE_BALANCING" }), "RUN_REPLENISHMENT");
       // Stopping is never slowed down by step-up
-      assert.strictEqual((await post("marketing/broadcasts/kill-switch", { active: true })).status, 200);
       assert.strictEqual((await post("operations/autonomy/kill-switch", { action: "TRIGGER", reason: "test" })).status, 200);
       // A token for another action doesn't help; one for this action reaches the lookup
       const sv = db.findUserById(userId)?.session_version ?? 1;
       const wrong = await signStepUpToken(userId, `${WORKSPACE_STEP_UP_PREFIX}APPROVE_PRICE_CHANGE`, sv, tenantId);
-      await refused(await post("growth/campaigns/[id]/approve", {}, "cmp_none", { "x-step-up-token": wrong }), "APPROVE_CAMPAIGN");
-      const right = await signStepUpToken(userId, `${WORKSPACE_STEP_UP_PREFIX}APPROVE_CAMPAIGN`, sv, tenantId);
-      assert.strictEqual((await post("growth/campaigns/[id]/approve", {}, "cmp_none", { "x-step-up-token": right })).status, 404);
+      await refused(await post("autonomous/decisions/[id]/approve", {}, "dec_none", { "x-step-up-token": wrong }), "APPROVE_DECISION");
+      const right = await signStepUpToken(userId, `${WORKSPACE_STEP_UP_PREFIX}APPROVE_DECISION`, sv, tenantId);
+      assert.strictEqual((await post("autonomous/decisions/[id]/approve", {}, "dec_none", { "x-step-up-token": right })).status, 404);
     });
   });
 
@@ -340,7 +337,7 @@ async function main() {
       seen.push(token);
       return token === "tok_ok"
         ? new Response(JSON.stringify({ data: { ok: true } }), { status: 200 })
-        : new Response(JSON.stringify({ error: { code: "STEP_UP_REQUIRED", message: "code please", details: { action: "APPROVE_BROADCAST" } } }), { status: 403 });
+        : new Response(JSON.stringify({ error: { code: "STEP_UP_REQUIRED", message: "code please", details: { action: "APPROVE_DECISION" } } }), { status: 403 });
     }) as typeof fetch;
     try {
       const asked: string[] = [];
@@ -348,9 +345,9 @@ async function main() {
         asked.push(`${req.reason}:${req.action}`);
         return "tok_ok";
       });
-      const ok = await fetchWithStepUp("/api/v1/marketing/broadcasts/b1/approve", { method: "POST", headers: { "content-type": "application/json" } });
+      const ok = await fetchWithStepUp("/api/v1/autonomous/decisions/d1/approve", { method: "POST", headers: { "content-type": "application/json" } });
       assert.strictEqual(ok.status, 200);
-      assert.deepStrictEqual(asked, ["STEP_UP_REQUIRED:APPROVE_BROADCAST"]);
+      assert.deepStrictEqual(asked, ["STEP_UP_REQUIRED:APPROVE_DECISION"]);
       assert.deepStrictEqual(seen, [null, "tok_ok"]);
 
       seen.length = 0;

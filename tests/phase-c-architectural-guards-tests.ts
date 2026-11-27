@@ -142,7 +142,6 @@ async function main() {
     const inspectedFiles = [
       "src/domains/analytics/analytics.service.ts",
       "src/domains/growth/services/customer-lifecycle.service.ts",
-      "src/domains/growth/services/campaign.service.ts",
       "src/domains/growth/services/growth-intelligence.service.ts",
       "src/domains/intelligence/services/customer-intelligence.service.ts",
       "src/domains/autonomous/services/unified-context.service.ts",
