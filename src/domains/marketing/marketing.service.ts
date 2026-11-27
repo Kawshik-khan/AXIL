@@ -12,7 +12,7 @@ import {
   Audience,
   MarketingChannelType,
 } from "@/types/growth";
-import { audienceService, segmentEngineService } from "@/domains/growth/services/audience.service";
+import { audienceService } from "@/domains/growth/services/audience.service";
 import { contentService } from "@/domains/growth/services/content.service";
 import { consentService, frequencyCappingService } from "@/domains/growth/services/consent.service";
 import { marketingChannelService } from "@/domains/growth/services/marketing-channel.service";
@@ -326,110 +326,34 @@ export class MarketingService {
    */
 
   /**
-   * Segment-evaluation context for every customer of the tenant, built once with maps:
-   * O(customers + orders + shipments + carts) instead of scanning orders and shipments per customer (FX-23).
-   */
-  private buildSegmentContexts(tenantId: string) {
-    const customers = db.getAllCustomers(tenantId);
-    const orders = db.getAllOrders(tenantId);
-    const returnedOrderIds = new Set(db.getShipments(tenantId).filter((s) => s.status === "RETURNED").map((s) => s.order_id));
-    const customersWithOpenCart = new Set(
-      db.getAbandonedCarts(tenantId).filter((c) => c.recovery_stage !== "RECOVERED").map((c) => c.customer_id)
-    );
-    const ordersByCustomer = new Map<string, typeof orders>();
-    for (const o of orders) {
-      const list = ordersByCustomer.get(o.customer_id);
-      if (list) list.push(o);
-      else ordersByCustomer.set(o.customer_id, [o]);
-    }
-    const now = Date.now();
-
-    return customers.map((cust) => {
-      const custOrders = ordersByCustomer.get(cust.id) ?? [];
-      const totalSpend = custOrders.reduce((sum, o) => sum + (o.grand_total || 0), 0);
-      const orderCount = custOrders.length;
-      const avgOrderVal = orderCount > 0 ? Math.round(totalSpend / orderCount) : 0;
-
-      const timestamps = custOrders
-        .map((o) => new Date(o.created_at).getTime())
-        .filter((t) => !isNaN(t))
-        .sort((a, b) => b - a);
-
-      const lastPurchaseDaysAgo = timestamps.length > 0 ? Math.floor((now - timestamps[0]) / 86400000) : 999;
-      const firstPurchaseDaysAgo = timestamps.length > 0 ? Math.floor((now - timestamps[timestamps.length - 1]) / 86400000) : 999;
-
-      const hasAbandonedCart = customersWithOpenCart.has(cust.id);
-      const hasReturnedOrder = custOrders.some((o) => returnedOrderIds.has(o.id));
-
-      const context = {
-        customer: cust,
-        orderCount,
-        totalSpend,
-        averageOrderValue: avgOrderVal,
-        lastPurchaseDaysAgo,
-        firstPurchaseDaysAgo,
-        lifecycleStage: orderCount > 2 ? "LOYAL" : orderCount >= 1 ? "REPEAT" : "NEW",
-        purchasedProductIds: [],
-        purchasedCategories: [],
-        hasReturnedOrder,
-        hasFailedPayment: false,
-        hasAbandonedCart,
-      };
-      return { cust, totalSpend, orderCount, lastPurchaseDaysAgo, hasAbandonedCart, context };
-    });
-  }
-
-  /**
-   * Returns all audience cohorts with current estimated member size
+   * Audiences with their size counted against the shop's customers now. Sizes come from the same evaluator that
+   * creates and refreshes audiences (AudienceService), so the list, the members and a refresh always agree.
    */
   public getAudienceCohorts(tenantId: string): Audience[] {
     const audiences = db.getAudiences(tenantId);
-    const contexts = this.buildSegmentContexts(tenantId); // once for all audiences
-
-    return audiences.map((aud) => {
-      // Deterministically evaluate size against rule groups
-      let matchCount = 0;
-      for (const { context } of contexts) {
-        if (aud.rule_groups.every((rg) => segmentEngineService.evaluateRuleGroup(context, rg))) matchCount++;
-      }
-
-      const size = matchCount > 0 ? matchCount : aud.estimated_size;
-
-      return {
-        ...aud,
-        estimated_size: size,
-      };
-    });
+    const members = audienceService.evaluateMembers(tenantId, audiences); // contexts built once for all audiences
+    return audiences.map((aud) => ({ ...aud, estimated_size: members.get(aud.id)?.length ?? 0 }));
   }
 
   /**
    * Evaluates and returns customer members for an audience cohort
    */
-  public getAudienceMembers(tenantId: string, audienceId: string): any[] {
+  public getAudienceMembers(tenantId: string, audienceId: string) {
     const audience = db.getAudienceById(tenantId, audienceId);
     if (!audience || audience.tenant_id !== tenantId) {
       throw new AppError("NOT_FOUND", `Audience not found: ${audienceId}`, 404);
     }
-
-    const matchedMembers: any[] = [];
-
-    for (const { cust, totalSpend, orderCount, lastPurchaseDaysAgo, hasAbandonedCart, context } of this.buildSegmentContexts(tenantId)) {
-      const matches = audience.rule_groups.every((rg) => segmentEngineService.evaluateRuleGroup(context, rg));
-      if (matches || audience.rule_groups.length === 0) {
-        matchedMembers.push({
-          id: cust.id,
-          name: `${cust.first_name} ${cust.last_name || ""}`.trim(),
-          phone: cust.phone,
-          email: cust.email || "N/A",
-          total_spend_bdt: totalSpend,
-          order_count: orderCount,
-          last_purchase_days_ago: lastPurchaseDaysAgo,
-          has_abandoned_cart: hasAbandonedCart,
-        });
-      }
-    }
-
-    return matchedMembers;
+    const members = audienceService.evaluateMembers(tenantId, [audience]).get(audience.id) ?? [];
+    return members.map((m) => ({
+      id: m.customer.id,
+      name: `${m.customer.first_name} ${m.customer.last_name || ""}`.trim(),
+      phone: m.customer.phone,
+      email: m.customer.email || "N/A",
+      total_spend_bdt: m.totalSpend,
+      order_count: m.orderCount,
+      last_purchase_days_ago: m.lastPurchaseDaysAgo,
+      has_abandoned_cart: m.hasAbandonedCart,
+    }));
   }
 
   /**

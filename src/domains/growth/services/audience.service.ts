@@ -137,6 +137,15 @@ export class SegmentEngineService {
 
 export const segmentEngineService = new SegmentEngineService();
 
+/** What an audience member was matched on, for the members list. */
+export interface AudienceMemberFacts {
+  customer: { id: string; first_name: string; last_name?: string; phone: string; email?: string };
+  totalSpend: number;
+  orderCount: number;
+  lastPurchaseDaysAgo: number;
+  hasAbandonedCart: boolean;
+}
+
 export class AudienceService {
   /**
    * Builds customer evaluation context for a tenant's customers
@@ -147,6 +156,10 @@ export class AudienceService {
     const payments = db.getPayments(tenantId);
     const shipments = db.getShipments(tenantId);
     const lifecycles = db.getCustomerLifecycles(tenantId);
+    // A cart counts until it is recovered (it was always false here, so "has_abandoned_cart" matched nobody)
+    const customersWithOpenCart = new Set(
+      db.getAbandonedCarts(tenantId).filter((c) => c.recovery_stage !== "RECOVERED").map((c) => c.customer_id)
+    );
 
     // Phase 6 RFM / LTV intelligence, computed in memory: evaluating an audience must not store a snapshot (FX-21)
     let intelProfiles: ReturnType<typeof customerIntelligenceService.computeCustomers> = [];
@@ -214,7 +227,7 @@ export class AudienceService {
         purchasedCategories,
         hasReturnedOrder,
         hasFailedPayment,
-        hasAbandonedCart: false,
+        hasAbandonedCart: customersWithOpenCart.has(c.id),
       };
     });
   }
@@ -257,36 +270,48 @@ export class AudienceService {
     return audience;
   }
 
+  /** Whether one customer context belongs to an audience: every rule group, then a predictive audience's threshold. */
+  private matchesAudience(audience: Audience, ctx: any): boolean {
+    // All rule groups must match (AND between groups); an audience without rules holds everyone
+    if (audience.rule_groups && audience.rule_groups.length > 0) {
+      if (!audience.rule_groups.every((rg) => segmentEngineService.evaluateRuleGroup(ctx, rg))) return false;
+    }
+    if (audience.type === "PREDICTIVE" && audience.predictive_metadata) {
+      if ((ctx.predictedLtvBdt || 0) < audience.predictive_metadata.score_threshold) return false;
+    }
+    return true;
+  }
+
   /**
    * Evaluates audience membership against live customer records
    */
   public evaluateAudienceMembership(tenantId: string, audience: Audience): { memberIds: string[] } {
     const contexts = this.buildCustomerContexts(tenantId);
-    const memberIds: string[] = [];
+    return { memberIds: contexts.filter((ctx) => this.matchesAudience(audience, ctx)).map((ctx) => ctx.customer.id) };
+  }
 
-    for (const ctx of contexts) {
-      let isMatch = true;
-
-      if (audience.rule_groups && audience.rule_groups.length > 0) {
-        // All rule groups must match (AND between groups)
-        isMatch = audience.rule_groups.every((rg) => segmentEngineService.evaluateRuleGroup(ctx, rg));
-      }
-
-      // If predictive segment, enforce score threshold
-      if (isMatch && audience.type === "PREDICTIVE" && audience.predictive_metadata) {
-        const threshold = audience.predictive_metadata.score_threshold;
-        const ltv = ctx.predictedLtvBdt || 0;
-        if (ltv < threshold) {
-          isMatch = false;
-        }
-      }
-
-      if (isMatch) {
-        memberIds.push(ctx.customer.id);
-      }
+  /**
+   * Members of each audience with the figures they were matched on. The one evaluator for sizes, members, creation
+   * and refresh (the Marketing page had its own, which never set churn risk); contexts are built once for all.
+   */
+  public evaluateMembers(tenantId: string, audiences: Audience[]): Map<string, AudienceMemberFacts[]> {
+    const contexts = this.buildCustomerContexts(tenantId);
+    const result = new Map<string, AudienceMemberFacts[]>();
+    for (const audience of audiences) {
+      result.set(
+        audience.id,
+        contexts
+          .filter((ctx) => this.matchesAudience(audience, ctx))
+          .map((ctx) => ({
+            customer: ctx.customer,
+            totalSpend: ctx.totalSpend,
+            orderCount: ctx.orderCount,
+            lastPurchaseDaysAgo: ctx.lastPurchaseDaysAgo,
+            hasAbandonedCart: ctx.hasAbandonedCart,
+          }))
+      );
     }
-
-    return { memberIds };
+    return result;
   }
 
   /**

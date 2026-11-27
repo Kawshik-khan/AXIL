@@ -402,6 +402,34 @@ export async function runMarketingTests() {
     assert.ok(members.some((m) => m.id === custDormant.id));
   });
 
+  await runTest("Churn-risk and abandoned-cart audiences have members, and list sizes match them (one evaluator)", async () => {
+    const churn = marketingService.createAudienceCohort({
+      tenantId,
+      name: "At-risk (churn HIGH)",
+      description: "",
+      type: "DYNAMIC",
+      ruleGroups: [{ conjunction: "AND", conditions: [{ field: "churn_risk_level", operator: "EQUALS", value: "HIGH" }] }],
+    });
+    const churnMembers = marketingService.getAudienceMembers(tenantId, churn.id);
+    assert.ok(churnMembers.some((m) => m.id === custDormant.id), "a customer quiet for 60+ days is high churn risk");
+
+    const openCart = db.getAbandonedCarts(tenantId).find((c) => c.recovery_stage !== "RECOVERED");
+    assert.ok(openCart, "fixture has an open cart");
+    const carts = marketingService.createAudienceCohort({
+      tenantId,
+      name: "Open carts",
+      description: "",
+      type: "DYNAMIC",
+      ruleGroups: [{ conjunction: "AND", conditions: [{ field: "has_abandoned_cart", operator: "EQUALS", value: true }] }],
+    });
+    assert.ok(carts.estimated_size > 0, "creation counts open carts (it used to count none)");
+    assert.ok(marketingService.getAudienceMembers(tenantId, carts.id).some((m) => m.id === openCart.customer_id));
+
+    const sizes = new Map(marketingService.getAudienceCohorts(tenantId).map((a) => [a.id, a.estimated_size]));
+    assert.strictEqual(sizes.get(churn.id), churnMembers.length);
+    assert.strictEqual(sizes.get(carts.id), carts.estimated_size);
+  });
+
   // ----------------------------------------------------------------------
   // SUITE 5: MARKETING OVERVIEW KPIS & AI COPILOT
   // ----------------------------------------------------------------------
