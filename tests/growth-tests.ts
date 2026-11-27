@@ -506,6 +506,26 @@ export async function runGrowthTests() {
     }
   });
 
+  await runTest("Creating a PREDICTIVE audience keeps its predictive_metadata; a malformed one is a 400", async () => {
+    const shop = await AuthService.registerTenantWithOwner({
+      email: `growth_pred_${randomUUID().slice(0, 8)}@growth.test`, password: "Growth-Pred-Pass-8812!", name: "Growth Owner", workspaceName: "Growth Predictive Shop",
+    });
+    const headers = { authorization: `Bearer ${shop.token}`, "content-type": "application/json" };
+    const mod = (await import("@/app/api/v1/growth/audiences/route")) as { POST: (r: Request) => Promise<Response> };
+    const metadata = { model_name: "churn", model_version: "1.0", score_threshold: 0.7, data_window_days: 90, generated_at: new Date().toISOString() };
+    const post = (body: unknown) =>
+      mod.POST(new NextRequest("http://localhost:3000/api/v1/growth/audiences", { method: "POST", headers, body: JSON.stringify(body) }));
+
+    const ok = await post({ name: "Likely to churn", type: "PREDICTIVE", rule_groups: [], predictive_metadata: metadata });
+    const okBody = await ok.json();
+    assert.strictEqual(ok.status, 201, JSON.stringify(okBody));
+    const stored = db.getAudienceById(shop.tenant.id, okBody.data.audience.id);
+    assert.strictEqual(stored?.predictive_metadata?.score_threshold, 0.7, "the threshold must reach the service");
+
+    const bad = await post({ name: "Broken", type: "PREDICTIVE", predictive_metadata: { score_threshold: "high" } });
+    assert.strictEqual(bad.status, 400);
+  });
+
   // Final Summary
   console.log(`\n${ANSI_BOLD}====================================================${ANSI_RESET}`);
   console.log(`${ANSI_BOLD}Growth Test Results: ${passedCount} Passed, ${failedCount} Failed${ANSI_RESET}`);

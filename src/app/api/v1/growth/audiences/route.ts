@@ -32,6 +32,18 @@ const CreateAudience = z
       )
       .max(50)
       .default([]),
+    // A PREDICTIVE audience keeps only customers at or above score_threshold (audience.service); without it the
+    // threshold isn't applied, so it is accepted and forwarded as the route did before the merge
+    predictive_metadata: z
+      .object({
+        model_name: z.string().trim().min(1).max(200),
+        model_version: z.string().trim().min(1).max(100),
+        score_threshold: z.number().finite(),
+        data_window_days: z.number().int().positive().max(3650),
+        generated_at: z.string().datetime(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
@@ -59,6 +71,7 @@ async function handlePOST(request: Request) {
       description: input.description,
       type: input.type,
       ruleGroups: input.rule_groups as AudienceRuleGroup[],
+      predictiveMetadata: input.predictive_metadata,
       createdBy: context.user?.id || "USER",
     });
 
