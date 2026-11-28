@@ -3,8 +3,6 @@ import assert from "assert";
 declare const process: { exit(code?: number): void };
 
 import { db } from "@/infrastructure/db";
-import { metricRegistryService } from "@/domains/intelligence/services/metric-registry.service";
-import { analyticsQueryService } from "@/domains/intelligence/services/analytics-query.service";
 import { intelligenceIngestionService } from "@/domains/intelligence/services/intelligence-ingestion.service";
 import { anomalyDetectorService } from "@/domains/intelligence/services/anomaly-detector.service";
 import { forecastingService } from "@/domains/intelligence/services/forecasting.service";
@@ -14,9 +12,6 @@ import { recommendationService } from "@/domains/intelligence/services/recommend
 import { decisionService } from "@/domains/intelligence/services/decision.service";
 import { feedbackLoopService } from "@/domains/intelligence/services/feedback-loop.service";
 import { intelligenceSupervisorAgent } from "@/domains/intelligence/agents/intelligence-supervisor.agent";
-import { dataQualityService } from "@/domains/intelligence/services/data-quality.service";
-import { modelRegistryService } from "@/domains/intelligence/services/model-registry.service";
-import { nlAnalyticsService } from "@/domains/intelligence/services/nl-analytics.service";
 import { intelligenceWorkflowService } from "@/domains/intelligence/services/intelligence-workflow.service";
 
 const ANSI_GREEN = "\x1b[32m";
@@ -186,52 +181,6 @@ export async function runIntelligenceTests() {
   }
 
   db.persist();
-
-  // =========================================================================
-  // GATE 1: METRIC REGISTRY INTEGRITY
-  // =========================================================================
-  console.log(`\n${ANSI_BOLD}Gate 1: Metric Registry Integrity${ANSI_RESET}`);
-
-  await runTest("MetricRegistry contains canonical definitions and deterministic formulas", () => {
-    const definitions = metricRegistryService.getDefinitions();
-    assert(definitions.length >= 8, `Expected at least 8 canonical metrics, got ${definitions.length}`);
-
-    const revDef = metricRegistryService.getDefinition("sales_revenue");
-    assert(revDef !== undefined, "sales_revenue metric must exist");
-    assert(revDef.unit === "CURRENCY", "sales_revenue unit must be CURRENCY");
-    assert(revDef.formula.length > 0, "sales_revenue must have an explainable formula");
-  });
-
-  await runTest("MetricRegistry assertValidMetric enforces registered keys", () => {
-    assert.doesNotThrow(() => {
-      metricRegistryService.assertValidMetric("orders_count");
-    });
-    assert.throws(() => {
-      metricRegistryService.assertValidMetric("unregistered_phantom_metric");
-    }, /not defined/);
-  });
-
-  // =========================================================================
-  // GATE 2: PARAMETERIZED QUERY SECURITY & EXECUTION
-  // =========================================================================
-  console.log(`\n${ANSI_BOLD}Gate 2: Parameterized Query Security & Zero-Injection Execution${ANSI_RESET}`);
-
-  await runTest("AnalyticsQueryService deterministically computes metrics with comparison period", () => {
-    const query = {
-      tenantId,
-      metrics: ["sales_revenue", "orders_count"],
-      startDate: new Date(now.getTime() - 7 * 86400000).toISOString().slice(0, 10),
-      endDate: now.toISOString().slice(0, 10),
-      comparison: "PREVIOUS_PERIOD",
-    };
-
-    const result = analyticsQueryService.executeQuery(query);
-    assert(result.tenant_id === tenantId, "Result must preserve tenant scoping");
-    assert(result.metrics["sales_revenue"] !== undefined, "Must include sales_revenue");
-    assert(result.metrics["orders_count"] !== undefined, "Must include orders_count");
-    assert(typeof result.metrics["sales_revenue"].current_value === "number", "current_value must be numeric");
-    assert(typeof result.metrics["sales_revenue"].trend_direction === "string", "trend_direction must be resolved");
-  });
 
   // =========================================================================
   // GATE 3: INGESTION PIPELINE & TENANT ROLLUPS
@@ -459,31 +408,9 @@ export async function runIntelligenceTests() {
   });
 
   // =========================================================================
-  // GATE 12: DATA QUALITY AUDIT & MODEL REGISTRY GOVERNANCE
+  // GATE 12: SCHEDULED WORKFLOWS
   // =========================================================================
-  console.log(`\n${ANSI_BOLD}Gate 12: Data Quality Audit & Model Registry Governance${ANSI_RESET}`);
-
-  await runTest("DataQualityService audits dataset health and boundary isolation", () => {
-    const audit = dataQualityService.runDataQualityAudit(tenantId);
-    assert(audit.tenant_id === tenantId, "Tenant scoping preserved");
-    assert(audit.checks.length >= 4, `Expected at least 4 data quality checks, got ${audit.checks.length}`);
-    assert(audit.overall_score_pct >= 80, `Data quality score should be healthy, got ${audit.overall_score_pct}`);
-  });
-
-  await runTest("ModelRegistryService governs registered statistical & ML models", () => {
-    const models = modelRegistryService.listModels();
-    assert(models.length >= 3, `Expected at least 3 baseline registered models, got ${models.length}`);
-    const fcModel = models.find((m) => m.type === "FORECASTING");
-    assert(fcModel !== undefined, "Forecasting model must be registered");
-    assert(fcModel.version !== undefined, "Model must declare version");
-  });
-
-  await runTest("NLAnalyticsService answers natural language queries deterministically", () => {
-    const ans = nlAnalyticsService.answerQuestion(tenantId, "What is our 30-day sales revenue?");
-    assert(ans.interpreted_metric === "sales_revenue", "Should interpret as sales_revenue");
-    assert(ans.grounded_answer.includes("sales_revenue") || ans.grounded_answer.includes("৳"), "Answer must cite currency");
-    assert(ans.confidence >= 0.9, "Confidence must be >= 90%");
-  });
+  console.log(`\n${ANSI_BOLD}Gate 12: Scheduled Workflows${ANSI_RESET}`);
 
   await runTest("IntelligenceWorkflowService runs scheduled commerce workflows", () => {
     const brief = intelligenceWorkflowService.runDailyExecutiveBrief(tenantId);

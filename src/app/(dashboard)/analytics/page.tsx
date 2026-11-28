@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import styles from "./Analytics.module.css";
 import {
   DatePreset,
@@ -12,11 +13,35 @@ import {
 } from "@/types/analytics";
 import { useDebounce } from "@/hooks/useDebounce";
 import { BrandIcon, brandFor } from "@/components/brand/BrandIcon";
+import { RecommendationsTab } from "./RecommendationsTab";
 
-type ActiveTab = "financials" | "rto" | "channels" | "digests";
+const TABS = ["financials", "rto", "channels", "recommendations", "digests"] as const;
+type ActiveTab = (typeof TABS)[number];
+const isTab = (value: string | null): value is ActiveTab => TABS.includes(value as ActiveTab);
 
+// useSearchParams needs a Suspense boundary on a prerendered page
 export default function AnalyticsPage() {
-  const [activeTab, setActiveTab] = useState<ActiveTab>("financials");
+  return (
+    <Suspense fallback={null}>
+      <AnalyticsContent />
+    </Suspense>
+  );
+}
+
+function AnalyticsContent() {
+  // The tab lives in ?tab= (the old /intelligence home redirects to ?tab=recommendations). It is read from the URL on
+  // every render, so a link to another tab works while the page is already open (the command palette, for one).
+  const searchParams = useSearchParams();
+  const requestedTab = searchParams.get("tab");
+  const activeTab: ActiveTab = isTab(requestedTab) ? requestedTab : "financials";
+
+  // Next.js folds replaceState into its router, so useSearchParams sees the new tab.
+  const setActiveTab = (tab: ActiveTab) => {
+    const url = new URL(window.location.href);
+    if (tab === "financials") url.searchParams.delete("tab");
+    else url.searchParams.set("tab", tab);
+    window.history.replaceState(window.history.state, "", url);
+  };
   const [datePreset, setDatePreset] = useState<DatePreset>("30D");
 
   // State collections
@@ -156,8 +181,7 @@ export default function AnalyticsPage() {
       <div className={styles.header}>
         <div>
           <div className={styles.headerTitle}>
-            <span>Analytics & Business Intelligence</span>
-            <span className={styles.badgeLime}>✦ Deterministic Engine</span>
+            <span>Analytics</span>
           </div>
           <div className={styles.headerSubtitle}>
             Revenue, returns by district and sales by channel, calculated from your orders.
@@ -184,7 +208,7 @@ export default function AnalyticsPage() {
             className={styles.btnPrimary}
             onClick={() => setShowGenerateModal(true)}
           >
-            ✦ Generate Digest
+            ✦ Create report
           </button>
         </div>
       </div>
@@ -228,7 +252,7 @@ export default function AnalyticsPage() {
           </div>
           <div className={styles.kpiFooter}>
             <span className={styles.kpiSubtext}>
-              {financials?.total_orders_count || 0} evaluated orders
+              {financials?.total_orders_count || 0} orders
             </span>
           </div>
         </div>
@@ -286,7 +310,7 @@ export default function AnalyticsPage() {
           }`}
           onClick={() => setActiveTab("rto")}
         >
-          🗺️ 64 Districts RTO Heatmap
+          🗺️ Returns by district
         </button>
         <button
           className={`${styles.navTab} ${
@@ -294,7 +318,15 @@ export default function AnalyticsPage() {
           }`}
           onClick={() => setActiveTab("channels")}
         >
-          📱 Channel Attribution
+          📱 Sales by channel
+        </button>
+        <button
+          className={`${styles.navTab} ${
+            activeTab === "recommendations" ? styles.navTabActive : ""
+          }`}
+          onClick={() => setActiveTab("recommendations")}
+        >
+          💡 Recommendations
         </button>
         <button
           className={`${styles.navTab} ${
@@ -302,29 +334,32 @@ export default function AnalyticsPage() {
           }`}
           onClick={() => setActiveTab("digests")}
         >
-          📋 Executive Business Digests ({digests.length})
+          📋 Reports ({digests.length})
         </button>
       </div>
 
+      {/* Recommendations load on their own (intelligence overview), so a failed or slow Analytics request never hides them */}
+      {activeTab === "recommendations" && <RecommendationsTab />}
+
       {/* Error state */}
-      {error && (
+      {error && activeTab !== "recommendations" && (
         <div className={styles.stateBox} style={{ borderColor: "#F28B82" }}>
           <div className={styles.stateIcon}>⚠️</div>
-          <div className={styles.stateTitle}>Telemetry Fetch Error</div>
+          <div className={styles.stateTitle}>Could not load analytics</div>
           <div className={styles.stateSubtitle}>{error}</div>
           <button className={styles.btnSecondary} onClick={loadAllData}>
-            Retry Sync
+            Try again
           </button>
         </div>
       )}
 
       {/* Loading state */}
-      {loading && !error && (
+      {loading && !error && activeTab !== "recommendations" && (
         <div className={styles.stateBox}>
           <div className={styles.stateIcon}>⏳</div>
-          <div className={styles.stateTitle}>Computing Business Telemetry</div>
+          <div className={styles.stateTitle}>Loading analytics</div>
           <div className={styles.stateSubtitle}>
-            Aggregating authoritative transactional records, district coordinates, and omnichannel attribution...
+            Adding up your orders, returns and sales channels...
           </div>
         </div>
       )}
@@ -341,11 +376,11 @@ export default function AnalyticsPage() {
                   <div className={styles.bentoCardHeader}>
                     <div>
                       <div className={styles.bentoCardTitle}>
-                        <span>Revenue Velocity Timeline</span>
+                        <span>Daily sales</span>
                         <span className={styles.badgeLime}>Daily GMV (BDT)</span>
                       </div>
                       <div className={styles.bentoCardDesc}>
-                        Deterministic day-over-day sales trajectory and order volume
+                        Sales and number of orders for each day
                       </div>
                     </div>
                   </div>
@@ -414,7 +449,7 @@ export default function AnalyticsPage() {
                     <div className={styles.metricRow}>
                       <div>
                         <div className={styles.metricRowLabel}>Refunds & Returns</div>
-                        <div className={styles.metricRowSub}>MFS reversals & courier RTOs</div>
+                        <div className={styles.metricRowSub}>Refunds and courier returns</div>
                       </div>
                       <div className={styles.metricRowValue} style={{ color: "var(--color-danger-ink)" }}>
                         -{fmtCurrency(financials.total_refunds_bdt)}
@@ -465,7 +500,7 @@ export default function AnalyticsPage() {
               {/* Row 2: Unit Economics & Delivery Logistical Health */}
               <div className={styles.bentoRowEqual}>
                 <div className={styles.bentoCard}>
-                  <div className={styles.bentoCardTitle}>📦 Unit Economics & Basket Composition</div>
+                  <div className={styles.bentoCardTitle}>📦 Order size and costs</div>
                   <div className={styles.bentoCardDesc}>Operational averages across checkout cycles</div>
                   <div className={styles.metricList} style={{ marginTop: 16 }}>
                     <div className={styles.metricRow}>
@@ -529,7 +564,7 @@ export default function AnalyticsPage() {
               <div className={styles.bentoRowEqual} style={{ marginBottom: 20 }}>
                 <div className={styles.bentoCard}>
                   <div className={styles.bentoCardTitle}>
-                    <span>Zone Delivery Disparity</span>
+                    <span>Delivery by zone</span>
                     <span className={styles.badgeLime}>Your shipments</span>
                   </div>
                   <div className={styles.metricList} style={{ marginTop: 14 }}>
@@ -555,7 +590,7 @@ export default function AnalyticsPage() {
                 </div>
 
                 <div className={styles.bentoCard}>
-                  <div className={styles.bentoCardTitle}>🛡️ COD Doorstep Refusal Risk Advisory</div>
+                  <div className={styles.bentoCardTitle}>🛡️ Cash-on-delivery refusal risk</div>
                   <div className={styles.bentoCardDesc}>Algorithmic courier fraud mitigation</div>
                   <div style={{ marginTop: 14, fontSize: 13, lineHeight: 1.6, color: "#3C4043" }}>
                     {(() => {
@@ -735,7 +770,7 @@ export default function AnalyticsPage() {
                   <div className={styles.bentoCardHeader}>
                     <div>
                       <div className={styles.bentoCardTitle}>
-                        <span>Omnichannel Revenue Attribution Matrix</span>
+                        <span>Sales by channel</span>
                         <span className={styles.badgeLime}>F-Commerce & Web</span>
                       </div>
                       <div className={styles.bentoCardDesc}>
@@ -847,11 +882,11 @@ export default function AnalyticsPage() {
               <div className={styles.bentoCardHeader} style={{ marginBottom: 16 }}>
                 <div>
                   <div className={styles.bentoCardTitle}>
-                    <span>Executive Commercial Briefings</span>
-                    <span className={styles.badgeLime}>Daily & Weekly Intelligence</span>
+                    <span>Business reports</span>
+                    <span className={styles.badgeLime}>Daily, weekly, monthly</span>
                   </div>
                   <div className={styles.bentoCardDesc}>
-                    AI-synthesized digests aggregating real financial telemetry, regional delivery hotspots, and growth recommendations
+                    Summaries of your sales, returns by district and suggested actions, calculated from your orders
                   </div>
                 </div>
 
@@ -924,10 +959,10 @@ export default function AnalyticsPage() {
             <div className={styles.modalHeader}>
               <div>
                 <h3 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>
-                  ✦ Generate Executive Business Digest
+                  Create a business report
                 </h3>
                 <p style={{ fontSize: 13, color: "var(--color-text-secondary)", margin: "4px 0 0 0" }}>
-                  Synthesize an executive intelligence brief from authoritative store telemetry.
+                  A summary of your sales, returns and channels for the period you pick.
                 </p>
               </div>
               <button
@@ -961,12 +996,12 @@ export default function AnalyticsPage() {
               </div>
 
               <div style={{ background: "var(--color-surface-soft)", padding: 14, borderRadius: 12, border: "1px solid var(--color-border-subtle)", fontSize: 12, lineHeight: 1.6 }}>
-                <strong>Deterministic Synthesis Pipeline:</strong>
+                <strong>What the report includes:</strong>
                 <ul style={{ margin: "6px 0 0 16px", padding: 0 }}>
-                  <li>Pulls real order totals, COGS, discounts, and refunds for the selected window</li>
-                  <li>Scans all 64 districts to detect delivery refusal and RTO anomalies</li>
-                  <li>Analyzes multi-touch attribution (WhatsApp, Facebook, Website)</li>
-                  <li>Derives high-impact operational recommendations for human executive review</li>
+                  <li>Sales, cost of goods, discounts and refunds for the period</li>
+                  <li>Districts where many deliveries come back</li>
+                  <li>Sales by channel (WhatsApp, Facebook, website)</li>
+                  <li>Suggested actions for you to review</li>
                 </ul>
               </div>
 
@@ -1019,7 +1054,7 @@ export default function AnalyticsPage() {
             <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
               {/* Executive Summary */}
               <div style={{ background: "var(--color-surface-soft)", padding: 16, borderRadius: 12, border: "1px solid var(--color-border-subtle)", fontSize: 13, lineHeight: 1.6 }}>
-                <strong>Executive Summary:</strong>
+                <strong>Summary:</strong>
                 <p style={{ margin: "6px 0 0 0", color: "#3C4043" }}>{selectedDigest.executive_summary}</p>
               </div>
 
@@ -1108,7 +1143,7 @@ export default function AnalyticsPage() {
               {selectedDigest.strategic_recommendations && (
                 <div>
                   <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>
-                    🎯 Strategic Action Items for Executive Team
+                    🎯 Suggested actions
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                     {selectedDigest.strategic_recommendations.map((rec, i) => (

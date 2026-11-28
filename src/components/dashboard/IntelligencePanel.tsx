@@ -56,7 +56,7 @@ function topInsights(data: IntelligenceOverview): Insight[] {
 }
 
 export const IntelligencePanel: React.FC<{ intelligence: Section<IntelligenceOverview> }> = ({ intelligence }) => (
-  <Panel title="✦ Commerce intelligence" note="From your orders, stock and payments" link={{ href: "/intelligence", label: "See all" }}>
+  <Panel title="✦ Commerce intelligence" note="From your orders, stock and payments" link={{ href: "/analytics?tab=recommendations", label: "See all" }}>
     <SectionState section={intelligence} resource="commerce intelligence" permission={PERMISSIONS.ANALYTICS_READ}>
       {(data) => {
         const insights = topInsights(data);

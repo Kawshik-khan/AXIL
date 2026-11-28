@@ -309,7 +309,8 @@ async function main() {
     const res = await post(token);
     assert.strictEqual(res.status, 200);
     const body = (await res.json()) as { data: { kinds: Array<{ kind: string; rows: number }> } };
-    assert.ok(body.data.kinds.length >= 12, `kinds: ${body.data.kinds.map((k) => k.kind).join(",")}`);
+    // 11 since 2026-11-27: the intelligence data-quality report was removed (no screen read it)
+    assert.ok(body.data.kinds.length >= 11,`kinds: ${body.data.kinds.map((k) => k.kind).join(",")}`);
     const firstCounts = Object.fromEntries(COLLECTIONS.map((c) => [c, tenantRows(c)]));
     for (const c of ["anomalies", "opportunities", "risks", "recommendations"]) assert.ok(firstCounts[c] > 0, `${c} detected`);
     assert.strictEqual((await post(token)).status, 200);

@@ -13,6 +13,8 @@ export interface DockItem {
   badge?: string;
   /** "exact" (default) lights the item only on its own path; "prefix" also on nested paths. */
   match?: "exact" | "prefix";
+  /** Other path prefixes that also light this item: pages reached from it that have no dock entry of their own. */
+  alsoActiveOn?: string[];
   /**
    * Pages grouped under this hub. With two or more, hovering or focusing the hub opens a flyout listing them; the hub
    * itself links to `href` (the first page the role can open) and lights up while any of its pages is open.
@@ -36,8 +38,12 @@ export interface DockProps {
   footer?: React.ReactNode;
 }
 
-function isActive(pathname: string, item: { href: string; match?: "exact" | "prefix" }): boolean {
+function isActive(
+  pathname: string,
+  item: { href: string; match?: "exact" | "prefix"; alsoActiveOn?: string[] }
+): boolean {
   if (pathname === item.href) return true;
+  if (item.alsoActiveOn?.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`))) return true;
   return item.match === "prefix" && item.href !== "/" && pathname.startsWith(`${item.href}/`);
 }
 

@@ -490,7 +490,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ## ADR-035: Canonical Metric Registry with Formal Aggregation Rules & Tenant Scoping
 
 - **Date**: 2026-09-19
-- **Status**: Approved
+- **Status**: Retired 2026-11-27. `metric-registry.service.ts` was removed: nothing in the app called it after the `intelligence/metrics` and `intelligence/query` routes were removed (2026-11-26). Analytics revenue is computed by `AnalyticsService` (sum of `grand_total`, cancelled orders left out).
 - **Context**: Different commerce modules, reports, and AI agents frequently recalculate critical commerce metrics (e.g. gross revenue, net margin, return rate, stockout rate) with subtly conflicting definitions, leading to inconsistent analytics and hallucinated summaries.
 - **Decision**: Implemented a canonical `MetricRegistryService` defining standard commerce metrics with immutable metadata, unit types, deterministic aggregation formulas (`SUM`, `AVG`, `RATIO`, `COUNT`), and tenant boundary scoping. Unregistered metric queries are strictly rejected.
 - **Consequences**: Single source of truth for all analytical calculations; eliminates contradictory KPI reporting across dashboards, agents, and API consumers.
@@ -500,7 +500,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ## ADR-036: Zero-Injection Parameterized Analytics Query Engine
 
 - **Date**: 2026-09-19
-- **Status**: Approved
+- **Status**: Retired 2026-11-27. `analytics-query.service.ts` and `POST /api/v1/intelligence/query` were removed; no screen used them.
 - **Context**: Analytical querying must support dynamic filters (time range, product category, courier, customer segment) while guaranteeing zero SQL/code injection, zero LLM runtime mutation, and tenant isolation.
 - **Decision**: Implemented `AnalyticsQueryService` utilizing structured, parameterized `AnalyticsQueryRequest` objects with strict enum-based dimensional grouping and comparison windowing (`PREVIOUS_PERIOD`, `PREVIOUS_YEAR`). Queries run deterministically without raw query construction.
 - **Consequences**: Safe, auditable analytics query execution with zero vulnerability to prompt or SQL injection attacks; reproducible comparative reporting.
@@ -530,7 +530,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ## ADR-039: Multi-Horizon Forecasting Engine with Bangladesh Retail Seasonality & Confidence Intervals
 
 - **Date**: 2026-09-19
-- **Status**: Approved
+- **Status**: Approved; the dashboard page and `POST /api/v1/intelligence/forecasts` were removed 2026-11-27 (too little order history to be useful). `forecasting.service.ts` stays; the intelligence supervisor agent uses it.
 - **Context**: Merchants require predictive projections across 7, 14, 30, and 90-day horizons to plan inventory purchases and cash flow, particularly accounting for Bangladeshi retail patterns (e.g. Friday/Saturday order spikes).
 - **Decision**: Implemented `ForecastingService` utilizing Holt-Winters moving average models with day-of-week seasonality factors and 95% confidence intervals (`confidence_lower`, `confidence_upper`). If historical records are below the minimum required threshold, the engine gracefully yields an `INSUFFICIENT_DATA` status without crashing.
 - **Consequences**: Robust predictive intelligence with transparent uncertainty bounds and resilience against cold-start scenarios for newly onboarded merchants.
@@ -540,7 +540,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ## ADR-040: Zero-Mutation What-If Simulation Sandbox with Microeconomic Elasticity Modeling
 
 - **Date**: 2026-09-19
-- **Status**: Approved
+- **Status**: Approved; the What-If Sandbox page and `POST /api/v1/intelligence/simulations` were removed 2026-11-27. `simulation.service.ts` stays; Growth offers use it (ADR-052).
 - **Context**: Merchants and agents need to evaluate the downstream impact of commercial adjustments (e.g. a 10% price increase, 15% promotional discount, or 20% inventory buffer increase) without mutating actual catalog or inventory records.
 - **Decision**: Implemented `SimulationService` executing in-memory what-if simulations based on empirical price elasticity of demand (Ed = -1.2 for retail apparel), computing projected revenue, order volume, and gross margin deltas while strictly maintaining zero mutations against the primary database.
 - **Consequences**: Safe exploration of strategic decisions with zero operational risk to active storefront listings or live stock levels.
@@ -597,7 +597,7 @@ One line per ADR. Read the full entry only when relevant. New ADRs: append below
 ## ADR-045: Data Quality Governance, Boundary Isolation & Machine Learning Model Registry
 
 - **Date**: 2026-09-19
-- **Status**: Approved
+- **Status**: Retired 2026-11-27 for the intelligence side: the model registry (`model-registry.service.ts`, `GET /intelligence/models`) and the intelligence data-quality report (`data-quality.service.ts`, `GET /intelligence/data-quality`, its recompute step) were removed; no screen read them. Stored `data_quality_reports` rows are left in place. The enterprise data-quality audit (`src/domains/enterprise/services/data-quality.service.ts`) is unchanged.
 - **Context**: Machine learning and statistical algorithms are vulnerable to corrupted input data, schema drift, uncalibrated model versions, and cross-tenant leakage.
 - **Decision**: Implemented `DataQualityService` performing automated multi-factor data health audits (completeness, freshness, format validity, anomaly rate, tenant boundary isolation) and `ModelRegistryService` managing the lifecycle, versioning, performance metrics (MAE, RMSE, MAPE), and activation state of analytical models.
 - **Consequences**: Production-grade ML governance, automated data drift alerts, and guaranteed multi-tenant safety.

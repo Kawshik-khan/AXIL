@@ -104,18 +104,11 @@ const MATRIX: Array<[string, Method, PermissionKey]> = [
   ["intelligence/anomalies", "GET", "ANALYTICS_READ"],
   ["intelligence/cohorts", "GET", "ANALYTICS_READ"],
   ["intelligence/customers", "GET", "ANALYTICS_READ"],
-  ["intelligence/data-quality", "GET", "ANALYTICS_READ"],
-  ["intelligence/forecasts", "POST", "ANALYTICS_READ"],
-  ["intelligence/metrics", "GET", "ANALYTICS_READ"],
-  ["intelligence/models", "GET", "ANALYTICS_READ"],
-  ["intelligence/nl-query", "POST", "ANALYTICS_READ"],
   ["intelligence/opportunities", "GET", "ANALYTICS_READ"],
   ["intelligence/overview", "GET", "ANALYTICS_READ"],
-  ["intelligence/query", "POST", "ANALYTICS_READ"],
   ["intelligence/recommendations", "GET", "ANALYTICS_READ"],
   ["intelligence/recommendations/[id]/propose-decision", "POST", "OPERATIONS_EXECUTE"],
   ["intelligence/risks", "GET", "ANALYTICS_READ"],
-  ["intelligence/simulations", "POST", "ANALYTICS_READ"],
   ["marketing/abandoned-carts", "GET", "MARKETING_READ"],
   ["marketing/abandoned-carts", "POST", "MARKETING_WRITE"],
   ["marketing/abandoned-carts/[id]/nudge", "POST", "MARKETING_WRITE"],
@@ -188,9 +181,11 @@ async function main() {
   const admin = await member("ADMIN");
 
   // 140 from Appendix A, plus the Phase 5 webhook delivery routes (FX-54), minus the 32 campaign / broadcast / journey /
-  // experiment / attribution / duplicate-audience handlers removed on 2026-11-26, plus the moved audience members route
-  await runTest(`the matrix covers all 112 guarded handlers`, () => {
-    assert.strictEqual(MATRIX.length, 112);
+  // experiment / attribution / duplicate-audience handlers removed on 2026-11-26, plus the moved audience members route,
+  // minus the seven unused intelligence handlers removed on 2026-11-26/27 (nl-query, query, metrics, models,
+  // data-quality, forecasts, simulations)
+  await runTest(`the matrix covers all 105 guarded handlers`, () => {
+    assert.strictEqual(MATRIX.length, 105);
   });
 
   await runTest("ADMIN holds every permission the matrix requires; SUPPORT holds none of them", () => {

@@ -2,25 +2,10 @@
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { Search, Sparkles, Send, HelpCircle, Users, BarChart3, RefreshCw } from "lucide-react";
+import { Users, BarChart3 } from "lucide-react";
 import styles from "../intelligence.module.css";
-import { LoadingSkeleton, EmptyState, ErrorState } from "@/components/ui/States/States";
 
-const SUGGESTED_QUERIES = [
-  "What is our 30-day sales revenue?",
-  "Show me order volume today",
-  "What is our average order value?",
-  "What is the courier return-to-origin (RTO) rate?",
-  "How much unreconciled COD volume is outstanding?",
-];
-
-export default function AnalyticsExplorerPage() {
-  const [question, setQuestion] = useState("");
-  const [nlResult, setNlResult] = useState<any | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  // Customer Intelligence & Cohort states
+export default function CustomerSegmentsPage() {
   const [customers, setCustomers] = useState<any[]>([]);
   const [cohorts, setCohorts] = useState<any[]>([]);
   const [dataLoading, setDataLoading] = useState(true);
@@ -46,101 +31,24 @@ export default function AnalyticsExplorerPage() {
     loadData();
   }, []);
 
-  const handleAsk = async (qText?: string) => {
-    const q = qText || question;
-    if (!q.trim()) return;
-
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/v1/intelligence/nl-query", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: q }),
-      });
-      if (!res.ok) throw new Error("Failed to process question");
-      const json = await res.json();
-      setNlResult(json.data);
-    } catch (err: any) {
-      setError(err.message || "Failed to answer question");
-    } finally {
-      setLoading(false);
-    }
-  };
-
   return (
     <div className={styles.container}>
       <div className={styles.header}>
         <div>
           <h1 className={styles.headerTitle}>
-            <Sparkles size={24} color="#C7F900" /> AI Analytics Explorer & Customer RFM
+            <Users size={24} color="var(--color-lime-ink)" /> Customer Segments
           </h1>
           <p className={styles.headerSubtitle}>
-            Query commerce performance in natural language and inspect verified customer lifetime value & retention cohorts.
+            Customer value and repeat-purchase cohorts, calculated from your orders. To ask a question about your shop, use <Link href="/assistant">Ask your shop</Link>.
           </p>
         </div>
       </div>
 
       <div className={styles.navTabs}>
-        <Link href="/intelligence" className={styles.navTab}>Executive Overview</Link>
+        <Link href="/analytics?tab=recommendations" className={styles.navTab}>← Analytics</Link>
         <Link href="/intelligence/insights" className={styles.navTab}>Insights & Anomalies</Link>
-        <Link href="/intelligence/forecasts" className={styles.navTab}>Demand Forecasts</Link>
         <Link href="/intelligence/recommendations" className={styles.navTab}>Recommendations</Link>
-        <Link href="/intelligence/simulation" className={styles.navTab}>What-If Sandbox</Link>
-        <Link href="/intelligence/analytics" className={`${styles.navTab} ${styles.navTabActive}`}>AI Analytics Explorer</Link>
-      </div>
-
-      {/* Natural Language Query Box */}
-      <div className={`${styles.bentoCard} ${styles.col12}`} style={{ marginBottom: 28 }}>
-        <div className={styles.cardTitle}>
-          <span>💬 Conversational Analytics Query</span>
-          <span className={styles.badgeLime}>Deterministic Execution</span>
-        </div>
-
-        <div className={styles.queryInputContainer}>
-          <input
-            type="text"
-            placeholder="Ask anything (e.g. 'What is our 30-day sales revenue?', 'Show me order volume today')..."
-            value={question}
-            onChange={(e) => setQuestion(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleAsk()}
-            className={styles.queryInput}
-          />
-          <button className={styles.actionBtn} onClick={() => handleAsk()} disabled={loading}>
-            <Send size={14} style={{ marginRight: 6 }} /> Ask
-          </button>
-        </div>
-
-        {/* Suggestion Chips */}
-        <div className={styles.querySuggestions}>
-          <span className={styles.querySuggestionsLabel}>Try:</span>
-          {SUGGESTED_QUERIES.map((sq, i) => (
-            <button
-              key={i}
-              type="button"
-              className={styles.querySuggestionBtn}
-              onClick={() => {
-                setQuestion(sq);
-                handleAsk(sq);
-              }}
-            >
-              {sq}
-            </button>
-          ))}
-        </div>
-
-        {/* Answer Box */}
-        {loading && <div style={{ marginTop: 20 }}><LoadingSkeleton lines={2} height="80px" /></div>}
-        {error && <div style={{ marginTop: 16, color: "var(--color-danger-ink)", fontSize: 13 }}>{error}</div>}
-        {nlResult && !loading && (
-          <div className={styles.groundedAnswerBox}>
-            <div className={styles.groundedAnswerLabel}>✦ GROUNDED ANSWER</div>
-            <div className={styles.groundedAnswerText}>{nlResult.grounded_answer}</div>
-            <div className={styles.groundedAnswerMeta}>
-              Interpreted Metric: <strong>{nlResult.interpreted_metric}</strong> • Period: {nlResult.parameters?.startDate} to {nlResult.parameters?.endDate}
-            </div>
-          </div>
-        )}
+        <Link href="/intelligence/analytics" className={`${styles.navTab} ${styles.navTabActive}`}>Customer Segments</Link>
       </div>
 
       {/* Row: Customer RFM Segmentation & Retention Cohorts */}
@@ -148,7 +56,7 @@ export default function AnalyticsExplorerPage() {
         {/* Customer RFM Table */}
         <div className={`${styles.bentoCard} ${styles.col7}`}>
           <div className={styles.cardTitle}>
-            <span><Users size={16} color="var(--color-lime-ink)" style={{ marginRight: 6 }} /> Customer RFM Intelligence & LTV</span>
+            <span><Users size={16} color="var(--color-lime-ink)" style={{ marginRight: 6 }} /> Customer value</span>
             <span className={styles.badgeNeutral}>{customers.length} Profiles</span>
           </div>
 

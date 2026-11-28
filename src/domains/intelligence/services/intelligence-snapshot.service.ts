@@ -22,7 +22,6 @@ export type IntelligenceKind =
   | "risks"
   | "recommendations"
   | "cohorts"
-  | "data_quality"
   | "growth_insights"
   | "growth_recommendations";
 
@@ -43,7 +42,6 @@ export const SNAPSHOT_KINDS: Readonly<Record<IntelligenceKind, KindSpec>> = {
   cohorts: { collection: "cohort_records", replace: true },
   anomalies: { collection: "anomalies" },
   risks: { collection: "risks" },
-  data_quality: { collection: "data_quality_reports" },
   // `expires_at` travels with the decision, so a decision lapses at the expiry it was made under; otherwise every
   // recompute would push the expiry forward and a decision would never expire (security re-review N-1).
   opportunities: { collection: "opportunities", keep: ["status", "expires_at"] },

@@ -61,10 +61,10 @@ export default function RecommendationsPage() {
       <div className={styles.header}>
         <div>
           <h1 className={styles.headerTitle}>
-            <Sparkles size={24} color="#C7F900" /> Explainable Recommendations & Decisions
+            <Sparkles size={24} color="var(--color-lime-ink)" /> Recommendations
           </h1>
           <p className={styles.headerSubtitle}>
-            Evidence-backed proposals with explicit impact forecasts, trade-off warnings, and approval routing.
+            Suggested actions with their expected effect and the evidence behind them. Proposing one sends it for approval.
           </p>
         </div>
         <button className={styles.secondaryBtn} onClick={loadRecs}>
@@ -73,12 +73,10 @@ export default function RecommendationsPage() {
       </div>
 
       <div className={styles.navTabs}>
-        <Link href="/intelligence" className={styles.navTab}>Executive Overview</Link>
+        <Link href="/analytics?tab=recommendations" className={styles.navTab}>← Analytics</Link>
         <Link href="/intelligence/insights" className={styles.navTab}>Insights & Anomalies</Link>
-        <Link href="/intelligence/forecasts" className={styles.navTab}>Demand Forecasts</Link>
         <Link href="/intelligence/recommendations" className={`${styles.navTab} ${styles.navTabActive}`}>Recommendations</Link>
-        <Link href="/intelligence/simulation" className={styles.navTab}>What-If Sandbox</Link>
-        <Link href="/intelligence/analytics" className={styles.navTab}>AI Analytics Explorer</Link>
+        <Link href="/intelligence/analytics" className={styles.navTab}>Customer Segments</Link>
       </div>
 
       {/* Status Filter Tabs */}
@@ -99,7 +97,7 @@ export default function RecommendationsPage() {
       ) : error ? (
         <ErrorState title="Unable to Load" message={error} onRetry={loadRecs} />
       ) : recommendations.length === 0 ? (
-        <EmptyState title="No Recommendations Found" description="Try selecting a different status filter or run new telemetry scans." />
+        <EmptyState title="No Recommendations Found" description="Try a different status filter." />
       ) : (
         <div className={styles.bentoGrid}>
           {recommendations.map((rec) => (
@@ -128,7 +126,7 @@ export default function RecommendationsPage() {
                   Conf: {typeof rec.confidence === "number" ? `${Math.round(rec.confidence * 100)}%` : "—"}
                 </span>
                 <span className={styles.badgeNeutral}>Risk: {rec.action_risk_level ?? "—"}</span>
-                <span className={styles.badgeNeutral}>Autonomy Level {rec.required_autonomy_level ?? "—"}</span>
+                <span className={styles.badgeNeutral}>Autonomy level {rec.required_autonomy_level ?? "—"}</span>
                 <span className={styles.badgeNeutral}>{rec.required_approval ? "Needs approval" : "No approval needed"}</span>
               </div>
 
@@ -151,9 +149,6 @@ export default function RecommendationsPage() {
                     {submittingId === rec.id ? "Proposing..." : "Propose Decision"}
                   </button>
                 )}
-                <Link href="/intelligence/simulation" className={styles.secondaryBtn}>
-                  Simulate Impact
-                </Link>
               </div>
             </div>
           ))}
