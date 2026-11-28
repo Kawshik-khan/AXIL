@@ -10,6 +10,7 @@ import { PlatformNotices } from "@/components/navigation/PlatformNotices";
 import { LoadingSkeleton } from "@/components/ui/States/States";
 import { MerchantThemeProvider } from "@/components/navigation/merchant-theme";
 import { StepUpHost } from "@/components/security/StepUpHost";
+import { AssistantLauncher } from "@/components/assistant/AssistantLauncher";
 import styles from "@/components/navigation/Shell.module.css";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -151,6 +152,8 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
       </div>
 
       <StepUpHost />
+
+      <AssistantLauncher permissions={session.permissions} readOnly={session.impersonation?.mode === "READ_ONLY"} />
 
       <CommandPalette
         isOpen={isCommandPaletteOpen}
