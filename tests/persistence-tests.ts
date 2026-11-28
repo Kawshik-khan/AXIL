@@ -270,6 +270,22 @@ async function main() {
     }
   });
 
+  await runTest("load keeps every array collection of DatabaseSchema (none dropped on restart)", async () => {
+    // 11 collections (comment-trigger rules/events, connection resources, media assets, RTO, ...) were once missing from
+    // fromParsed, so both the JSON file and Postgres loads dropped them. Every array key of the interface must survive.
+    const { CommerceDatabase } = await import("@/infrastructure/db");
+    const source = fs.readFileSync(path.join(ROOT, "src/infrastructure/db/index.ts"), "utf-8");
+    const start = source.indexOf("export interface DatabaseSchema");
+    const body = source.slice(start, source.indexOf("\n}\n", start));
+    const arrayKeys = [...body.matchAll(/^  ([a-z_]+)\??:\s*[A-Za-z<>{}, ]+\[\];/gm)].map((m) => m[1]);
+    assert.ok(arrayKeys.length > 200, `parsed ${arrayKeys.length} array collections from DatabaseSchema`);
+    const parsed: Record<string, unknown[]> = {};
+    for (const key of arrayKeys) parsed[key] = [{ id: `marker_${key}`, tenant_id: "t" }];
+    const loaded = CommerceDatabase.fromParsed(parsed as never) as unknown as Record<string, unknown[]>;
+    const dropped = arrayKeys.filter((key) => !Array.isArray(loaded[key]) || loaded[key].length !== 1);
+    assert.deepStrictEqual(dropped, [], `collections dropped on load: ${dropped.join(", ")}`);
+  });
+
   console.log(`\n${ANSI_BOLD}====================================================${ANSI_RESET}`);
   console.log(`  Tests Passed: ${passedCount} | Tests Failed: ${failedCount}`);
   console.log(`${ANSI_BOLD}====================================================${ANSI_RESET}\n`);

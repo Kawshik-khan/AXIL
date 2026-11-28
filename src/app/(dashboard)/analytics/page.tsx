@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import styles from "./Analytics.module.css";
 import {
   DatePreset,
@@ -18,18 +19,24 @@ const TABS = ["financials", "rto", "channels", "recommendations", "digests"] as 
 type ActiveTab = (typeof TABS)[number];
 const isTab = (value: string | null): value is ActiveTab => TABS.includes(value as ActiveTab);
 
+// useSearchParams needs a Suspense boundary on a prerendered page
 export default function AnalyticsPage() {
-  const [activeTab, setActiveTabState] = useState<ActiveTab>("financials");
+  return (
+    <Suspense fallback={null}>
+      <AnalyticsContent />
+    </Suspense>
+  );
+}
 
-  // ?tab= opens a tab directly (the old /intelligence home redirects to ?tab=recommendations). Read on mount from
-  // window.location so the page needs no Suspense boundary for useSearchParams.
-  useEffect(() => {
-    const requested = new URLSearchParams(window.location.search).get("tab");
-    if (isTab(requested)) setActiveTabState(requested);
-  }, []);
+function AnalyticsContent() {
+  // The tab lives in ?tab= (the old /intelligence home redirects to ?tab=recommendations). It is read from the URL on
+  // every render, so a link to another tab works while the page is already open (the command palette, for one).
+  const searchParams = useSearchParams();
+  const requestedTab = searchParams.get("tab");
+  const activeTab: ActiveTab = isTab(requestedTab) ? requestedTab : "financials";
 
+  // Next.js folds replaceState into its router, so useSearchParams sees the new tab.
   const setActiveTab = (tab: ActiveTab) => {
-    setActiveTabState(tab);
     const url = new URL(window.location.href);
     if (tab === "financials") url.searchParams.delete("tab");
     else url.searchParams.set("tab", tab);
@@ -331,8 +338,11 @@ export default function AnalyticsPage() {
         </button>
       </div>
 
+      {/* Recommendations load on their own (intelligence overview), so a failed or slow Analytics request never hides them */}
+      {activeTab === "recommendations" && <RecommendationsTab />}
+
       {/* Error state */}
-      {error && (
+      {error && activeTab !== "recommendations" && (
         <div className={styles.stateBox} style={{ borderColor: "#F28B82" }}>
           <div className={styles.stateIcon}>⚠️</div>
           <div className={styles.stateTitle}>Could not load analytics</div>
@@ -344,7 +354,7 @@ export default function AnalyticsPage() {
       )}
 
       {/* Loading state */}
-      {loading && !error && (
+      {loading && !error && activeTab !== "recommendations" && (
         <div className={styles.stateBox}>
           <div className={styles.stateIcon}>⏳</div>
           <div className={styles.stateTitle}>Loading analytics</div>
@@ -356,8 +366,6 @@ export default function AnalyticsPage() {
 
       {!loading && !error && (
         <>
-          {activeTab === "recommendations" && <RecommendationsTab />}
-
           {/* TAB 1: FINANCIALS & MARGINS */}
           {activeTab === "financials" && financials && (
             <div>

@@ -103,14 +103,6 @@ export class AutonomousSupervisorAgent {
           required_tools: ["evaluate_global_decision", "approve_autonomous_decision"],
         },
         {
-          task_type: "PAUSE_AT_RISK_CAMPAIGNS",
-          objective: "Halt paid advertising and outbound marketing campaigns targeting stockout items",
-          agent_type: "CAMPAIGN_PLANNER",
-          dependencies: ["DECIDE_RECOVERY_ACTIONS"],
-          risk_level: "MEDIUM" as ActionRiskLevel,
-          required_tools: ["pause_campaign", "get_campaign_metrics"],
-        },
-        {
           task_type: "EXECUTE_EMERGENCY_REPLENISHMENT",
           objective: "Trigger purchase orders or cross-store transfers to replenish stock",
           agent_type: "PROCUREMENT",
@@ -178,23 +170,7 @@ export class AutonomousSupervisorAgent {
           agent_type: "OFFER_AGENT",
           dependencies: ["IDENTIFY_CHURN_COHORTS"],
           risk_level: "LOW" as ActionRiskLevel,
-          required_tools: ["get_product_recommendations", "simulate_campaign"],
-        },
-        {
-          task_type: "DISPATCH_LIFECYCLE_JOURNEYS",
-          objective: "Trigger automated omni-channel messaging across WhatsApp, SMS, and Facebook Messenger",
-          agent_type: "RETENTION_AGENT",
-          dependencies: ["SYNTHESIZE_RETENTION_OFFERS"],
-          risk_level: "MEDIUM" as ActionRiskLevel,
-          required_tools: ["send_campaign", "check_consent"],
-        },
-        {
-          task_type: "MEASURE_RETENTION_LIFT",
-          objective: "Calculate repurchase conversion lift and incremental revenue generated",
-          agent_type: "ATTRIBUTION_AGENT",
-          dependencies: ["DISPATCH_LIFECYCLE_JOURNEYS"],
-          risk_level: "LOW" as ActionRiskLevel,
-          required_tools: ["get_attribution", "get_campaign_result"],
+          required_tools: ["get_product_recommendations"],
         },
       ];
       return this.validateAndReturn(steps);

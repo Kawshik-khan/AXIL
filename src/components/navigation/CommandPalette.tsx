@@ -13,7 +13,7 @@ import {
   LogOut,
   Rocket,
   Send,
-  GitFork,
+  ShoppingCart,
   Workflow,
   PlugZap,
   Layers,
@@ -160,23 +160,12 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose,
     },
     {
       id: "nav-growth",
-      title: "Go to Growth Command Center",
+      title: "Go to Growth",
       category: "Growth & Marketing",
       icon: <Rocket size={18} />,
       href: "/growth",
       action: () => {
         router.push("/growth");
-        onClose();
-      },
-    },
-    {
-      id: "nav-growth-campaigns",
-      title: "Launch / Manage Growth Campaigns",
-      category: "Growth & Marketing",
-      icon: <Send size={18} />,
-      href: "/growth/campaigns",
-      action: () => {
-        router.push("/growth/campaigns");
         onClose();
       },
     },
@@ -203,17 +192,6 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose,
       },
     },
     {
-      id: "nav-growth-journeys",
-      title: "Customer Lifecycle Automated Journeys",
-      category: "Growth & Marketing",
-      icon: <GitFork size={18} />,
-      href: "/growth/journeys",
-      action: () => {
-        router.push("/growth/journeys");
-        onClose();
-      },
-    },
-    {
       id: "nav-growth-audiences",
       title: "Audience Segments & Predictive Cohorts",
       category: "Growth & Marketing",
@@ -221,6 +199,28 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose,
       href: "/growth/audiences",
       action: () => {
         router.push("/growth/audiences");
+        onClose();
+      },
+    },
+    {
+      id: "nav-growth-cart-recovery",
+      title: "Cart recovery (abandoned carts & WhatsApp nudges)",
+      category: "Growth & Marketing",
+      icon: <ShoppingCart size={18} />,
+      href: "/growth/cart-recovery",
+      action: () => {
+        router.push("/growth/cart-recovery");
+        onClose();
+      },
+    },
+    {
+      id: "nav-customer-lifecycle",
+      title: "Customer lifecycle stages",
+      category: "Growth & Marketing",
+      icon: <Users size={18} />,
+      href: "/customers/lifecycle",
+      action: () => {
+        router.push("/customers/lifecycle");
         onClose();
       },
     },

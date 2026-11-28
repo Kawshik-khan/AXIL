@@ -1632,6 +1632,18 @@ export class CommerceDatabase {
       gateway_payment_attempts: parsed.gateway_payment_attempts || [],
       billing_invoices: parsed.billing_invoices || [],
       newsletter_subscriptions: parsed.newsletter_subscriptions || [],
+      // Missing here before 2026-11-27, so these were dropped on every load (JSON file and Postgres alike)
+      network_delivery_reputations: parsed.network_delivery_reputations || [],
+      order_rto_evaluations: parsed.order_rto_evaluations || [],
+      tenant_rto_settings: parsed.tenant_rto_settings || [],
+      courier_disputes: parsed.courier_disputes || [],
+      agent_execution_traces: parsed.agent_execution_traces || [],
+      agent_hitl_escalations: parsed.agent_hitl_escalations || [],
+      tenant_ai_guard_settings: parsed.tenant_ai_guard_settings || [],
+      comment_trigger_rules: parsed.comment_trigger_rules || [],
+      comment_trigger_events: parsed.comment_trigger_events || [],
+      connection_resources: parsed.connection_resources || [],
+      media_assets: parsed.media_assets || [],
     };
 
     if (unhydrated && unhydrated.size > 0) {
@@ -7039,6 +7051,11 @@ export class CommerceDatabase {
       where?: (conversation: Conversation) => boolean;
       /** Order of the result; newest message first without it. */
       compare?: (a: Conversation, b: Conversation) => number;
+      /**
+       * false: leave `customer` off the page. For a caller that loads the page's customers after paging (the inbox),
+       * since under zero-hydration they are not in the request's working set yet.
+       */
+      with_customers?: boolean;
     }
   ): { conversations: (Conversation & { customer?: Customer; channel_name?: string })[]; total: number } {
     let list = this.data.conversations.filter((c) => c.tenant_id === tenantId);
@@ -7096,9 +7113,9 @@ export class CommerceDatabase {
     const paged = list.slice(offset, offset + limit);
 
     // Bolt Optimization: Reuse customer map if already built, otherwise fetch now for pagination mapping.
-    const _customersById = customersById || this.customersById(tenantId);
+    const _customersById = options?.with_customers === false ? undefined : customersById || this.customersById(tenantId);
     const enriched = paged.map((c) => {
-      const customer = _customersById.get(c.customer_id);
+      const customer = _customersById?.get(c.customer_id);
       const channel = this.findConnectedChannelById(tenantId, c.channel_id);
       return {
         ...c,
@@ -11568,6 +11585,19 @@ export class CommerceDatabase {
       .filter((e) => e.tenant_id === tenantId)
       .sort((a, b) => b.created_at.localeCompare(a.created_at))
       .slice(0, limit);
+  }
+
+  /** Every event created in [sinceIso, untilIso], oldest first (analytics: no limit). */
+  public getCommentTriggerEventsInRange(tenantId: string, sinceIso: string, untilIso: string): CommentTriggerEvent[] {
+    const since = new Date(sinceIso).getTime();
+    const until = new Date(untilIso).getTime();
+    return (this.data.comment_trigger_events || [])
+      .filter((e) => {
+        if (e.tenant_id !== tenantId) return false;
+        const at = new Date(e.created_at).getTime();
+        return at >= since && at <= until;
+      })
+      .sort((a, b) => a.created_at.localeCompare(b.created_at));
   }
 
   public findCommentTriggerEvent(tenantId: string, id: string): CommentTriggerEvent | undefined {

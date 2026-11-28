@@ -740,6 +740,22 @@ async function zeroHydratedRouteTests(client: SqlClient) {
     assert.strictEqual(foreign.status, 404, "another workspace's order is not found");
   });
 
+  await runTest("inbox: the list loads with its customer's name, with and without a search (was 500 COLLECTION_NOT_HYDRATED)", async () => {
+    const inbox = await call("GET", "social/conversations", "social/conversations?view=inbox&queue=OPEN", auth);
+    assert.strictEqual(inbox.status, 200, JSON.stringify(inbox.json));
+    assert.deepStrictEqual(inbox.json.data.map((c: { id: string }) => c.id), ["conv_zh_1"]);
+    assert.strictEqual(inbox.json.data[0].customer?.first_name, "Zh1");
+    const searched = await call("GET", "social/conversations", "social/conversations?view=inbox&search=zh1", auth);
+    assert.strictEqual(searched.status, 200, JSON.stringify(searched.json));
+    assert.deepStrictEqual(searched.json.data.map((c: { id: string }) => c.id), ["conv_zh_1"]);
+    const missed = await call("GET", "social/conversations", "social/conversations?view=inbox&search=nobody", auth);
+    assert.strictEqual(missed.status, 200, JSON.stringify(missed.json));
+    assert.strictEqual(missed.json.data.length, 0);
+    const plain = await call("GET", "social/conversations", "social/conversations", auth);
+    assert.strictEqual(plain.status, 200, JSON.stringify(plain.json));
+    assert.strictEqual(plain.json.data[0].customer?.first_name, "Zh1");
+  });
+
   await runTest("products and customers pages: one page from SQL, with variants and addresses", async () => {
     const products = await call("GET", "products", "products", auth);
     assert.strictEqual(products.status, 200, JSON.stringify(products.json));
