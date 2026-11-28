@@ -1,621 +1,446 @@
 "use client";
 
-import React, { useEffect, useState, useMemo } from "react";
-import {
-  Package,
-  Plus,
-  Search,
-  Tag,
-  Filter,
-  Layers,
-  CheckCircle2,
-  Trash2,
-  AlertCircle,
-  UploadCloud,
-  Images,
-  Pencil,
-} from "lucide-react";
-import { BentoCard } from "@/components/bento/BentoCard";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { AlertCircle, Archive, LayoutGrid, List, Package, Plus, Search, UploadCloud, X } from "lucide-react";
 import { Button } from "@/components/ui/Button/Button";
 import { Input } from "@/components/ui/Input/Input";
-import { Modal } from "@/components/ui/Modal/Modal";
-import { Badge } from "@/components/ui/Badge/Badge";
-import { EmptyState, LoadingState } from "@/components/ui/States/States";
+import { EmptyState, ErrorState, LoadingState, PermissionDenied } from "@/components/ui/States/States";
 import { BulkImportModal } from "@/components/catalog/BulkImportModal";
-import { ProductImageUploader } from "@/components/catalog/ProductImageUploader";
 import { ProductPhotosModal } from "@/components/catalog/ProductPhotosModal";
-import { Category, Product } from "@/types/commerce";
+import type { Category, Product } from "@/types/commerce";
 import { useDebounce } from "@/hooks/useDebounce";
+import { RestockPanel, StatusTiles, type StatusCounts } from "./CatalogOverview";
+import { ProductFormModal } from "./ProductFormModal";
+import { ProductList, type ProductView } from "./ProductList";
+import { PRODUCT_STATUSES, STATUS_LABELS, restockList, stockByVariant, type ListedStatus, type StockRow } from "./product-display";
+import styles from "./products.module.css";
+
+const PAGE_SIZE = 24;
+const VIEW_KEY = "commerceos.products.view";
+
+type LoadError = { message: string; requestId?: string; status?: number };
+
+async function readError(res: Response, fallback: string): Promise<LoadError> {
+  const json = await res.json().catch(() => ({}));
+  return { message: json?.error?.message || fallback, requestId: json?.error?.request_id, status: res.status };
+}
 
 export default function ProductsPage() {
   const [products, setProducts] = useState<Product[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<LoadError | null>(null);
+  const [page, setPage] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
-  // ⚡ Bolt: Debounce search query to reduce re-renders and filter calculations while typing
-  const debouncedSearchQuery = useDebounce(searchQuery, 300);
-  const [statusFilter, setStatusFilter] = useState("ALL");
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isBulkImportModalOpen, setIsBulkImportModalOpen] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [formError, setFormError] = useState("");
+  const debouncedSearch = useDebounce(searchQuery, 300);
+  const [status, setStatus] = useState<ListedStatus | null>(null);
+  const [categoryId, setCategoryId] = useState("");
+  const [view, setView] = useState<ProductView>("table");
 
-  // New Product form fields
-  const [name, setName] = useState("");
-  const [sku, setSku] = useState("");
-  const [basePrice, setBasePrice] = useState("");
-  const [compareAtPrice, setCompareAtPrice] = useState("");
-  const [initialStock, setInitialStock] = useState("10");
-  const [description, setDescription] = useState("");
-  const [categoryName, setCategoryName] = useState("");
+  const [counts, setCounts] = useState<StatusCounts | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [images, setImages] = useState<string[]>([]);
-  const [imagesBusy, setImagesBusy] = useState(false);
-  const [photosProduct, setPhotosProduct] = useState<Product | null>(null);
-  // Set while the modal edits an existing product; null when it creates one
-  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [stockRows, setStockRows] = useState<StockRow[] | null>(null);
+  const [stockNote, setStockNote] = useState<string | undefined>();
 
-  const loadProducts = async () => {
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const [formOpen, setFormOpen] = useState(false);
+  const [editing, setEditing] = useState<Product | null>(null);
+  const [photosProduct, setPhotosProduct] = useState<Product | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
+
+  // The view choice is a local preference only
+  useEffect(() => {
+    const saved = window.localStorage.getItem(VIEW_KEY);
+    if (saved === "grid" || saved === "table") setView(saved);
+  }, []);
+  const chooseView = (next: ProductView) => {
+    setView(next);
+    window.localStorage.setItem(VIEW_KEY, next);
+  };
+
+  const loadProducts = useCallback(async () => {
     try {
       setIsLoading(true);
-      const res = await fetch("/api/v1/products?limit=100");
-      if (res.ok) {
-        const json = await res.json();
-        setProducts(json.data || []);
+      setLoadError(null);
+      const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(page * PAGE_SIZE) });
+      if (debouncedSearch.trim()) params.set("search", debouncedSearch.trim());
+      if (status) params.set("status", status);
+      if (categoryId) params.set("category_id", categoryId);
+      const res = await fetch(`/api/v1/products?${params.toString()}`);
+      if (!res.ok) {
+        setLoadError(await readError(res, `Products could not be loaded (${res.status}).`));
+        return;
       }
-    } catch (err) {
-      console.error("Failed to load products:", err);
+      const json = await res.json();
+      const rows: Product[] = json.data || [];
+      const total = Number(json.meta?.total ?? rows.length);
+      // A page emptied by an archive or a status change: show the last page that still has products
+      if (rows.length === 0 && page > 0 && total > 0) {
+        setPage(Math.ceil(total / PAGE_SIZE) - 1);
+        return;
+      }
+      setProducts(rows);
+      setTotalCount(total);
+    } catch {
+      setLoadError({ message: "Could not reach the server." });
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [page, debouncedSearch, status, categoryId]);
 
-  const loadCategories = async () => {
+  /** One count per status, read from each filtered list's total. */
+  const loadCounts = useCallback(async () => {
+    try {
+      const totals = await Promise.all(
+        [...PRODUCT_STATUSES, "all" as const].map(async (s) => {
+          const res = await fetch(`/api/v1/products?limit=1${s === "all" ? "" : `&status=${s}`}`);
+          if (!res.ok) throw new Error();
+          const json = await res.json();
+          return [s, Number(json.meta?.total ?? 0)] as const;
+        })
+      );
+      setCounts(Object.fromEntries(totals) as StatusCounts);
+    } catch {
+      setCounts(null);
+    }
+  }, []);
+
+  const loadCategories = useCallback(async () => {
     try {
       const res = await fetch("/api/v1/categories");
-      if (res.ok) {
-        const json = await res.json();
-        setCategories((json.data?.categories || []).filter((c: Category) => c.status !== "ARCHIVED"));
-      }
+      if (!res.ok) return;
+      const json = await res.json();
+      setCategories((json.data?.categories || []).filter((c: Category) => c.status !== "ARCHIVED"));
     } catch {
-      // The form still works without the list; a typed category is created on save
+      // Filters and the form still work without the list; a typed category is created on save
     }
-  };
+  }, []);
+
+  const loadStock = useCallback(async () => {
+    try {
+      const res = await fetch("/api/v1/inventory");
+      if (res.status === 403) {
+        setStockRows(null);
+        setStockNote("Your role cannot see stock levels (needs inventory.read).");
+        return;
+      }
+      if (!res.ok) {
+        const err = await readError(res, "Stock levels could not be loaded.");
+        setStockRows(null);
+        setStockNote(err.requestId ? `${err.message} (request ${err.requestId})` : err.message);
+        return;
+      }
+      const json = await res.json();
+      setStockRows(json.data?.inventory || []);
+      setStockNote(undefined);
+    } catch {
+      setStockRows(null);
+      setStockNote("Could not reach the server for stock levels.");
+    }
+  }, []);
 
   useEffect(() => {
     loadProducts();
+  }, [loadProducts]);
+
+  useEffect(() => {
+    loadCounts();
     loadCategories();
-  }, []);
+    loadStock();
+  }, [loadCounts, loadCategories, loadStock]);
 
-  /** The chosen category's id: an existing one by name, or a new one created now. Customers browse the shop by category. */
-  const resolveCategoryId = async (): Promise<string | undefined> => {
-    const wanted = categoryName.trim();
-    if (!wanted) return undefined;
-    const existing = categories.find((c) => c.name.toLowerCase() === wanted.toLowerCase());
-    if (existing) return existing.id;
-    const res = await fetch("/api/v1/categories", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: wanted }),
-    });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error?.message || "Failed to create the category");
-    await loadCategories();
-    return json.data?.category?.id;
+  const refreshAll = async () => {
+    setSelected(new Set());
+    await Promise.all([loadProducts(), loadCounts(), loadStock()]);
   };
 
-  const handleCreateProduct = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setFormError("");
+  // A new filter shows its first page and starts a fresh selection
+  const resetPaging = () => {
+    setPage(0);
+    setSelected(new Set());
+  };
 
-    if (!name.trim()) {
-      setFormError("Product name is required.");
-      return;
-    }
-    if (imagesBusy) {
-      setFormError("Wait for the photos to finish uploading.");
-      return;
-    }
-    const priceNum = parseFloat(basePrice);
-    if (isNaN(priceNum) || priceNum <= 0) {
-      setFormError("A valid positive base price is required.");
-      return;
-    }
+  const categoryNames = useMemo(() => new Map(categories.map((c) => [c.id, c.name])), [categories]);
+  const stockIndex = useMemo(() => (stockRows ? stockByVariant(stockRows) : null), [stockRows]);
+  const restock = useMemo(() => (stockRows ? restockList(stockRows) : null), [stockRows]);
 
-    const generatedSku = sku.trim() || `SKU-${name.slice(0, 3).toUpperCase()}-${Math.floor(1000 + Math.random() * 9000)}`;
+  const toggleSelected = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
+  const toggleAll = () =>
+    setSelected((prev) => {
+      const allOn = products.length > 0 && products.every((p) => prev.has(p.id));
+      const next = new Set(prev);
+      for (const p of products) {
+        if (allOn) next.delete(p.id);
+        else next.add(p.id);
+      }
+      return next;
+    });
+
+  const archiveOne = async (product: Product) => {
+    if (!window.confirm(`Archive "${product.name}"? Customers will no longer be able to order it.`)) return;
+    setActionError(null);
+    setBusyId(product.id);
     try {
-      setIsSubmitting(true);
-      const categoryId = await resolveCategoryId();
-      const res = await fetch("/api/v1/products", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: name.trim(),
-          sku: generatedSku,
-          base_price: priceNum,
-          compare_at_price: compareAtPrice ? parseFloat(compareAtPrice) : undefined,
-          initial_stock: parseInt(initialStock, 10) || 0,
-          description: description.trim(),
-          category_id: categoryId,
-          images,
-          status: "ACTIVE",
-        }),
-      });
-
+      const res = await fetch(`/api/v1/products/${encodeURIComponent(product.id)}`, { method: "DELETE" });
       if (!res.ok) {
-        const errJson = await res.json();
-        throw new Error(errJson.error?.message || "Failed to create product");
+        const err = await readError(res, "The product could not be archived.");
+        setActionError(err.requestId ? `${err.message} (request ${err.requestId})` : err.message);
+        return;
       }
-
-      // Success
-      setIsModalOpen(false);
-      resetForm();
-      await loadProducts();
-    } catch (err) {
-      setFormError(err instanceof Error ? err.message : "An error occurred");
+      await refreshAll();
+    } catch {
+      setActionError("Could not reach the server.");
     } finally {
-      setIsSubmitting(false);
+      setBusyId(null);
     }
   };
 
-  const resetForm = () => {
-    setEditingProduct(null);
-    setFormError("");
-    setName("");
-    setSku("");
-    setBasePrice("");
-    setCompareAtPrice("");
-    setDescription("");
-    setCategoryName("");
-    setInitialStock("10");
-    setImages([]);
-  };
-
-  const openCreateModal = () => {
-    resetForm();
-    setIsModalOpen(true);
-  };
-
-  const openEditModal = (product: Product) => {
-    resetForm();
-    setEditingProduct(product);
-    setName(product.name);
-    setSku(product.sku);
-    setBasePrice(String(product.base_price));
-    setCompareAtPrice(product.compare_at_price != null ? String(product.compare_at_price) : "");
-    setDescription(product.description ?? "");
-    setCategoryName(categories.find((c) => c.id === product.category_id)?.name ?? "");
-    setImages(product.images ?? []);
-    setIsModalOpen(true);
-  };
-
-  const closeModal = () => {
-    setIsModalOpen(false);
-    resetForm();
-  };
-
-  /** Sends only the fields that changed. Stock is not part of a product edit; it changes through inventory. */
-  const handleUpdateProduct = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingProduct) return;
-    setFormError("");
-
-    if (!name.trim()) {
-      setFormError("Product name is required.");
-      return;
-    }
-    if (!sku.trim()) {
-      setFormError("SKU is required.");
-      return;
-    }
-    if (imagesBusy) {
-      setFormError("Wait for the photos to finish uploading.");
-      return;
-    }
-    const priceNum = parseFloat(basePrice);
-    if (isNaN(priceNum) || priceNum <= 0) {
-      setFormError("A valid positive base price is required.");
-      return;
-    }
-    const compareNum = compareAtPrice.trim() ? parseFloat(compareAtPrice) : null;
-    if (compareNum !== null && (isNaN(compareNum) || compareNum < 0)) {
-      setFormError("Compare at price must be a positive number or empty.");
-      return;
-    }
-
+  const setProductStatus = async (product: Product, next: "ACTIVE" | "DRAFT") => {
+    setActionError(null);
+    setBusyId(product.id);
     try {
-      setIsSubmitting(true);
-      const original = editingProduct;
-      const patch: Record<string, unknown> = {};
-      if (name.trim() !== original.name) patch.name = name.trim();
-      if (sku.trim() !== original.sku) patch.sku = sku.trim();
-      if (priceNum !== original.base_price) patch.base_price = priceNum;
-      if (compareNum !== (original.compare_at_price ?? null)) patch.compare_at_price = compareNum;
-      if (description.trim() !== (original.description ?? "")) patch.description = description.trim();
-      // Only touch the category when the field changed, so a category missing from the list is never cleared
-      const originalCategoryName = categories.find((c) => c.id === original.category_id)?.name ?? "";
-      if (categoryName.trim() !== originalCategoryName) {
-        patch.category_id = (await resolveCategoryId()) ?? null;
+      const res = await fetch(`/api/v1/products/${encodeURIComponent(product.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: next }),
+      });
+      if (!res.ok) {
+        const err = await readError(res, "The status could not be changed.");
+        setActionError(err.requestId ? `${err.message} (request ${err.requestId})` : err.message);
+        return;
       }
-      const originalImages = original.images ?? [];
-      if (images.length !== originalImages.length || images.some((url, i) => url !== originalImages[i])) {
-        patch.images = images;
-        patch.primary_image = images[0] ?? "";
-      }
-
-      if (Object.keys(patch).length > 0) {
-        const res = await fetch(`/api/v1/products/${encodeURIComponent(original.id)}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(patch),
-        });
-        if (!res.ok) {
-          const errJson = await res.json();
-          throw new Error(errJson.error?.message || "Failed to update product");
-        }
-      }
-
-      closeModal();
-      await loadProducts();
-    } catch (err) {
-      setFormError(err instanceof Error ? err.message : "An error occurred");
+      await refreshAll();
+    } catch {
+      setActionError("Could not reach the server.");
     } finally {
-      setIsSubmitting(false);
+      setBusyId(null);
     }
   };
 
-  const handleArchive = async (productId: string) => {
-    if (!confirm("Are you sure you want to archive this product?")) return;
-    try {
-      const res = await fetch(`/api/v1/products/${productId}`, { method: "DELETE" });
-      if (res.ok) {
-        await loadProducts();
+  /** Archives the selected products one by one and reports any that failed. */
+  const archiveSelected = async () => {
+    const targets = products.filter((p) => selected.has(p.id) && p.status !== "ARCHIVED");
+    if (targets.length === 0) return;
+    if (!window.confirm(`Archive ${targets.length} product${targets.length === 1 ? "" : "s"}? Customers will no longer be able to order them.`)) return;
+    setActionError(null);
+    setBulkBusy(true);
+    const failed: string[] = [];
+    for (const p of targets) {
+      try {
+        const res = await fetch(`/api/v1/products/${encodeURIComponent(p.id)}`, { method: "DELETE" });
+        if (!res.ok) failed.push(p.name);
+      } catch {
+        failed.push(p.name);
       }
-    } catch (err) {
-      console.error("Failed to archive product:", err);
     }
+    setBulkBusy(false);
+    if (failed.length > 0) setActionError(`Not archived: ${failed.join(", ")}.`);
+    await refreshAll();
   };
 
-  const filteredProducts = useMemo(() => {
-    return products.filter((p) => {
-      const matchesSearch =
-        p.name.toLowerCase().includes(debouncedSearchQuery.toLowerCase()) ||
-        p.sku.toLowerCase().includes(debouncedSearchQuery.toLowerCase());
-      const matchesStatus = statusFilter === "ALL" || p.status === statusFilter;
-      return matchesSearch && matchesStatus;
-    });
-  }, [products, debouncedSearchQuery, statusFilter]);
+  const openCreate = () => {
+    setEditing(null);
+    setFormOpen(true);
+  };
+
+  if (loadError?.status === 403) return <PermissionDenied resource="products" requiredPermission="products.read" />;
+
+  const isFiltered = Boolean(status || categoryId || debouncedSearch.trim());
+  const archivableSelected = products.filter((p) => selected.has(p.id) && p.status !== "ARCHIVED").length;
 
   return (
-    <>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "24px" }}>
+    <div className={styles.page}>
+      <header className={styles.header}>
         <div>
-          <h1 style={{ fontSize: "24px", fontWeight: 700, margin: 0 }}>Product Catalog &amp; SKUs</h1>
-          <p style={{ color: "var(--color-text-muted)", fontSize: "14px", marginTop: "4px" }}>
-            Authoritative multi-variant product catalog, attributes, and pricing.
-          </p>
+          <h1 className={styles.title}>Products</h1>
+          <p className={styles.subtitle}>Your catalog: prices, photos and stock your AI agents sell from.</p>
         </div>
-        <div style={{ display: "flex", gap: "10px" }}>
-          <Button variant="outline" size="md" onClick={() => setIsBulkImportModalOpen(true)}>
-            <UploadCloud size={16} style={{ marginRight: 6 }} /> Import Catalog (CSV)
-          </Button>
-          <Button variant="primary" size="md" onClick={openCreateModal}>
-            <Plus size={16} style={{ marginRight: 6 }} /> Add Product
-          </Button>
+        <div className={styles.actions}>
+          <button type="button" className={styles.ghostButton} onClick={() => setImportOpen(true)}>
+            <UploadCloud size={15} /> Import CSV
+          </button>
+          <button type="button" className={styles.inkButton} onClick={openCreate}>
+            <Plus size={16} /> New product
+          </button>
         </div>
-      </div>
+      </header>
 
-      {/* Filter and Search Bar */}
-      <div
-        style={{
-          display: "flex",
-          gap: "12px",
-          alignItems: "center",
-          marginBottom: "20px",
-          flexWrap: "wrap",
+      <StatusTiles
+        counts={counts}
+        active={status}
+        onPick={(s) => {
+          setStatus(s);
+          resetPaging();
         }}
-      >
-        <div style={{ flex: "1 1 300px" }}>
-          <Input
-            placeholder="Search by title or SKU..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            leftIcon={<Search size={16} color="var(--color-text-muted)" />}
-          />
-        </div>
-        <div style={{ display: "flex", gap: "6px" }}>
-          {["ALL", "ACTIVE", "DRAFT", "ARCHIVED"].map((s) => (
-            <button
-              key={s}
-              onClick={() => setStatusFilter(s)}
-              style={{
-                padding: "8px 14px",
-                borderRadius: "var(--radius-control)",
-                fontSize: "12px",
-                fontWeight: 600,
-                border: "1px solid var(--color-border-subtle)",
-                background: statusFilter === s ? "var(--color-charcoal)" : "transparent",
-                color: statusFilter === s ? "var(--color-lime)" : "var(--color-text-secondary)",
-                cursor: "pointer",
-                transition: "all 0.15s ease",
-              }}
-            >
-              {s}
-            </button>
-          ))}
-        </div>
-      </div>
+      />
 
-      {/* Catalog Table */}
-      <BentoCard span={12} title="Catalog Items" subtitle={`Displaying ${filteredProducts.length} items`}>
-        {isLoading ? (
-          <LoadingState message="Fetching catalog from authoritative database..." />
-        ) : filteredProducts.length === 0 ? (
-          <EmptyState
-            icon={<Package size={36} color="var(--color-lime-hover)" />}
-            title="No products found"
-            description="Add products to your catalog to unlock inventory tracking, checkout, and AI recommendations."
-            actionText="+ Add First Product"
-            onAction={openCreateModal}
-          />
-        ) : (
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
-              <thead>
-                <tr style={{ borderBottom: "1px solid var(--color-border-subtle)", textAlign: "left" }}>
-                  <th style={{ padding: "12px 10px", color: "var(--color-text-secondary)" }}>Product</th>
-                  <th style={{ padding: "12px 10px", color: "var(--color-text-secondary)" }}>SKU</th>
-                  <th style={{ padding: "12px 10px", color: "var(--color-text-secondary)" }}>Price</th>
-                  <th style={{ padding: "12px 10px", color: "var(--color-text-secondary)" }}>Variants</th>
-                  <th style={{ padding: "12px 10px", color: "var(--color-text-secondary)" }}>Status</th>
-                  <th style={{ padding: "12px 10px", color: "var(--color-text-secondary)", textAlign: "right" }}>
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredProducts.map((product) => (
-                  <tr
-                    key={product.id}
-                    style={{
-                      borderBottom: "1px solid var(--color-border-subtle)",
-                      opacity: product.status === "ARCHIVED" ? 0.6 : 1,
-                    }}
-                  >
-                    <td style={{ padding: "14px 10px", fontWeight: 600 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                        {product.primary_image || product.images?.[0] ? (
-                          // eslint-disable-next-line @next/next/no-img-element -- uploaded files come from the media bucket
-                          <img
-                            src={product.primary_image || product.images[0]}
-                            alt=""
-                            width={40}
-                            height={40}
-                            style={{ objectFit: "cover", borderRadius: "var(--radius-sm)", flexShrink: 0 }}
-                          />
-                        ) : (
-                          <span
-                            aria-hidden
-                            style={{
-                              width: 40,
-                              height: 40,
-                              display: "inline-flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              borderRadius: "var(--radius-sm)",
-                              background: "var(--color-surface-soft)",
-                              flexShrink: 0,
-                            }}
-                          >
-                            <Package size={16} color="var(--color-text-muted)" />
-                          </span>
-                        )}
-                        <div>
-                          <div>{product.name}</div>
-                          {product.description && (
-                            <div style={{ fontSize: "11px", color: "var(--color-text-muted)", fontWeight: 400 }}>
-                              {product.description.slice(0, 60)}...
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </td>
-                    <td style={{ padding: "14px 10px" }}>
-                      <code>{product.sku}</code>
-                    </td>
-                    <td style={{ padding: "14px 10px", fontWeight: 600 }}>
-                      {product.base_price.toLocaleString("en-BD")} ৳
-                      {product.compare_at_price && (
-                        <span
-                          style={{
-                            fontSize: "11px",
-                            color: "var(--color-text-muted)",
-                            textDecoration: "line-through",
-                            marginLeft: "6px",
-                          }}
-                        >
-                          {product.compare_at_price.toLocaleString("en-BD")} ৳
-                        </span>
-                      )}
-                    </td>
-                    <td style={{ padding: "14px 10px" }}>
-                      <span style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
-                        <Layers size={14} color="var(--color-text-muted)" />
-                        {product.variants?.length || 1}
-                      </span>
-                    </td>
-                    <td style={{ padding: "14px 10px" }}>
-                      <Badge variant={product.status === "ACTIVE" ? "active" : "inactive"}>
-                        {product.status}
-                      </Badge>
-                    </td>
-                    <td style={{ padding: "14px 10px", textAlign: "right", whiteSpace: "nowrap" }}>
-                      {product.status !== "ARCHIVED" && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => openEditModal(product)}
-                          aria-label={`Edit ${product.name}`}
-                        >
-                          <Pencil size={14} />
-                        </Button>
-                      )}
-                      {product.status !== "ARCHIVED" && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setPhotosProduct(product)}
-                          aria-label={`Edit photos of ${product.name}`}
-                        >
-                          <Images size={14} />
-                        </Button>
-                      )}
-                      {product.status !== "ARCHIVED" && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleArchive(product.id)}
-                          style={{ color: "var(--color-danger)" }}
-                        >
-                          <Trash2 size={14} />
-                        </Button>
-                      )}
-                    </td>
-                  </tr>
+      <div className={styles.layout}>
+        <section className={styles.panel} aria-label="Product list">
+          <div className={styles.toolbar}>
+            <div className={styles.tools}>
+              <div className={styles.search}>
+                <Input
+                  type="search"
+                  aria-label="Search products"
+                  placeholder="Search name or SKU"
+                  value={searchQuery}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    resetPaging();
+                  }}
+                  leftIcon={<Search size={15} color="var(--color-text-secondary)" />}
+                />
+              </div>
+              <select
+                className={styles.toolSelect}
+                aria-label="Filter by category"
+                value={categoryId}
+                onChange={(e) => {
+                  setCategoryId(e.target.value);
+                  resetPaging();
+                }}
+              >
+                <option value="">All categories</option>
+                {categories.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
                 ))}
-              </tbody>
-            </table>
+              </select>
+              {status && (
+                <button
+                  type="button"
+                  className={styles.filterChip}
+                  onClick={() => {
+                    setStatus(null);
+                    resetPaging();
+                  }}
+                >
+                  {STATUS_LABELS[status]} <X size={13} aria-label="Clear status filter" />
+                </button>
+              )}
+            </div>
+            <div className={styles.tools}>
+              {selected.size > 0 && (
+                <>
+                  <span className={styles.selection}>{selected.size} selected</span>
+                  <button
+                    type="button"
+                    className={styles.toolButton}
+                    onClick={archiveSelected}
+                    disabled={bulkBusy || archivableSelected === 0}
+                  >
+                    <Archive size={14} /> {bulkBusy ? "Archiving…" : "Archive"}
+                  </button>
+                </>
+              )}
+              <div className={styles.segmented} role="group" aria-label="View">
+                <button type="button" aria-pressed={view === "table"} onClick={() => chooseView("table")} title="Table view">
+                  <List size={15} />
+                  <span className={styles.srOnly}>Table view</span>
+                </button>
+                <button type="button" aria-pressed={view === "grid"} onClick={() => chooseView("grid")} title="Grid view">
+                  <LayoutGrid size={15} />
+                  <span className={styles.srOnly}>Grid view</span>
+                </button>
+              </div>
+            </div>
           </div>
-        )}
-      </BentoCard>
 
-      {/* Add / Edit Product Modal */}
-      <Modal
-        isOpen={isModalOpen}
-        onClose={closeModal}
-        title={editingProduct ? "Edit Product" : "Create New Product"}
-      >
-        <form
-          onSubmit={editingProduct ? handleUpdateProduct : handleCreateProduct}
-          style={{ display: "flex", flexDirection: "column", gap: "16px" }}
-        >
-          {formError && (
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "8px",
-                padding: "10px",
-                background: "rgba(239, 68, 68, 0.1)",
-                color: "var(--color-danger)",
-                borderRadius: "var(--radius-control)",
-                fontSize: "13px",
-              }}
-            >
-              <AlertCircle size={16} />
-              <span>{formError}</span>
+          {actionError && (
+            <div className={styles.banner} role="alert">
+              <AlertCircle size={15} />
+              <span>{actionError}</span>
+              <button type="button" className={styles.bannerClose} onClick={() => setActionError(null)} aria-label="Dismiss">
+                <X size={14} />
+              </button>
             </div>
           )}
 
-          <Input
-            label="Product Title *"
-            placeholder="e.g. Traditional Panjabi - Midnight Blue"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            required
-          />
-
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-            <Input
-              label={editingProduct ? "SKU *" : "SKU (Leave blank to auto-generate)"}
-              placeholder="e.g. PAN-BLU-001"
-              value={sku}
-              onChange={(e) => setSku(e.target.value)}
-              required={Boolean(editingProduct)}
+          {isLoading ? (
+            <LoadingState message="Loading products…" />
+          ) : loadError ? (
+            <ErrorState message={loadError.message} requestId={loadError.requestId} onRetry={() => loadProducts()} />
+          ) : products.length === 0 ? (
+            <EmptyState
+              icon={<Package size={36} color="var(--color-text-secondary)" />}
+              title={isFiltered ? "No products match" : "No products yet"}
+              description={
+                isFiltered
+                  ? "Try another search, status or category."
+                  : "Add products so customers can order them and your AI agents can recommend them."
+              }
+              actionText={isFiltered ? undefined : "+ Add product"}
+              onAction={isFiltered ? undefined : openCreate}
             />
-            {editingProduct ? (
-              <Input
-                label="Stock"
-                value="Managed in Inventory"
-                disabled
-                hint="Change stock from the Inventory page."
+          ) : (
+            <>
+              <ProductList
+                products={products}
+                view={view}
+                categoryNames={categoryNames}
+                stock={stockIndex}
+                selected={selected}
+                busyId={busyId}
+                onToggle={toggleSelected}
+                onToggleAll={toggleAll}
+                onEdit={(p) => {
+                  setEditing(p);
+                  setFormOpen(true);
+                }}
+                onPhotos={setPhotosProduct}
+                onArchive={archiveOne}
+                onSetStatus={setProductStatus}
               />
-            ) : (
-              <Input
-                label="Initial Stock *"
-                type="number"
-                min="0"
-                value={initialStock}
-                onChange={(e) => setInitialStock(e.target.value)}
-                required
-              />
-            )}
-          </div>
+              <div className={styles.footer}>
+                <span>
+                  {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, totalCount)} of {totalCount.toLocaleString()}
+                </span>
+                {totalCount > PAGE_SIZE && (
+                  <div className={styles.pager}>
+                    <Button variant="outline" size="sm" disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>
+                      Previous
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={(page + 1) * PAGE_SIZE >= totalCount}
+                      onClick={() => setPage((p) => p + 1)}
+                    >
+                      Next
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </section>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-            <Input
-              label="Base Price (BDT ৳) *"
-              type="number"
-              min="1"
-              placeholder="1500"
-              value={basePrice}
-              onChange={(e) => setBasePrice(e.target.value)}
-              required
-            />
-            <Input
-              label="Compare At Price (BDT ৳)"
-              type="number"
-              placeholder="1800"
-              value={compareAtPrice}
-              onChange={(e) => setCompareAtPrice(e.target.value)}
-            />
-          </div>
+        <RestockPanel restock={restock} note={stockNote} />
+      </div>
 
-          <Input
-            label="Category"
-            placeholder="e.g. Panjabi, Saree, Shoes"
-            list="product-categories"
-            value={categoryName}
-            onChange={(e) => setCategoryName(e.target.value)}
-            hint="Pick one or type a new one. Customers browse your shop by category in chat."
-            maxLength={80}
-          />
-          <datalist id="product-categories">
-            {categories.map((c) => (
-              <option key={c.id} value={c.name} />
-            ))}
-          </datalist>
-
-          <ProductImageUploader value={images} onChange={setImages} onBusyChange={setImagesBusy} disabled={isSubmitting} />
-
-          <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-            <label style={{ fontSize: "13px", fontWeight: 500 }}>Description</label>
-            <textarea
-              rows={3}
-              placeholder="Detailed product specifications..."
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              style={{
-                padding: "10px",
-                borderRadius: "var(--radius-control)",
-                border: "1px solid var(--color-border-subtle)",
-                fontFamily: "inherit",
-                fontSize: "13px",
-                background: "var(--color-bg-primary)",
-              }}
-            />
-          </div>
-
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "12px" }}>
-            <Button variant="outline" type="button" onClick={closeModal}>
-              Cancel
-            </Button>
-            <Button variant="primary" type="submit" isLoading={isSubmitting} disabled={imagesBusy}>
-              {editingProduct ? "Save Changes" : "Create Product"}
-            </Button>
-          </div>
-        </form>
-      </Modal>
+      <ProductFormModal
+        isOpen={formOpen}
+        product={editing}
+        categories={categories}
+        onClose={() => {
+          setFormOpen(false);
+          setEditing(null);
+        }}
+        onSaved={refreshAll}
+        onCategoryCreated={loadCategories}
+      />
 
       <ProductPhotosModal
         product={photosProduct}
@@ -626,12 +451,7 @@ export default function ProductsPage() {
         }}
       />
 
-      {/* Bulk Catalog Import Modal */}
-      <BulkImportModal
-        isOpen={isBulkImportModalOpen}
-        onClose={() => setIsBulkImportModalOpen(false)}
-        onSuccess={loadProducts}
-      />
-    </>
+      <BulkImportModal isOpen={importOpen} onClose={() => setImportOpen(false)} onSuccess={refreshAll} />
+    </div>
   );
 }
