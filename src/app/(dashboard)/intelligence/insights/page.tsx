@@ -50,10 +50,10 @@ export default function InsightsExplorerPage() {
       <div className={styles.header}>
         <div>
           <h1 className={styles.headerTitle}>
-            <Sparkles size={24} color="#C7F900" /> Insights & Anomaly Explorer
+            <Sparkles size={24} color="var(--color-lime-ink)" /> Insights
           </h1>
           <p className={styles.headerSubtitle}>
-            Statistical anomaly detection, verified revenue opportunities, and proactive commerce risk monitoring.
+            Unusual changes in your sales, chances to sell more, and risks to watch.
           </p>
         </div>
         <button className={styles.secondaryBtn} onClick={loadData}>
@@ -62,12 +62,10 @@ export default function InsightsExplorerPage() {
       </div>
 
       <div className={styles.navTabs}>
-        <Link href="/intelligence" className={styles.navTab}>Executive Overview</Link>
+        <Link href="/analytics?tab=recommendations" className={styles.navTab}>← Analytics</Link>
         <Link href="/intelligence/insights" className={`${styles.navTab} ${styles.navTabActive}`}>Insights & Anomalies</Link>
-        <Link href="/intelligence/forecasts" className={styles.navTab}>Demand Forecasts</Link>
         <Link href="/intelligence/recommendations" className={styles.navTab}>Recommendations</Link>
-        <Link href="/intelligence/simulation" className={styles.navTab}>What-If Sandbox</Link>
-        <Link href="/intelligence/analytics" className={styles.navTab}>AI Analytics Explorer</Link>
+        <Link href="/intelligence/analytics" className={styles.navTab}>Customer Segments</Link>
       </div>
 
       {/* Internal Tab Filter */}

@@ -18,7 +18,7 @@ import { Dock, type DockItem } from "./Dock";
 import { DockAccount } from "./DockAccount";
 import { canAccessPath } from "./module-access";
 
-type HubPage = Pick<DockItem, "label" | "href" | "badge" | "match">;
+type HubPage = Pick<DockItem, "label" | "href" | "badge" | "match" | "alsoActiveOn">;
 interface Hub {
   label: string;
   icon: React.ReactNode;
@@ -57,7 +57,8 @@ const HUBS: Hub[] = [
   {
     label: "Insights",
     icon: <BarChart3 size={20} strokeWidth={2} />,
-    pages: [page("Analytics", "/analytics"), page("Intelligence", "/intelligence"), page("Ask your shop", "/assistant")],
+    // The Intelligence pages (recommendations, insights, forecasts, ...) open from Analytics' Recommendations tab
+    pages: [{ ...page("Analytics", "/analytics"), alsoActiveOn: ["/intelligence"] }, page("Ask your shop", "/assistant")],
   },
 ];
 

@@ -11,7 +11,6 @@ import { opportunityDetectorService } from "./opportunity-detector.service";
 import { riskDetectorService } from "./risk-detector.service";
 import { recommendationService } from "./recommendation.service";
 import { cohortAnalysisService } from "./cohort-analysis.service";
-import { dataQualityService } from "./data-quality.service";
 import { intelligenceSnapshots, IntelligenceKind } from "./intelligence-snapshot.service";
 import { customerLifecycleService } from "@/domains/growth/services/customer-lifecycle.service";
 import { growthIntelligenceService } from "@/domains/growth/services/growth-intelligence.service";
@@ -43,7 +42,6 @@ export class IntelligenceRecomputeService {
     run("risks", () => riskDetectorService.computeRisks(tenantId));
     run("recommendations", () => recommendationService.computeRecommendations(tenantId));
     run("cohorts", () => cohortAnalysisService.computeCohorts(tenantId));
-    run("data_quality", () => [dataQualityService.computeDataQualityReport(tenantId)]);
 
     // Growth insights read stored lifecycles, so lifecycles are evaluated (and their transitions logged) first.
     const t0 = Date.now();

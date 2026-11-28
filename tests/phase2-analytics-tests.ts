@@ -9,7 +9,6 @@ import { db } from "@/infrastructure/db";
 import { RequestContext } from "@/lib/context";
 import { ROLE_PERMISSIONS } from "@/lib/permissions";
 import { AnalyticsService } from "@/domains/analytics/analytics.service";
-import { analyticsQueryService } from "@/domains/intelligence/services/analytics-query.service";
 import { customerIntelligenceService } from "@/domains/intelligence/services/customer-intelligence.service";
 import { SalesIntelligenceService } from "@/domains/intelligence/services/sales-intelligence.service";
 import type { Customer, Order, OrderItem } from "@/types/commerce";
@@ -111,11 +110,6 @@ async function main() {
   await runTest("financial metrics count all 120 orders, not the first 50", async () => {
     const m = await AnalyticsService.getFinancialMetrics(context(TENANT), "30D");
     assert.strictEqual(m.gmv_bdt, ORDERS * ORDER_TOTAL, `GMV ${m.gmv_bdt}`);
-  });
-
-  await runTest("analytics query orders_count and gross revenue cover all 120 orders", () => {
-    const r = analyticsQueryService.executeQuery({ tenantId: TENANT, metrics: ["orders_count"], datePreset: "30D" });
-    assert.strictEqual(r.metrics.orders_count.current_value, ORDERS);
   });
 
   await runTest("sales intelligence overview sees all 120 orders", () => {

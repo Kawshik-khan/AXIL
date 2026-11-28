@@ -9,9 +9,7 @@ import {
   Users,
   Shield,
   FileText,
-  TrendingUp,
   Sparkles,
-  Sliders,
   LogOut,
   Rocket,
   Send,
@@ -227,46 +225,24 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose,
       },
     },
     {
-      id: "nav-intelligence",
-      title: "Go to Commerce Intelligence Overview",
+      id: "nav-recommendations",
+      title: "Recommendations, opportunities and risks",
       category: "Intelligence",
       icon: <Sparkles size={18} />,
-      href: "/intelligence",
+      href: "/analytics?tab=recommendations",
       action: () => {
-        router.push("/intelligence");
+        router.push("/analytics?tab=recommendations");
         onClose();
       },
     },
     {
-      id: "nav-forecasts",
-      title: "Predictive Demand & Revenue Forecasts",
-      category: "Intelligence",
-      icon: <TrendingUp size={18} />,
-      href: "/intelligence/forecasts",
-      action: () => {
-        router.push("/intelligence/forecasts");
-        onClose();
-      },
-    },
-    {
-      id: "nav-simulation",
-      title: "Simulate What-If Scenarios (Price, Stock, Discounts)",
-      category: "Intelligence",
-      icon: <Sliders size={18} />,
-      href: "/intelligence/simulation",
-      action: () => {
-        router.push("/intelligence/simulation");
-        onClose();
-      },
-    },
-    {
-      id: "nav-analytics-nl",
-      title: "Ask AI Analytics in Natural Language",
+      id: "nav-ask-your-shop",
+      title: "Ask your shop",
       category: "Intelligence",
       icon: <Sparkles size={18} />,
-      href: "/intelligence/analytics",
+      href: "/assistant",
       action: () => {
-        router.push("/intelligence/analytics");
+        router.push("/assistant");
         onClose();
       },
     },
