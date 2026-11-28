@@ -45,6 +45,37 @@
   --color-lilac-soft:       #E9E9FE;
   --color-lilac-ink:        #3F3CA8;
   --color-lilac-mark:       #7B78EE;
+  /* Ask your shop floating card (src/components/assistant): see-through frosted glass lit by a lime + lilac aurora
+     (lime is the AI signal, lilac the dashboard's second colour). Light glass here, smoked glass in the dark theme. */
+  --assistant-glass-top:    rgba(255, 255, 255, 0.40);
+  --assistant-glass-bottom: rgba(255, 255, 255, 0.22);
+  --assistant-aurora-lime:  rgba(199, 249, 0, 0.32);
+  --assistant-aurora-lilac: rgba(123, 120, 238, 0.30);
+  --assistant-glass-edge:   rgba(255, 255, 255, 0.75);
+  --assistant-glass-line:   rgba(30, 32, 30, 0.08);
+  --assistant-glass-sheen:  rgba(255, 255, 255, 0.55);
+  --assistant-glass-field:  rgba(255, 255, 255, 0.42);
+  --assistant-glass-field-hover: rgba(255, 255, 255, 0.72);
+  --assistant-ink:          #202124;
+  --assistant-ink-soft:     rgba(32, 33, 36, 0.70);
+  --assistant-ink-faint:    rgba(32, 33, 36, 0.48);
+  --assistant-mark:         #6B68E0;
+  --assistant-focus:        #3F3CA8;
+  --assistant-danger:       #B42318;
+  --assistant-send:         #202124;
+  --assistant-send-ink:     #D8FF38;
+  --assistant-shadow:       0 24px 60px rgba(32, 33, 36, 0.16), 0 4px 14px rgba(32, 33, 36, 0.06);
+  /* the orb: an iridescent lilac sphere with a lime rim of light, the same in both themes */
+  --assistant-orb-light:    #FFFFFF;
+  --assistant-orb-lime:     #D8FF38;
+  --assistant-orb-mid:      #8582F2;
+  --assistant-orb-deep:     #2E2C7A;
+  --assistant-orb-ink:      #FFFFFF;
+  --assistant-orb-edge:     rgba(255, 255, 255, 0.45);
+  --assistant-orb-shade:    rgba(0, 0, 0, 0.18);
+  --assistant-avatar-shadow: 0 6px 16px rgba(63, 60, 168, 0.25);
+  --assistant-send-shadow:  0 8px 18px rgba(32, 33, 36, 0.22);
+  --assistant-orb-shadow:   0 12px 30px rgba(63, 60, 168, 0.38), 0 0 0 6px rgba(199, 249, 0, 0.14);
   /* Text on a solid lime fill: the fill is the same in both themes, so these are too */
   --color-on-lime:          #202124;
   --color-on-lime-soft:     #3B4700;
@@ -303,6 +334,26 @@
    shared dock, top bar and blur carry their own dark rules under the same attribute. */
 html[data-console-theme="dark"] {
   color-scheme: dark;
+  /* Ask your shop card: smoked glass in the dark theme */
+  --assistant-glass-top:    rgba(36, 37, 42, 0.48);
+  --assistant-glass-bottom: rgba(20, 21, 24, 0.34);
+  --assistant-aurora-lime:  rgba(199, 249, 0, 0.18);
+  --assistant-aurora-lilac: rgba(143, 140, 245, 0.26);
+  --assistant-glass-edge:   rgba(255, 255, 255, 0.14);
+  --assistant-glass-line:   rgba(255, 255, 255, 0.06);
+  --assistant-glass-sheen:  rgba(255, 255, 255, 0.08);
+  --assistant-glass-field:  rgba(255, 255, 255, 0.06);
+  --assistant-glass-field-hover: rgba(255, 255, 255, 0.13);
+  --assistant-ink:          #F3F4EF;
+  --assistant-ink-soft:     rgba(243, 244, 239, 0.72);
+  --assistant-ink-faint:    rgba(243, 244, 239, 0.48);
+  --assistant-mark:         #D8FF38;
+  --assistant-focus:        #D8FF38;
+  --assistant-danger:       #FF9EA1;
+  --assistant-send:         #C7F900;
+  --assistant-send-ink:     #202124;
+  --assistant-shadow:       0 24px 60px rgba(0, 0, 0, 0.5), 0 4px 14px rgba(0, 0, 0, 0.3);
+
 
   --color-bg-base:      #0A0B0D;
   --color-surface-pure: #141518;

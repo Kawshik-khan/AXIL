@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Eraser, Loader2, MessageCircleQuestion, Send, Sparkles } from "lucide-react";
 import { BentoGrid } from "@/components/bento/BentoGrid";
@@ -10,48 +10,7 @@ import { Modal } from "@/components/ui/Modal/Modal";
 import { ErrorState, LoadingSkeleton, PermissionDenied } from "@/components/ui/States/States";
 import dashStyles from "../dashboard.module.css";
 import styles from "./assistant.module.css";
-
-interface Turn {
-  id: string;
-  question: string;
-  answer: string | null;
-  status: string;
-  mode: "LIVE" | "BASIC" | "REFUSED" | null;
-  tools_used: string[];
-  created_at: string;
-}
-
-interface ApiError {
-  message: string;
-  requestId?: string;
-  status: number;
-}
-
-const SUGGESTIONS = [
-  "How much did I sell today?",
-  "Which products sold best this week?",
-  "What is low on stock?",
-  "How many deliveries failed last week?",
-  "আজ কত বিক্রি হলো?",
-  "How much COD is still with couriers?",
-];
-
-const MAX_CHARS = 1000;
-
-async function call<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, { credentials: "include", ...init, headers: { "content-type": "application/json", ...(init?.headers ?? {}) } });
-  const body = await res.json().catch(() => null);
-  if (!res.ok) {
-    const err: ApiError = { status: res.status, message: body?.error?.message ?? "Something went wrong.", requestId: body?.error?.request_id };
-    throw err;
-  }
-  return body?.data as T;
-}
-
-const asError = (err: unknown): ApiError =>
-  typeof err === "object" && err && "status" in err ? (err as ApiError) : { status: 0, message: "Couldn't reach CommerceOS. Check your connection." };
-
-const time = (iso: string) => new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+import { ASSISTANT_MAX_CHARS as MAX_CHARS, ASSISTANT_SUGGESTIONS as SUGGESTIONS, turnTime as time, useOwnerAssistant } from "@/components/assistant/use-owner-assistant";
 
 /**
  * Ask your shop (Owner Assistant, ADR-127): the owner asks about sales, stock, deliveries, returns and cash on
@@ -60,25 +19,11 @@ const time = (iso: string) => new Date(iso).toLocaleTimeString(undefined, { hour
  * offline answer (no AI model connected).
  */
 export default function AssistantPage() {
-  const [turns, setTurns] = useState<Turn[] | null>(null);
-  const [loadError, setLoadError] = useState<ApiError | null>(null);
+  const { turns, loadError, pending, sendError, clearing, load, ask: send, clear } = useOwnerAssistant();
   const [question, setQuestion] = useState("");
-  const [pending, setPending] = useState<string | null>(null);
-  const [sendError, setSendError] = useState<ApiError | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
-  const [clearing, setClearing] = useState(false);
   const endRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
-
-  const load = useCallback(async () => {
-    try {
-      const data = await call<{ turns: Turn[] }>("/api/v1/ai/owner-assistant/messages");
-      setTurns(data.turns);
-      setLoadError(null);
-    } catch (err) {
-      setLoadError(asError(err));
-    }
-  }, []);
 
   useEffect(() => {
     void load();
@@ -91,33 +36,15 @@ export default function AssistantPage() {
   const ask = async (text: string) => {
     const q = text.trim();
     if (!q || pending) return;
-    setPending(q);
-    setSendError(null);
     setQuestion("");
-    try {
-      const data = await call<{ turn: Turn }>("/api/v1/ai/owner-assistant/messages", { method: "POST", body: JSON.stringify({ question: q }) });
-      setTurns((t) => [...(t ?? []), data.turn]);
-    } catch (err) {
-      setSendError(asError(err));
-      setQuestion(q); // keep what they typed, so they can retry
-    } finally {
-      setPending(null);
-      inputRef.current?.focus();
-    }
+    const ok = await send(q);
+    if (!ok) setQuestion(q); // keep what they typed, so they can retry
+    inputRef.current?.focus();
   };
 
   const clearChat = async () => {
-    setClearing(true);
-    try {
-      await call("/api/v1/ai/owner-assistant/messages", { method: "DELETE" });
-      setTurns([]);
-      setConfirmClear(false);
-    } catch (err) {
-      setSendError(asError(err));
-      setConfirmClear(false);
-    } finally {
-      setClearing(false);
-    }
+    await clear();
+    setConfirmClear(false);
   };
 
   const header = (

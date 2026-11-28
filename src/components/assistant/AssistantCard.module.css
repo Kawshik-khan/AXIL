@@ -1,0 +1,499 @@
+/* Ask your shop: the floating orb and its frosted glass chat card, lit by a lime + lilac aurora. Light glass in the
+   light theme, smoked glass in the dark one; values from the --assistant-* tokens in src/styles/tokens.css. Above the dock (100-106) and top bar (110), under
+   modals and the command palette (1000). */
+
+/* ---------- orb launcher ---------- */
+.orbButton {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 120;
+  width: 60px;
+  height: 60px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  color: var(--assistant-orb-ink);
+  box-shadow: var(--assistant-orb-shadow);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.orbButton:hover {
+  transform: translateY(-2px) scale(1.04);
+}
+
+.orbButton:focus-visible {
+  outline: 2px solid var(--assistant-focus);
+  outline-offset: 4px;
+}
+
+/* a glossy sphere: light from the top-left, a deep core, a soft rim */
+.orbSphere {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background:
+    radial-gradient(circle at 30% 24%, var(--assistant-orb-light) 0%, transparent 30%),
+    radial-gradient(circle at 74% 82%, var(--assistant-orb-lime) 0%, transparent 42%),
+    radial-gradient(circle at 50% 45%, var(--assistant-orb-mid) 0%, var(--assistant-orb-deep) 82%);
+  box-shadow: inset 0 0 0 1px var(--assistant-orb-edge), inset 0 -8px 16px var(--assistant-orb-shade);
+  animation: orbBreathe 4.5s ease-in-out infinite;
+}
+
+.orbButtonOpen .orbSphere {
+  animation: none;
+}
+
+.orbIcon {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+
+.orbTip {
+  position: absolute;
+  right: calc(100% + 12px);
+  top: 50%;
+  transform: translateY(-50%) translateX(6px);
+  white-space: nowrap;
+  padding: 7px 12px;
+  border-radius: var(--radius-pill);
+  background: var(--assistant-send);
+  color: var(--assistant-send-ink);
+  font-size: var(--font-size-meta);
+  font-weight: 500;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.orbButton:hover .orbTip,
+.orbButton:focus-visible .orbTip {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
+}
+
+@keyframes orbBreathe {
+  0%, 100% { filter: saturate(1) brightness(1); }
+  50% { filter: saturate(1.15) brightness(1.08); }
+}
+
+/* ---------- card ---------- */
+.card {
+  position: fixed;
+  right: 24px;
+  bottom: 96px;
+  z-index: 120;
+  width: min(392px, calc(100vw - 32px));
+  height: min(600px, calc(100vh - 128px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: var(--radius-dock);
+  border: 1px solid var(--assistant-glass-edge);
+  /* aurora light behind the frost: lime from the top-right, lilac from the bottom-left */
+  background:
+    radial-gradient(70% 45% at 100% 0%, var(--assistant-aurora-lime) 0%, transparent 70%),
+    radial-gradient(80% 55% at 0% 100%, var(--assistant-aurora-lilac) 0%, transparent 70%),
+    linear-gradient(165deg, var(--assistant-glass-top) 0%, var(--assistant-glass-bottom) 100%);
+  backdrop-filter: blur(16px) saturate(1.8);
+  -webkit-backdrop-filter: blur(16px) saturate(1.8);
+  box-shadow: var(--assistant-shadow), inset 0 1px 0 var(--assistant-glass-sheen), inset 0 0 0 1px var(--assistant-glass-line);
+  color: var(--assistant-ink);
+  font-family: var(--font-family-base);
+  transform-origin: bottom right;
+}
+
+.card[hidden] {
+  display: none;
+}
+
+.cardOpen {
+  animation: cardIn 0.22s cubic-bezier(0.2, 0.9, 0.3, 1.1);
+}
+
+@keyframes cardIn {
+  from { opacity: 0; transform: translateY(12px) scale(0.96); }
+  to { opacity: 1; transform: none; }
+}
+
+/* the light catching the glass: a diagonal sheen across the top */
+.sheen {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(125deg, var(--assistant-glass-sheen) 0%, transparent 32%);
+}
+
+/* ---------- header ---------- */
+.head {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 20px 18px 8px 20px;
+}
+
+.avatar {
+  flex: none;
+  width: 52px;
+  height: 52px;
+  border-radius: var(--radius-pill);
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(circle at 30% 24%, var(--assistant-orb-light) 0%, transparent 30%),
+    radial-gradient(circle at 74% 82%, var(--assistant-orb-lime) 0%, transparent 42%),
+    radial-gradient(circle at 50% 45%, var(--assistant-orb-mid) 0%, var(--assistant-orb-deep) 82%);
+  box-shadow: inset 0 0 0 1px var(--assistant-orb-edge), var(--assistant-avatar-shadow);
+}
+
+.avatarWord {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--assistant-orb-ink);
+  opacity: 0.85;
+}
+
+.headText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.title {
+  font-size: var(--font-size-section);
+  font-weight: 600;
+}
+
+.subtitle {
+  font-size: var(--font-size-meta);
+  color: var(--assistant-ink-faint);
+}
+
+.headActions {
+  display: flex;
+  gap: 6px;
+}
+
+.iconButton {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-pill);
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--assistant-glass-edge);
+  background: var(--assistant-glass-field);
+  color: var(--assistant-ink);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.iconButton:hover {
+  background: var(--assistant-glass-field-hover);
+}
+
+.iconButton:focus-visible,
+.chip:focus-visible,
+.send:focus-visible {
+  outline: 2px solid var(--assistant-focus);
+  outline-offset: 2px;
+}
+
+/* ---------- body ---------- */
+.body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 20px 36px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--assistant-glass-edge) transparent;
+  /* text fades out under the header instead of being cut */
+  mask-image: linear-gradient(180deg, transparent 0, var(--assistant-ink) 18px);
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, var(--assistant-ink) 18px);
+}
+
+.welcome,
+.notice {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 18px;
+}
+
+.greeting {
+  margin: 0;
+  font-size: 26px;
+  line-height: 1.22;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+
+.greetingSmall {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 400;
+}
+
+.soft {
+  margin: 0;
+  font-size: var(--font-size-body);
+  line-height: 1.5;
+  color: var(--assistant-ink-soft);
+}
+
+.ref {
+  color: var(--assistant-ink-faint);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  padding: 8px 14px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--assistant-glass-edge);
+  background: var(--assistant-glass-field);
+  color: var(--assistant-ink);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+
+.chip:hover {
+  background: var(--assistant-glass-field-hover);
+  transform: translateY(-1px);
+}
+
+.skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 22px;
+}
+
+.skeleton span {
+  height: 16px;
+  border-radius: var(--radius-pill);
+  background: var(--assistant-glass-field-hover);
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+
+.skeleton span:nth-child(1) { width: 85%; height: 24px; }
+.skeleton span:nth-child(2) { width: 70%; height: 24px; }
+.skeleton span:nth-child(3) { width: 50%; }
+
+@keyframes shimmer {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
+/* ---------- thread ---------- */
+.thread {
+  list-style: none;
+  margin: 0;
+  padding: 6px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.pair {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.question {
+  align-self: flex-end;
+  max-width: 85%;
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: 18px 18px 6px 18px;
+  background: var(--assistant-glass-field-hover);
+  border: 1px solid var(--assistant-glass-edge);
+  font-size: var(--font-size-body);
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.answer {
+  display: flex;
+  gap: 10px;
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.answer p {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.answerMark {
+  flex: none;
+  margin-top: 4px;
+  color: var(--assistant-mark);
+}
+
+.thinking {
+  align-items: center;
+  color: var(--assistant-ink-soft);
+}
+
+.badge {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  background: var(--assistant-glass-field);
+  border: 1px solid var(--assistant-glass-edge);
+  font-size: 11px;
+  color: var(--assistant-ink-soft);
+}
+
+.sendError {
+  position: relative;
+  margin: 0 20px 26px;
+  font-size: var(--font-size-meta);
+  color: var(--assistant-danger);
+}
+
+/* ---------- composer: a lighter glass shelf, send button set into its top edge ---------- */
+.composer {
+  position: relative;
+  margin: 0 10px 10px;
+  padding: 18px 16px 14px;
+  border-radius: 22px;
+  border: 1px solid var(--assistant-glass-edge);
+  background: linear-gradient(180deg, var(--assistant-glass-field-hover) 0%, var(--assistant-glass-field) 100%);
+  box-shadow: inset 0 1px 0 var(--assistant-glass-sheen);
+}
+
+.send {
+  position: absolute;
+  right: 22px;
+  top: -22px;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--assistant-glass-edge);
+  background: var(--assistant-send);
+  color: var(--assistant-send-ink);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  /* the ring reads as a notch cut into the shelf */
+  box-shadow: 0 0 0 5px var(--assistant-glass-field), var(--assistant-send-shadow);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.send:not(:disabled):hover {
+  transform: scale(1.06);
+}
+
+.send:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.input {
+  width: 100%;
+  padding: 0 52px 0 0;
+  border: none;
+  outline: none;
+  resize: none;
+  background: transparent;
+  color: var(--assistant-ink);
+  font: inherit;
+  font-size: var(--font-size-body);
+  line-height: 1.45;
+}
+
+.input::placeholder {
+  color: var(--assistant-ink-faint);
+}
+
+.input:disabled {
+  cursor: not-allowed;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.spin {
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ---------- phones: the dock runs along the bottom, so the orb sits above it and the card fills the screen ---------- */
+@media (max-width: 768px) {
+  .orbButton {
+    right: 16px;
+    bottom: 84px;
+    width: 52px;
+    height: 52px;
+  }
+
+  .orbButtonOpen {
+    display: none;
+  }
+
+  .orbTip {
+    display: none;
+  }
+
+  .card {
+    left: 10px;
+    right: 10px;
+    top: 10px;
+    bottom: 78px;
+    width: auto;
+    height: auto;
+    border-radius: var(--radius-lg);
+  }
+
+  .greeting {
+    font-size: 23px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .orbSphere,
+  .cardOpen,
+  .skeleton span,
+  .spin {
+    animation: none;
+  }
+
+  .orbButton,
+  .chip,
+  .send {
+    transition: none;
+  }
+}
